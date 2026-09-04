@@ -1,5 +1,5 @@
 import { FormEvent, useState } from 'react';
-import { clearAuth, login, storeAuth } from './authApi';
+import { login, storeAuth } from './authApi';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -55,25 +55,24 @@ function validateForm(email: string, password: string): FieldErrors {
 }
 
 const pageClassName =
-  'flex min-h-full items-center justify-center bg-[#0a0a0a] bg-[radial-gradient(ellipse_at_center,#1a1a1a_0%,#0d0d0d_70%)] p-6';
+  'relative flex min-h-full items-center justify-center bg-app-bg-login p-6 dark:bg-[radial-gradient(ellipse_at_center,#1a1a1a_0%,#0d0d0d_70%)]';
 
 const cardClassName =
-  'w-full max-w-[420px] rounded-[20px] border border-border bg-surface p-8 shadow-[0_24px_48px_rgba(0,0,0,0.45)]';
+  'w-full max-w-[420px] rounded-[20px] border border-app-border bg-app-surface p-8 shadow-app';
 
 const inputClassName =
-  'w-full rounded-[10px] border border-border-input bg-surface-input px-3.5 py-3 text-white outline-none transition-colors placeholder:text-[#666666] focus:border-[#555555]';
+  'w-full rounded-[10px] border border-app-border bg-app-surface-input px-3.5 py-3 text-app-text outline-none transition-colors placeholder:text-app-placeholder focus:border-app-border-strong';
 
 const submitClassName =
   'mt-1 w-full rounded-[10px] border-none bg-accent px-4 py-3.5 text-[0.9375rem] font-semibold text-white transition-colors hover:bg-accent-hover active:bg-accent-active disabled:cursor-not-allowed disabled:opacity-70';
 
-export default function LoginPage() {
+export default function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -107,42 +106,15 @@ export default function LoginPage() {
     }
 
     storeAuth(result.data);
-    setIsLoggedIn(true);
+    onLoggedIn();
   };
-
-  const handleSignOut = () => {
-    clearAuth();
-    setIsLoggedIn(false);
-    setEmail('');
-    setPassword('');
-    setFieldErrors({});
-    setFormError('');
-  };
-
-  if (isLoggedIn) {
-    return (
-      <div className={pageClassName}>
-        <div className={`${cardClassName} text-center`}>
-          <header className="mb-7">
-            <h1 className="mb-2 text-[1.75rem] font-bold text-white">Signed in</h1>
-            <p className="text-[0.9375rem] leading-normal text-muted">
-              You are connected to your FlexHubs workspace.
-            </p>
-          </header>
-          <button type="button" className={submitClassName} onClick={handleSignOut}>
-            Sign out
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className={pageClassName}>
       <div className={cardClassName}>
         <header className="mb-7">
-          <h1 className="mb-2 text-[1.75rem] font-bold text-white">Sign in</h1>
-          <p className="text-[0.9375rem] leading-normal text-muted">
+          <h1 className="mb-2 text-[1.75rem] font-bold text-app-text">Sign in</h1>
+          <p className="text-[0.9375rem] leading-normal text-app-muted">
             Welcome back. Enter your credentials to open your workspace.
           </p>
         </header>
@@ -158,13 +130,13 @@ export default function LoginPage() {
           ) : null}
 
           <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-white" htmlFor="email">
+            <label className="text-sm font-medium text-app-text" htmlFor="email">
               Email
             </label>
             <input
               id="email"
               className={`${inputClassName}${fieldErrors.email ? ' border-accent focus:border-accent' : ''}`}
-              type="email"
+              type="text"
               placeholder="you@company.com"
               autoComplete="email"
               value={email}
@@ -188,7 +160,7 @@ export default function LoginPage() {
           </div>
 
           <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-white" htmlFor="password">
+            <label className="text-sm font-medium text-app-text" htmlFor="password">
               Password
             </label>
             <div className="relative">
@@ -213,7 +185,7 @@ export default function LoginPage() {
               />
               <button
                 type="button"
-                className="absolute top-1/2 right-3 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border-none bg-transparent text-[#888888] transition-colors hover:text-[#bbbbbb]"
+                className="absolute top-1/2 right-3 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border-none bg-transparent text-app-muted transition-colors hover:text-app-text"
                 aria-label={showPassword ? 'Hide password' : 'Show password'}
                 onClick={() => setShowPassword((current) => !current)}
               >
@@ -236,7 +208,7 @@ export default function LoginPage() {
           </button>
         </form>
 
-        <footer className="mt-7 border-t border-[#2e2e2e] pt-6 text-center text-sm text-muted">
+        <footer className="mt-7 border-t border-app-border pt-6 text-center text-sm text-app-muted">
           Starting a new company workspace?{' '}
           <a className="font-medium text-accent transition-opacity hover:opacity-85" href="#">
             Create a workspace
