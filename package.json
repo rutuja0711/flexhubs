@@ -3,6 +3,8 @@
   "productName": "FlexHubs Desktop",
   "version": "1.0.0",
   "description": "FlexHubs Desktop Application",
+  "author": "Flexodyn Solutions",
+  "authors": "Flexodyn Solutions",
   "main": ".vite/build/main.js",
   "scripts": {
     "start": "electron-forge start",
@@ -28,6 +30,7 @@
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "react-icons": "^5.7.0"
   }
 }
