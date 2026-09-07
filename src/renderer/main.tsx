@@ -4,6 +4,8 @@ import { applyTheme, resolveInitialTheme } from '../shared/theme';
 import './global.css';
 import App from './App';
 import { ThemeProvider } from './theme/ThemeProvider';
+import { ConfirmProvider } from './ui/ConfirmDialog';
+import { ToastProvider } from './ui/Toast';
 
 applyTheme(resolveInitialTheme());
 
@@ -13,7 +15,11 @@ if (rootElement) {
   createRoot(rootElement).render(
     <StrictMode>
       <ThemeProvider>
-        <App />
+        <ToastProvider>
+          <ConfirmProvider>
+            <App />
+          </ConfirmProvider>
+        </ToastProvider>
       </ThemeProvider>
     </StrictMode>,
   );

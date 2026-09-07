@@ -2,10 +2,14 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { ApiResult } from './shared/api';
 import type { ConversationsPayload, UnreadCountPayload } from './shared/chat';
 import type {
+  BlockedUserItem,
   CalendarEventItem,
+  ChannelInviteItem,
   ChannelItem,
+  CreatedChannelResult,
   FileItem,
   FriendItem,
+  FriendRelationship,
   HubInviteItem,
   SavedMessageItem,
 } from './shared/features';
@@ -32,8 +36,109 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('auth:login', credentials),
   getCurrentUser: (token: string): Promise<LoginResult> =>
     ipcRenderer.invoke('auth:me', token),
-  getConversations: (token: string): Promise<ApiResult<ConversationsPayload>> =>
-    ipcRenderer.invoke('chat:conversations', token),
+  createOrgOrder: (
+    token: string | null,
+    payloadJson: string,
+  ): Promise<ApiResult<import('./shared/workspace').OrgOrderResult>> =>
+    ipcRenderer.invoke('payments:create-org-order', token, payloadJson),
+  verifyOrgSubscription: (
+    token: string | null,
+    payloadJson: string,
+  ): Promise<ApiResult<import('./shared/workspace').WorkspaceCreationResult>> =>
+    ipcRenderer.invoke('payments:verify-org-subscription', token, payloadJson),
+  getPaymentPlans: (
+    token: string | null,
+  ): Promise<ApiResult<import('./shared/payments').PaymentPlanItem[]>> =>
+    ipcRenderer.invoke('payments:plans', token),
+  getOrgSubscription: (
+    token: string,
+  ): Promise<ApiResult<import('./shared/payments').OrgSubscriptionInfo | null>> =>
+    ipcRenderer.invoke('payments:org-subscription', token),
+  getPlanCompliance: (
+    token: string | null,
+    planId: string,
+    teamSize: number,
+  ): Promise<ApiResult<import('./shared/payments').PlanComplianceInfo>> =>
+    ipcRenderer.invoke('payments:plan-compliance', token, planId, teamSize),
+  createUpgradeOrder: (
+    token: string,
+    payloadJson: string,
+  ): Promise<ApiResult<import('./shared/workspace').OrgOrderResult>> =>
+    ipcRenderer.invoke('payments:create-order', token, payloadJson),
+  verifyUpgradeSubscription: (
+    token: string,
+    payloadJson: string,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('payments:verify-upgrade', token, payloadJson),
+  getOrganizationMembersAdmin: (
+    token: string,
+  ): Promise<ApiResult<import('./shared/profile').OrganizationMemberItem[]>> =>
+    ipcRenderer.invoke('org:members', token),
+  removeOrganizationMember: (token: string, userId: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('org:remove-member', token, userId),
+  leaveOrganizationWorkspace: (token: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('org:leave', token),
+  getOrganizationRoles: (
+    token: string,
+  ): Promise<ApiResult<import('./shared/organization').OrganizationRoleItem[]>> =>
+    ipcRenderer.invoke('org:roles', token),
+  createOrganizationRole: (
+    token: string,
+    name: string,
+  ): Promise<ApiResult<import('./shared/organization').OrganizationRoleItem[]>> =>
+    ipcRenderer.invoke('org:create-role', token, name),
+  updateOrganizationRole: (
+    token: string,
+    roleId: string,
+    name: string,
+  ): Promise<ApiResult<import('./shared/organization').OrganizationRoleItem[]>> =>
+    ipcRenderer.invoke('org:update-role', token, roleId, name),
+  deleteOrganizationRole: (
+    token: string,
+    roleId: string,
+  ): Promise<ApiResult<import('./shared/organization').OrganizationRoleItem[]>> =>
+    ipcRenderer.invoke('org:delete-role', token, roleId),
+  getOrganizationInvites: (
+    token: string,
+  ): Promise<ApiResult<import('./shared/organization').OrganizationInviteItem[]>> =>
+    ipcRenderer.invoke('org:invites', token),
+  sendOrganizationInvite: (
+    token: string,
+    email: string,
+    roleId: string | null,
+  ): Promise<ApiResult<import('./shared/organization').OrganizationInviteItem[]>> =>
+    ipcRenderer.invoke('org:send-invite', token, email, roleId),
+  revokeOrganizationInvite: (
+    token: string,
+    inviteId: string,
+  ): Promise<ApiResult<import('./shared/organization').OrganizationInviteItem[]>> =>
+    ipcRenderer.invoke('org:revoke-invite', token, inviteId),
+  getMyOrganizationInvites: (
+    token: string,
+  ): Promise<ApiResult<import('./shared/organization').OrganizationInviteItem[]>> =>
+    ipcRenderer.invoke('org:my-invites', token),
+  acceptOrganizationInvite: (token: string, inviteId: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('org:accept-invite', token, inviteId),
+  declineOrganizationInvite: (token: string, inviteId: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('org:decline-invite', token, inviteId),
+  getOrganizationSeats: (
+    token: string,
+  ): Promise<ApiResult<import('./shared/organization').OrganizationSeatsInfo>> =>
+    ipcRenderer.invoke('org:seats', token),
+  getOrgInvoices: (
+    token: string,
+  ): Promise<ApiResult<import('./shared/organization').OrgInvoiceItem[]>> =>
+    ipcRenderer.invoke('org:invoices', token),
+  getOrgInvoiceById: (
+    token: string,
+    invoiceId: string,
+  ): Promise<ApiResult<import('./shared/organization').OrgInvoiceItem>> =>
+    ipcRenderer.invoke('org:invoice', token, invoiceId),
+  getConversations: (
+    token: string,
+    viewerUserId?: string | null,
+  ): Promise<ApiResult<ConversationsPayload>> =>
+    ipcRenderer.invoke('chat:conversations', token, viewerUserId ?? null),
   getUnreadCount: (token: string): Promise<ApiResult<UnreadCountPayload>> =>
     ipcRenderer.invoke('chat:unread-count', token),
   getConversationBootstrap: (
@@ -74,12 +179,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
     content: string,
     replyToId?: string,
     threadRootId?: string,
+    mediaJson?: string,
   ): Promise<ApiResult<MessageItem>> =>
-    ipcRenderer.invoke('chat:send-message', token, conversationId, content, replyToId, threadRootId),
+    ipcRenderer.invoke('chat:send-message', token, conversationId, content, replyToId, threadRootId, mediaJson),
+  getTrendingGifs: (token: string, limit?: number): Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>> =>
+    ipcRenderer.invoke('gifs:trending', token, limit),
+  searchGifs: (
+    token: string,
+    query: string,
+    limit?: number,
+  ): Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>> =>
+    ipcRenderer.invoke('gifs:search', token, query, limit),
+  getTrendingStickers: (
+    token: string,
+    limit?: number,
+  ): Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>> =>
+    ipcRenderer.invoke('gifs:stickers-trending', token, limit),
+  searchStickers: (
+    token: string,
+    query: string,
+    limit?: number,
+  ): Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>> =>
+    ipcRenderer.invoke('gifs:stickers-search', token, query, limit),
   createDirectConversation: (
     token: string,
     userId: string,
-  ): Promise<ApiResult<{ conversationId: string }>> =>
+  ): Promise<ApiResult<{ conversationId: string; conversation: import('../shared/chat').ConversationItem | null }>> =>
     ipcRenderer.invoke('chat:create-direct', token, userId),
   addMessageReaction: (
     token: string,
@@ -127,20 +252,121 @@ contextBridge.exposeInMainWorld('electronAPI', {
     messageId: string,
   ): Promise<ApiResult<MessageItem>> =>
     ipcRenderer.invoke('chat:unpin-message', token, conversationId, messageId),
-  unsaveMessage: (token: string, messageId: string): Promise<ApiResult<unknown>> =>
-    ipcRenderer.invoke('chat:unsave-message', token, messageId),
   renameConversation: (token: string, conversationId: string, name: string): Promise<ApiResult<unknown>> =>
     ipcRenderer.invoke('chat:rename-conversation', token, conversationId, name),
+  updateConversationNotificationSettings: (
+    token: string,
+    conversationId: string,
+    settingsJson: string,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('chat:update-conversation-notification-settings', token, conversationId, settingsJson),
+  setConversationFavorite: (
+    token: string,
+    conversationId: string,
+    favorite: boolean,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('chat:set-conversation-favorite', token, conversationId, favorite),
   addConversationMembers: (token: string, conversationId: string, userIds: string[]): Promise<ApiResult<unknown>> =>
     ipcRenderer.invoke('chat:add-conversation-members', token, conversationId, userIds),
   removeConversationMember: (token: string, conversationId: string, userId: string): Promise<ApiResult<unknown>> =>
     ipcRenderer.invoke('chat:remove-conversation-member', token, conversationId, userId),
-  leaveConversation: (token: string, conversationId: string): Promise<ApiResult<unknown>> =>
-    ipcRenderer.invoke('chat:leave-conversation', token, conversationId),
+  leaveConversation: (token: string, conversationId: string, isHub: boolean): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('chat:leave-conversation', token, conversationId, isHub),
   deleteConversation: (token: string, conversationId: string): Promise<ApiResult<unknown>> =>
     ipcRenderer.invoke('chat:delete-conversation', token, conversationId),
   clearConversationHistory: (token: string, conversationId: string): Promise<ApiResult<unknown>> =>
     ipcRenderer.invoke('chat:clear-conversation-history', token, conversationId),
+  createGroupConversation: (
+    token: string,
+    name: string,
+    userIds: string[],
+  ): Promise<ApiResult<{ conversationId: string }>> =>
+    ipcRenderer.invoke('chat:create-group', token, name, userIds),
+  getSelfConversation: (token: string): Promise<ApiResult<{ conversationId: string }>> =>
+    ipcRenderer.invoke('chat:self-conversation', token),
+  getConversationById: (token: string, conversationId: string): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('chat:get-conversation', token, conversationId),
+  markConversationUnread: (token: string, conversationId: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('chat:mark-unread', token, conversationId),
+  getPinnedMessages: (token: string, conversationId: string): Promise<ApiResult<MessageItem[]>> =>
+    ipcRenderer.invoke('chat:pinned-messages', token, conversationId),
+  getMessageById: (
+    token: string,
+    conversationId: string,
+    messageId: string,
+  ): Promise<ApiResult<MessageItem>> =>
+    ipcRenderer.invoke('chat:get-message', token, conversationId, messageId),
+  getMentionSuggestions: (
+    token: string,
+    conversationId: string,
+    query: string,
+  ): Promise<ApiResult<unknown[]>> =>
+    ipcRenderer.invoke('chat:mention-suggestions', token, conversationId, query),
+  createPollMessage: (
+    token: string,
+    conversationId: string,
+    payloadJson: string,
+  ): Promise<ApiResult<MessageItem>> =>
+    ipcRenderer.invoke('chat:create-poll', token, conversationId, payloadJson),
+  votePollMessage: (
+    token: string,
+    conversationId: string,
+    messageId: string,
+    optionId: string,
+  ): Promise<ApiResult<MessageItem>> =>
+    ipcRenderer.invoke('chat:vote-poll', token, conversationId, messageId, optionId),
+  getConversationScheduledMessages: (
+    token: string,
+    conversationId: string,
+  ): Promise<ApiResult<unknown[]>> =>
+    ipcRenderer.invoke('chat:conversation-scheduled-messages', token, conversationId),
+  createConversationScheduledMessage: (
+    token: string,
+    conversationId: string,
+    payloadJson: string,
+  ): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('chat:create-conversation-scheduled-message', token, conversationId, payloadJson),
+  deleteConversationScheduledMessage: (
+    token: string,
+    conversationId: string,
+    scheduledId: string,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('chat:delete-conversation-scheduled-message', token, conversationId, scheduledId),
+  updateConversationMemberRole: (
+    token: string,
+    conversationId: string,
+    userId: string,
+    role: string,
+  ): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('chat:update-member-role', token, conversationId, userId, role),
+  getConversationNotificationSettings: (
+    token: string,
+    conversationId: string,
+  ): Promise<ApiResult<Record<string, unknown>>> =>
+    ipcRenderer.invoke('chat:get-conversation-notification-settings', token, conversationId),
+  registerAccount: (payloadJson: string): Promise<LoginResult> =>
+    ipcRenderer.invoke('auth:register', payloadJson),
+  registerWorkspaceAccount: (payloadJson: string): Promise<LoginResult> =>
+    ipcRenderer.invoke('auth:register-workspace', payloadJson),
+  getInviteRegistrationDetails: (inviteToken: string): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('auth:invite-details', inviteToken),
+  forgotPassword: (email: string): Promise<ApiResult<{ message?: string; delivered?: boolean }>> =>
+    ipcRenderer.invoke('auth:forgot-password', email),
+  verifyResetCode: (payloadJson: string): Promise<ApiResult<{ message?: string }>> =>
+    ipcRenderer.invoke('auth:verify-reset-code', payloadJson),
+  resetPassword: (payloadJson: string): Promise<ApiResult<{ message?: string }>> =>
+    ipcRenderer.invoke('auth:reset-password', payloadJson),
+  createOrganizationWorkspace: (
+    token: string | null,
+    payloadJson: string,
+  ): Promise<ApiResult<unknown>> => ipcRenderer.invoke('org:create', token, payloadJson),
+  getUserProfile: (token: string, userId: string): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('user:profile', token, userId),
+  getMessageConversation: (
+    token: string,
+    messageId: string,
+  ): Promise<ApiResult<{ conversationId: string }>> =>
+    ipcRenderer.invoke('features:message-conversation', token, messageId),
   saveMessage: (
     token: string,
     conversationId: string,
@@ -151,6 +377,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('chat:notifications', token),
   markAllNotificationsRead: (token: string): Promise<ApiResult<{ ok: true }>> =>
     ipcRenderer.invoke('chat:notifications-read-all', token),
+  markNotificationRead: (
+    token: string,
+    notificationId: string,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('chat:notification-read', token, notificationId),
   getPendingFriends: (token: string): Promise<ApiResult<PendingFriendsPayload>> =>
     ipcRenderer.invoke('chat:friends-pending', token),
   getOrganizationMembers: (token: string): Promise<ApiResult<TeammatesPayload>> =>
@@ -171,6 +402,56 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('features:files', token, filter),
   getCalendarEvents: (token: string): Promise<ApiResult<CalendarEventItem[]>> =>
     ipcRenderer.invoke('features:calendar', token),
+  getCalendarMentionableUsers: (
+    token: string,
+  ): Promise<ApiResult<import('../shared/extras').CalendarMentionableUser[]>> =>
+    ipcRenderer.invoke('extras:calendar-mentionable-users', token),
+  createCalendarEvent: (
+    token: string,
+    payloadJson: string,
+  ): Promise<ApiResult<import('../shared/extras').CalendarEventItem>> =>
+    ipcRenderer.invoke('extras:create-calendar-event', token, payloadJson),
+  respondToCalendarEvent: (
+    token: string,
+    eventId: string,
+    accept: boolean,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('extras:respond-calendar-event', token, eventId, accept),
+  deleteCalendarEvent: (token: string, eventId: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('extras:delete-calendar-event', token, eventId),
+  getScheduledMessages: (
+    token: string,
+  ): Promise<ApiResult<import('../shared/extras').ScheduledMessageItem[]>> =>
+    ipcRenderer.invoke('extras:scheduled-messages', token),
+  enhanceMessageText: (token: string, text: string): Promise<ApiResult<import('../shared/extras').AiTextResult>> =>
+    ipcRenderer.invoke('extras:ai-enhance', token, text),
+  generateMessageText: (
+    token: string,
+    description: string,
+  ): Promise<ApiResult<import('../shared/extras').AiTextResult>> =>
+    ipcRenderer.invoke('extras:ai-generate', token, description),
+  parseFlexCommand: (token: string, input: string): Promise<ApiResult<import('../shared/extras').AiTextResult>> =>
+    ipcRenderer.invoke('extras:ai-flex-command', token, input),
+  transcribeAudioFile: (
+    token: string,
+    fileName: string,
+    mimeType: string,
+    base64Data: string,
+  ): Promise<ApiResult<import('../shared/extras').AiTextResult>> =>
+    ipcRenderer.invoke('extras:ai-transcribe', token, fileName, mimeType, base64Data),
+  getPushVapidPublicKey: (
+    token: string,
+  ): Promise<ApiResult<import('../shared/extras').PushVapidKeyResult>> =>
+    ipcRenderer.invoke('extras:push-vapid-key', token),
+  subscribePushNotifications: (
+    token: string,
+    subscriptionJson: string,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('extras:push-subscribe', token, subscriptionJson),
+  unsubscribePushEndpoint: (token: string, endpoint: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('extras:push-unsubscribe', token, endpoint),
+  deletePushSubscriptions: (token: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('extras:push-delete-subscriptions', token),
   getChannels: (token: string): Promise<ApiResult<ChannelItem[]>> =>
     ipcRenderer.invoke('features:channels', token),
   getHubInvites: (token: string): Promise<ApiResult<HubInviteItem[]>> =>
@@ -179,6 +460,51 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('features:friends', token),
   acceptHubInvite: (token: string, channelId: string): Promise<ApiResult<{ ok: true }>> =>
     ipcRenderer.invoke('features:accept-hub-invite', token, channelId),
+  acceptHubInviteById: (token: string, inviteId: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('features:accept-hub-invite-by-id', token, inviteId),
+  declineHubInvite: (token: string, inviteId: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('features:decline-hub-invite', token, inviteId),
+  getBlockedUsers: (token: string): Promise<ApiResult<BlockedUserItem[]>> =>
+    ipcRenderer.invoke('features:blocks', token),
+  blockUser: (token: string, userId: string): Promise<ApiResult<{ success: true }>> =>
+    ipcRenderer.invoke('features:block-user', token, userId),
+  unblockUser: (token: string, userId: string): Promise<ApiResult<{ success: true }>> =>
+    ipcRenderer.invoke('features:unblock-user', token, userId),
+  getFriendRelationship: (token: string, userId: string): Promise<ApiResult<FriendRelationship>> =>
+    ipcRenderer.invoke('features:friend-relationship', token, userId),
+  createChannel: (
+    token: string,
+    payloadJson: string,
+  ): Promise<ApiResult<CreatedChannelResult>> =>
+    ipcRenderer.invoke('features:create-channel', token, payloadJson),
+  updateChannelName: (
+    token: string,
+    channelId: string,
+    name: string,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('features:update-channel-name', token, channelId, name),
+  updateChannelDescription: (
+    token: string,
+    channelId: string,
+    description: string,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('features:update-channel-description', token, channelId, description),
+  updateChannelSettings: (
+    token: string,
+    channelId: string,
+    settingsJson: string,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('features:update-channel-settings', token, channelId, settingsJson),
+  getChannelInvites: (token: string, channelId: string): Promise<ApiResult<ChannelInviteItem[]>> =>
+    ipcRenderer.invoke('features:channel-invites', token, channelId),
+  revokeChannelInvite: (
+    token: string,
+    channelId: string,
+    inviteId: string,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('features:revoke-channel-invite', token, channelId, inviteId),
+  deleteChannel: (token: string, channelId: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('features:delete-channel', token, channelId),
   sendFriendRequest: (token: string, userId: string): Promise<ApiResult<{ ok: true }>> =>
     ipcRenderer.invoke('features:friend-request', token, userId),
   respondFriendRequest: (token: string, userId: string, status: 'ACCEPTED' | 'DECLINED'): Promise<ApiResult<{ ok: true }>> =>
@@ -189,6 +515,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
     messageId: string,
   ): Promise<ApiResult<SavedMessageItem[]>> =>
     ipcRenderer.invoke('features:unsave-message', token, conversationId, messageId),
+  getAvatarStyles: (token: string): Promise<ApiResult<import('../shared/profile').AvatarStyleItem[]>> =>
+    ipcRenderer.invoke('user:avatar-styles', token),
+  getNotificationSettings: (token: string): Promise<ApiResult<import('../shared/profile').ProfileSettings>> =>
+    ipcRenderer.invoke('user:notification-settings', token),
+  updateNotificationSettings: (
+    token: string,
+    updatesJson: string,
+  ): Promise<ApiResult<import('../shared/profile').ProfileSettings>> =>
+    ipcRenderer.invoke('user:update-notification-settings', token, updatesJson),
+  updateUserProfile: (token: string, updatesJson: string): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('user:update-profile', token, updatesJson),
+  updateUserStatus: (
+    token: string,
+    status: string,
+    message?: string,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('user:update-status', token, status, message),
+  updateUserTimezone: (token: string, timezone: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('user:update-timezone', token, timezone),
+  uploadProfileImage: (
+    token: string,
+    fileName: string,
+    mimeType: string,
+    base64Data: string,
+  ): Promise<ApiResult<{ url: string }>> =>
+    ipcRenderer.invoke('user:upload-image', token, fileName, mimeType, base64Data),
+  getOrganizationMembersDetailed: (
+    token: string,
+  ): Promise<ApiResult<import('../shared/profile').OrganizationMemberItem[]>> =>
+    ipcRenderer.invoke('user:organization-members-detailed', token),
   startRealtime: (token: string): Promise<{ ok: true }> =>
     ipcRenderer.invoke('realtime:start', token),
   stopRealtime: (): Promise<{ ok: true }> => ipcRenderer.invoke('realtime:stop'),
@@ -198,6 +554,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     isTyping: boolean,
   ): Promise<ApiResult<{ ok: true }>> =>
     ipcRenderer.invoke('realtime:typing', token, conversationId, isTyping),
+  getUserPresence: (
+    token: string,
+    userIds: string[],
+  ): Promise<ApiResult<import('../shared/realtime').PresenceItem[]>> =>
+    ipcRenderer.invoke('realtime:presence', token, JSON.stringify(userIds)),
   onRealtimeEvent: (callback: (event: unknown) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
       callback(payload);

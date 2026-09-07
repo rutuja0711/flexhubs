@@ -1,4 +1,5 @@
-import { BuildingIcon, HeartChatIcon, UserPlusIcon } from './ChatIcons';
+import { FiMessageSquare } from 'react-icons/fi';
+import { BuildingIcon, UserPlusIcon } from './ChatIcons';
 
 type ChatWelcomeProps = {
   workspaceName: string;
@@ -12,7 +13,7 @@ export function ChatWelcome({ workspaceName, onFindPeople }: ChatWelcomeProps) {
     <div className="flex flex-1 items-center justify-center bg-app-chat-bg p-8">
       <div className="max-w-lg text-center">
         <div className="mx-auto mb-6 flex h-24 w-24 items-center justify-center rounded-[24px] border border-app-border bg-app-chat-panel text-accent-soft">
-          <HeartChatIcon />
+          <FiMessageSquare className="h-10 w-10" aria-hidden="true" />
         </div>
 
         <h2 className="mb-3 text-[1.75rem] font-bold text-app-text">Welcome to {shortName}</h2>
@@ -24,7 +25,7 @@ export function ChatWelcome({ workspaceName, onFindPeople }: ChatWelcomeProps) {
           <span className="text-accent-soft">
             <BuildingIcon />
           </span>
-          <span>{shortName} teammates appear at the top of the sidebar.</span>
+          <span>{shortName} teammates appear below your chats in the sidebar.</span>
         </div>
 
         <button

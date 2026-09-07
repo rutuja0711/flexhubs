@@ -1,7 +1,12 @@
 import type { ApiResult } from '../shared/api';
-import type { ConversationsPayload, UnreadCountPayload } from '../shared/chat';
+import type { GifPickerItem } from '../shared/gifs';
+import { buildFileMessagePayload, buildMediaMessagePayload } from '../shared/gifs';
+import type { ConversationsPayload, ConversationItem, UnreadCountPayload } from '../shared/chat';
 import type { ConversationBootstrap, MessageDraft } from '../shared/messages';
-import { clearAuth, getStoredToken } from './authApi';
+import { buildProfileUpdatePayload } from '../shared/profile';
+import { clearAuth, getStoredToken, getStoredUser } from './authApi';
+import { getUserId } from '../shared/user';
+import { uploadFileToApi } from './uploadApi';
 
 async function withToken<T>(
   request: (token: string) => Promise<ApiResult<T>>,
@@ -37,7 +42,9 @@ export async function loadConversations(): Promise<ApiResult<ConversationsPayloa
     return unavailable();
   }
 
-  return withToken((token) => window.electronAPI.getConversations(token));
+  const viewerUserId = getUserId(getStoredUser());
+
+  return withToken((token) => window.electronAPI.getConversations(token, viewerUserId));
 }
 
 export async function loadUnreadCount(): Promise<ApiResult<UnreadCountPayload>> {
@@ -159,6 +166,26 @@ export async function markAllNotificationsRead(): Promise<ApiResult<{ ok: true }
   return withToken((token) => window.electronAPI.markAllNotificationsRead(token));
 }
 
+export async function markNotificationRead(
+  notificationId: string,
+): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.markNotificationRead) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.markNotificationRead(token, notificationId));
+}
+
+export async function loadUserPresence(
+  userIds: string[],
+): Promise<ApiResult<import('../shared/realtime').PresenceItem[]>> {
+  if (!window.electronAPI?.getUserPresence) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getUserPresence(token, userIds));
+}
+
 export async function loadPendingFriends(): Promise<
   ApiResult<import('../shared/messages').PendingFriendItem[]>
 > {
@@ -195,7 +222,6 @@ export async function loadBellPanelData(): Promise<{
   notifications: ApiResult<import('../shared/messages').NotificationItem[]>;
   pending: ApiResult<import('../shared/messages').PendingFriendItem[]>;
 }> {
-  await markAllNotificationsRead();
   return refreshBellPanelData();
 }
 
@@ -209,6 +235,14 @@ export async function refreshBellPanelData(): Promise<{
   ]);
 
   return { notifications, pending };
+}
+
+export async function openBellPanelData(): Promise<{
+  notifications: ApiResult<import('../shared/messages').NotificationItem[]>;
+  pending: ApiResult<import('../shared/messages').PendingFriendItem[]>;
+}> {
+  await markAllNotificationsRead();
+  return refreshBellPanelData();
 }
 
 export async function addMessageReaction(
@@ -302,7 +336,7 @@ export async function saveChatMessage(
 
 export async function createDirectChat(
   userId: string,
-): Promise<ApiResult<{ conversationId: string }>> {
+): Promise<ApiResult<{ conversationId: string; conversation: ConversationItem | null }>> {
   if (!window.electronAPI?.createDirectConversation) {
     return unavailable();
   }
@@ -315,12 +349,78 @@ export async function sendChatMessage(
   content: string,
   replyToId?: string,
   threadRootId?: string,
+  mediaJson?: string,
 ): Promise<ApiResult<import('../shared/messages').MessageItem>> {
   if (!window.electronAPI?.sendMessage) {
     return unavailable();
   }
 
-  return withToken((token) => window.electronAPI.sendMessage(token, conversationId, content, replyToId, threadRootId));
+  return withToken((token) =>
+    window.electronAPI.sendMessage(token, conversationId, content, replyToId, threadRootId, mediaJson),
+  );
+}
+
+export async function sendChatMediaMessage(
+  conversationId: string,
+  item: GifPickerItem,
+  kind: 'gif' | 'sticker',
+  replyToId?: string,
+  threadRootId?: string,
+): Promise<ApiResult<import('../shared/messages').MessageItem>> {
+  const mediaPayload = buildMediaMessagePayload(item, kind);
+
+  return sendChatMessage(conversationId, '', replyToId, threadRootId, JSON.stringify(mediaPayload));
+}
+
+export async function sendChatFileMessage(
+  conversationId: string,
+  url: string,
+  fileName: string,
+  mimeType: string,
+  replyToId?: string,
+  threadRootId?: string,
+): Promise<ApiResult<import('../shared/messages').MessageItem>> {
+  const mediaPayload = buildFileMessagePayload(url, fileName, mimeType);
+
+  return sendChatMessage(conversationId, '', replyToId, threadRootId, JSON.stringify(mediaPayload));
+}
+
+export async function loadGifTrending(): Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>> {
+  if (!window.electronAPI?.getTrendingGifs) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getTrendingGifs(token));
+}
+
+export async function loadGifSearch(
+  query: string,
+): Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>> {
+  if (!window.electronAPI?.searchGifs) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.searchGifs(token, query));
+}
+
+export async function loadStickerTrending(): Promise<
+  ApiResult<import('../shared/gifs').GifPickerItem[]>
+> {
+  if (!window.electronAPI?.getTrendingStickers) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getTrendingStickers(token));
+}
+
+export async function loadStickerSearch(
+  query: string,
+): Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>> {
+  if (!window.electronAPI?.searchStickers) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.searchStickers(token, query));
 }
 
 export async function loadGlobalSearch(
@@ -424,6 +524,171 @@ export async function acceptHubInvite(
   return withToken((token) => window.electronAPI.acceptHubInvite(token, channelId));
 }
 
+export async function acceptHubInviteById(
+  inviteId: string,
+): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.acceptHubInviteById) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.acceptHubInviteById(token, inviteId));
+}
+
+export async function declineHubInvite(
+  inviteId: string,
+): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.declineHubInvite) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.declineHubInvite(token, inviteId));
+}
+
+export async function loadBlockedUsers(): Promise<
+  ApiResult<import('../shared/features').BlockedUserItem[]>
+> {
+  if (!window.electronAPI?.getBlockedUsers) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getBlockedUsers(token));
+}
+
+export async function blockUser(userId: string): Promise<ApiResult<{ success: true }>> {
+  if (!window.electronAPI?.blockUser) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.blockUser(token, userId));
+}
+
+export async function unblockUser(userId: string): Promise<ApiResult<{ success: true }>> {
+  if (!window.electronAPI?.unblockUser) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.unblockUser(token, userId));
+}
+
+export async function loadFriendRelationship(
+  userId: string,
+): Promise<ApiResult<import('../shared/features').FriendRelationship>> {
+  if (!window.electronAPI?.getFriendRelationship) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getFriendRelationship(token, userId));
+}
+
+export async function createHubChannel(
+  input: import('../shared/features').CreateChannelInput,
+): Promise<ApiResult<import('../shared/features').CreatedChannelResult>> {
+  if (!window.electronAPI?.createChannel) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.createChannel(token, JSON.stringify(input)));
+}
+
+export async function renameConversation(conversationId: string, name: string): Promise<ApiResult<unknown>> {
+  if (!window.electronAPI?.renameConversation) return unavailable();
+  return withToken((token) => window.electronAPI.renameConversation(token, conversationId, name));
+}
+
+export async function updateConversationNotificationSettings(
+  conversationId: string,
+  settings: Record<string, unknown>,
+): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.updateConversationNotificationSettings) {
+    return unavailable();
+  }
+
+  return withToken((token) =>
+    window.electronAPI.updateConversationNotificationSettings(
+      token,
+      conversationId,
+      JSON.stringify(settings),
+    ),
+  );
+}
+
+export async function setConversationFavorite(
+  conversationId: string,
+  favorite: boolean,
+): Promise<ApiResult<{ ok: true; favorite: boolean }>> {
+  if (!window.electronAPI?.setConversationFavorite) {
+    return unavailable();
+  }
+
+  return withToken((token) =>
+    window.electronAPI.setConversationFavorite(token, conversationId, favorite),
+  );
+}
+
+export async function updateHubChannelName(
+  channelId: string,
+  name: string,
+): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.updateChannelName) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.updateChannelName(token, channelId, name));
+}
+
+export async function updateHubChannelDescription(
+  channelId: string,
+  description: string,
+): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.updateChannelDescription) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.updateChannelDescription(token, channelId, description));
+}
+
+export async function updateHubChannelSettings(
+  channelId: string,
+  settings: Record<string, unknown>,
+): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.updateChannelSettings) {
+    return unavailable();
+  }
+
+  return withToken((token) =>
+    window.electronAPI.updateChannelSettings(token, channelId, JSON.stringify(settings)),
+  );
+}
+
+export async function loadChannelInvites(
+  channelId: string,
+): Promise<ApiResult<import('../shared/features').ChannelInviteItem[]>> {
+  if (!window.electronAPI?.getChannelInvites) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getChannelInvites(token, channelId));
+}
+
+export async function revokeHubChannelInvite(
+  channelId: string,
+  inviteId: string,
+): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.revokeChannelInvite) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.revokeChannelInvite(token, channelId, inviteId));
+}
+
+export async function deleteHubChannel(channelId: string): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.deleteChannel) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.deleteChannel(token, channelId));
+}
+
 export async function sendFriendRequest(
   userId: string,
 ): Promise<ApiResult<{ ok: true }>> {
@@ -457,11 +722,6 @@ export async function unsaveChatMessage(
 }
 
 
-export async function renameConversation(conversationId: string, name: string): Promise<ApiResult<unknown>> {
-  if (!window.electronAPI?.renameConversation) return unavailable();
-  return withToken((token) => window.electronAPI.renameConversation(token, conversationId, name));
-}
-
 export async function addConversationMembers(conversationId: string, userIds: string[]): Promise<ApiResult<unknown>> {
   if (!window.electronAPI?.addConversationMembers) return unavailable();
   return withToken((token) => window.electronAPI.addConversationMembers(token, conversationId, userIds));
@@ -472,9 +732,9 @@ export async function removeConversationMember(conversationId: string, userId: s
   return withToken((token) => window.electronAPI.removeConversationMember(token, conversationId, userId));
 }
 
-export async function leaveConversation(conversationId: string): Promise<ApiResult<unknown>> {
+export async function leaveConversation(conversationId: string, isHub: boolean): Promise<ApiResult<unknown>> {
   if (!window.electronAPI?.leaveConversation) return unavailable();
-  return withToken((token) => window.electronAPI.leaveConversation(token, conversationId));
+  return withToken((token) => window.electronAPI.leaveConversation(token, conversationId, isHub));
 }
 
 export async function deleteConversation(conversationId: string): Promise<ApiResult<unknown>> {
@@ -485,4 +745,187 @@ export async function deleteConversation(conversationId: string): Promise<ApiRes
 export async function clearConversationHistory(conversationId: string): Promise<ApiResult<unknown>> {
   if (!window.electronAPI?.clearConversationHistory) return unavailable();
   return withToken((token) => window.electronAPI.clearConversationHistory(token, conversationId));
+}
+
+export async function loadAvatarStyles(): Promise<
+  ApiResult<import('../shared/profile').AvatarStyleItem[]>
+> {
+  if (!window.electronAPI?.getAvatarStyles) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getAvatarStyles(token));
+}
+
+export async function loadNotificationSettings(): Promise<
+  ApiResult<import('../shared/profile').ProfileSettings>
+> {
+  if (!window.electronAPI?.getNotificationSettings) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getNotificationSettings(token));
+}
+
+export async function saveNotificationSettings(
+  updates: import('../shared/profile').NotificationPreferenceUpdate,
+): Promise<ApiResult<import('../shared/profile').ProfileSettings>> {
+  if (!window.electronAPI?.updateNotificationSettings) {
+    return unavailable();
+  }
+
+  return withToken((token) =>
+    window.electronAPI.updateNotificationSettings(token, JSON.stringify(updates)),
+  );
+}
+
+export async function saveUserProfile(
+  updates: Record<string, unknown>,
+): Promise<ApiResult<unknown>> {
+  if (!window.electronAPI?.updateUserProfile) {
+    return unavailable();
+  }
+
+  const payload = buildProfileUpdatePayload(updates);
+
+  return withToken((token) => window.electronAPI.updateUserProfile(token, JSON.stringify(payload)));
+}
+
+export async function saveUserStatus(
+  status: import('../shared/profile').UserPresenceStatus,
+  message?: string,
+): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.updateUserStatus) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.updateUserStatus(token, status, message));
+}
+
+export async function saveUserTimezone(timezone: string): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.updateUserTimezone) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.updateUserTimezone(token, timezone));
+}
+
+export async function uploadUserProfileImage(
+  file: File,
+): Promise<ApiResult<{ url: string }>> {
+  return uploadFileToApi(file);
+}
+
+export async function loadOrganizationMembersDetailed(): Promise<
+  ApiResult<import('../shared/profile').OrganizationMemberItem[]>
+> {
+  if (!window.electronAPI?.getOrganizationMembersDetailed) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getOrganizationMembersDetailed(token));
+}
+
+export async function createGroupConversation(
+  name: string,
+  userIds: string[],
+): Promise<ApiResult<{ conversationId: string }>> {
+  if (!window.electronAPI?.createGroupConversation) return unavailable();
+  return withToken((token) => window.electronAPI.createGroupConversation(token, name, userIds));
+}
+
+export async function openSelfConversation(): Promise<ApiResult<{ conversationId: string }>> {
+  if (!window.electronAPI?.getSelfConversation) return unavailable();
+  return withToken((token) => window.electronAPI.getSelfConversation(token));
+}
+
+export async function markConversationUnread(conversationId: string): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.markConversationUnread) return unavailable();
+  return withToken((token) => window.electronAPI.markConversationUnread(token, conversationId));
+}
+
+export async function loadPinnedMessages(conversationId: string): Promise<ApiResult<import('../shared/messages').MessageItem[]>> {
+  if (!window.electronAPI?.getPinnedMessages) return unavailable();
+  return withToken((token) => window.electronAPI.getPinnedMessages(token, conversationId));
+}
+
+export async function loadMentionSuggestions(conversationId: string, query: string): Promise<ApiResult<unknown[]>> {
+  if (!window.electronAPI?.getMentionSuggestions) return unavailable();
+  return withToken((token) => window.electronAPI.getMentionSuggestions(token, conversationId, query));
+}
+
+export async function createPoll(conversationId: string, payload: Record<string, unknown>): Promise<ApiResult<import('../shared/messages').MessageItem>> {
+  if (!window.electronAPI?.createPollMessage) return unavailable();
+  return withToken((token) => window.electronAPI.createPollMessage(token, conversationId, JSON.stringify(payload)));
+}
+
+export async function votePoll(conversationId: string, messageId: string, optionId: string): Promise<ApiResult<import('../shared/messages').MessageItem>> {
+  if (!window.electronAPI?.votePollMessage) return unavailable();
+  return withToken((token) => window.electronAPI.votePollMessage(token, conversationId, messageId, optionId));
+}
+
+export async function loadUserProfile(userId: string): Promise<ApiResult<unknown>> {
+  if (!window.electronAPI?.getUserProfile) return unavailable();
+  return withToken((token) => window.electronAPI.getUserProfile(token, userId));
+}
+
+export async function loadMessageConversation(messageId: string): Promise<ApiResult<{ conversationId: string }>> {
+  if (!window.electronAPI?.getMessageConversation) return unavailable();
+  return withToken((token) => window.electronAPI.getMessageConversation(token, messageId));
+}
+
+export async function loadConversationNotificationSettings(
+  conversationId: string,
+): Promise<ApiResult<Record<string, unknown>>> {
+  if (!window.electronAPI?.getConversationNotificationSettings) return unavailable();
+  return withToken((token) => window.electronAPI.getConversationNotificationSettings(token, conversationId));
+}
+
+export async function updateMemberRole(
+  conversationId: string,
+  userId: string,
+  role: string,
+): Promise<ApiResult<unknown>> {
+  if (!window.electronAPI?.updateConversationMemberRole) return unavailable();
+  return withToken((token) => window.electronAPI.updateConversationMemberRole(token, conversationId, userId, role));
+}
+
+export async function loadConversationById(conversationId: string): Promise<ApiResult<unknown>> {
+  if (!window.electronAPI?.getConversationById) return unavailable();
+  return withToken((token) => window.electronAPI.getConversationById(token, conversationId));
+}
+
+export async function loadMessageById(
+  conversationId: string,
+  messageId: string,
+): Promise<ApiResult<import('../shared/messages').MessageItem>> {
+  if (!window.electronAPI?.getMessageById) return unavailable();
+  return withToken((token) => window.electronAPI.getMessageById(token, conversationId, messageId));
+}
+
+export async function loadConversationScheduledMessages(
+  conversationId: string,
+): Promise<ApiResult<unknown[]>> {
+  if (!window.electronAPI?.getConversationScheduledMessages) return unavailable();
+  return withToken((token) => window.electronAPI.getConversationScheduledMessages(token, conversationId));
+}
+
+export async function scheduleConversationMessage(
+  conversationId: string,
+  payload: Record<string, unknown>,
+): Promise<ApiResult<unknown>> {
+  if (!window.electronAPI?.createConversationScheduledMessage) return unavailable();
+  return withToken((token) =>
+    window.electronAPI.createConversationScheduledMessage(token, conversationId, JSON.stringify(payload)),
+  );
+}
+
+export async function deleteConversationScheduledMessage(
+  conversationId: string,
+  scheduledId: string,
+): Promise<ApiResult<{ ok: true }>> {
+  if (!window.electronAPI?.deleteConversationScheduledMessage) return unavailable();
+  return withToken((token) =>
+    window.electronAPI.deleteConversationScheduledMessage(token, conversationId, scheduledId),
+  );
 }

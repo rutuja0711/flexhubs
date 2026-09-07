@@ -19,6 +19,50 @@ export type LoginResult =
   | { ok: true; data: LoginSuccess }
   | { ok: false; error: string; status?: number };
 
+export type RegisterAccountInput = {
+  email: string;
+  password: string;
+  confirmPassword: string;
+  username: string;
+  inviteToken: string;
+  name?: string;
+};
+
+export function buildRegisterAccountBody(input: RegisterAccountInput): Record<string, string> {
+  const body: Record<string, string> = {
+    email: input.email.trim(),
+    password: input.password,
+    confirmPassword: input.confirmPassword,
+    username: input.username.trim(),
+    inviteToken: input.inviteToken.trim(),
+  };
+
+  const name = input.name?.trim();
+
+  if (name) {
+    body.name = name;
+  }
+
+  return body;
+}
+
+export function readInviteRegistrationEmail(payload: unknown): string {
+  if (!payload || typeof payload !== 'object') {
+    return '';
+  }
+
+  const record = payload as Record<string, unknown>;
+  const invite = record.invite;
+
+  if (!invite || typeof invite !== 'object') {
+    return '';
+  }
+
+  const email = (invite as Record<string, unknown>).email;
+
+  return typeof email === 'string' ? email.trim() : '';
+}
+
 export const API_BASE_URL = 'https://flexhubs.in/api';
 export const LOGIN_URL = `${API_BASE_URL}/auth/login`;
 export const ME_URL = `${API_BASE_URL}/auth/me`;

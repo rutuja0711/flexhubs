@@ -7,7 +7,10 @@ import { apiGet } from './apiRequest';
 const CONVERSATIONS_URL = `${API_BASE_URL}/conversations`;
 const UNREAD_COUNT_URL = `${API_BASE_URL}/notifications/unread-count`;
 
-export async function fetchConversations(token: string): Promise<ApiResult<ConversationsPayload>> {
+export async function fetchConversations(
+  token: string,
+  viewerUserId?: string | null,
+): Promise<ApiResult<ConversationsPayload>> {
   const result = await apiGet<unknown>(CONVERSATIONS_URL, token, 'Conversations API');
 
   if (!result.ok) {
@@ -17,7 +20,7 @@ export async function fetchConversations(token: string): Promise<ApiResult<Conve
   return {
     ok: true,
     data: {
-      conversations: normalizeConversations(result.data),
+      conversations: normalizeConversations(result.data, viewerUserId),
     },
   };
 }

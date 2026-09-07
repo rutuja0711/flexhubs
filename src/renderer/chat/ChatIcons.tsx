@@ -53,9 +53,9 @@ export function PlusIcon() {
   );
 }
 
-export function PinIcon() {
+export function PinIcon({ className = '', size = 14 }: { className?: string; size?: number }) {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
       <path
         d="M12 17V22M9 3H15L14 10L18 12V15H6V12L10 10L9 3Z"
         stroke="currentColor"
@@ -117,22 +117,42 @@ type NavIconProps = {
   children: ReactNode;
 };
 
+export function NotificationBadge({
+  count,
+  ringClass = 'ring-app-chat-rail',
+}: {
+  count: number;
+  ringClass?: string;
+}) {
+  if (count <= 0) {
+    return null;
+  }
+
+  return (
+    <span
+      className={`absolute -top-0.5 -right-0.5 z-10 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[0.5625rem] font-bold leading-none text-white ring-2 ${ringClass}`}
+    >
+      {count > 99 ? '99+' : count}
+    </span>
+  );
+}
+
 export function NavIconButton({ label, active, badge, onClick, children }: NavIconProps) {
   return (
     <button
       type="button"
-      aria-label={label}
+      aria-label={badge && badge > 0 ? `${label}, ${badge} unread` : label}
       aria-current={active ? 'page' : undefined}
       className={`relative flex w-full flex-col items-center gap-1 rounded-xl px-2 py-2.5 text-[0.6875rem] transition-colors ${
         active ? 'bg-accent/15 text-accent-soft' : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
       }`}
       onClick={onClick}
     >
-      {children}
+      <span className="relative inline-flex">
+        {children}
+        <NotificationBadge count={badge ?? 0} />
+      </span>
       <span className="leading-none">{label}</span>
-      {badge && badge > 0 ? (
-        <span className="absolute top-1.5 right-3 h-2 w-2 rounded-full bg-accent" aria-hidden="true" />
-      ) : null}
     </button>
   );
 }
@@ -165,9 +185,16 @@ export function SavedNavIcon() {
   );
 }
 
-export function CalendarNavIcon() {
+export function CalendarNavIcon({ className = '' }: { className?: string }) {
   return (
-    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="none"
+      aria-hidden="true"
+      className={className}
+    >
       <rect x="3" y="4" width="18" height="18" rx="2" stroke="currentColor" strokeWidth="1.75" />
       <path d="M16 2V6M8 2V6M3 10H21" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
     </svg>
@@ -244,7 +271,7 @@ export function Avatar({
 
   return (
     <div
-      className={`${sizeClass} flex items-center justify-center rounded-full bg-[#2d3340] font-semibold text-white`}
+      className={`${sizeClass} flex items-center justify-center rounded-full bg-app-avatar-fallback font-semibold text-app-text`}
     >
       {initials}
     </div>

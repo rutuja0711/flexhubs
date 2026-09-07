@@ -157,3 +157,37 @@ export async function apiPatch<T>(
     };
   }
 }
+
+export async function apiPostForm<T>(
+  url: string,
+  token: string,
+  label: string,
+  fileName: string,
+  mimeType: string,
+  base64Data: string,
+): Promise<ApiResult<T>> {
+  try {
+    const buffer = Buffer.from(base64Data, 'base64');
+    const file = new File([new Uint8Array(buffer)], fileName, {
+      type: mimeType || 'application/octet-stream',
+    });
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    return parseResponse<T>(response, label);
+  } catch (error) {
+    console.error(`[${label}] request failed:`, error);
+    return {
+      ok: false,
+      error: 'Unable to reach the server. Check your connection and try again.',
+    };
+  }
+}

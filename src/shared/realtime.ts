@@ -1,4 +1,4 @@
-import { normalizeMessage, type MessageItem } from './messages';
+import { normalizeMessage, parseMessageReactions, type MessageItem, type MessageReaction } from './messages';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
@@ -29,6 +29,120 @@ export type RealtimeStatusPayload = {
   enabled: boolean;
   mode: string | null;
 };
+
+export type PresenceItem = {
+  userId: string;
+  status: string;
+};
+
+function extractArray(payload: unknown, keys: string[]): unknown[] {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  const record = asRecord(payload);
+
+  if (!record) {
+    return [];
+  }
+
+  for (const key of keys) {
+    const value = record[key];
+
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+
+  return [];
+}
+
+export function normalizePresencePayload(payload: unknown): PresenceItem[] {
+  const record = asRecord(payload);
+
+  if (record) {
+    const mapLike =
+      asRecord(record.presence) ??
+      asRecord(record.users) ??
+      asRecord(record.statuses);
+
+    if (mapLike && !Array.isArray(record.presence) && !Array.isArray(record.users)) {
+      return Object.entries(mapLike)
+        .map(([userId, value]) => {
+          const entry = asRecord(value);
+          const status =
+            typeof value === 'string'
+              ? value
+              : readString(entry?.status) ?? readString(entry?.presence);
+
+          if (!status) {
+            return null;
+          }
+
+          return { userId, status };
+        })
+        .filter((item): item is PresenceItem => item !== null);
+    }
+  }
+
+  return extractArray(payload, ['presence', 'users', 'items', 'data'])
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => item !== null)
+    .map((entry) => {
+      const user = asRecord(entry.user) ?? entry;
+      const userId =
+        readString(entry.userId) ??
+        readString(user.id) ??
+        readString(entry.id);
+
+      const status =
+        readString(entry.status) ??
+        readString(entry.presence) ??
+        readString(user.status);
+
+      if (!userId || !status) {
+        return null;
+      }
+
+      return { userId, status };
+    })
+    .filter((item): item is PresenceItem => item !== null);
+}
+
+export function extractConversationMemberIds(conversation: Record<string, unknown> | null): string[] {
+  if (!conversation) {
+    return [];
+  }
+
+  const ids = new Set<string>();
+
+  for (const key of ['members', 'participants', 'users']) {
+    const value = conversation[key];
+
+    if (!Array.isArray(value)) {
+      continue;
+    }
+
+    for (const entry of value) {
+      const member = asRecord(entry);
+      if (!member) {
+        continue;
+      }
+
+      const user = asRecord(member.user) ?? member;
+      const userId =
+        readString(user.id) ??
+        readString(member.userId) ??
+        readString(member.id);
+
+      if (userId) {
+        ids.add(userId);
+      }
+    }
+  }
+
+  return [...ids];
+}
 
 export function parseRealtimeEvent(data: unknown): RealtimeEvent {
   const record = asRecord(data);
@@ -120,8 +234,23 @@ export function extractConversationId(payload: unknown): string | null {
   return (
     readString(record.conversationId) ??
     readString(asRecord(record.conversation)?.id) ??
-    readString(asRecord(record.message)?.conversationId)
+    readString(asRecord(record.message)?.conversationId) ??
+    readString(record.channelId) ??
+    readString(record.chatId)
   );
+}
+
+export function extractConversationIdFromRealtime(rawEvent: unknown, payload: unknown): string | null {
+  const fromPayload = extractConversationId(payload);
+
+  if (fromPayload) {
+    return fromPayload;
+  }
+
+  const rawRecord = asRecord(rawEvent);
+  const channel = rawRecord ? readString(rawRecord.channel) : null;
+
+  return extractConversationIdFromChannel(channel);
 }
 
 export function extractMessageFromRealtimePayload(payload: unknown): MessageItem | null {
@@ -131,21 +260,131 @@ export function extractMessageFromRealtimePayload(payload: unknown): MessageItem
     return null;
   }
 
-  const messageRecord =
-    asRecord(record.message) ??
-    (readString(record.id) && (readString(record.content) ?? readString(record.text)) ? record : null);
+  const messageRecord = asRecord(record.message);
 
-  if (!messageRecord) {
+  if (messageRecord) {
+    return normalizeMessage(messageRecord, 0);
+  }
+
+  const messageId = readString(record.messageId) ?? readString(record.id);
+
+  if (
+    messageId &&
+    (readString(record.content) ||
+      readString(record.text) ||
+      Array.isArray(record.reactions) ||
+      readString(record.createdAt) ||
+      readString(record.sentAt))
+  ) {
+    return normalizeMessage({ ...record, id: messageId }, 0);
+  }
+
+  return null;
+}
+
+export type ReactionEventPatch = {
+  messageId: string;
+  message: MessageItem | null;
+  reactions: MessageReaction[] | null;
+  addedReaction: MessageReaction | null;
+  removedReaction: { emoji: string; userId: string } | null;
+};
+
+export function isReactionEvent(type: string): boolean {
+  return type.toLowerCase().includes('reaction');
+}
+
+export function extractReactionEvent(payload: unknown): ReactionEventPatch | null {
+  const record = asRecord(payload);
+
+  if (!record) {
     return null;
   }
 
-  return normalizeMessage(messageRecord, 0);
+  const message = extractMessageFromRealtimePayload(payload);
+
+  if (message) {
+    return {
+      messageId: message.id,
+      message,
+      reactions: message.reactions.length > 0 ? message.reactions : null,
+      addedReaction: null,
+      removedReaction: null,
+    };
+  }
+
+  const messageId =
+    readString(record.messageId) ??
+    readString(asRecord(record.message)?.id) ??
+    readString(record.id);
+
+  if (!messageId) {
+    return null;
+  }
+
+  const user = asRecord(record.user) ?? asRecord(record.sender);
+  const emoji = readString(record.emoji) ?? readString(record.reaction);
+  const userId =
+    readString(record.userId) ??
+    readString(user?.id) ??
+    readString(user?.userId);
+  const username =
+    readString(record.username) ??
+    readString(user?.username) ??
+    readString(user?.name) ??
+    readString(user?.displayName) ??
+    '';
+  const action = String(record.action ?? record.event ?? record.type ?? '').toLowerCase();
+  const removed =
+    record.removed === true ||
+    action.includes('remove') ||
+    action.includes('delete') ||
+    action.includes('unreact');
+
+  if (Array.isArray(record.reactions)) {
+    return {
+      messageId,
+      message: null,
+      reactions: parseMessageReactions(record.reactions),
+      addedReaction: null,
+      removedReaction: null,
+    };
+  }
+
+  if (removed && emoji && userId) {
+    return {
+      messageId,
+      message: null,
+      reactions: null,
+      addedReaction: null,
+      removedReaction: { emoji, userId },
+    };
+  }
+
+  if (emoji && userId) {
+    return {
+      messageId,
+      message: null,
+      reactions: null,
+      addedReaction: { emoji, userId, username },
+      removedReaction: null,
+    };
+  }
+
+  return null;
 }
 
 export function isNewMessageEvent(type: string): boolean {
   const normalized = type.toLowerCase();
 
-  if (normalized === 'message' || normalized === 'message.created') {
+  if (
+    normalized === 'message' ||
+    normalized === 'message.created' ||
+    normalized === 'message.new' ||
+    normalized === 'message_created' ||
+    normalized === 'new_message' ||
+    normalized === 'newmessage'
+  ) {
     return true;
   }
 
@@ -155,7 +394,8 @@ export function isNewMessageEvent(type: string): boolean {
       normalized.includes('create') ||
       normalized.includes('created') ||
       normalized.includes('sent') ||
-      normalized.includes('insert'))
+      normalized.includes('insert') ||
+      normalized.includes('received'))
   );
 }
 
@@ -190,7 +430,9 @@ export function isUnreadUpdateEvent(type: string): boolean {
 }
 
 export function isPresenceEvent(type: string): boolean {
-  return type.toLowerCase() === 'presence';
+  const normalized = type.toLowerCase();
+
+  return normalized === 'presence' || normalized.includes('presence');
 }
 
 export function extractPresenceUpdate(
@@ -202,8 +444,15 @@ export function extractPresenceUpdate(
     return null;
   }
 
-  const userId = readString(record.userId);
-  const status = readString(record.status);
+  const nested = asRecord(record.presence) ?? asRecord(record.user);
+  const userId =
+    readString(record.userId) ??
+    readString(nested?.id) ??
+    readString(record.id);
+  const status =
+    readString(record.status) ??
+    readString(record.presence) ??
+    readString(nested?.status);
 
   if (!userId || !status) {
     return null;
@@ -255,6 +504,7 @@ export function isTypingChannelEvent(rawEvent: unknown): boolean {
 export function extractTypingUpdate(
   payload: unknown,
   fallbackConversationId?: string | null,
+  rawEvent?: unknown,
 ): { userId: string; conversationId: string; username: string | null; isTyping: boolean } | null {
   const record = asRecord(payload);
 
@@ -267,10 +517,16 @@ export function extractTypingUpdate(
     readString(record.id) ??
     readString(asRecord(record.user)?.id);
 
+  const rawRecord = asRecord(rawEvent);
+  const channelConversationId = extractConversationIdFromChannel(
+    rawRecord ? readString(rawRecord.channel) : null,
+  );
+
   const conversationId =
     readString(record.conversationId) ??
     readString(record.channelId) ??
     readString(record.chatId) ??
+    channelConversationId ??
     fallbackConversationId ??
     null;
 
@@ -281,7 +537,10 @@ export function extractTypingUpdate(
   const isTyping =
     record.isTyping === true ||
     record.typing === true ||
-    (record.isTyping !== false && record.typing !== false && record.stopped !== true);
+    (record.isTyping !== false &&
+      record.typing !== false &&
+      record.stopped !== true &&
+      record.action !== 'stop');
 
   return {
     userId,

@@ -37,6 +37,37 @@ export function clearAuth(): void {
   localStorage.removeItem('authUser');
 }
 
+export function logout(): void {
+  clearAuth();
+}
+
+export async function performLogout(): Promise<void> {
+  if (getStoredToken()) {
+    try {
+      const { stopRealtime } = await import('./realtimeApi');
+      await stopRealtime();
+    } catch {
+      // Best-effort cleanup before clearing the session.
+    }
+
+    try {
+      const { saveUserStatus } = await import('./chatApi');
+      await saveUserStatus('OFFLINE');
+    } catch {
+      // Ignore offline status failures during logout.
+    }
+
+    try {
+      const { disableDesktopPushNotifications } = await import('./pushNotifications');
+      await disableDesktopPushNotifications();
+    } catch {
+      // Push may be unavailable in the desktop shell.
+    }
+  }
+
+  clearAuth();
+}
+
 export function getStoredUser(): unknown | null {
   const raw = localStorage.getItem('authUser');
 

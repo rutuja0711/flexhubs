@@ -1,5 +1,7 @@
 import { useMemo, useState } from 'react';
 import type { NotificationItem, PendingFriendItem } from '../../shared/messages';
+import { isNotificationClickable } from '../../shared/messages';
+import type { ConversationItem } from '../../shared/chat';
 import { validateSearchQuery } from '../../shared/chat';
 import { formatConversationTimestamp } from './format';
 import { SearchIcon } from './ChatIcons';
@@ -11,6 +13,7 @@ type ActivityFilter = (typeof FILTERS)[number];
 type ActivityViewProps = {
   notifications: NotificationItem[];
   pendingFriends: PendingFriendItem[];
+  conversations: ConversationItem[];
   loading: boolean;
   error: string;
   onRetry: () => void;
@@ -21,6 +24,7 @@ type ActivityViewProps = {
 export function ActivityView({
   notifications,
   pendingFriends,
+  conversations,
   loading,
   error,
   onRetry,
@@ -155,7 +159,9 @@ export function ActivityView({
         {!loading && !error ? (
           <div className="flex flex-col gap-1">
             {filteredItems.map((item) => {
-              const isClickable = Boolean(item.notification);
+              const isClickable =
+                Boolean(item.notification) &&
+                isNotificationClickable(item.notification!, conversations);
 
               if (isClickable && item.notification) {
                 return (

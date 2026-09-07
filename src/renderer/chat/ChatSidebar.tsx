@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { ConversationItem, ConversationKind } from '../../shared/chat';
+import type { ConversationItem, ConversationKind, DirectChatMetadata } from '../../shared/chat';
 import type { TeammateItem } from '../../shared/messages';
 import type { GlobalSearchResult, SearchPerson } from '../../shared/search';
-import { validateSearchQuery } from '../../shared/chat';
+import { validateSearchQuery, filterTeammatesWithoutDirectChat } from '../../shared/chat';
 import { validateSearchInput } from '../../shared/search';
 import { loadGlobalSearch } from '../chatApi';
-import { BellIcon, PlusIcon } from './ChatIcons';
+import { BellIcon, NotificationBadge, PlusIcon } from './ChatIcons';
 import { ConversationList } from './ConversationList';
 import { GlobalSearchResults } from './GlobalSearchResults';
 import { NewConversationModal } from './NewConversationModal';
 import { NotificationsPanel } from './NotificationsPanel';
 import { SearchField } from './SearchField';
 import { TeammatesSection } from './TeammatesSection';
+import { FiSettings, FiBox } from 'react-icons/fi';
 
 type ChatTab = ConversationKind;
 
@@ -30,6 +31,7 @@ type ChatSidebarProps = {
   panelNotifications: import('../../shared/messages').NotificationItem[];
   panelPendingFriends: import('../../shared/messages').PendingFriendItem[];
   onSelect: (id: string) => void;
+  onPrefetch?: (id: string) => void;
   onRetry: () => void;
   onToggleNotifications: () => void;
   onCloseNotifications: () => void;
@@ -40,6 +42,13 @@ type ChatSidebarProps = {
   newConversationOpen: boolean;
   onNewConversationOpenChange: (open: boolean) => void;
   onMessageUser: (userId: string) => void;
+  onNavigate?: (view: import('../../shared/nav').MainView) => void;
+  onCreateHub: (name: string, memberIds: string[]) => Promise<{ ok: boolean; error?: string }>;
+  onCreateGroup?: (name: string, memberIds: string[]) => Promise<{ ok: boolean; error?: string }>;
+  onTogglePin?: (conversationId: string, isPinned: boolean) => void;
+  pinningConversationId?: string | null;
+  openingTeammateId?: string | null;
+  directChatMetadata?: Record<string, DirectChatMetadata>;
 };
 
 export function ChatSidebar({
@@ -57,6 +66,7 @@ export function ChatSidebar({
   panelNotifications,
   panelPendingFriends,
   onSelect,
+  onPrefetch,
   onRetry,
   onToggleNotifications,
   onCloseNotifications,
@@ -67,8 +77,16 @@ export function ChatSidebar({
   newConversationOpen,
   onNewConversationOpenChange,
   onMessageUser,
+  onNavigate,
+  onCreateHub,
+  onCreateGroup,
+  onTogglePin,
+  pinningConversationId = null,
+  openingTeammateId = null,
+  directChatMetadata = {},
 }: ChatSidebarProps) {
   const [activeTab, setActiveTab] = useState<ChatTab>('direct');
+  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchError, setSearchError] = useState('');
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
@@ -134,6 +152,38 @@ export function ChatSidebar({
     });
   }, [activeTab, conversations, isGlobalSearch, searchQuery]);
 
+  const hiddenOnOtherTabCount = useMemo(() => {
+    if (isGlobalSearch) {
+      return 0;
+    }
+
+    return conversations.filter((conversation) => conversation.kind !== activeTab).length;
+  }, [activeTab, conversations, isGlobalSearch]);
+
+  const availableTeammates = useMemo(() => {
+    if (isGlobalSearch || activeTab !== 'direct') {
+      return [];
+    }
+
+    const withoutExistingChats = filterTeammatesWithoutDirectChat(
+      teammates,
+      conversations,
+      directChatMetadata,
+    );
+    const validation = validateSearchQuery(searchQuery);
+
+    if (!validation.ok || !validation.value) {
+      return withoutExistingChats;
+    }
+
+    const query = validation.value.toLowerCase();
+
+    return withoutExistingChats.filter((teammate) => {
+      const haystack = `${teammate.name} ${teammate.username}`.toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [activeTab, conversations, directChatMetadata, isGlobalSearch, searchQuery, teammates]);
+
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
 
@@ -156,26 +206,49 @@ export function ChatSidebar({
         : 'No hubs yet.';
 
   return (
-    <aside className="relative flex w-[320px] shrink-0 flex-col border-r border-app-border bg-app-chat-sidebar">
+    <aside className="relative flex h-full w-[320px] shrink-0 flex-col border-r border-app-border bg-app-chat-sidebar">
       <div className="border-b border-app-border px-4 py-4">
-        <div className="mb-4 flex items-start justify-between gap-3">
-          <div className="min-w-0">
+        <div className="mb-4 flex items-start justify-between gap-3 relative">
+          <button 
+            className="min-w-0 text-left hover:bg-app-chat-hover p-1 -m-1 rounded-lg transition-colors flex-1"
+            onClick={() => setWorkspaceMenuOpen(!workspaceMenuOpen)}
+          >
             <h1 className="truncate text-[0.9375rem] font-semibold text-app-text">{workspaceName}</h1>
-            <p className="text-xs text-app-muted">Workspace</p>
-          </div>
+            <p className="mt-1 text-xs text-app-muted">Workspace</p>
+          </button>
+          
+          {workspaceMenuOpen && (
+            <div className="absolute top-10 left-0 w-56 rounded-xl border border-app-border bg-app-elevated py-2 shadow-lg z-50">
+              <button 
+                className="w-full px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover flex items-center gap-2"
+                onClick={() => {
+                  setWorkspaceMenuOpen(false);
+                  if (onNavigate) onNavigate('profile');
+                }}
+              >
+                <FiSettings /> Profile & settings
+              </button>
+              <button 
+                className="w-full px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover flex items-center gap-2"
+                onClick={() => {
+                  setWorkspaceMenuOpen(false);
+                  if (onNavigate) onNavigate('organization');
+                }}
+              >
+                <FiBox /> Organization
+              </button>
+            </div>
+          )}
+          
           <button
             type="button"
             aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
             aria-expanded={notificationsOpen}
-            className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+            className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-visible rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
             onClick={onToggleNotifications}
           >
             <BellIcon />
-            {unreadCount > 0 ? (
-              <span className="absolute top-1.5 right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[0.625rem] font-semibold text-white">
-                {unreadCount > 99 ? '99+' : unreadCount}
-              </span>
-            ) : null}
+            <NotificationBadge count={unreadCount} ringClass="ring-app-chat-sidebar" />
           </button>
         </div>
 
@@ -235,7 +308,7 @@ export function ChatSidebar({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         {loading ? (
           <div className="px-4 py-8 text-center text-sm text-app-muted" role="status">
             Loading conversations...
@@ -274,16 +347,36 @@ export function ChatSidebar({
         ) : null}
 
         {!loading && !error && !isGlobalSearch ? (
-          <ConversationList
-            conversations={filteredConversations}
-            selectedId={selectedId}
-            onSelect={onSelect}
-            emptyMessage={emptyMessage}
-          />
+          <>
+            {filteredConversations.length === 0 && hiddenOnOtherTabCount > 0 ? (
+              <p className="px-4 pb-2 text-xs text-app-muted">
+                {hiddenOnOtherTabCount} chat{hiddenOnOtherTabCount === 1 ? '' : 's'} on the{' '}
+                {activeTab === 'direct' ? 'Hubs' : 'Direct messages'} tab.
+              </p>
+            ) : null}
+            <ConversationList
+              conversations={filteredConversations}
+              selectedId={selectedId}
+              onSelect={onSelect}
+              onPrefetch={onPrefetch}
+              onTogglePin={onTogglePin}
+              pinningConversationId={pinningConversationId}
+              emptyMessage={
+                activeTab === 'direct' && availableTeammates.length > 0 && !searchQuery.trim()
+                  ? 'Pick a teammate below to start chatting.'
+                  : emptyMessage
+              }
+            />
+            {activeTab === 'direct' ? (
+              <TeammatesSection
+                teammates={availableTeammates}
+                openingTeammateId={openingTeammateId}
+                onSelect={onTeammateSelect}
+              />
+            ) : null}
+          </>
         ) : null}
       </div>
-
-      {!isGlobalSearch ? <TeammatesSection teammates={teammates} onSelect={onTeammateSelect} /> : null}
 
       {notificationsOpen ? (
         <NotificationsPanel
@@ -308,6 +401,8 @@ export function ChatSidebar({
             onNewConversationOpenChange(false);
             onMessageUser(userId);
           }}
+          onCreateHub={onCreateHub}
+          onCreateGroup={onCreateGroup}
         />
       ) : null}
     </aside>

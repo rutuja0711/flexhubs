@@ -1,3 +1,5 @@
+import type { ConversationItem } from '../shared/chat';
+import { normalizeConversation, patchDirectConversationMetadata } from '../shared/chat';
 import { API_BASE_URL } from '../shared/api';
 import type { ApiResult } from '../shared/api';
 import type { ConversationBootstrap, MessageDraft, MessageItem } from '../shared/messages';
@@ -122,7 +124,7 @@ export async function markConversationRead(
 export async function createDirectConversation(
   token: string,
   userId: string,
-): Promise<ApiResult<{ conversationId: string }>> {
+): Promise<ApiResult<{ conversationId: string; conversation: ConversationItem | null }>> {
   const result = await apiPost<unknown>(
     `${API_BASE_URL}/conversations/direct`,
     token,
@@ -134,10 +136,17 @@ export async function createDirectConversation(
     return result;
   }
 
-  const record = result.data as Record<string, unknown>;
-  const conversation = asRecord(record.conversation);
-  const conversationId =
-    (conversation ? readString(conversation.id) : null) ?? readString(record.id);
+  const record = asRecord(result.data);
+
+  if (!record) {
+    return {
+      ok: false,
+      error: 'Conversation payload missing from server response.',
+    };
+  }
+
+  const conversationRecord = asRecord(record.conversation) ?? record;
+  const conversationId = readString(conversationRecord.id) ?? readString(record.id);
 
   if (!conversationId) {
     return {
@@ -146,7 +155,25 @@ export async function createDirectConversation(
     };
   }
 
-  return { ok: true, data: { conversationId } };
+  const normalized = normalizeConversation(conversationRecord, 0);
+  const peerName =
+    normalized.title && normalized.title !== 'Conversation' && normalized.title !== 'Direct message'
+      ? normalized.title
+      : readString(asRecord(conversationRecord.user)?.name) ??
+        readString(asRecord(conversationRecord.peer)?.name) ??
+        'Direct message';
+
+  return {
+    ok: true,
+    data: {
+      conversationId,
+      conversation: patchDirectConversationMetadata(
+        { ...normalized, kind: 'direct' },
+        userId,
+        peerName,
+      ),
+    },
+  };
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -167,10 +194,27 @@ export async function sendMessage(
   content: string,
   replyToId?: string,
   threadRootId?: string,
+  mediaJson?: string,
 ): Promise<ApiResult<MessageItem>> {
-  const payload: Record<string, unknown> = { content };
+  const payload: Record<string, unknown> = {};
   if (replyToId) payload.replyToId = replyToId;
   if (threadRootId) payload.threadRootId = threadRootId;
+
+  if (mediaJson) {
+    try {
+      const media = JSON.parse(mediaJson) as Record<string, unknown>;
+
+      if (media.type) payload.type = media.type;
+      if (typeof media.content === 'string') payload.content = media.content;
+      if (media.fileUrl) payload.fileUrl = media.fileUrl;
+      if (media.fileName) payload.fileName = media.fileName;
+      if (media.mimeType) payload.mimeType = media.mimeType;
+    } catch {
+      // Ignore malformed media payload and send as plain text.
+    }
+  } else {
+    payload.content = content;
+  }
 
   const result = await apiPost<unknown>(
     `${API_BASE_URL}/conversations/${conversationId}/messages`,
@@ -362,6 +406,65 @@ export async function renameConversation(token: string, conversationId: string, 
   return apiPatch<unknown>(`${API_BASE_URL}/conversations/${conversationId}/name`, token, 'Rename Conversation API', { name });
 }
 
+export async function updateConversationNotificationSettings(
+  token: string,
+  conversationId: string,
+  settings: Record<string, unknown>,
+): Promise<ApiResult<{ ok: true }>> {
+  const result = await apiPatch<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/notification-settings`,
+    token,
+    'Conversation Notification Settings API',
+    settings,
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return { ok: true, data: { ok: true } };
+}
+
+export async function setConversationFavorite(
+  token: string,
+  conversationId: string,
+  favorite: boolean,
+): Promise<ApiResult<{ ok: true; favorite: boolean }>> {
+  const result = await apiPatch<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/favorite`,
+    token,
+    'Favorite Conversation API',
+    { favorite, isFavorite: favorite },
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const record =
+    result.data && typeof result.data === 'object'
+      ? (result.data as Record<string, unknown>)
+      : null;
+  const nestedConversation =
+    record && record.conversation && typeof record.conversation === 'object'
+      ? (record.conversation as Record<string, unknown>)
+      : null;
+  const resolvedFavorite =
+    record?.favorite === true ||
+    record?.isFavorite === true ||
+    nestedConversation?.favorite === true ||
+    nestedConversation?.isFavorite === true
+      ? true
+      : record?.favorite === false ||
+          record?.isFavorite === false ||
+          nestedConversation?.favorite === false ||
+          nestedConversation?.isFavorite === false
+        ? false
+        : favorite;
+
+  return { ok: true, data: { ok: true, favorite: resolvedFavorite } };
+}
+
 export async function addConversationMembers(token: string, conversationId: string, userIds: string[]): Promise<ApiResult<unknown>> {
   return apiPost<unknown>(`${API_BASE_URL}/conversations/${conversationId}/members`, token, 'Add Conversation Members API', { userIds });
 }
@@ -370,7 +473,10 @@ export async function removeConversationMember(token: string, conversationId: st
   return apiDelete<unknown>(`${API_BASE_URL}/conversations/${conversationId}/members/${userId}`, token, 'Remove Conversation Member API');
 }
 
-export async function leaveConversation(token: string, conversationId: string): Promise<ApiResult<unknown>> {
+export async function leaveConversation(token: string, conversationId: string, isHub: boolean): Promise<ApiResult<unknown>> {
+  if (isHub) {
+    return apiDelete<unknown>(`${API_BASE_URL}/channels/${conversationId}/leave`, token, 'Leave Hub API');
+  }
   return apiDelete<unknown>(`${API_BASE_URL}/conversations/${conversationId}/leave`, token, 'Leave Conversation API');
 }
 
@@ -380,4 +486,308 @@ export async function deleteConversation(token: string, conversationId: string):
 
 export async function clearConversationHistory(token: string, conversationId: string): Promise<ApiResult<unknown>> {
   return apiDelete<unknown>(`${API_BASE_URL}/conversations/${conversationId}/history`, token, 'Clear Conversation History API');
+}
+
+export async function createGroupConversation(
+  token: string,
+  name: string,
+  userIds: string[],
+): Promise<ApiResult<{ conversationId: string }>> {
+  const result = await apiPost<unknown>(
+    `${API_BASE_URL}/conversations/group`,
+    token,
+    'Create Group Conversation API',
+    { name, userIds, memberIds: userIds },
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const record = asRecord(result.data);
+  const conversation = asRecord(record?.conversation);
+  const conversationId =
+    readString(conversation?.id) ?? readString(record?.id) ?? readString(record?.conversationId);
+
+  if (!conversationId) {
+    return { ok: false, error: 'Conversation id missing from server response.' };
+  }
+
+  return { ok: true, data: { conversationId } };
+}
+
+export async function fetchSelfConversation(token: string): Promise<ApiResult<{ conversationId: string }>> {
+  const result = await apiGet<unknown>(`${API_BASE_URL}/conversations/self`, token, 'Self Conversation API');
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const record = asRecord(result.data);
+  const conversation = asRecord(record?.conversation);
+  const conversationId =
+    readString(conversation?.id) ?? readString(record?.id) ?? readString(record?.conversationId);
+
+  if (!conversationId) {
+    return { ok: false, error: 'Self conversation id missing from server response.' };
+  }
+
+  return { ok: true, data: { conversationId } };
+}
+
+export async function fetchConversationById(
+  token: string,
+  conversationId: string,
+): Promise<ApiResult<unknown>> {
+  return apiGet<unknown>(`${API_BASE_URL}/conversations/${conversationId}`, token, 'Conversation API');
+}
+
+export async function markConversationUnread(
+  token: string,
+  conversationId: string,
+): Promise<ApiResult<{ ok: true }>> {
+  const result = await apiPost<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages/unread`,
+    token,
+    'Mark Unread API',
+    {},
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return { ok: true, data: { ok: true } };
+}
+
+export async function sendMessageStream(
+  token: string,
+  conversationId: string,
+  content: string,
+  replyToId?: string,
+  threadRootId?: string,
+): Promise<ApiResult<MessageItem>> {
+  const payload: Record<string, unknown> = { content };
+  if (replyToId) payload.replyToId = replyToId;
+  if (threadRootId) payload.threadRootId = threadRootId;
+
+  const streamResult = await apiPost<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages/stream`,
+    token,
+    'Send Message Stream API',
+    payload,
+  );
+
+  if (streamResult.ok) {
+    return { ok: true, data: normalizeMessageResult(streamResult.data) };
+  }
+
+  return sendMessage(token, conversationId, content, replyToId, threadRootId);
+}
+
+export async function createPollMessage(
+  token: string,
+  conversationId: string,
+  payload: Record<string, unknown>,
+): Promise<ApiResult<MessageItem>> {
+  const result = await apiPost<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages/poll`,
+    token,
+    'Create Poll API',
+    payload,
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return { ok: true, data: normalizeMessageResult(result.data) };
+}
+
+export async function votePollMessage(
+  token: string,
+  conversationId: string,
+  messageId: string,
+  optionId: string,
+): Promise<ApiResult<MessageItem>> {
+  const result = await apiPost<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}/poll/vote`,
+    token,
+    'Vote Poll API',
+    { optionId, optionIds: [optionId] },
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return { ok: true, data: normalizeMessageResult(result.data) };
+}
+
+export async function fetchPinnedMessages(
+  token: string,
+  conversationId: string,
+): Promise<ApiResult<MessageItem[]>> {
+  const result = await apiGet<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages/pinned`,
+    token,
+    'Pinned Messages API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const record = asRecord(result.data);
+  const raw = Array.isArray(result.data)
+    ? result.data
+    : Array.isArray(record?.messages)
+      ? record.messages
+      : Array.isArray(record?.pinned)
+        ? record.pinned
+        : [];
+
+  return {
+    ok: true,
+    data: raw
+      .map(asRecord)
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map((item, index) => normalizeMessage(item, index)),
+  };
+}
+
+export async function fetchMessageById(
+  token: string,
+  conversationId: string,
+  messageId: string,
+): Promise<ApiResult<MessageItem>> {
+  const result = await apiGet<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}`,
+    token,
+    'Message API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return { ok: true, data: normalizeMessageResult(result.data) };
+}
+
+export async function fetchMentionSuggestions(
+  token: string,
+  conversationId: string,
+  query: string,
+): Promise<ApiResult<unknown[]>> {
+  const result = await apiGet<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages/mention-suggestions?q=${encodeURIComponent(query)}`,
+    token,
+    'Mention Suggestions API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const record = asRecord(result.data);
+  const users = Array.isArray(result.data)
+    ? result.data
+    : Array.isArray(record?.users)
+      ? record.users
+      : Array.isArray(record?.members)
+        ? record.members
+        : Array.isArray(record?.suggestions)
+          ? record.suggestions
+          : Array.isArray(record?.mentionableUsers)
+            ? record.mentionableUsers
+            : [];
+
+  return { ok: true, data: users };
+}
+
+export async function fetchConversationScheduledMessages(
+  token: string,
+  conversationId: string,
+): Promise<ApiResult<unknown[]>> {
+  const result = await apiGet<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages/scheduled`,
+    token,
+    'Conversation Scheduled Messages API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const record = asRecord(result.data);
+  const messages = Array.isArray(result.data)
+    ? result.data
+    : Array.isArray(record?.messages)
+      ? record.messages
+      : [];
+
+  return { ok: true, data: messages };
+}
+
+export async function createConversationScheduledMessage(
+  token: string,
+  conversationId: string,
+  payload: Record<string, unknown>,
+): Promise<ApiResult<unknown>> {
+  return apiPost<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages/scheduled`,
+    token,
+    'Schedule Conversation Message API',
+    payload,
+  );
+}
+
+export async function deleteConversationScheduledMessage(
+  token: string,
+  conversationId: string,
+  scheduledId: string,
+): Promise<ApiResult<{ ok: true }>> {
+  const result = await apiDelete<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages/scheduled/${scheduledId}`,
+    token,
+    'Delete Scheduled Conversation Message API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return { ok: true, data: { ok: true } };
+}
+
+export async function updateConversationMemberRole(
+  token: string,
+  conversationId: string,
+  userId: string,
+  role: string,
+): Promise<ApiResult<unknown>> {
+  return apiPatch<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/members/${userId}/role`,
+    token,
+    'Update Member Role API',
+    { role },
+  );
+}
+
+export async function fetchConversationNotificationSettings(
+  token: string,
+  conversationId: string,
+): Promise<ApiResult<Record<string, unknown>>> {
+  const result = await apiGet<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/notification-settings`,
+    token,
+    'Get Conversation Notification Settings API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const record = asRecord(result.data) ?? {};
+  return { ok: true, data: record };
 }

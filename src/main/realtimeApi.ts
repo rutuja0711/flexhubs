@@ -2,6 +2,7 @@ import { API_BASE_URL } from '../shared/api';
 import type { ApiResult } from '../shared/api';
 import {
   extractRealtimeToken,
+  normalizePresencePayload,
   normalizeRealtimeStatus,
   type RealtimeStatusPayload,
 } from '../shared/realtime';
@@ -115,4 +116,28 @@ export async function sendTypingIndicator(
   }
 
   return lastResult;
+}
+
+export async function fetchRealtimePresence(
+  token: string,
+  userIds: string[],
+): Promise<ApiResult<import('../shared/realtime').PresenceItem[]>> {
+  const ids = [...new Set(userIds.filter((id) => typeof id === 'string' && id.trim().length > 0))];
+
+  if (ids.length === 0) {
+    return { ok: true, data: [] };
+  }
+
+  const query = encodeURIComponent(ids.join(','));
+  const result = await apiGet<unknown>(
+    `${API_BASE_URL}/realtime/presence?userIds=${query}`,
+    token,
+    'Realtime Presence API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return { ok: true, data: normalizePresencePayload(result.data) };
 }

@@ -1,4 +1,7 @@
+import { useState, useRef, useEffect } from 'react';
+import { FiLogOut, FiSettings, FiSun } from 'react-icons/fi';
 import type { MainView } from '../../shared/nav';
+import { apiStatusToUi, userPresenceDotClass, type UserPresenceStatus } from '../../shared/profile';
 import {
   ActivityNavIcon,
   Avatar,
@@ -10,16 +13,44 @@ import {
   SavedNavIcon,
   SparkleIcon,
 } from './ChatIcons';
-import { getUserAvatarUrl, getUserInitials } from '../../shared/user';
+import { getUserAvatarUrl, getUserInitials, getUserDisplayName } from '../../shared/user';
+import { useTheme } from '../theme/ThemeProvider';
+import { getEffectivePresenceStatus, subscribePresenceManager } from '../presenceManager';
 
 type NavRailProps = {
   unreadCount: number;
   user: unknown;
   activeView: MainView;
   onNavigate: (view: MainView) => void;
+  onLogout?: () => void;
 };
 
-export function NavRail({ unreadCount, user, activeView, onNavigate }: NavRailProps) {
+export function NavRail({ unreadCount, user, activeView, onNavigate, onLogout }: NavRailProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [presenceStatus, setPresenceStatus] = useState<UserPresenceStatus>(() => getEffectivePresenceStatus());
+  const menuRef = useRef<HTMLDivElement>(null);
+  const { theme, toggleTheme } = useTheme();
+
+  useEffect(() => {
+    const syncPresence = () => {
+      setPresenceStatus(getEffectivePresenceStatus());
+    };
+
+    syncPresence();
+    return subscribePresenceManager(syncPresence);
+  }, []);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
+        setMenuOpen(false);
+      }
+    }
+    if (menuOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [menuOpen]);
   return (
     <aside className="flex w-[72px] shrink-0 flex-col items-center border-r border-app-border bg-app-chat-rail py-4">
       <div className="mb-6">
@@ -73,22 +104,78 @@ export function NavRail({ unreadCount, user, activeView, onNavigate }: NavRailPr
         >
           <SparkleIcon />
         </button>
-        <button
-          type="button"
-          aria-label="Back to chats"
-          className="relative rounded-full"
-          onClick={() => onNavigate('chat')}
-        >
-          <Avatar
-            imageUrl={getUserAvatarUrl(user)}
-            initials={getUserInitials(user)}
-            size="sm"
-          />
-          <span
-            className="absolute right-0 bottom-0 h-3 w-3 rounded-full border-2 border-app-chat-rail bg-[#3ecf8e]"
-            aria-hidden="true"
-          />
-        </button>
+        <div className="relative" ref={menuRef}>
+          <button
+            type="button"
+            aria-label="User menu"
+            className="relative rounded-full"
+            onClick={() => setMenuOpen(!menuOpen)}
+          >
+            <Avatar
+              imageUrl={getUserAvatarUrl(user)}
+              initials={getUserInitials(user)}
+              size="sm"
+            />
+            <span
+              className={`absolute right-0 bottom-0 h-3 w-3 rounded-full border-2 border-app-chat-rail ${userPresenceDotClass(presenceStatus)}`}
+              aria-hidden="true"
+            />
+          </button>
+          
+          {menuOpen && (
+            <div className="absolute bottom-10 left-full ml-4 w-56 rounded-xl border border-app-border bg-app-elevated py-2 shadow-lg z-50">
+              <div className="mb-2 border-b border-app-border/40 px-4 py-2">
+                <div className="truncate text-sm font-bold text-app-text">{getUserDisplayName(user)}</div>
+                <div className="text-xs text-app-muted">{apiStatusToUi(presenceStatus)}</div>
+              </div>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onNavigate('profile');
+                }}
+              >
+                <FiSettings className="shrink-0 text-base" />
+                Profile & settings
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onNavigate('organization');
+                }}
+              >
+                <BuildingIcon />
+                Organization
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
+                onClick={() => {
+                  setMenuOpen(false);
+                  toggleTheme();
+                }}
+              >
+                <FiSun className="shrink-0 text-base" />
+                {theme === 'dark' ? 'Light mode' : 'Dark mode'}
+              </button>
+              <div className="my-1 border-t border-app-border/40" />
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
+                onClick={() => {
+                  setMenuOpen(false);
+                  if (onLogout) onLogout();
+                }}
+              >
+                <FiLogOut className="shrink-0 text-base" />
+                Sign out
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </aside>
   );

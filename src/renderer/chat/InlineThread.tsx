@@ -3,6 +3,7 @@ import type { MessageItem } from '../../shared/messages';
 import { loadMessageThread } from '../chatApi';
 import { MessageInput } from './MessageInput';
 import { formatConversationTimestamp } from './format';
+import { MessageContent } from './MessageContent';
 
 type InlineThreadProps = {
   conversationId: string;
@@ -87,7 +88,9 @@ export function InlineThread({ conversationId, rootMessageId, onSendThreadMessag
                 <span className="text-xs font-semibold text-app-text">{msg.senderName}</span>
                 <span className="text-[10px] text-app-muted">{formatConversationTimestamp(msg.createdAt)}</span>
               </div>
-              <p className="text-sm text-app-text whitespace-pre-wrap">{msg.content}</p>
+              <div className="min-w-0 text-sm text-app-text">
+                <MessageContent message={msg} />
+              </div>
             </div>
           </div>
         ))}

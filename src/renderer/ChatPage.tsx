@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
 import type {
   CalendarEventItem,
   FileItem,
@@ -9,12 +9,17 @@ import type { SearchPerson } from '../shared/search';
 import { getCurrentUser, getStoredUser } from './authApi';
 import {
   acceptHubInvite,
+  acceptHubInviteById,
   addMessageReaction,
   createDirectChat,
+  createGroupConversation,
+  createHubChannel,
+  clearConversationHistory,
+  deleteConversation,
+  declineHubInvite,
   deleteChatMessage,
   editChatMessage,
   forwardChatMessage,
-  loadBellPanelData,
   loadCalendarEvents,
   loadChannels,
   loadChatBootstrap,
@@ -24,25 +29,37 @@ import {
   loadFriends,
   loadHubInvites,
   loadMessageDraft,
-  loadNotifications,
+  loadMessageById,
+  loadNotificationSettings,
   loadOrganizationMembers,
   loadPendingFriends,
   loadSavedMessages,
   loadUnreadCount,
+  loadUserPresence,
+  loadUserProfile,
   markConversationRead,
+  markConversationUnread,
+  markNotificationRead,
+  openSelfConversation,
   pinChatMessage,
   refreshBellPanelData,
+  openBellPanelData,
   saveChatDraft,
   saveChatMessage,
   sendChatMessage,
+  sendChatMediaMessage,
+  sendChatFileMessage,
   sendTypingUpdate,
+  setConversationFavorite,
   clearChatDraft,
   unpinChatMessage,
   respondFriendRequest,
   unsaveChatMessage,
+  votePoll,
 } from './chatApi';
 import { ActivityView } from './chat/ActivityView';
 import { CalendarView } from './chat/CalendarView';
+import { uploadChatFile } from './extrasApi';
 import { ChatSidebar } from './chat/ChatSidebar';
 import { ChatWelcome } from './chat/ChatWelcome';
 import { ConversationThread } from './chat/ConversationThread';
@@ -50,41 +67,87 @@ import { FilesView } from './chat/FilesView';
 import { HubsView } from './chat/HubsView';
 import { NavRail } from './chat/NavRail';
 import { SavedView } from './chat/SavedView';
-import type { ConversationItem } from '../shared/chat';
+import { ProfileSettingsView } from './chat/ProfileSettingsView';
+import { OrganizationView } from './chat/OrganizationView';
+import { OrganizationInviteModal } from './chat/OrganizationInviteModal';
+import { NotificationStatusBanner } from './chat/NotificationStatusBanner';
+import { PlanComplianceBanner } from './chat/PlanComplianceBanner';
+import { loadOrgSubscription, loadPlanCompliance } from './organizationApi';
+import {
+  readPersistedDirectChatMetadata,
+  readPlanComplianceDismissed,
+  writePersistedDirectChatMetadata,
+  writePlanComplianceDismissed,
+} from './directChatMetadataStorage';
+import { readPeerProfile, writePeerProfile } from './profileCache';
+import { useConfirm } from './ui/ConfirmDialog';
+import { useToast } from './ui/Toast';
+import type { ConversationItem, DirectChatMetadata } from '../shared/chat';
+import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, sanitizeDirectDisplayName } from '../shared/chat';
 import type {
   MessageItem,
   NotificationItem,
   PendingFriendItem,
   TeammateItem,
 } from '../shared/messages';
-import { resolveNotificationConversationId } from '../shared/messages';
+import type { GifPickerItem } from '../shared/gifs';
+import { DELETED_MESSAGE_TEXT, applyReactionPatch, enrichMessageReplies, findFirstUnreadMessageId, formatMessagePreview, mergeMessageUpdates, readLastReadMessageId, resolveNotificationAction } from '../shared/messages';
+import type { ProfileSettings } from '../shared/profile';
+import { normalizeUserProfile } from '../shared/profile';
+import { scheduleCalendarReminders } from './calendarReminders';
 import {
-  extractConversationId,
+  alertNewDesktopNotifications,
+  peekNewNotifications,
+  markNotificationSeen,
+  seedNotificationSnapshot,
+  showCalendarEventReminder,
+  showIncomingMessageDesktopNotification,
+} from './desktopNotifications';
+import { enableDesktopPushNotifications, shouldDeliverDesktopNotifications } from './pushNotifications';
+import {
+  extractConversationIdFromRealtime,
+  extractConversationMemberIds,
   extractMessageFromRealtimePayload,
   extractPresenceUpdate,
+  extractReactionEvent,
   extractTypingUpdate,
   isConversationUpdateEvent,
   isMessageDeleteEvent,
   isMessageUpdateEvent,
   isNewMessageEvent,
   isPresenceEvent,
+  isReactionEvent,
   isTypingChannelEvent,
   isTypingEvent,
   isUnreadUpdateEvent,
   parseRealtimeEvent,
+  type RealtimeConnectionStatus,
 } from '../shared/realtime';
-import { getUserDisplayName, getUserId, getWorkspaceName, getWorkspaceShortName } from '../shared/user';
+import { getUserDisplayName, getUserId, getWorkspaceName, getWorkspaceShortName, userInOrganization } from '../shared/user';
 import {
   startRealtime,
   stopRealtime,
   subscribeRealtimeEvent,
+  subscribeRealtimeStatus,
 } from './realtimeApi';
+import { startPresenceManager, stopPresenceManager } from './presenceManager';
+import {
+  getThreadCacheEntry,
+  patchThreadCacheMessages,
+  writeThreadCacheEntry,
+  type ThreadCacheStore,
+} from './threadCache';
 
+// Background refresh intervals (not initial load time).
 const UNREAD_POLL_MS = 120_000;
 const BELL_POLL_MS = 30_000;
+const NOTIFICATION_POLL_MS = 60_000;
+const CALENDAR_POLL_MS = 5 * 60_000;
 const DRAFT_SAVE_MS = 600;
 const TYPING_STOP_MS = 3_000;
 const TYPING_LABEL_MS = 5_000;
+const THREAD_POLL_MS = 3_000;
+const THREAD_POLL_CONNECTED_MS = 5_000;
 
 type FileFilter = 'all' | 'images' | 'docs' | 'other';
 
@@ -105,25 +168,6 @@ function sortConversations(items: ConversationItem[]): ConversationItem[] {
   });
 }
 
-function findConversationForPerson(
-  conversations: ConversationItem[],
-  person: SearchPerson,
-): ConversationItem | null {
-  const normalizedName = person.name.toLowerCase();
-  const normalizedUsername = person.username.toLowerCase();
-
-  return (
-    conversations.find((conversation) => {
-      if (conversation.kind !== 'direct') {
-        return false;
-      }
-
-      const title = conversation.title.toLowerCase();
-      return title === normalizedName || (normalizedUsername && title.includes(normalizedUsername));
-    }) ?? null
-  );
-}
-
 function markOwnMessages(messages: MessageItem[], userId: string | null): MessageItem[] {
   if (!userId) {
     return messages;
@@ -133,6 +177,15 @@ function markOwnMessages(messages: MessageItem[], userId: string | null): Messag
     ...message,
     isOwn: message.senderId === userId || message.isOwn,
   }));
+}
+
+function commitMessages(messages: MessageItem[], userId: string | null): MessageItem[] {
+  return enrichMessageReplies(markOwnMessages(messages, userId));
+}
+
+function appendMessage(current: MessageItem[], message: MessageItem, userId: string | null): MessageItem[] {
+  const next = [...current, markOwnMessages([message], userId)[0]];
+  return enrichMessageReplies(next);
 }
 
 function preserveMessageOwnership(
@@ -150,6 +203,8 @@ type ChatPageProps = {
 };
 
 export default function ChatPage({ onSessionExpired }: ChatPageProps) {
+  const toast = useToast();
+  const confirm = useConfirm();
   const [user, setUser] = useState<unknown | null>(() => getStoredUser());
   const workspaceName = getWorkspaceName(user);
   const workspaceShortName = getWorkspaceShortName(user);
@@ -157,19 +212,25 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const [mainView, setMainView] = useState<MainView>('chat');
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [conversationPlaceholders, setConversationPlaceholders] = useState<Record<string, ConversationItem>>({});
   const [teammates, setTeammates] = useState<TeammateItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [draft, setDraft] = useState('');
   const [draftError, setDraftError] = useState('');
   const [typingLabel, setTypingLabel] = useState('');
+  const [realtimeStatus, setRealtimeStatus] = useState<RealtimeConnectionStatus>('idle');
   const [threadLoading, setThreadLoading] = useState(false);
   const [threadError, setThreadError] = useState('');
-  const [actionMessage, setActionMessage] = useState('');
+  const [threadUnreadAnchorId, setThreadUnreadAnchorId] = useState<string | null>(null);
+  const [activeHubDetails, setActiveHubDetails] = useState<Record<string, unknown> | null>(null);
+  const [pinnedMessageIds, setPinnedMessageIds] = useState<string[]>([]);
+  const [pinningConversationId, setPinningConversationId] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
 
   const [notificationsOpen, setNotificationsOpen] = useState(false);
@@ -195,11 +256,23 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEventItem[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState('');
+  const [highlightCalendarEventId, setHighlightCalendarEventId] = useState<string | null>(null);
+  const [openingTeammateId, setOpeningTeammateId] = useState<string | null>(null);
+  const [directChatMetadata, setDirectChatMetadata] = useState<Record<string, DirectChatMetadata>>(
+    () => readPersistedDirectChatMetadata(),
+  );
+  const directChatMetadataRef = useRef<Record<string, DirectChatMetadata>>({});
+  const [notificationSettings, setNotificationSettings] = useState<ProfileSettings | null>(null);
+  const [planComplianceRules, setPlanComplianceRules] = useState<string[]>([]);
+  const [planComplianceDismissed, setPlanComplianceDismissed] = useState(() =>
+    readPlanComplianceDismissed(),
+  );
 
   const [hubsChannels, setHubsChannels] = useState<import('../shared/features').ChannelItem[]>([]);
   const [hubsInvites, setHubsInvites] = useState<import('../shared/features').HubInviteItem[]>([]);
   const [hubsFriends, setHubsFriends] = useState<import('../shared/features').FriendItem[]>([]);
   const [hubsLoading, setHubsLoading] = useState(false);
+  const [joiningChannelId, setJoiningChannelId] = useState<string | null>(null);
   const [hubsError, setHubsError] = useState('');
 
   const [newConversationOpen, setNewConversationOpen] = useState(false);
@@ -210,16 +283,423 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const typingStopTimerRef = useRef<number | null>(null);
   const typingLabelTimerRef = useRef<number | null>(null);
   const lastSavedDraftRef = useRef('');
+  const draftRef = useRef('');
+  const draftPreviewsRef = useRef<Record<string, string>>({});
+  const threadCacheRef = useRef<ThreadCacheStore>({});
+  const prefetchInFlightRef = useRef<Set<string>>(new Set());
+  const prefetchTimerRef = useRef<Record<string, number>>({});
   const isTypingActiveRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
   const userIdRef = useRef<string | null>(null);
+  const notificationSettingsRef = useRef<ProfileSettings | null>(null);
+  const handleNotificationClickRef = useRef<(notification: NotificationItem) => void>(() => {});
+  const conversationsRef = useRef(conversations);
+  const teammatesRef = useRef(teammates);
+  const userRef = useRef(user);
+  const handleSelectConversationRef = useRef<
+    (conversationId: string, messageId?: string | null, options?: { forceReload?: boolean }) => void
+  >(() => {});
+
+  directChatMetadataRef.current = directChatMetadata;
+
+  const rememberDirectChatMetadata = useCallback(
+    (conversationId: string, peerUserId: string, displayName: string) => {
+      const selfName = getUserDisplayName(userRef.current);
+      const trimmedName = sanitizeDirectDisplayName(displayName, selfName, 'Direct message');
+
+      if (isBrokenDirectTitle(trimmedName, selfName)) {
+        return;
+      }
+
+      setDirectChatMetadata((current) => {
+        const existing = current[conversationId];
+
+        if (existing?.peerUserId === peerUserId && existing.displayName === trimmedName) {
+          return current;
+        }
+
+        return {
+          ...current,
+          [conversationId]: {
+            peerUserId,
+            displayName: trimmedName,
+          },
+        };
+      });
+    },
+    [],
+  );
+
+  const seedDirectChatMetadata = useCallback((items: ConversationItem[]) => {
+    setDirectChatMetadata((current) => {
+      let changed = false;
+      const next = { ...current };
+
+      for (const conversation of items) {
+        if (conversation.kind !== 'direct' || conversation.isSelf || !conversation.peerUserId) {
+          continue;
+        }
+
+        const selfName = getUserDisplayName(userRef.current);
+
+        if (isBrokenDirectTitle(conversation.title, selfName)) {
+          continue;
+        }
+
+        const existing = next[conversation.id];
+
+        if (existing) {
+          continue;
+        }
+
+        next[conversation.id] = {
+          peerUserId: conversation.peerUserId,
+          displayName: conversation.title,
+        };
+        changed = true;
+      }
+
+      return changed ? next : current;
+    });
+  }, []);
+  conversationsRef.current = conversations;
+  teammatesRef.current = teammates;
+  userRef.current = user;
+  draftRef.current = draft;
+
+  useEffect(() => {
+    writePersistedDirectChatMetadata(directChatMetadata);
+  }, [directChatMetadata]);
+
+  const isOrgAdmin = useMemo(() => {
+    const profile = normalizeUserProfile(user);
+    const role = profile.organizationRole?.toLowerCase() ?? '';
+
+    return (
+      role.includes('admin') ||
+      role === 'director' ||
+      role === 'founder' ||
+      profile.organizationRole === 'Admin'
+    );
+  }, [user]);
 
   selectedIdRef.current = selectedId;
   userIdRef.current = getUserId(user);
 
-  const selectedConversation = useMemo(
-    () => conversations.find((item) => item.id === selectedId) ?? null,
-    [conversations, selectedId],
+  const selectedConversation = useMemo(() => {
+    if (!selectedId) {
+      return null;
+    }
+
+    return (
+      conversations.find((item) => item.id === selectedId) ??
+      conversationPlaceholders[selectedId] ??
+      null
+    );
+  }, [conversationPlaceholders, conversations, selectedId]);
+
+  useEffect(() => {
+    if (!selectedId || !conversationPlaceholders[selectedId]) {
+      return;
+    }
+
+    if (conversations.some((conversation) => conversation.id === selectedId)) {
+      setConversationPlaceholders((current) => {
+        if (!current[selectedId]) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[selectedId];
+        return next;
+      });
+    }
+  }, [conversationPlaceholders, conversations, selectedId]);
+
+  const applyDraftPreviews = useCallback((items: ConversationItem[]) => {
+    return mergeConversationDraftPreviews(
+      items,
+      draftPreviewsRef.current,
+      selectedIdRef.current,
+      draftRef.current,
+    );
+  }, []);
+
+  const commitConversationList = useCallback(
+    (
+      items: ConversationItem[],
+      options?: { seedFromApi?: boolean; currentUserId?: string | null },
+    ) => {
+      const viewerId = options?.currentUserId ?? userIdRef.current;
+      const selfName = getUserDisplayName(userRef.current);
+      const teammateMap = new Map(
+        teammatesRef.current.map((teammate) => [
+          teammate.id,
+          { name: teammate.name, username: teammate.username },
+        ]),
+      );
+      const sorted = sortConversations(
+        dropBrokenDirectConversations(
+          dedupeDirectConversations(
+            repairConversationPeerIds(
+              reconcileDirectConversations(
+                applyStoredDirectChatMetadata(
+                  items,
+                  directChatMetadataRef.current,
+                  selfName,
+                ),
+                viewerId,
+                selfName,
+                teammateMap,
+              ),
+              viewerId,
+            ),
+          ),
+          viewerId,
+          selfName,
+        ),
+      );
+
+      if (options?.seedFromApi !== false) {
+        seedDraftPreviewCache(sorted, draftPreviewsRef.current);
+      }
+
+      return applyDraftPreviews(sorted);
+    },
+    [applyDraftPreviews],
+  );
+
+  const upsertConversation = useCallback(
+    (items: ConversationItem[], conversation: ConversationItem) => {
+      const without = items.filter((item) => item.id !== conversation.id);
+      return commitConversationList([conversation, ...without], { seedFromApi: false });
+    },
+    [commitConversationList],
+  );
+
+  const prefetchDirectPeerProfile = useCallback(
+    (peerUserId: string, conversationId: string, fallbackName?: string) => {
+      const selfName = getUserDisplayName(userRef.current);
+
+      const applyProfile = (displayName: string) => {
+        const trimmedName = sanitizeDirectDisplayName(displayName, selfName, fallbackName);
+
+        if (isBrokenDirectTitle(trimmedName, selfName)) {
+          return;
+        }
+
+        rememberDirectChatMetadata(conversationId, peerUserId, trimmedName);
+        setConversations((current) =>
+          commitConversationList(
+            current.map((conversation) =>
+              conversation.id === conversationId
+                ? patchDirectConversationMetadata(conversation, peerUserId, trimmedName)
+                : conversation,
+            ),
+            { seedFromApi: false, currentUserId: userIdRef.current },
+          ),
+        );
+      };
+
+      const cached = readPeerProfile(peerUserId);
+
+      if (cached) {
+        const cachedName = cached.name.trim() || cached.username.trim();
+
+        if (cachedName) {
+          applyProfile(cachedName);
+        }
+      }
+
+      void loadUserProfile(peerUserId).then((result) => {
+        if (!result.ok) {
+          return;
+        }
+
+        const profile = normalizeUserProfile(result.data);
+        const displayName = profile.name.trim() || profile.username.trim();
+
+        if (!displayName || isBrokenDirectTitle(displayName, selfName)) {
+          return;
+        }
+
+        writePeerProfile({
+          userId: peerUserId,
+          name: profile.name,
+          username: profile.username,
+          avatarUrl: profile.avatarUrl,
+        });
+
+        applyProfile(displayName);
+      });
+    },
+    [commitConversationList, rememberDirectChatMetadata],
+  );
+
+  useEffect(() => {
+    const selfName = getUserDisplayName(user);
+    const repairedPeerIds = new Set<string>();
+
+    for (const conversation of conversations) {
+      if (
+        conversation.kind !== 'direct' ||
+        conversation.isSelf ||
+        !conversation.peerUserId ||
+        !isBrokenDirectTitle(conversation.title, selfName) ||
+        repairedPeerIds.has(conversation.peerUserId)
+      ) {
+        continue;
+      }
+
+      repairedPeerIds.add(conversation.peerUserId);
+      prefetchDirectPeerProfile(conversation.peerUserId, conversation.id);
+    }
+  }, [conversations, prefetchDirectPeerProfile, user]);
+
+  const setDraftPreviewForConversation = useCallback((conversationId: string, preview: string | null) => {
+    const trimmed = preview?.trim();
+
+    if (trimmed) {
+      draftPreviewsRef.current[conversationId] = trimmed;
+      return;
+    }
+
+    delete draftPreviewsRef.current[conversationId];
+  }, []);
+
+  const syncThreadCache = useCallback(
+    (
+      conversationId: string,
+      entry: {
+        messages: MessageItem[];
+        pinnedMessageIds: string[];
+        activeHubDetails: Record<string, unknown> | null;
+        draft: string;
+      },
+    ) => {
+      writeThreadCacheEntry(threadCacheRef.current, conversationId, entry);
+    },
+    [],
+  );
+
+  const hydrateThreadFromCache = useCallback((conversationId: string): boolean => {
+    const cached = getThreadCacheEntry(threadCacheRef.current, conversationId);
+
+    if (!cached) {
+      return false;
+    }
+
+    setMessages(cached.messages);
+    setActiveHubDetails(cached.activeHubDetails);
+    setPinnedMessageIds(cached.pinnedMessageIds);
+    setDraft(cached.draft);
+    lastSavedDraftRef.current = cached.draft;
+    setThreadError('');
+    setDraftError('');
+    setThreadLoading(false);
+
+    const conversationUnread =
+      conversationsRef.current.find((item) => item.id === conversationId)?.unreadCount ?? 0;
+    setThreadUnreadAnchorId(
+      findFirstUnreadMessageId(
+        cached.messages,
+        conversationUnread,
+        readLastReadMessageId(cached.activeHubDetails),
+        userIdRef.current,
+      ),
+    );
+    return true;
+  }, []);
+
+  const flushDraftSave = useCallback((conversationId: string, content: string) => {
+    if (draftSaveTimerRef.current) {
+      window.clearTimeout(draftSaveTimerRef.current);
+      draftSaveTimerRef.current = null;
+    }
+
+    const trimmed = content.trim();
+
+    if (!trimmed) {
+      if (lastSavedDraftRef.current.trim()) {
+        void clearChatDraft(conversationId).then((result) => {
+          if (result.ok) {
+            lastSavedDraftRef.current = '';
+          }
+        });
+      }
+
+      return;
+    }
+
+    if (trimmed === lastSavedDraftRef.current) {
+      return;
+    }
+
+    void saveChatDraft(conversationId, trimmed).then((result) => {
+      if (result.ok) {
+        lastSavedDraftRef.current = trimmed;
+      }
+    });
+  }, []);
+
+  const clearConversationUnread = useCallback(
+    (conversationId: string) => {
+      setConversations((current) =>
+        applyDraftPreviews(
+          current.map((conversation) =>
+            conversation.id === conversationId ? { ...conversation, unreadCount: 0 } : conversation,
+          ),
+        ),
+      );
+    },
+    [applyDraftPreviews],
+  );
+
+  const touchConversationWithMessage = useCallback(
+    (conversationId: string, message: MessageItem, incrementUnread: boolean) => {
+      const viewerUserId = userIdRef.current;
+      const preview = formatMessagePreview(message);
+      const senderPrefix = message.senderName ? `${message.senderName}: ${preview}` : preview;
+      const timestamp = message.createdAt || new Date().toISOString();
+      const isOwn = message.isOwn || (viewerUserId ? message.senderId === viewerUserId : false);
+
+      setConversations((current) =>
+        applyDraftPreviews(
+          sortConversations(
+            current.map((conversation) => {
+              if (conversation.id !== conversationId) {
+                return conversation;
+              }
+
+              if (conversation.isDraftPreview) {
+                return {
+                  ...conversation,
+                  messagePreview: preview,
+                  timestamp,
+                  unreadCount:
+                    incrementUnread && !isOwn
+                      ? Math.max(conversation.unreadCount, 0) + 1
+                      : conversation.unreadCount,
+                };
+              }
+
+              return {
+                ...conversation,
+                messagePreview: preview,
+                subtitle: senderPrefix || preview,
+                isDraftPreview: false,
+                timestamp,
+                unreadCount:
+                  incrementUnread && !isOwn
+                    ? Math.max(conversation.unreadCount, 0) + 1
+                    : conversation.unreadCount,
+              };
+            }),
+          ),
+        ),
+      );
+    },
+    [applyDraftPreviews],
   );
 
   const handleUnauthorized = useCallback(
@@ -234,67 +714,235 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     [onSessionExpired],
   );
 
-  const refreshUnreadCount = useCallback(async () => {
-    const result = await loadUnreadCount();
+  const refreshUnreadCount = useCallback(
+    async (notificationItems?: NotificationItem[]) => {
+      const [countResult, pendingResult] = await Promise.all([
+        loadUnreadCount(),
+        loadPendingFriends(),
+      ]);
 
-    if (handleUnauthorized(result.status)) {
-      return;
+      if (handleUnauthorized(countResult.status ?? pendingResult.status)) {
+        return;
+      }
+
+      const apiCount = countResult.ok ? countResult.data.count : 0;
+      const pendingCount = pendingResult.ok ? pendingResult.data.length : 0;
+      const unreadFromNotifications = (notificationItems ?? []).filter((item) => !item.isRead).length;
+
+      setUnreadCount(Math.max(apiCount, unreadFromNotifications) + pendingCount);
+    },
+    [handleUnauthorized],
+  );
+
+  const shouldSuppressNotificationAlerts = useCallback((): boolean => {
+    const settings = notificationSettingsRef.current;
+
+    if (settings?.dndEnabled) {
+      return true;
     }
 
-    if (result.ok) {
-      setUnreadCount(result.data.count);
-    }
-  }, [handleUnauthorized]);
+    const snoozeUntil = settings?.snoozeUntil;
+    return Boolean(snoozeUntil && new Date(snoozeUntil).getTime() > Date.now());
+  }, []);
 
-  const loadActivityData = useCallback(async () => {
-    setActivityLoading(true);
-    setActivityError('');
+  const patchMessageReactions = useCallback(
+    (
+      conversationId: string,
+      messageId: string,
+      patch: {
+        incoming?: MessageItem;
+        reactions?: MessageItem['reactions'];
+        addedReaction?: MessageItem['reactions'][number] | null;
+        removedReaction?: { emoji: string; userId: string } | null;
+      },
+    ) => {
+      const userId = userIdRef.current;
 
-    const [notificationsResult, pendingResult] = await Promise.all([
-      loadNotifications(),
-      loadPendingFriends(),
-    ]);
+      const apply = (messages: MessageItem[]) => {
+        const index = messages.findIndex((message) => message.id === messageId);
 
-    if (handleUnauthorized(notificationsResult.status ?? pendingResult.status)) {
-      return;
-    }
+        if (index === -1) {
+          return messages;
+        }
 
-    if (!notificationsResult.ok) {
-      setActivityError(notificationsResult.error);
-      setActivityLoading(false);
-      return;
-    }
+        const updated = applyReactionPatch(messages[index], patch);
 
-    setActivityNotifications(notificationsResult.data);
-    setActivityPendingFriends(pendingResult.ok ? pendingResult.data : []);
-    setActivityLoading(false);
-  }, [handleUnauthorized]);
+        return messages.map((message, currentIndex) =>
+          currentIndex === index
+            ? preserveMessageOwnership(updated, message, userId)
+            : message,
+        );
+      };
 
-  const loadBellPanel = useCallback(
-    async (markAllRead: boolean) => {
-      setNotificationsLoading(true);
-      setNotificationsError('');
+      if (selectedIdRef.current === conversationId) {
+        setMessages((current) => apply(current));
+      }
 
-      const { notifications, pending } = markAllRead
-        ? await loadBellPanelData()
+      patchThreadCacheMessages(threadCacheRef.current, conversationId, apply);
+    },
+    [],
+  );
+
+  const refreshMessageReactions = useCallback(
+    (conversationId: string, messageId: string) => {
+      void loadMessageById(conversationId, messageId).then((result) => {
+        if (!result.ok) {
+          return;
+        }
+
+        patchMessageReactions(conversationId, messageId, { incoming: result.data });
+      });
+    },
+    [patchMessageReactions],
+  );
+
+  const refreshMessageFromNotification = useCallback(
+    (notification: NotificationItem) => {
+      if (!notification.conversationId || !notification.messageId) {
+        return;
+      }
+
+      const normalizedType = notification.type.toLowerCase();
+      const normalizedTitle = notification.title.toLowerCase();
+      const normalizedBody = notification.body.toLowerCase();
+      const isReaction =
+        normalizedType.includes('reaction') ||
+        normalizedTitle.includes('reaction') ||
+        normalizedBody.includes('reacted');
+
+      if (!isReaction) {
+        return;
+      }
+
+      refreshMessageReactions(notification.conversationId, notification.messageId);
+    },
+    [refreshMessageReactions],
+  );
+
+  const processNotificationAlerts = useCallback(
+    async (notifications: NotificationItem[]) => {
+      if (!shouldDeliverDesktopNotifications() || shouldSuppressNotificationAlerts()) {
+        if (!notifications.length) {
+          return;
+        }
+
+        for (const notification of peekNewNotifications(notifications)) {
+          refreshMessageFromNotification(notification);
+          markNotificationSeen(notification);
+        }
+
+        seedNotificationSnapshot(notifications);
+        return;
+      }
+
+      for (const notification of peekNewNotifications(notifications)) {
+        refreshMessageFromNotification(notification);
+      }
+
+      await alertNewDesktopNotifications(notifications, (notification) => {
+        handleNotificationClickRef.current(notification);
+      });
+    },
+    [refreshMessageFromNotification, shouldSuppressNotificationAlerts],
+  );
+
+  const syncNotifications = useCallback(
+    async (options?: { seedSnapshot?: boolean; withLoading?: boolean; markAllRead?: boolean }) => {
+      if (options?.withLoading) {
+        setNotificationsLoading(true);
+        setNotificationsError('');
+        setActivityLoading(true);
+        setActivityError('');
+      }
+
+      const { notifications, pending } = options?.markAllRead
+        ? await openBellPanelData()
         : await refreshBellPanelData();
 
       if (handleUnauthorized(notifications.status ?? pending.status)) {
+        if (options?.withLoading) {
+          setNotificationsLoading(false);
+          setActivityLoading(false);
+        }
         return;
       }
 
       if (!notifications.ok) {
-        setNotificationsError(notifications.error);
-        setNotificationsLoading(false);
+        if (options?.withLoading) {
+          setNotificationsError(notifications.error);
+          setActivityError(notifications.error);
+          setNotificationsLoading(false);
+          setActivityLoading(false);
+        }
         return;
       }
 
       setPanelNotifications(notifications.data);
-      setPanelPendingFriends(pending.ok ? pending.data : []);
-      setNotificationsLoading(false);
-      void refreshUnreadCount();
+      setActivityNotifications(notifications.data);
+
+      if (options?.seedSnapshot) {
+        seedNotificationSnapshot(notifications.data);
+      } else {
+        await processNotificationAlerts(notifications.data);
+      }
+
+      if (pending.ok) {
+        setPanelPendingFriends(pending.data);
+        setActivityPendingFriends(pending.data);
+      }
+
+      if (options?.withLoading) {
+        setNotificationsLoading(false);
+        setActivityLoading(false);
+      }
+
+      void refreshUnreadCount(notifications.data);
     },
-    [handleUnauthorized, refreshUnreadCount],
+    [handleUnauthorized, processNotificationAlerts, refreshUnreadCount],
+  );
+
+  const loadActivityData = useCallback(async () => {
+    await syncNotifications({ withLoading: true, markAllRead: true });
+  }, [syncNotifications]);
+
+  const refreshPresence = useCallback(
+    async (userIds: string[]) => {
+      const unique = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
+
+      if (unique.length === 0) {
+        return;
+      }
+
+      const result = await loadUserPresence(unique);
+
+      if (!result.ok) {
+        handleUnauthorized(result.status);
+        return;
+      }
+
+      const statusByUserId = new Map(
+        result.data.map((item) => [item.userId, mapApiPresenceToStatus(item.status)] as const),
+      );
+
+      setConversations((current) =>
+        applyDraftPreviews(
+          current.map((conversation) => {
+            if (!conversation.peerUserId) {
+              return conversation;
+            }
+
+            const status = statusByUserId.get(conversation.peerUserId);
+
+            if (!status) {
+              return conversation;
+            }
+
+            return { ...conversation, status };
+          }),
+        ),
+      );
+    },
+    [applyDraftPreviews, handleUnauthorized],
   );
 
   const loadData = useCallback(async () => {
@@ -308,12 +956,35 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
     } else {
-      setUser(meResult.data.user ?? meResult.data);
+      const userPayload = meResult.data.user ?? meResult.data;
+      setUser(userPayload);
+      const profile = normalizeUserProfile(userPayload);
+      startPresenceManager(profile.status, profile.statusMessage);
     }
 
-    const [bootstrap, membersResult] = await Promise.all([
+    const currentUser = meResult.ok ? (meResult.data.user ?? meResult.data) : getStoredUser();
+    const inOrg = userInOrganization(currentUser);
+
+    const [bootstrap, membersResult, friendsResult, orgBootstrapResult] = await Promise.all([
       loadChatBootstrap(),
-      loadOrganizationMembers(),
+      inOrg ? loadOrganizationMembers() : Promise.resolve(null),
+      inOrg ? Promise.resolve(null) : loadFriends(),
+      inOrg
+        ? loadOrgSubscription().then(async (subscriptionResult) => {
+            if (!subscriptionResult.ok || !subscriptionResult.data) {
+              return null;
+            }
+
+            const complianceResult = await loadPlanCompliance(
+              subscriptionResult.data.planId,
+              subscriptionResult.data.teamSize,
+            );
+
+            return {
+              complianceRules: complianceResult.ok ? complianceResult.data.rules : [],
+            };
+          })
+        : Promise.resolve(null),
     ]);
 
     const { conversations: conversationsResult, unreadCount: unreadCountResult } = bootstrap;
@@ -329,7 +1000,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    setConversations(sortConversations(conversationsResult.data.conversations));
+    setConversations(
+      commitConversationList(conversationsResult.data.conversations, {
+        currentUserId: getUserId(currentUser),
+      }),
+    );
+    seedDirectChatMetadata(conversationsResult.data.conversations);
 
     if (unreadCountResult.ok) {
       setUnreadCount(unreadCountResult.data.count);
@@ -337,60 +1013,294 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    if (membersResult.ok) {
-      setTeammates(membersResult.data);
+    if (membersResult?.ok) {
+      const currentUserId = getUserId(currentUser);
+      const nextTeammates = membersResult.data.filter(
+        (member) => member.id && member.id !== currentUserId,
+      );
+      setTeammates(nextTeammates);
+      teammatesRef.current = nextTeammates;
+      setConversations((current) =>
+        commitConversationList(current, {
+          seedFromApi: false,
+          currentUserId,
+        }),
+      );
     }
 
+    if (friendsResult?.ok) {
+      setHubsFriends(friendsResult.data);
+    }
+
+    if (orgBootstrapResult?.complianceRules.length) {
+      setPlanComplianceRules(orgBootstrapResult.complianceRules);
+    } else if (!inOrg) {
+      setPlanComplianceRules([]);
+    }
+
+    const presenceUserIds = [
+      ...conversationsResult.data.conversations
+        .map((conversation) => conversation.peerUserId)
+        .filter((id): id is string => Boolean(id)),
+      ...(membersResult?.ok ? membersResult.data.map((member) => member.id) : []),
+    ];
+
+    void refreshPresence(presenceUserIds);
+
     setLoading(false);
-  }, [handleUnauthorized]);
+  }, [commitConversationList, handleUnauthorized, refreshPresence]);
 
   const loadThread = useCallback(
     async (conversationId: string) => {
+      const cached = getThreadCacheEntry(threadCacheRef.current, conversationId);
+      const hasCache = Boolean(cached);
+
       setThreadLoading(true);
-      setThreadError('');
-      setDraftError('');
 
-      const [bootstrapResult, draftResult] = await Promise.all([
-        loadConversationBootstrap(conversationId),
-        loadMessageDraft(conversationId),
-      ]);
-
-      if (handleUnauthorized(bootstrapResult.status ?? draftResult.status)) {
-        return;
+      if (!hasCache) {
+        setThreadError('');
+        setDraftError('');
+        setActiveHubDetails(null);
+        setPinnedMessageIds([]);
       }
 
-      if (!bootstrapResult.ok) {
-        setThreadError(bootstrapResult.error);
-        setMessages([]);
-        setThreadLoading(false);
-        return;
-      }
+      try {
+        const [bootstrapResult, draftResult] = await Promise.all([
+          loadConversationBootstrap(conversationId),
+          loadMessageDraft(conversationId),
+        ]);
 
-      setMessages(markOwnMessages(bootstrapResult.data.messages, getUserId(user)));
+        if (conversationId !== selectedIdRef.current) {
+          return;
+        }
 
-      if (draftResult.ok) {
-        setDraft(draftResult.data.content);
-        lastSavedDraftRef.current = draftResult.data.content;
-      } else if (!draftResult.ok && draftResult.status !== 404) {
-        setDraftError(draftResult.error);
-      } else {
-        setDraft('');
-      }
+        if (handleUnauthorized(bootstrapResult.status ?? draftResult.status)) {
+          return;
+        }
 
-      setThreadLoading(false);
+        if (!bootstrapResult.ok) {
+          if (!hasCache) {
+            setThreadError(bootstrapResult.error);
+            setMessages([]);
+            setActiveHubDetails(null);
+          }
 
-      if (markReadTimerRef.current) {
-        window.clearTimeout(markReadTimerRef.current);
-      }
+          return;
+        }
 
-      markReadTimerRef.current = window.setTimeout(() => {
-        void markConversationRead(conversationId).then((result) => {
-          handleUnauthorized(result.status);
-          void refreshUnreadCount();
+        const nextMessages = commitMessages(bootstrapResult.data.messages, getUserId(user));
+        let nextDraft = cached?.draft ?? '';
+        const conversationUnread =
+          conversationsRef.current.find((item) => item.id === conversationId)?.unreadCount ?? 0;
+
+        setActiveHubDetails(bootstrapResult.data.conversation);
+        setPinnedMessageIds(bootstrapResult.data.pinnedMessageIds);
+        setMessages(nextMessages);
+
+        setConversations((current) =>
+          commitConversationList(
+            current.map((conversation) =>
+              conversation.id === conversationId
+                ? { ...conversation, isPinned: bootstrapResult.data.isFavorite }
+                : conversation,
+            ),
+            { seedFromApi: false, currentUserId: getUserId(user) },
+          ),
+        );
+
+        const memberIds = extractConversationMemberIds(bootstrapResult.data.conversation);
+        const currentUserId = getUserId(user);
+
+        if (memberIds.length === 2 && currentUserId) {
+          const peerUserId = memberIds.find((memberId) => memberId !== currentUserId) ?? null;
+
+          if (peerUserId) {
+            const conversationRecord = bootstrapResult.data.conversation;
+            const peerTitle =
+              (conversationRecord
+                ? readDirectPeerDisplayName(conversationRecord, currentUserId)
+                : null) ??
+              conversationsRef.current.find((item) => item.id === conversationId)?.title ??
+              'Direct message';
+            rememberDirectChatMetadata(conversationId, peerUserId, peerTitle);
+            prefetchDirectPeerProfile(peerUserId, conversationId, peerTitle);
+
+            setConversations((current) =>
+              commitConversationList(
+                current.map((conversation) =>
+                  conversation.id === conversationId &&
+                  conversation.kind === 'direct' &&
+                  !conversation.isSelf
+                    ? { ...conversation, peerUserId }
+                    : conversation,
+                ),
+                { seedFromApi: false, currentUserId },
+              ),
+            );
+          }
+        }
+
+        setThreadUnreadAnchorId(
+          findFirstUnreadMessageId(
+            nextMessages,
+            conversationUnread,
+            readLastReadMessageId(bootstrapResult.data.conversation),
+            getUserId(user),
+          ),
+        );
+
+        if (draftResult.ok) {
+          const content = draftResult.data.content;
+          nextDraft = content;
+          setDraft(content);
+          lastSavedDraftRef.current = content;
+          setDraftPreviewForConversation(conversationId, content.trim() || null);
+        } else if (!draftResult.ok && draftResult.status !== 404) {
+          setDraftError(draftResult.error);
+        } else {
+          nextDraft = '';
+          setDraft('');
+          lastSavedDraftRef.current = '';
+          setDraftPreviewForConversation(conversationId, null);
+        }
+
+        syncThreadCache(conversationId, {
+          messages: nextMessages,
+          pinnedMessageIds: bootstrapResult.data.pinnedMessageIds,
+          activeHubDetails: bootstrapResult.data.conversation,
+          draft: nextDraft,
         });
-      }, 100);
+
+        if (memberIds.length > 0) {
+          void refreshPresence(memberIds);
+        }
+
+        if (markReadTimerRef.current) {
+          window.clearTimeout(markReadTimerRef.current);
+        }
+
+        markReadTimerRef.current = window.setTimeout(() => {
+          void markConversationRead(conversationId).then((result) => {
+            if (result.ok) {
+              clearConversationUnread(conversationId);
+            }
+
+            handleUnauthorized(result.status);
+            void refreshUnreadCount();
+          });
+        }, 100);
+      } finally {
+        if (conversationId === selectedIdRef.current) {
+          setThreadLoading(false);
+        }
+      }
     },
-    [handleUnauthorized, refreshUnreadCount, user],
+    [applyDraftPreviews, clearConversationUnread, commitConversationList, handleUnauthorized, prefetchDirectPeerProfile, rememberDirectChatMetadata, refreshPresence, refreshUnreadCount, setDraftPreviewForConversation, syncThreadCache, user],
+  );
+
+  const refreshActiveThreadSilently = useCallback(
+    async (conversationId: string) => {
+      const result = await loadConversationBootstrap(conversationId);
+
+      if (!result.ok || conversationId !== selectedIdRef.current) {
+        return;
+      }
+
+      const nextMessages = commitMessages(result.data.messages, getUserId(user));
+
+      setMessages((current) => {
+        const currentLastId = current[current.length - 1]?.id;
+        const nextLastId = nextMessages[nextMessages.length - 1]?.id;
+
+        if (current.length === nextMessages.length && currentLastId === nextLastId) {
+          return current;
+        }
+
+        return nextMessages;
+      });
+
+      setActiveHubDetails(result.data.conversation);
+      setPinnedMessageIds(result.data.pinnedMessageIds);
+
+      syncThreadCache(conversationId, {
+        messages: nextMessages,
+        pinnedMessageIds: result.data.pinnedMessageIds,
+        activeHubDetails: result.data.conversation,
+        draft: draftRef.current,
+      });
+    },
+    [syncThreadCache, user],
+  );
+
+  const prefetchThread = useCallback(
+    (conversationId: string) => {
+      if (
+        conversationId === selectedIdRef.current ||
+        getThreadCacheEntry(threadCacheRef.current, conversationId) ||
+        prefetchInFlightRef.current.has(conversationId)
+      ) {
+        return;
+      }
+
+      if (prefetchTimerRef.current[conversationId]) {
+        window.clearTimeout(prefetchTimerRef.current[conversationId]);
+      }
+
+      prefetchTimerRef.current[conversationId] = window.setTimeout(() => {
+        delete prefetchTimerRef.current[conversationId];
+
+        if (
+          conversationId === selectedIdRef.current ||
+          getThreadCacheEntry(threadCacheRef.current, conversationId) ||
+          prefetchInFlightRef.current.has(conversationId)
+        ) {
+          return;
+        }
+
+        prefetchInFlightRef.current.add(conversationId);
+
+        void Promise.all([
+          loadConversationBootstrap(conversationId),
+          loadMessageDraft(conversationId),
+        ])
+          .then(([bootstrapResult, draftResult]) => {
+            if (!bootstrapResult.ok) {
+              return;
+            }
+
+            const draftContent = draftResult.ok ? draftResult.data.content : '';
+
+            writeThreadCacheEntry(threadCacheRef.current, conversationId, {
+              messages: commitMessages(bootstrapResult.data.messages, getUserId(user)),
+              pinnedMessageIds: bootstrapResult.data.pinnedMessageIds,
+              activeHubDetails: bootstrapResult.data.conversation,
+              draft: draftContent,
+            });
+
+            const memberIds = extractConversationMemberIds(bootstrapResult.data.conversation);
+            const currentUserId = getUserId(user);
+            const peerUserId =
+              memberIds.length === 2
+                ? memberIds.find((memberId) => memberId !== currentUserId) ?? null
+                : null;
+
+            if (peerUserId) {
+              const conversationRecord = bootstrapResult.data.conversation;
+              const peerTitle =
+                (conversationRecord
+                  ? readDirectPeerDisplayName(conversationRecord, currentUserId)
+                  : null) ??
+                conversationsRef.current.find((item) => item.id === conversationId)?.title ??
+                'Direct message';
+              prefetchDirectPeerProfile(peerUserId, conversationId, peerTitle);
+            }
+          })
+          .finally(() => {
+            prefetchInFlightRef.current.delete(conversationId);
+          });
+      }, 120);
+    },
+    [prefetchDirectPeerProfile, user],
   );
 
   const loadSavedData = useCallback(async () => {
@@ -444,6 +1354,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     const result = await loadCalendarEvents();
 
     if (handleUnauthorized(result.status)) {
+      setCalendarLoading(false);
       return;
     }
 
@@ -456,6 +1367,16 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     setCalendarEvents(result.data);
     setCalendarLoading(false);
   }, [handleUnauthorized]);
+
+  const openCalendarFromNotification = useCallback(
+    (eventId?: string | null) => {
+      setNotificationsOpen(false);
+      setMainView('calendar');
+      setHighlightCalendarEventId(eventId ?? null);
+      void loadCalendarData();
+    },
+    [loadCalendarData],
+  );
 
   const loadHubsData = useCallback(async () => {
     setHubsLoading(true);
@@ -491,9 +1412,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     if (result.ok) {
-      setConversations(sortConversations(result.data.conversations));
+      setConversations((current) =>
+        commitConversationList(mergeConversationLists(current, result.data.conversations)),
+      );
     }
-  }, [handleUnauthorized]);
+  }, [commitConversationList, handleUnauthorized]);
 
   const scheduleConversationsRefresh = useCallback(() => {
     if (refreshConversationsTimerRef.current) {
@@ -509,25 +1432,91 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     (rawEvent: unknown) => {
       const event = parseRealtimeEvent(rawEvent);
       const type = event.type;
-      const conversationId = extractConversationId(event.payload);
+      const conversationId = extractConversationIdFromRealtime(rawEvent, event.payload);
       const incomingMessage = extractMessageFromRealtimePayload(event.payload);
       const activeConversationId = selectedIdRef.current;
       const userId = userIdRef.current;
 
       if (incomingMessage && conversationId && isNewMessageEvent(type)) {
+        const message = markOwnMessages([incomingMessage], userId)[0];
+        const incrementUnread =
+          conversationId !== activeConversationId && !message.isOwn && message.senderId !== userId;
+
         if (conversationId === activeConversationId) {
           setMessages((current) => {
-            if (current.some((message) => message.id === incomingMessage.id)) {
+            if (current.some((item) => item.id === message.id)) {
               return current;
             }
 
-            return [...current, markOwnMessages([incomingMessage], userId)[0]];
+            return appendMessage(current, incomingMessage, userId);
           });
+
+          if (!message.isOwn && message.senderId !== userId) {
+            void markConversationRead(conversationId).then((result) => {
+              if (result.ok) {
+                clearConversationUnread(conversationId);
+              }
+            });
+          }
+        } else {
+          patchThreadCacheMessages(threadCacheRef.current, conversationId, (current) => {
+            if (current.some((item) => item.id === message.id)) {
+              return current;
+            }
+
+            return appendMessage(current, incomingMessage, userId);
+          });
+
+          if (incrementUnread) {
+            setUnreadCount((count) => count + 1);
+
+            const settings = notificationSettingsRef.current;
+            const snoozeUntil = settings?.snoozeUntil;
+            const suppressed =
+              settings?.dndEnabled ||
+              Boolean(snoozeUntil && new Date(snoozeUntil).getTime() > Date.now());
+
+            if (!suppressed && shouldDeliverDesktopNotifications()) {
+              const conversation =
+                conversationsRef.current.find((item) => item.id === conversationId) ?? null;
+
+              void showIncomingMessageDesktopNotification(
+                message,
+                conversation?.title ?? message.senderName,
+                () => handleSelectConversationRef.current(conversationId, message.id),
+              );
+            }
+          }
         }
 
-        scheduleConversationsRefresh();
-        void refreshUnreadCount();
+        touchConversationWithMessage(conversationId, message, incrementUnread);
+
+        if (!conversationsRef.current.some((item) => item.id === conversationId)) {
+          scheduleConversationsRefresh();
+        }
+
+        void syncNotifications();
         return;
+      }
+
+      if (conversationId && (isReactionEvent(type) || extractReactionEvent(event.payload))) {
+        const reactionPatch = extractReactionEvent(event.payload);
+
+        if (reactionPatch) {
+          patchMessageReactions(conversationId, reactionPatch.messageId, {
+            incoming: reactionPatch.message ?? undefined,
+            reactions: reactionPatch.reactions ?? undefined,
+            addedReaction: reactionPatch.addedReaction,
+            removedReaction: reactionPatch.removedReaction,
+          });
+
+          if (conversationId === activeConversationId) {
+            refreshMessageReactions(conversationId, reactionPatch.messageId);
+          }
+
+          void syncNotifications();
+          return;
+        }
       }
 
       if (incomingMessage && conversationId && isMessageUpdateEvent(type)) {
@@ -535,7 +1524,23 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           setMessages((current) =>
             current.map((message) =>
               message.id === incomingMessage.id
-                ? preserveMessageOwnership(incomingMessage, message, userId)
+                ? preserveMessageOwnership(
+                    mergeMessageUpdates(message, incomingMessage),
+                    message,
+                    userId,
+                  )
+                : message,
+            ),
+          );
+        } else {
+          patchThreadCacheMessages(threadCacheRef.current, conversationId, (current) =>
+            current.map((message) =>
+              message.id === incomingMessage.id
+                ? preserveMessageOwnership(
+                    mergeMessageUpdates(message, incomingMessage),
+                    message,
+                    userId,
+                  )
                 : message,
             ),
           );
@@ -545,7 +1550,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
 
-      if (isMessageDeleteEvent(type) && conversationId === activeConversationId) {
+      if (isMessageDeleteEvent(type) && conversationId) {
         const messageId =
           typeof event.payload === 'object' &&
           event.payload &&
@@ -555,7 +1560,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             : incomingMessage?.id;
 
         if (messageId) {
-          setMessages((current) => current.filter((message) => message.id !== messageId));
+          if (conversationId === activeConversationId) {
+            setMessages((current) => current.filter((message) => message.id !== messageId));
+          } else {
+            patchThreadCacheMessages(threadCacheRef.current, conversationId, (current) =>
+              current.filter((message) => message.id !== messageId),
+            );
+          }
         }
 
         scheduleConversationsRefresh();
@@ -564,27 +1575,43 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
       if (isConversationUpdateEvent(type)) {
         scheduleConversationsRefresh();
+        void syncNotifications();
         return;
       }
 
       if (isUnreadUpdateEvent(type)) {
+        scheduleConversationsRefresh();
+        void syncNotifications();
         void refreshUnreadCount();
-
-        if (notificationsOpen) {
-          void loadBellPanel(false);
-        }
         return;
       }
 
       if (isPresenceEvent(type)) {
-        if (extractPresenceUpdate(event.payload)) {
+        const presenceUpdate = extractPresenceUpdate(event.payload);
+
+        if (presenceUpdate) {
+          const status = mapApiPresenceToStatus(presenceUpdate.status);
+
+          if (status) {
+            setConversations((current) =>
+              applyDraftPreviews(
+                current.map((conversation) =>
+                  conversation.peerUserId === presenceUpdate.userId
+                    ? { ...conversation, status }
+                    : conversation,
+                ),
+              ),
+            );
+          }
+        } else {
           scheduleConversationsRefresh();
         }
+
         return;
       }
 
       if (isTypingEvent(type) || isTypingChannelEvent(rawEvent)) {
-        const typing = extractTypingUpdate(event.payload, activeConversationId);
+        const typing = extractTypingUpdate(event.payload, activeConversationId, rawEvent);
 
         if (!typing || typing.userId === userId) {
           return;
@@ -614,31 +1641,56 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       }
 
       if (type === 'unknown' && incomingMessage && conversationId) {
+        const message = markOwnMessages([incomingMessage], userId)[0];
+        const incrementUnread =
+          conversationId !== activeConversationId && !message.isOwn && message.senderId !== userId;
+
         if (conversationId === activeConversationId) {
           setMessages((current) => {
-            if (current.some((message) => message.id === incomingMessage.id)) {
+            if (current.some((item) => item.id === message.id)) {
               return current;
             }
 
-            return [...current, markOwnMessages([incomingMessage], userId)[0]];
+            return appendMessage(current, incomingMessage, userId);
           });
+        } else {
+          patchThreadCacheMessages(threadCacheRef.current, conversationId, (current) => {
+            if (current.some((item) => item.id === message.id)) {
+              return current;
+            }
+
+            return appendMessage(current, incomingMessage, userId);
+          });
+
+          if (incrementUnread) {
+            setUnreadCount((count) => count + 1);
+          }
         }
 
-        scheduleConversationsRefresh();
-        void refreshUnreadCount();
+        touchConversationWithMessage(conversationId, message, incrementUnread);
+
+        if (!conversationsRef.current.some((item) => item.id === conversationId)) {
+          scheduleConversationsRefresh();
+        }
+
+        void syncNotifications();
       }
     },
-    [loadBellPanel, notificationsOpen, refreshUnreadCount, scheduleConversationsRefresh],
+    [applyDraftPreviews, clearConversationUnread, patchMessageReactions, refreshMessageReactions, scheduleConversationsRefresh, syncNotifications, touchConversationWithMessage],
   );
 
   useEffect(() => {
     void startRealtime();
 
-    const unsubscribe = subscribeRealtimeEvent(handleRealtimeEvent);
+    const unsubscribeEvents = subscribeRealtimeEvent(handleRealtimeEvent);
+    const unsubscribeStatus = subscribeRealtimeStatus(setRealtimeStatus);
 
     return () => {
-      unsubscribe();
+      unsubscribeEvents();
+      unsubscribeStatus();
+      setRealtimeStatus('idle');
       void stopRealtime();
+      stopPresenceManager();
 
       if (refreshConversationsTimerRef.current) {
         window.clearTimeout(refreshConversationsTimerRef.current);
@@ -657,6 +1709,24 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       }
     };
   }, [handleRealtimeEvent]);
+
+  useEffect(() => {
+    if (!selectedId || mainView !== 'chat') {
+      return;
+    }
+
+    const pollMs = realtimeStatus === 'connected' ? THREAD_POLL_CONNECTED_MS : THREAD_POLL_MS;
+
+    const intervalId = window.setInterval(() => {
+      void refreshActiveThreadSilently(selectedId);
+
+      if (realtimeStatus !== 'connected') {
+        void refreshConversations();
+      }
+    }, pollMs);
+
+    return () => window.clearInterval(intervalId);
+  }, [mainView, realtimeStatus, refreshActiveThreadSilently, refreshConversations, selectedId]);
 
   const stopTyping = useCallback((conversationId: string) => {
     if (typingStopTimerRef.current) {
@@ -726,6 +1796,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           void clearChatDraft(selectedId).then((result) => {
             if (result.ok) {
               lastSavedDraftRef.current = '';
+              setDraftPreviewForConversation(selectedId, null);
+              setConversations((current) => applyDraftPreviews(current));
             }
           });
         }
@@ -736,6 +1808,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       void saveChatDraft(selectedId, draft).then((result) => {
         if (result.ok) {
           lastSavedDraftRef.current = draft;
+          setDraftPreviewForConversation(selectedId, draft.trim());
+          setConversations((current) => applyDraftPreviews(current));
         }
       });
     }, DRAFT_SAVE_MS);
@@ -745,7 +1819,16 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         window.clearTimeout(draftSaveTimerRef.current);
       }
     };
-  }, [draft, selectedId]);
+  }, [applyDraftPreviews, draft, selectedId, setDraftPreviewForConversation]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      return;
+    }
+
+    setDraftPreviewForConversation(selectedId, draft.trim() || null);
+    setConversations((current) => applyDraftPreviews(current));
+  }, [applyDraftPreviews, draft, selectedId, setDraftPreviewForConversation]);
 
   useEffect(() => {
     setTypingLabel('');
@@ -760,7 +1843,67 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   useEffect(() => {
     void loadData();
-  }, [loadData]);
+    void loadCalendarData();
+    void refreshUnreadCount();
+    void loadNotificationSettings().then((result) => {
+      if (result.ok) {
+        notificationSettingsRef.current = result.data;
+        setNotificationSettings(result.data);
+      }
+    });
+    void syncNotifications({ seedSnapshot: true });
+
+    void (async () => {
+      if (typeof Notification === 'undefined' || Notification.permission === 'denied') {
+        return;
+      }
+
+      if (shouldDeliverDesktopNotifications()) {
+        return;
+      }
+
+      await enableDesktopPushNotifications();
+    })();
+  }, [loadCalendarData, loadData, refreshUnreadCount, syncNotifications]);
+
+  useEffect(() => {
+    if (mainView !== 'chat') {
+      return;
+    }
+
+    void loadNotificationSettings().then((result) => {
+      if (result.ok) {
+        notificationSettingsRef.current = result.data;
+        setNotificationSettings(result.data);
+      }
+    });
+  }, [mainView]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void syncNotifications();
+    }, NOTIFICATION_POLL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [syncNotifications]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void loadCalendarData();
+    }, CALENDAR_POLL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [loadCalendarData]);
+
+  useEffect(() => {
+    return scheduleCalendarReminders(calendarEvents, (event) => {
+      void showCalendarEventReminder(
+        event.title || 'Calendar event',
+        event.startsAt ? `Starting now · ${event.title}` : 'Your event is starting now.',
+        () => openCalendarFromNotification(event.id),
+      );
+    });
+  }, [calendarEvents, openCalendarFromNotification]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
@@ -775,14 +1918,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    void loadBellPanel(true);
+    void syncNotifications({ withLoading: true, markAllRead: true });
 
     const intervalId = window.setInterval(() => {
-      void loadBellPanel(false);
+      void syncNotifications();
     }, BELL_POLL_MS);
 
     return () => window.clearInterval(intervalId);
-  }, [notificationsOpen, loadBellPanel]);
+  }, [notificationsOpen, syncNotifications]);
 
   useEffect(() => {
     if (mainView !== 'activity') {
@@ -790,7 +1933,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     void loadActivityData();
-  }, [mainView, loadActivityData]);
+
+    const intervalId = window.setInterval(() => {
+      void syncNotifications();
+    }, BELL_POLL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [loadActivityData, mainView, syncNotifications]);
 
   useEffect(() => {
     if (mainView === 'saved') {
@@ -821,6 +1970,19 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     void loadThread(selectedId);
   }, [selectedId, loadThread]);
 
+  useEffect(() => {
+    if (!selectedId || threadLoading) {
+      return;
+    }
+
+    syncThreadCache(selectedId, {
+      messages,
+      pinnedMessageIds,
+      activeHubDetails,
+      draft,
+    });
+  }, [activeHubDetails, draft, messages, pinnedMessageIds, selectedId, syncThreadCache, threadLoading]);
+
   useEffect(
     () => () => {
       if (markReadTimerRef.current) {
@@ -830,46 +1992,157 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     [],
   );
 
-  const handleSelectConversation = (conversationId: string) => {
+  const handleSelectConversation = (
+    conversationId: string,
+    messageId?: string | null,
+    options?: { forceReload?: boolean },
+  ) => {
+    const outgoingId = selectedIdRef.current;
+    const outgoingDraft = draftRef.current;
+
+    if (outgoingId && outgoingId !== conversationId) {
+      setDraftPreviewForConversation(outgoingId, outgoingDraft.trim() || null);
+      flushDraftSave(outgoingId, outgoingDraft);
+      setConversations((current) => applyDraftPreviews(current));
+    }
+
+    const shouldUseCache = !options?.forceReload;
+    const hasCachedThread = shouldUseCache && hydrateThreadFromCache(conversationId);
+
+    if (!hasCachedThread) {
+      setThreadLoading(true);
+      setMessages([]);
+      setActiveHubDetails(null);
+      setPinnedMessageIds([]);
+      setDraft('');
+      setThreadError('');
+      setThreadUnreadAnchorId(null);
+    }
+
     setMainView('chat');
     setSelectedId(conversationId);
+
+    if (messageId) {
+      setFocusMessageId(messageId);
+    }
+  };
+
+  const handleNavigate = useCallback((view: MainView) => {
+    startTransition(() => {
+      setMainView(view);
+    });
+  }, []);
+
+  handleSelectConversationRef.current = handleSelectConversation;
+
+  const handleOpenInChat = (conversationId: string | null, messageId?: string | null) => {
+    if (!conversationId) {
+      toast.error('This file is not linked to a conversation.');
+      return;
+    }
+
+    handleSelectConversation(conversationId, messageId ?? null);
   };
 
   const handleOpenDirectChat = useCallback(
-    async (userId: string) => {
+    async (userId: string, options?: { displayName?: string; username?: string }) => {
+      const displayName = options?.displayName?.trim() || options?.username?.trim() || 'Direct message';
+      const existing = findConversationForPeerUserId(
+        conversationsRef.current,
+        userId,
+        directChatMetadataRef.current,
+      );
+
+      if (existing) {
+        rememberDirectChatMetadata(existing.id, userId, displayName);
+        setConversations((current) =>
+          upsertConversation(
+            current,
+            patchDirectConversationMetadata(existing, userId, displayName),
+          ),
+        );
+        prefetchDirectPeerProfile(userId, existing.id, displayName);
+        handleSelectConversationRef.current(existing.id);
+        return existing.id;
+      }
+
       const result = await createDirectChat(userId);
 
       if (!result.ok) {
         if (handleUnauthorized(result.status)) {
+          return null;
+        }
+
+        toast.error(result.error);
+        return null;
+      }
+
+      const conversationId = result.data.conversationId;
+      const baseConversation =
+        result.data.conversation ?? buildPlaceholderDirectConversation(conversationId, userId, displayName);
+      const entry = patchDirectConversationMetadata(baseConversation, userId, displayName);
+
+      rememberDirectChatMetadata(conversationId, userId, displayName);
+      setConversations((current) => upsertConversation(current, entry));
+      prefetchDirectPeerProfile(userId, conversationId, displayName);
+      handleSelectConversationRef.current(conversationId);
+
+      void loadConversations().then((listResult) => {
+        if (!listResult.ok) {
+          if (handleUnauthorized(listResult.status)) {
+            return;
+          }
+
           return;
         }
 
-        setError(result.error);
-        return;
-      }
+        seedDirectChatMetadata(listResult.data.conversations);
 
-      handleSelectConversation(result.data.conversationId);
-      void loadData();
+        setConversations((current) =>
+          commitConversationList(
+            mergeConversationLists(current, listResult.data.conversations).map((conversation) => {
+              const stored = directChatMetadataRef.current[conversation.id];
+
+              if (!stored) {
+                return conversation;
+              }
+
+              return patchDirectConversationMetadata(
+                conversation,
+                stored.peerUserId,
+                stored.displayName,
+              );
+            }),
+            { currentUserId: userIdRef.current },
+          ),
+        );
+      });
+
+      return conversationId;
     },
-    [handleUnauthorized, loadData],
+    [commitConversationList, handleUnauthorized, prefetchDirectPeerProfile, rememberDirectChatMetadata, seedDirectChatMetadata, toast, upsertConversation],
   );
 
   const handleSelectPerson = async (person: SearchPerson) => {
-    const existing = findConversationForPerson(conversations, person);
-
-    if (existing) {
-      handleSelectConversation(existing.id);
-      return;
-    }
-
-    await handleOpenDirectChat(person.id);
+    await handleOpenDirectChat(person.id, {
+      displayName: person.name,
+      username: person.username,
+    });
   };
 
-  const handleMessageSelf = () => {
+  const handleMessageSelf = async () => {
     const selfConversation = conversations.find((conversation) => conversation.isSelf);
 
     if (selfConversation) {
       handleSelectConversation(selfConversation.id);
+      return;
+    }
+
+    const result = await openSelfConversation();
+
+    if (result.ok) {
+      await refreshConversations();
+      handleSelectConversation(result.data.conversationId);
     }
   };
 
@@ -877,33 +2150,50 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     const teammate = teammates.find((member) => member.id === memberId);
 
     if (!teammate) {
+      toast.error('Unable to find that teammate.');
       return;
     }
 
-    const existing = conversations.find(
-      (conversation) =>
-        conversation.kind === 'direct' &&
-        conversation.title.toLowerCase() === teammate.name.toLowerCase(),
-    );
+    setOpeningTeammateId(memberId);
 
-    if (existing) {
-      handleSelectConversation(existing.id);
-      return;
+    try {
+      await handleOpenDirectChat(teammate.id, {
+        displayName: teammate.name,
+        username: teammate.username,
+      });
+    } finally {
+      setOpeningTeammateId(null);
     }
-
-    await handleOpenDirectChat(memberId);
   };
 
   const handleNotificationClick = (notification: NotificationItem) => {
-    const conversationId = resolveNotificationConversationId(notification, conversations);
+    markNotificationSeen(notification);
+    const action = resolveNotificationAction(notification, conversations);
 
-    if (!conversationId) {
+    void markNotificationRead(notification.id).then((result) => {
+      if (!result.ok) {
+        handleUnauthorized(result.status);
+        return;
+      }
+
+      setPanelNotifications((current) => current.filter((item) => item.id !== notification.id));
+      setActivityNotifications((current) => current.filter((item) => item.id !== notification.id));
+      void refreshUnreadCount();
+    });
+
+    setNotificationsOpen(false);
+
+    if (action.kind === 'calendar') {
+      openCalendarFromNotification(action.eventId);
       return;
     }
 
-    setNotificationsOpen(false);
-    handleSelectConversation(conversationId);
+    if (action.kind === 'chat') {
+      handleSelectConversation(action.conversationId, action.messageId);
+    }
   };
+
+  handleNotificationClickRef.current = handleNotificationClick;
 
   const handleSendMessage = async (replyToId?: string) => {
     if (!selectedId || !draft.trim() || isSending) {
@@ -929,10 +2219,109 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     setDraft('');
     lastSavedDraftRef.current = '';
+    setDraftPreviewForConversation(selectedId, null);
+    setConversations((current) => applyDraftPreviews(current));
     stopTyping(selectedId);
     void clearChatDraft(selectedId);
+    setMessages((current) => {
+      if (current.some((message) => message.id === result.data.id)) {
+        return current;
+      }
+
+      return appendMessage(current, result.data, getUserId(user));
+    });
+    touchConversationWithMessage(selectedId, result.data, false);
     setIsSending(false);
-    void loadThread(selectedId);
+  };
+
+  const handleSendMedia = async (
+    item: GifPickerItem,
+    kind: 'gif' | 'sticker',
+    replyToId?: string,
+  ) => {
+    if (!selectedId || isSending) {
+      return;
+    }
+
+    setIsSending(true);
+    setDraftError('');
+
+    const result = await sendChatMediaMessage(selectedId, item, kind, replyToId);
+
+    if (handleUnauthorized(result.status)) {
+      setIsSending(false);
+      return;
+    }
+
+    if (!result.ok) {
+      setDraftError(result.error);
+      setIsSending(false);
+      return;
+    }
+
+    stopTyping(selectedId);
+    setMessages((current) => {
+      if (current.some((message) => message.id === result.data.id)) {
+        return current;
+      }
+
+      return appendMessage(current, result.data, getUserId(user));
+    });
+    touchConversationWithMessage(selectedId, result.data, false);
+    setIsSending(false);
+  };
+
+  const handleSendFile = async (file: File, replyToId?: string) => {
+    if (!selectedId || isSending) {
+      return;
+    }
+
+    setIsSending(true);
+    setDraftError('');
+
+    const mimeType = file.type || 'application/octet-stream';
+    const uploadResult = await uploadChatFile(file);
+
+    if (handleUnauthorized(uploadResult.status)) {
+      setIsSending(false);
+      return;
+    }
+
+    if (!uploadResult.ok) {
+      setDraftError(uploadResult.error);
+      setIsSending(false);
+      return;
+    }
+
+    const result = await sendChatFileMessage(
+      selectedId,
+      uploadResult.data.url,
+      file.name,
+      mimeType,
+      replyToId,
+    );
+
+    if (handleUnauthorized(result.status)) {
+      setIsSending(false);
+      return;
+    }
+
+    if (!result.ok) {
+      setDraftError(result.error);
+      setIsSending(false);
+      return;
+    }
+
+    stopTyping(selectedId);
+    setMessages((current) => {
+      if (current.some((message) => message.id === result.data.id)) {
+        return current;
+      }
+
+      return appendMessage(current, result.data, getUserId(user));
+    });
+    touchConversationWithMessage(selectedId, result.data, false);
+    setIsSending(false);
   };
 
   const handleAddReaction = async (messageId: string, emoji: string) => {
@@ -954,6 +2343,39 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     setMessages((current) =>
       current.map((message) =>
         message.id === messageId
+          ? preserveMessageOwnership(mergeMessageUpdates(message, result.data), message, getUserId(user))
+          : message,
+      ),
+    );
+
+    patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
+      current.map((message) =>
+        message.id === messageId
+          ? preserveMessageOwnership(mergeMessageUpdates(message, result.data), message, getUserId(user))
+          : message,
+      ),
+    );
+  };
+
+  const handleVotePoll = async (messageId: string, optionId: string) => {
+    if (!selectedId) {
+      return;
+    }
+
+    const result = await votePoll(selectedId, messageId, optionId);
+
+    if (!result.ok) {
+      if (handleUnauthorized(result.status)) {
+        return;
+      }
+
+      toast.error(result.error);
+      return;
+    }
+
+    setMessages((current) =>
+      current.map((message) =>
+        message.id === messageId
           ? preserveMessageOwnership(result.data, message, getUserId(user))
           : message,
       ),
@@ -961,8 +2383,46 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   };
 
   const showActionMessage = (message: string) => {
-    setActionMessage(message);
-    window.setTimeout(() => setActionMessage(''), 3000);
+    toast.success(message);
+  };
+
+  const handleToggleConversationPin = async (conversationId: string, isPinned: boolean) => {
+    if (pinningConversationId) {
+      return;
+    }
+
+    setPinningConversationId(conversationId);
+    setConversations((current) =>
+      commitConversationList(
+        current.map((item) =>
+          item.id === conversationId ? { ...item, isPinned: !isPinned } : item,
+        ),
+      ),
+    );
+
+    const result = await setConversationFavorite(conversationId, !isPinned);
+    setPinningConversationId(null);
+
+    if (!result.ok) {
+      if (handleUnauthorized(result.status)) {
+        return;
+      }
+
+      toast.error(result.error);
+      void refreshConversations();
+      return;
+    }
+
+    const nextPinned = result.data.favorite;
+    setConversations((current) =>
+      commitConversationList(
+        current.map((item) =>
+          item.id === conversationId ? { ...item, isPinned: nextPinned } : item,
+        ),
+      ),
+    );
+
+    showActionMessage(nextPinned ? 'Chat pinned.' : 'Chat unpinned.');
   };
 
   const handleEditMessage = async (messageId: string, content: string) => {
@@ -996,6 +2456,20 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
+    const confirmed = await confirm({
+      title: scope === 'everyone' ? 'Delete for everyone' : 'Delete message',
+      message:
+        scope === 'everyone'
+          ? 'This message will be removed for all members. This cannot be undone.'
+          : 'Delete this message from your view?',
+      confirmLabel: 'Delete',
+      tone: 'danger',
+    });
+
+    if (!confirmed) {
+      return;
+    }
+
     const result = await deleteChatMessage(selectedId, messageId, scope);
 
     if (!result.ok) {
@@ -1004,6 +2478,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       }
 
       setThreadError(result.error);
+      toast.error(result.error);
       return;
     }
 
@@ -1011,7 +2486,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       setMessages((current) =>
         current.map((message) =>
           message.id === messageId
-            ? { ...message, content: 'This message was deleted.' }
+            ? {
+                ...message,
+                content: DELETED_MESSAGE_TEXT,
+                media: [],
+                messageType: 'TEXT',
+                deletedForEveryone: true,
+              }
             : message,
         ),
       );
@@ -1020,14 +2501,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     showActionMessage(scope === 'everyone' ? 'Message deleted for everyone.' : 'Message deleted.');
-  };
-
-  const handleReplyMessage = (_messageId: string) => {
-    showActionMessage('Reply coming soon.');
-  };
-
-  const handleReplyInThread = (_messageId: string) => {
-    showActionMessage('Reply in thread coming soon.');
   };
 
   const handleForwardMessage = async (
@@ -1051,13 +2524,15 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     const conversationsResult = await loadConversations();
 
     if (conversationsResult.ok) {
-      setConversations(sortConversations(conversationsResult.data.conversations));
+      setConversations((current) =>
+        commitConversationList(mergeConversationLists(current, conversationsResult.data.conversations)),
+      );
     }
 
     setMainView('chat');
 
     if (selectedId === targetConversationId) {
-      const forwarded = markOwnMessages(result.data.messages, getUserId(user));
+      const forwarded = commitMessages(result.data.messages, getUserId(user));
 
       if (forwarded.length > 0) {
         setMessages((current) => {
@@ -1096,11 +2571,31 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     setMessages((current) =>
       current.map((message) =>
-        message.id === messageId
-          ? preserveMessageOwnership(result.data, message, getUserId(user))
-          : message,
+        message.id === messageId ? preserveMessageOwnership(result.data, message, getUserId(user)) : message,
       ),
     );
+
+    setPinnedMessageIds((current) =>
+      isPinned ? current.filter((id) => id !== messageId) : [...new Set([...current, messageId])],
+    );
+
+    patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
+      current.map((message) =>
+        message.id === messageId ? preserveMessageOwnership(result.data, message, getUserId(user)) : message,
+      ),
+    );
+
+    const cached = getThreadCacheEntry(threadCacheRef.current, selectedId);
+
+    if (cached) {
+      writeThreadCacheEntry(threadCacheRef.current, selectedId, {
+        ...cached,
+        pinnedMessageIds: isPinned
+          ? cached.pinnedMessageIds.filter((id) => id !== messageId)
+          : [...new Set([...cached.pinnedMessageIds, messageId])],
+      });
+    }
+
     showActionMessage(isPinned ? 'Message unpinned.' : 'Message pinned.');
   };
 
@@ -1167,6 +2662,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         <ActivityView
           notifications={activityNotifications}
           pendingFriends={activityPendingFriends}
+          conversations={conversations}
           loading={activityLoading}
           error={activityError}
           onRetry={() => {
@@ -1190,9 +2686,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             void loadSavedData();
           }}
           onSelect={(item) => {
-            if (item.conversationId) {
-              handleSelectConversation(item.conversationId);
-            }
+            handleOpenInChat(item.conversationId, item.messageId);
           }}
         />
       );
@@ -1211,6 +2705,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           onRetry={() => {
             void loadFilesData(fileFilter);
           }}
+          onOpenInChat={(item) => {
+            handleOpenInChat(item.conversationId, item.messageId ?? item.id);
+          }}
         />
       );
     }
@@ -1221,9 +2718,20 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           events={calendarEvents}
           loading={calendarLoading}
           error={calendarError}
+          user={user}
           onRetry={() => {
             void loadCalendarData();
           }}
+          onRefresh={() => {
+            void loadCalendarData();
+            void syncNotifications();
+          }}
+          onNotificationsRefresh={() => {
+            void syncNotifications();
+          }}
+          onUnauthorized={handleUnauthorized}
+          highlightEventId={highlightCalendarEventId}
+          onHighlightHandled={() => setHighlightCalendarEventId(null)}
         />
       );
     }
@@ -1236,20 +2744,97 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           friends={hubsFriends}
           loading={hubsLoading}
           error={hubsError}
+          joiningChannelId={joiningChannelId}
           onRetry={() => {
             void loadHubsData();
           }}
-          onAcceptInvite={async (channelId) => {
-            const result = await acceptHubInvite(channelId);
+          onAcceptInvite={async (inviteId) => {
+            const result = await acceptHubInviteById(inviteId);
             if (result.ok) {
               void loadHubsData();
-              showActionMessage('Invite accepted.');
+              void refreshConversations();
+              toast.success('Hub invite accepted.');
+            } else if (handleUnauthorized(result.status)) {
+              return;
             } else {
               setHubsError(result.error);
+              toast.error(result.error);
             }
           }}
-          onOpenChannel={(_channelId) => {
-            showActionMessage('Open channel coming soon.');
+          onDeclineInvite={async (inviteId) => {
+            const result = await declineHubInvite(inviteId);
+            if (result.ok) {
+              void loadHubsData();
+              toast.success('Hub invite declined.');
+            } else if (handleUnauthorized(result.status)) {
+              return;
+            } else {
+              setHubsError(result.error);
+              toast.error(result.error);
+            }
+          }}
+          onJoinChannel={async (channelId) => {
+            setJoiningChannelId(channelId);
+            setHubsError('');
+
+            const result = await acceptHubInvite(channelId);
+
+            setJoiningChannelId(null);
+
+            if (result.ok) {
+              void loadHubsData();
+              void refreshConversations();
+              toast.success('Joined hub successfully.');
+              handleSelectConversation(channelId);
+              setMainView('chat');
+              return;
+            }
+
+            if (handleUnauthorized(result.status)) {
+              return;
+            }
+
+            setHubsError(result.error);
+            toast.error(result.error);
+          }}
+          onOpenChannel={(channelId) => {
+            handleSelectConversation(channelId);
+            setMainView('chat');
+          }}
+        />
+      );
+    }
+
+    if (mainView === 'profile') {
+      return (
+        <ProfileSettingsView
+          user={user}
+          onLogout={onSessionExpired}
+          onUnauthorized={handleUnauthorized}
+          onUserUpdated={() => {
+            void getCurrentUser().then((result) => {
+              if (result.ok) {
+                setUser(result.data.user ?? result.data);
+              }
+            });
+          }}
+        />
+      );
+    }
+
+    if (mainView === 'organization') {
+      return (
+        <OrganizationView
+          user={user}
+          onUnauthorized={handleUnauthorized}
+          onLeftOrganization={() => {
+            setMainView('chat');
+            void getCurrentUser().then((result) => {
+              if (result.ok) {
+                setUser(result.data.user ?? result.data);
+              }
+            });
+            void loadData();
           }}
         />
       );
@@ -1259,6 +2844,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return (
         <ConversationThread
           conversation={selectedConversation}
+          hubDetails={selectedConversation.kind === 'hub' ? activeHubDetails : null}
+          conversationDetails={activeHubDetails}
+          pinnedMessageIds={pinnedMessageIds}
           conversations={conversations}
           messages={messages}
           draft={draft}
@@ -1266,19 +2854,22 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           error={threadError}
           draftError={draftError}
           typingLabel={typingLabel}
-          actionMessage={actionMessage}
           isSending={isSending}
           onDraftChange={handleDraftChange}
           onSend={(replyToMessageId) => {
             void handleSendMessage(replyToMessageId);
+          }}
+          onSendMedia={(item, kind, replyToId) => {
+            void handleSendMedia(item, kind, replyToId);
+          }}
+          onSendFile={(file, replyToId) => {
+            void handleSendFile(file, replyToId);
           }}
           onUnauthorized={handleUnauthorized}
           currentUserId={getUserId(user)}
           onAddReaction={(messageId, emoji) => {
             void handleAddReaction(messageId, emoji);
           }}
-          onReplyMessage={handleReplyMessage}
-          onReplyInThread={handleReplyInThread}
           onEditMessage={(messageId, content) => {
             void handleEditMessage(messageId, content);
           }}
@@ -1297,6 +2888,29 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           onUnsaveMessage={(messageId) => {
             void handleUnsaveMessage(messageId);
           }}
+          onVotePoll={(messageId, optionId) => {
+            void handleVotePoll(messageId, optionId);
+          }}
+          onConversationUpdated={() => {
+            void refreshConversations();
+            if (selectedId) {
+              void loadThread(selectedId);
+            }
+          }}
+          onTogglePin={(conversationId, isPinned) => {
+            void handleToggleConversationPin(conversationId, isPinned);
+          }}
+          onOpenCalendar={() => {
+            setMainView('calendar');
+            void loadCalendarData();
+          }}
+          onHubDeleted={() => {
+            setSelectedId(null);
+            void refreshConversations();
+          }}
+          focusMessageId={focusMessageId}
+          unreadAnchorMessageId={threadUnreadAnchorId}
+          onFocusMessageHandled={() => setFocusMessageId(null)}
         />
       );
     }
@@ -1311,16 +2925,30 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   return (
     <div className="flex h-full bg-app-chat-bg">
+      <OrganizationInviteModal
+        onUnauthorized={handleUnauthorized}
+        onInviteResolved={() => {
+          void loadData();
+          void getCurrentUser().then((result) => {
+            if (result.ok) {
+              setUser(result.data.user ?? result.data);
+            }
+          });
+        }}
+      />
       <NavRail
         unreadCount={unreadCount}
         user={user}
         activeView={mainView}
-        onNavigate={setMainView}
+        onNavigate={handleNavigate}
+        onLogout={onSessionExpired}
       />
 
       <ChatSidebar
-        workspaceName={workspaceName}
+        workspaceName={workspaceShortName}
         selfLabel={selfLabel}
+        openingTeammateId={openingTeammateId}
+        directChatMetadata={directChatMetadata}
         conversations={conversations}
         teammates={teammates}
         unreadCount={unreadCount}
@@ -1333,6 +2961,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         panelNotifications={panelNotifications}
         panelPendingFriends={panelPendingFriends}
         onSelect={handleSelectConversation}
+        onPrefetch={prefetchThread}
+        onTogglePin={(conversationId, isPinned) => {
+          void handleToggleConversationPin(conversationId, isPinned);
+        }}
+        pinningConversationId={pinningConversationId}
         onRetry={() => {
           void loadData();
         }}
@@ -1351,10 +2984,69 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         onMessageUser={(userId) => {
           void handleOpenDirectChat(userId);
         }}
+        onNavigate={handleNavigate}
+        onCreateHub={async (name, memberIds) => {
+          const result = await createHubChannel({ name, memberIds });
+
+          if (!result.ok) {
+            if (handleUnauthorized(result.status)) {
+              return { ok: false, error: result.error };
+            }
+
+            return { ok: false, error: result.error };
+          }
+
+          const conversationId = result.data.conversationId;
+
+          void loadHubsData();
+          void refreshConversations();
+          handleSelectConversation(conversationId);
+          setMainView('chat');
+          showActionMessage('Hub created successfully.');
+          return { ok: true };
+        }}
+        onCreateGroup={async (name, memberIds) => {
+          const result = await createGroupConversation(name, memberIds);
+
+          if (!result.ok) {
+            if (handleUnauthorized(result.status)) {
+              return { ok: false, error: result.error };
+            }
+
+            return { ok: false, error: result.error };
+          }
+
+          await refreshConversations();
+          handleSelectConversation(result.data.conversationId);
+          setMainView('chat');
+          showActionMessage('Group created successfully.');
+          return { ok: true };
+        }}
       />
 
       <main className="relative flex min-w-0 flex-1 flex-col">
-        {renderMainPanel()}
+        {mainView === 'chat' && notificationSettings ? (
+          <NotificationStatusBanner
+            settings={notificationSettings}
+            onOpenSettings={() => handleNavigate('profile')}
+          />
+        ) : null}
+        {mainView === 'chat' &&
+        isOrgAdmin &&
+        planComplianceRules.length > 0 &&
+        !planComplianceDismissed ? (
+          <PlanComplianceBanner
+            rules={planComplianceRules}
+            onDismiss={() => {
+              setPlanComplianceDismissed(true);
+              writePlanComplianceDismissed(true);
+            }}
+            onManagePlan={() => handleNavigate('organization')}
+          />
+        ) : null}
+        <div key={mainView} className="app-view-transition flex min-h-0 min-w-0 flex-1 flex-col">
+          {renderMainPanel()}
+        </div>
       </main>
     </div>
   );

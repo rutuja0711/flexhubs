@@ -1,14 +1,46 @@
 import { useEffect, useState } from 'react';
 import ChatPage from './ChatPage';
 import LoginPage from './LoginPage';
-import { getCurrentUser, getStoredToken } from './authApi';
+import { clearAuth, getCurrentUser, getStoredToken, performLogout } from './authApi';
 
-type Screen = 'checking' | 'login' | 'chat';
+import RegisterWorkspacePage from './RegisterWorkspacePage';
+import {
+  ForgotPasswordPage,
+  InviteRegisterPage,
+  RegisterPage,
+} from './AuthFlowPages';
+
+type Screen = 'checking' | 'login' | 'chat' | 'register' | 'signup' | 'forgot' | 'reset' | 'invite';
 
 function App() {
   const [screen, setScreen] = useState<Screen>('checking');
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotStep, setForgotStep] = useState<'email' | 'code' | 'password'>('email');
+  const [inviteToken, setInviteToken] = useState('');
 
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const emailParam = params.get('email') || hashParams.get('email');
+    const invite =
+      params.get('invite') ||
+      params.get('inviteToken') ||
+      hashParams.get('invite') ||
+      hashParams.get('inviteToken');
+
+    if (emailParam) {
+      setForgotEmail(emailParam);
+      setForgotStep('code');
+      setScreen('forgot');
+      return;
+    }
+
+    if (invite) {
+      setInviteToken(invite);
+      setScreen('invite');
+      return;
+    }
+
     const token = getStoredToken();
 
     if (!token) {
@@ -24,6 +56,7 @@ function App() {
       }
 
       if (!result.ok) {
+        clearAuth();
         setScreen('login');
         return;
       }
@@ -45,11 +78,72 @@ function App() {
   }
 
   if (screen === 'login') {
-    return <LoginPage onLoggedIn={() => setScreen('chat')} />;
+    return (
+      <LoginPage
+        onLoggedIn={() => setScreen('chat')}
+        onRegister={() => setScreen('signup')}
+        onCreateWorkspace={() => setScreen('register')}
+        onForgotPassword={() => setScreen('forgot')}
+      />
+    );
+  }
+
+  if (screen === 'signup') {
+    return (
+      <RegisterPage
+        onBack={() => setScreen('login')}
+        onCreateWorkspace={() => setScreen('register')}
+      />
+    );
+  }
+
+  if (screen === 'forgot') {
+    return (
+      <ForgotPasswordPage
+        initialEmail={forgotEmail}
+        initialStep={forgotStep}
+        onBack={() => setScreen('login')}
+        onDone={() => setScreen('login')}
+      />
+    );
+  }
+
+  if (screen === 'reset') {
+    return (
+      <ForgotPasswordPage
+        onBack={() => setScreen('login')}
+        onDone={() => setScreen('login')}
+      />
+    );
+  }
+
+  if (screen === 'invite') {
+    return (
+      <InviteRegisterPage
+        inviteToken={inviteToken}
+        onBack={() => setScreen('login')}
+        onRegistered={() => setScreen('chat')}
+      />
+    );
+  }
+
+  if (screen === 'register') {
+    return (
+      <RegisterWorkspacePage 
+        onBackToLogin={() => setScreen('login')}
+        onWorkspaceCreated={() => setScreen('chat')}
+      />
+    );
   }
 
   return (
-    <ChatPage onSessionExpired={() => setScreen('login')} />
+    <ChatPage
+      onSessionExpired={() => {
+        void performLogout().finally(() => {
+          setScreen('login');
+        });
+      }}
+    />
   );
 }
 

@@ -1,3 +1,5 @@
+import { formatMessagePreview, normalizeMessage } from './messages';
+
 export type ConversationKind = 'direct' | 'hub';
 
 export type PresenceStatus = 'online' | 'away' | 'dnd' | 'offline';
@@ -7,6 +9,9 @@ export type ConversationItem = {
   kind: ConversationKind;
   title: string;
   subtitle: string;
+  messagePreview: string;
+  draftPreview: string | null;
+  isDraftPreview: boolean;
   timestamp: string;
   avatarUrl: string | null;
   avatarInitials: string;
@@ -14,6 +19,7 @@ export type ConversationItem = {
   isSelf: boolean;
   status: PresenceStatus | null;
   unreadCount: number;
+  peerUserId: string | null;
 };
 
 export type ConversationsPayload = {
@@ -23,6 +29,57 @@ export type ConversationsPayload = {
 export type UnreadCountPayload = {
   count: number;
 };
+
+const BROKEN_DIRECT_TITLES = new Set([
+  'your account',
+  'conversation',
+  'direct message',
+  'unknown user',
+  'unknown',
+]);
+
+export function isBrokenDirectTitle(
+  title: string,
+  selfDisplayName?: string | null,
+): boolean {
+  const normalized = title.trim().toLowerCase();
+
+  if (!normalized) {
+    return true;
+  }
+
+  if (BROKEN_DIRECT_TITLES.has(normalized)) {
+    return true;
+  }
+
+  const normalizedSelf = selfDisplayName?.trim().toLowerCase();
+
+  if (normalizedSelf && normalized === normalizedSelf) {
+    return true;
+  }
+
+  return normalized.includes('yourself');
+}
+
+export function sanitizeDirectDisplayName(
+  title: string,
+  selfDisplayName?: string | null,
+  fallback = 'Direct message',
+): string {
+  const trimmed = title.trim();
+
+  if (!isBrokenDirectTitle(trimmed, selfDisplayName)) {
+    return trimmed;
+  }
+
+  const trimmedFallback = fallback.trim();
+
+  if (trimmedFallback && !isBrokenDirectTitle(trimmedFallback, selfDisplayName)) {
+    return trimmedFallback;
+  }
+
+  return 'Direct message';
+}
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
@@ -54,6 +111,16 @@ function inferKind(record: Record<string, unknown>): ConversationKind {
   const type = String(record.type ?? record.kind ?? record.conversationType ?? '').toUpperCase();
 
   if (
+    type === 'DIRECT' ||
+    type === 'DM' ||
+    type === 'PRIVATE' ||
+    type === 'ONE_TO_ONE' ||
+    type === 'ONE-TO-ONE'
+  ) {
+    return 'direct';
+  }
+
+  if (
     type.includes('HUB') ||
     type.includes('CHANNEL') ||
     type.includes('GROUP') ||
@@ -65,6 +132,27 @@ function inferKind(record: Record<string, unknown>): ConversationKind {
   }
 
   return 'direct';
+}
+
+function readConversationUnread(record: Record<string, unknown>): number {
+  const direct =
+    readNumber(record.unreadCount) ??
+    readNumber(record.unread) ??
+    readNumber(record.unreadMessagesCount) ??
+    readNumber(record.unreadMessages);
+
+  if (direct !== null) {
+    return direct;
+  }
+
+  const membership =
+    asRecord(record.membership) ?? asRecord(record.member) ?? asRecord(record.currentMember);
+
+  if (membership) {
+    return readNumber(membership.unreadCount) ?? readNumber(membership.unread) ?? 0;
+  }
+
+  return 0;
 }
 
 function inferPresence(record: Record<string, unknown>): PresenceStatus | null {
@@ -89,23 +177,207 @@ function inferPresence(record: Record<string, unknown>): PresenceStatus | null {
   return null;
 }
 
+export function mapApiPresenceToStatus(value: string | null | undefined): PresenceStatus | null {
+  if (!value) {
+    return null;
+  }
+
+  return inferPresence({ status: value });
+}
+
+function readDirectPeerUserId(
+  record: Record<string, unknown>,
+  viewerUserId: string | null = readViewerUserId(record),
+): string | null {
+  if (inferKind(record) !== 'direct') {
+    return null;
+  }
+
+  const memberIds: string[] = [];
+
+  for (const key of ['members', 'participants', 'users']) {
+    const value = record[key];
+
+    if (!Array.isArray(value)) {
+      continue;
+    }
+
+    for (const entry of value) {
+      const member = asRecord(entry);
+      if (!member) {
+        continue;
+      }
+
+      const user = asRecord(member.user) ?? member;
+      const userId =
+        readString(user.id) ??
+        readString(member.userId) ??
+        readString(member.id);
+
+      if (userId) {
+        memberIds.push(userId);
+      }
+    }
+  }
+
+  const viewerId = viewerUserId;
+
+  if (viewerId && memberIds.length > 0) {
+    const peerId = memberIds.find((id) => id !== viewerId);
+
+    if (peerId) {
+      return peerId;
+    }
+  }
+
+  if (memberIds.length === 2) {
+    return memberIds.find((id) => id !== viewerId) ?? memberIds[1];
+  }
+
+  for (const key of ['otherUser', 'peer', 'recipient', 'participant', 'partner', 'dmUser'] as const) {
+    const nestedUser = asRecord(record[key]);
+
+    if (!nestedUser) {
+      continue;
+    }
+
+    const nestedId =
+      readString(nestedUser.id) ??
+      readString(nestedUser.userId) ??
+      readString(nestedUser._id);
+
+    if (nestedId && nestedId !== viewerId) {
+      return nestedId;
+    }
+  }
+
+  const directId =
+    readString(record.otherUserId) ??
+    readString(record.peerUserId) ??
+    readString(record.recipientId) ??
+    readString(record.targetUserId) ??
+    readString(record.dmUserId) ??
+    readString(record.partnerId) ??
+    readString(record.participantId);
+
+  if (directId && directId !== viewerId) {
+    return directId;
+  }
+
+  const fallbackUser = asRecord(record.user);
+  const fallbackUserId =
+    readString(fallbackUser?.id) ??
+    readString(fallbackUser?.userId) ??
+    readString(fallbackUser?._id);
+
+  if (fallbackUserId && fallbackUserId !== viewerId && !memberIds.includes(fallbackUserId)) {
+    return fallbackUserId;
+  }
+
+  return null;
+}
+
+function readDraftPreview(record: Record<string, unknown>): string | null {
+  const direct =
+    readString(record.draftPreview) ??
+    readString(record.draft_preview) ??
+    readString(record.messageDraft) ??
+    readString(record.messageDraftPreview) ??
+    readString(record.draftContent);
+
+  if (direct) {
+    return direct;
+  }
+
+  const draft = asRecord(record.draft) ?? asRecord(record.messageDraft);
+  return draft
+    ? readString(draft.content) ?? readString(draft.text) ?? readString(draft.body)
+    : null;
+}
+
+function buildConversationSubtitle(messagePreview: string, draftPreview: string | null): {
+  subtitle: string;
+  isDraftPreview: boolean;
+} {
+  const trimmedDraft = draftPreview?.trim();
+  if (trimmedDraft) {
+    return {
+      subtitle: `Draft: ${trimmedDraft}`,
+      isDraftPreview: true,
+    };
+  }
+
+  return {
+    subtitle: messagePreview,
+    isDraftPreview: false,
+  };
+}
+
+export function applyDraftPreviewToConversation(
+  conversation: ConversationItem,
+  draftPreview: string | null,
+): ConversationItem {
+  const { subtitle, isDraftPreview } = buildConversationSubtitle(
+    conversation.messagePreview,
+    draftPreview,
+  );
+
+  return {
+    ...conversation,
+    draftPreview: draftPreview?.trim() || null,
+    subtitle,
+    isDraftPreview,
+  };
+}
+
+export function seedDraftPreviewCache(
+  conversations: ConversationItem[],
+  cache: Record<string, string>,
+): void {
+  for (const conversation of conversations) {
+    const preview = conversation.draftPreview?.trim();
+
+    if (preview) {
+      cache[conversation.id] = preview;
+    }
+  }
+}
+
+export function mergeConversationDraftPreviews(
+  conversations: ConversationItem[],
+  draftPreviews: Readonly<Record<string, string | null | undefined>>,
+  activeConversationId?: string | null,
+  activeDraft?: string,
+): ConversationItem[] {
+  return conversations.map((conversation) => {
+    if (activeConversationId && conversation.id === activeConversationId) {
+      return applyDraftPreviewToConversation(conversation, activeDraft?.trim() || null);
+    }
+
+    const cached = draftPreviews[conversation.id];
+
+    if (cached !== undefined) {
+      return applyDraftPreviewToConversation(conversation, cached?.trim() || null);
+    }
+
+    return conversation;
+  });
+}
+
 function readLastMessagePreview(record: Record<string, unknown>): string {
   const lastMessage = asRecord(record.lastMessage) ?? asRecord(record.latestMessage);
 
   if (lastMessage) {
-    const content =
-      readString(lastMessage.content) ??
-      readString(lastMessage.text) ??
-      readString(lastMessage.body) ??
-      readString(lastMessage.preview);
+    const normalized = normalizeMessage(lastMessage, 0);
+    const preview = formatMessagePreview(normalized);
 
-    if (content) {
+    if (preview) {
       const sender =
         readString(asRecord(lastMessage.sender)?.name) ??
         readString(asRecord(lastMessage.user)?.name) ??
         readString(lastMessage.senderName);
 
-      return sender ? `${sender}: ${content}` : content;
+      return sender ? `${sender}: ${preview}` : preview;
     }
   }
 
@@ -117,39 +389,104 @@ function readLastMessagePreview(record: Record<string, unknown>): string {
   );
 }
 
-function readConversationTitle(record: Record<string, unknown>): string {
+function readMemberPeople(record: Record<string, unknown>): Record<string, unknown>[] {
+  const participants = Array.isArray(record.participants) ? record.participants : [];
+  const members = Array.isArray(record.members) ? record.members : [];
+  const users = Array.isArray(record.users) ? record.users : [];
+
+  return [...participants, ...members, ...users]
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => item !== null);
+}
+
+function readViewerUserId(record: Record<string, unknown>): string | null {
+  return (
+    readString(record.viewerId) ??
+    readString(record.currentUserId) ??
+    readString(asRecord(record.membership)?.userId)
+  );
+}
+
+function readDirectConversationPeerTitle(
+  record: Record<string, unknown>,
+  viewerId: string | null = readViewerUserId(record),
+): string | null {
+  for (const member of readMemberPeople(record)) {
+    const user = asRecord(member.user) ?? member;
+    const memberId =
+      readString(user.id) ??
+      readString(member.userId) ??
+      readString(member.id);
+
+    if (viewerId && memberId === viewerId) {
+      continue;
+    }
+
+    const name =
+      readString(user.username) ??
+      readString(user.name) ??
+      readString(user.displayName) ??
+      readString(member.username) ??
+      readString(member.name) ??
+      readString(member.displayName);
+
+    if (name) {
+      return name;
+    }
+  }
+
+  return null;
+}
+
+function readConversationTitle(
+  record: Record<string, unknown>,
+  viewerUserId: string | null = readViewerUserId(record),
+): string {
+  if (inferKind(record) === 'direct') {
+    const peerTitle = readDirectConversationPeerTitle(record, viewerUserId);
+
+    if (peerTitle && !isBrokenDirectTitle(peerTitle)) {
+      return peerTitle;
+    }
+  }
+
   const directName =
     readString(record.name) ??
     readString(record.title) ??
     readString(record.displayName);
 
-  if (directName) {
+  if (directName && !isBrokenDirectTitle(directName)) {
     return directName;
   }
 
-  const participants = Array.isArray(record.participants) ? record.participants : [];
-  const members = Array.isArray(record.members) ? record.members : [];
-  const people = [...participants, ...members];
-  const member = people.map(asRecord).find(Boolean);
-  const memberRecord = member ?? null;
+  const member = readMemberPeople(record)[0];
 
-  if (memberRecord) {
-    return (
-      readString(memberRecord.name) ??
-      readString(memberRecord.displayName) ??
-      readString(memberRecord.username) ??
-      'Conversation'
-    );
+  if (member) {
+    const user = asRecord(member.user) ?? member;
+
+    const memberName =
+      readString(user.username) ??
+      readString(user.name) ??
+      readString(user.displayName) ??
+      readString(member.username) ??
+      readString(member.name) ??
+      readString(member.displayName);
+
+    if (memberName && !isBrokenDirectTitle(memberName)) {
+      return memberName;
+    }
   }
 
-  return 'Conversation';
+  return inferKind(record) === 'direct' ? 'Direct message' : 'Conversation';
 }
 
 function readConversationId(record: Record<string, unknown>, index: number): string {
+  const nested = asRecord(record.conversation);
   const id =
     readString(record.id) ??
     readString(record.conversationId) ??
-    readString(record._id);
+    readString(record._id) ??
+    readString(nested?.id);
 
   return id ?? `conversation-${index}`;
 }
@@ -210,41 +547,538 @@ export function extractConversationRecords(payload: unknown): Record<string, unk
     return [];
   }
 
-  for (const key of ['conversations', 'data', 'items', 'results']) {
+  const collected: Record<string, unknown>[] = [];
+
+  for (const key of [
+    'conversations',
+    'direct',
+    'directMessages',
+    'hubs',
+    'channels',
+    'groups',
+    'items',
+    'results',
+  ]) {
     const value = record[key];
 
     if (Array.isArray(value)) {
-      return value.map(asRecord).filter((item): item is Record<string, unknown> => item !== null);
+      collected.push(
+        ...value.map(asRecord).filter((item): item is Record<string, unknown> => item !== null),
+      );
+    }
+  }
+
+  if (collected.length > 0) {
+    return collected;
+  }
+
+  const nestedData = asRecord(record.data);
+
+  if (nestedData) {
+    const nested = extractConversationRecords(nestedData);
+
+    if (nested.length > 0) {
+      return nested;
     }
   }
 
   return [];
 }
 
+export function readDirectPeerDisplayName(
+  record: Record<string, unknown>,
+  viewerUserId?: string | null,
+): string | null {
+  const viewerId = viewerUserId ?? readViewerUserId(record);
+  const peerTitle = readDirectConversationPeerTitle(record, viewerId);
+
+  if (peerTitle && !isBrokenDirectTitle(peerTitle)) {
+    return peerTitle;
+  }
+
+  return null;
+}
+
+function readConversationPinned(record: Record<string, unknown>): boolean {
+  if (
+    record.isPinned === true ||
+    record.pinned === true ||
+    record.favorite === true ||
+    record.isFavorite === true ||
+    record.isFavorited === true
+  ) {
+    return true;
+  }
+
+  if (readString(record.favoritedAt)) {
+    return true;
+  }
+
+  const membership =
+    asRecord(record.membership) ?? asRecord(record.member) ?? asRecord(record.currentMember);
+
+  if (
+    membership &&
+    (membership.isFavorite === true ||
+      membership.favorite === true ||
+      membership.isFavorited === true ||
+      readString(membership.favoritedAt))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+function flattenConversationRecord(record: Record<string, unknown>): Record<string, unknown> {
+  const nested = asRecord(record.conversation);
+
+  if (!nested) {
+    return record;
+  }
+
+  const merged: Record<string, unknown> = { ...nested };
+
+  for (const key of [
+    'isFavorite',
+    'favorite',
+    'favoritedAt',
+    'isFavorited',
+    'isPinned',
+    'pinned',
+    'unreadCount',
+    'unread',
+    'lastMessage',
+    'latestMessage',
+    'draft',
+    'notificationSettings',
+    'membership',
+    'member',
+    'currentMember',
+  ] as const) {
+    if (record[key] !== undefined && record[key] !== null) {
+      merged[key] = record[key];
+    }
+  }
+
+  merged.id = readString(record.id) ?? readString(nested.id) ?? readString(record.conversationId) ?? merged.id;
+
+  return merged;
+}
+
 export function normalizeConversation(
   record: Record<string, unknown>,
   index: number,
+  viewerUserId?: string | null,
 ): ConversationItem {
-  const title = readConversationTitle(record);
-  const avatar = readAvatar(record);
+  const source = flattenConversationRecord(record);
+  const viewerId = viewerUserId ?? readViewerUserId(source);
+  const title = readConversationTitle(source, viewerId);
+  const avatar = readAvatar(source);
+  const messagePreview = readLastMessagePreview(source);
+  const draftPreview = readDraftPreview(source);
+  const { subtitle, isDraftPreview } = buildConversationSubtitle(messagePreview, draftPreview);
 
   return {
-    id: readConversationId(record, index),
-    kind: inferKind(record),
+    id: readConversationId(source, index),
+    kind: inferKind(source),
     title,
-    subtitle: readLastMessagePreview(record),
-    timestamp: readTimestamp(record),
+    subtitle,
+    messagePreview,
+    draftPreview: draftPreview?.trim() || null,
+    isDraftPreview,
+    timestamp: readTimestamp(source),
     avatarUrl: avatar.url,
     avatarInitials: avatar.initials,
-    isPinned: record.isPinned === true || record.pinned === true,
-    isSelf: record.isSelf === true || record.isYourself === true || title.toLowerCase().includes('yourself'),
-    status: inferPresence(record),
-    unreadCount: readNumber(record.unreadCount) ?? readNumber(record.unread) ?? 0,
+    isPinned: readConversationPinned(source),
+    isSelf: source.isSelf === true || source.isYourself === true || title.toLowerCase().includes('yourself'),
+    status: inferPresence(source),
+    unreadCount: readConversationUnread(source),
+    peerUserId: readDirectPeerUserId(source, viewerId),
   };
 }
 
-export function normalizeConversations(payload: unknown): ConversationItem[] {
-  return extractConversationRecords(payload).map(normalizeConversation);
+export function normalizeConversations(
+  payload: unknown,
+  viewerUserId?: string | null,
+): ConversationItem[] {
+  return dedupeDirectConversations(
+    extractConversationRecords(payload).map((record, index) =>
+      normalizeConversation(record, index, viewerUserId),
+    ),
+  );
+}
+
+export function mergeConversationLists(
+  existing: ConversationItem[],
+  incoming: ConversationItem[],
+): ConversationItem[] {
+  const byId = new Map<string, ConversationItem>();
+
+  for (const conversation of existing) {
+    byId.set(conversation.id, conversation);
+  }
+
+  for (const conversation of incoming) {
+    const previous = byId.get(conversation.id);
+    byId.set(conversation.id, {
+      ...previous,
+      ...conversation,
+      isPinned: conversation.isPinned,
+    });
+  }
+
+  return [...byId.values()];
+}
+
+function conversationRecency(conversation: ConversationItem): number {
+  const time = Date.parse(conversation.timestamp);
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function directDedupeKey(conversation: ConversationItem): string | null {
+  if (conversation.kind !== 'direct' || conversation.isSelf || !conversation.peerUserId) {
+    return null;
+  }
+
+  return `user:${conversation.peerUserId.toLowerCase()}`;
+}
+
+export function dedupeDirectConversations(conversations: ConversationItem[]): ConversationItem[] {
+  const byId = new Map<string, ConversationItem>();
+
+  for (const conversation of conversations) {
+    byId.set(conversation.id, conversation);
+  }
+
+  const byPeer = new Map<string, ConversationItem>();
+  const passthrough: ConversationItem[] = [];
+
+  for (const conversation of byId.values()) {
+    const key = directDedupeKey(conversation);
+
+    if (!key) {
+      passthrough.push(conversation);
+      continue;
+    }
+
+    const existing = byPeer.get(key);
+
+    if (!existing) {
+      byPeer.set(key, conversation);
+      continue;
+    }
+
+    const keepExisting = conversationRecency(existing) >= conversationRecency(conversation);
+    const picked = keepExisting ? existing : conversation;
+    byPeer.set(key, {
+      ...picked,
+      isPinned: existing.isPinned || conversation.isPinned,
+    });
+  }
+
+  const brokenTitleByKey = new Map<string, ConversationItem>();
+  const finalPassthrough: ConversationItem[] = [];
+
+  for (const conversation of passthrough) {
+    if (
+      conversation.kind !== 'direct' ||
+      conversation.isSelf ||
+      conversation.peerUserId ||
+      !isBrokenDirectTitle(conversation.title)
+    ) {
+      finalPassthrough.push(conversation);
+      continue;
+    }
+
+    const key = conversation.title.trim().toLowerCase();
+    const existing = brokenTitleByKey.get(key);
+
+    if (!existing || conversationRecency(conversation) > conversationRecency(existing)) {
+      brokenTitleByKey.set(key, conversation);
+    }
+  }
+
+  return [...finalPassthrough, ...brokenTitleByKey.values(), ...byPeer.values()];
+}
+
+export function repairConversationPeerIds(
+  conversations: ConversationItem[],
+  currentUserId: string | null,
+): ConversationItem[] {
+  if (!currentUserId) {
+    return conversations;
+  }
+
+  return conversations.map((conversation) => {
+    if (
+      conversation.kind !== 'direct' ||
+      conversation.isSelf ||
+      !conversation.peerUserId ||
+      conversation.peerUserId !== currentUserId
+    ) {
+      return conversation;
+    }
+
+    return {
+      ...conversation,
+      peerUserId: null,
+    };
+  });
+}
+
+export function findDirectConversationForUser(
+  conversations: ConversationItem[],
+  userId: string,
+): ConversationItem | null {
+  const normalizedId = userId.toLowerCase();
+
+  const matches = conversations.filter(
+    (conversation) =>
+      conversation.kind === 'direct' &&
+      !conversation.isSelf &&
+      conversation.peerUserId?.toLowerCase() === normalizedId,
+  );
+
+  if (matches.length === 0) {
+    return null;
+  }
+
+  return [...matches].sort((left, right) => conversationRecency(right) - conversationRecency(left))[0];
+}
+
+export type DirectChatMetadata = {
+  peerUserId: string;
+  displayName: string;
+};
+
+export function applyStoredDirectChatMetadata(
+  conversations: ConversationItem[],
+  metadataByConversationId: Readonly<Record<string, DirectChatMetadata>>,
+  selfDisplayName?: string | null,
+): ConversationItem[] {
+  return conversations.map((conversation) => {
+    const stored = metadataByConversationId[conversation.id];
+
+    if (!stored || conversation.kind !== 'direct' || conversation.isSelf) {
+      return conversation;
+    }
+
+    if (isBrokenDirectTitle(stored.displayName, selfDisplayName)) {
+      return conversation;
+    }
+
+    return patchDirectConversationMetadata(
+      conversation,
+      stored.peerUserId,
+      stored.displayName,
+      selfDisplayName,
+    );
+  });
+}
+
+export function findConversationForPeerUserId(
+  conversations: ConversationItem[],
+  userId: string,
+  metadataByConversationId: Readonly<Record<string, DirectChatMetadata>> = {},
+): ConversationItem | null {
+  const byPeer = findDirectConversationForUser(conversations, userId);
+
+  if (byPeer) {
+    return byPeer;
+  }
+
+  for (const conversation of conversations) {
+    if (conversation.kind !== 'direct' || conversation.isSelf) {
+      continue;
+    }
+
+    const stored = metadataByConversationId[conversation.id];
+
+    if (stored?.peerUserId === userId) {
+      return patchDirectConversationMetadata(conversation, stored.peerUserId, stored.displayName);
+    }
+  }
+
+  return null;
+}
+
+export function teammateHasDirectChat(
+  conversations: ConversationItem[],
+  teammate: { id: string; name: string; username?: string },
+  metadataByConversationId: Readonly<Record<string, DirectChatMetadata>> = {},
+): boolean {
+  return Boolean(findConversationForPeerUserId(conversations, teammate.id, metadataByConversationId));
+}
+
+export function findDirectConversationForTeammate(
+  conversations: ConversationItem[],
+  teammate: { id: string; name: string; username?: string },
+): ConversationItem | null {
+  return findDirectConversationForUser(conversations, teammate.id);
+}
+
+export function filterTeammatesWithoutDirectChat<T extends { id: string; name: string; username?: string }>(
+  teammates: T[],
+  conversations: ConversationItem[],
+  metadataByConversationId: Readonly<Record<string, DirectChatMetadata>> = {},
+): T[] {
+  return teammates.filter(
+    (teammate) => !teammateHasDirectChat(conversations, teammate, metadataByConversationId),
+  );
+}
+
+export function patchDirectConversationMetadata(
+  conversation: ConversationItem,
+  peerUserId: string,
+  title: string,
+  selfDisplayName?: string | null,
+): ConversationItem {
+  const resolvedTitle = sanitizeDirectDisplayName(title, selfDisplayName, conversation.title);
+
+  return {
+    ...conversation,
+    kind: 'direct',
+    peerUserId,
+    title: resolvedTitle,
+    avatarInitials: initialsFromName(resolvedTitle),
+  };
+}
+
+export function reconcileDirectConversations(
+  conversations: ConversationItem[],
+  currentUserId: string | null,
+  currentUserDisplayName: string,
+  teammatesById: ReadonlyMap<string, { name: string; username?: string }>,
+): ConversationItem[] {
+  const normalizedSelfName = currentUserDisplayName.trim().toLowerCase();
+
+  return conversations.map((conversation) => {
+    if (conversation.kind !== 'direct' || conversation.isSelf) {
+      return conversation;
+    }
+
+    let peerUserId =
+      conversation.peerUserId && conversation.peerUserId !== currentUserId
+        ? conversation.peerUserId
+        : null;
+
+    if (!peerUserId) {
+      for (const [teammateId, teammate] of teammatesById.entries()) {
+        if (teammateId === currentUserId) {
+          continue;
+        }
+
+        const teammateName = teammate.name.trim().toLowerCase();
+        const teammateUsername = teammate.username?.trim().toLowerCase() ?? '';
+        const title = conversation.title.trim().toLowerCase();
+
+        if (
+          (teammateName && title === teammateName) ||
+          (teammateUsername && title === teammateUsername)
+        ) {
+          peerUserId = teammateId;
+          break;
+        }
+      }
+    }
+
+    if (peerUserId) {
+      const teammate = teammatesById.get(peerUserId);
+      const teammateName = teammate?.name.trim() || teammate?.username?.trim() || '';
+      const displayName =
+        teammateName && !isBrokenDirectTitle(teammateName, currentUserDisplayName)
+          ? teammateName
+          : conversation.title;
+
+      if (
+        !isBrokenDirectTitle(displayName, currentUserDisplayName) &&
+        (conversation.peerUserId !== peerUserId ||
+          isBrokenDirectTitle(conversation.title, currentUserDisplayName) ||
+          conversation.title.trim().toLowerCase() === normalizedSelfName)
+      ) {
+        return patchDirectConversationMetadata(
+          conversation,
+          peerUserId,
+          displayName,
+          currentUserDisplayName,
+        );
+      }
+
+      if (conversation.peerUserId !== peerUserId) {
+        return { ...conversation, peerUserId };
+      }
+    }
+
+    if (isBrokenDirectTitle(conversation.title, currentUserDisplayName)) {
+      return {
+        ...conversation,
+        peerUserId: peerUserId ?? conversation.peerUserId,
+        title: 'Direct message',
+      };
+    }
+
+    if (normalizedSelfName && conversation.title.trim().toLowerCase() === normalizedSelfName) {
+      return {
+        ...conversation,
+        peerUserId: null,
+        title: 'Direct message',
+      };
+    }
+
+    return conversation;
+  });
+}
+
+export function dropBrokenDirectConversations(
+  conversations: ConversationItem[],
+  currentUserId: string | null,
+  currentUserDisplayName: string,
+): ConversationItem[] {
+  const normalizedSelfName = currentUserDisplayName.trim().toLowerCase();
+
+  return conversations.filter((conversation) => {
+    if (conversation.kind !== 'direct' || conversation.isSelf) {
+      return true;
+    }
+
+    if (conversation.peerUserId && conversation.peerUserId !== currentUserId) {
+      return true;
+    }
+
+    if (!normalizedSelfName) {
+      return !isBrokenDirectTitle(conversation.title, currentUserDisplayName);
+    }
+
+    return (
+      conversation.title.trim().toLowerCase() !== normalizedSelfName &&
+      !isBrokenDirectTitle(conversation.title, currentUserDisplayName)
+    );
+  });
+}
+
+export function buildPlaceholderDirectConversation(
+  conversationId: string,
+  peerUserId: string,
+  title: string,
+): ConversationItem {
+  return {
+    id: conversationId,
+    kind: 'direct',
+    title,
+    subtitle: '',
+    messagePreview: '',
+    draftPreview: null,
+    isDraftPreview: false,
+    timestamp: new Date().toISOString(),
+    avatarUrl: null,
+    avatarInitials: initialsFromName(title),
+    isPinned: false,
+    isSelf: false,
+    status: null,
+    unreadCount: 0,
+    peerUserId,
+  };
 }
 
 export function normalizeUnreadCount(payload: unknown): number {
@@ -258,10 +1092,14 @@ export function normalizeUnreadCount(payload: unknown): number {
     return 0;
   }
 
+  const nested = asRecord(record.data);
+
   return (
     readNumber(record.count) ??
     readNumber(record.unreadCount) ??
+    readNumber(record.unread) ??
     readNumber(record.total) ??
+    (nested ? readNumber(nested.count) ?? readNumber(nested.unreadCount) ?? readNumber(nested.unread) : null) ??
     0
   );
 }

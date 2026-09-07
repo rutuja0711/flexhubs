@@ -9,7 +9,10 @@
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",
-    "make": "electron-forge make"
+    "make": "electron-forge make",
+    "make:mac": "electron-forge make --platform=darwin",
+    "make:win": "electron-forge make --platform=win32",
+    "package:win": "electron-forge package --platform=win32"
   },
   "license": "MIT",
   "devDependencies": {

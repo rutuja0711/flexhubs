@@ -29,6 +29,16 @@ export function getUserId(user: unknown): string | null {
   return readString(record.id) ?? readString(record.userId);
 }
 
+export function getUserUsername(user: unknown): string | null {
+  const record = asRecord(user);
+
+  if (!record) {
+    return null;
+  }
+
+  return readString(record.username) ?? readString(record.handle);
+}
+
 export function getUserDisplayName(user: unknown): string {
   const record = asRecord(user);
 
@@ -108,4 +118,23 @@ export function getUserInitials(user: unknown): string {
   }
 
   return name.slice(0, 2).toUpperCase();
+}
+
+export function userInOrganization(user: unknown): boolean {
+  const record = asRecord(user);
+
+  if (!record) {
+    return false;
+  }
+
+  if (record.inOrganization === true) {
+    return true;
+  }
+
+  if (readString(record.organizationId)) {
+    return true;
+  }
+
+  const organization = asRecord(record.organization);
+  return Boolean(organization && (readString(organization.id) ?? readNameFromRecord(organization)));
 }

@@ -58,7 +58,7 @@ const pageClassName =
   'relative flex min-h-full items-center justify-center bg-app-bg-login p-6 dark:bg-[radial-gradient(ellipse_at_center,#1a1a1a_0%,#0d0d0d_70%)]';
 
 const cardClassName =
-  'w-full max-w-[420px] rounded-[20px] border border-app-border bg-app-surface p-8 shadow-app';
+  'w-full max-w-[520px] rounded-[20px] border border-app-border bg-app-surface p-8 shadow-app';
 
 const inputClassName =
   'w-full rounded-[10px] border border-app-border bg-app-surface-input px-3.5 py-3 text-app-text outline-none transition-colors placeholder:text-app-placeholder focus:border-app-border-strong';
@@ -66,7 +66,17 @@ const inputClassName =
 const submitClassName =
   'mt-1 w-full rounded-[10px] border-none bg-accent px-4 py-3.5 text-[0.9375rem] font-semibold text-white transition-colors hover:bg-accent-hover active:bg-accent-active disabled:cursor-not-allowed disabled:opacity-70';
 
-export default function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
+export default function LoginPage({
+  onLoggedIn,
+  onRegister,
+  onCreateWorkspace,
+  onForgotPassword,
+}: {
+  onLoggedIn: () => void;
+  onRegister?: () => void;
+  onCreateWorkspace?: () => void;
+  onForgotPassword?: () => void;
+}) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -199,21 +209,44 @@ export default function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
             ) : null}
           </div>
 
-          <a className="-mt-2 self-end text-sm font-medium text-accent transition-opacity hover:opacity-85" href="#">
+          <button
+            type="button"
+            className="-mt-2 self-end text-sm font-medium text-accent transition-opacity hover:opacity-85"
+            onClick={() => onForgotPassword?.()}
+          >
             Forgot password?
-          </a>
+          </button>
 
           <button type="submit" className={submitClassName} disabled={isSubmitting}>
             {isSubmitting ? 'Signing in...' : 'Sign in'}
           </button>
+          
+          {onRegister ? (
+            <div className="mt-4 flex flex-col items-center gap-2 border-t border-app-border/40 pt-4">
+              <p className="text-sm text-app-muted">Need an account?</p>
+              <button
+                type="button"
+                onClick={onRegister}
+                className="rounded-lg bg-app-elevated px-4 py-2 text-sm font-semibold text-app-text transition-colors hover:bg-app-chat-hover"
+              >
+                Join with invite or create workspace
+              </button>
+            </div>
+          ) : null}
         </form>
 
+        {onCreateWorkspace ? (
         <footer className="mt-7 border-t border-app-border pt-6 text-center text-sm text-app-muted">
           Starting a new company workspace?{' '}
-          <a className="font-medium text-accent transition-opacity hover:opacity-85" href="#">
+          <button
+            type="button"
+            className="font-medium text-accent underline transition-opacity hover:opacity-85"
+            onClick={onCreateWorkspace}
+          >
             Create a workspace
-          </a>
+          </button>
         </footer>
+        ) : null}
       </div>
     </div>
   );

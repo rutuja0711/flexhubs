@@ -1,5 +1,5 @@
-import { useState } from 'react';
 import type { FileItem } from '../../shared/features';
+import { formatConversationTimestamp } from './format';
 
 const FILTERS = ['all', 'images', 'docs', 'other'] as const;
 
@@ -12,7 +12,18 @@ type FilesViewProps = {
   activeFilter: FileFilter;
   onFilterChange: (filter: FileFilter) => void;
   onRetry: () => void;
+  onOpenInChat: (item: FileItem) => void;
 };
+
+function fileSubtitle(item: FileItem): string {
+  return [item.sharedBy, item.conversationName].filter(Boolean).join(' · ');
+}
+
+function isImageFile(item: FileItem): boolean {
+  const mime = item.mimeType?.toLowerCase() ?? '';
+  const name = item.name.toLowerCase();
+  return mime.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg)$/.test(name);
+}
 
 export function FilesView({
   items,
@@ -21,6 +32,7 @@ export function FilesView({
   activeFilter,
   onFilterChange,
   onRetry,
+  onOpenInChat,
 }: FilesViewProps) {
   return (
     <div className="flex h-full flex-col bg-app-chat-bg">
@@ -31,10 +43,10 @@ export function FilesView({
             <button
               key={filter}
               type="button"
-              className={`rounded-full border px-3 py-1.5 text-sm capitalize ${
+              className={`rounded-full px-3 py-1.5 text-sm capitalize ${
                 activeFilter === filter
-                  ? 'border-accent text-accent-soft'
-                  : 'border-app-border text-app-muted'
+                  ? 'bg-accent text-white'
+                  : 'border border-app-border text-app-muted hover:text-app-text'
               }`}
               onClick={() => onFilterChange(filter)}
             >
@@ -55,16 +67,50 @@ export function FilesView({
           </div>
         ) : null}
         {!loading && !error ? (
-          <div className="grid gap-3 md:grid-cols-2">
-            {items.map((item) => (
-              <div key={item.id} className="rounded-[12px] border border-app-border bg-app-surface p-4">
-                <p className="font-medium text-app-text">{item.name}</p>
-                <p className="text-sm text-app-muted">
-                  {item.sharedBy}
-                  {item.conversationName ? ` · ${item.conversationName}` : ''}
-                </p>
-              </div>
-            ))}
+          <div className="flex flex-col gap-2">
+            {items.map((item) => {
+              const canOpenInChat = Boolean(item.conversationId);
+              const subtitle = fileSubtitle(item);
+
+              return (
+                <div
+                  key={item.id}
+                  className={`flex items-center gap-3 rounded-[12px] border border-app-border bg-app-surface px-4 py-3 ${
+                    canOpenInChat ? 'transition-colors hover:bg-app-chat-hover' : ''
+                  }`}
+                >
+                  <button
+                    type="button"
+                    disabled={!canOpenInChat}
+                    className="flex min-w-0 flex-1 items-center gap-3 text-left disabled:cursor-default"
+                    onClick={() => {
+                      if (canOpenInChat) {
+                        onOpenInChat(item);
+                      }
+                    }}
+                  >
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-app-chat-panel text-app-muted">
+                      {item.url && isImageFile(item) ? (
+                        <img src={item.url} alt="" className="h-full w-full object-cover" />
+                      ) : (
+                        <span className="text-lg">📄</span>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate font-medium text-app-text">{item.name}</p>
+                      {subtitle ? (
+                        <p className="truncate text-sm text-app-muted">{subtitle}</p>
+                      ) : null}
+                    </div>
+                  </button>
+                  {item.createdAt ? (
+                    <p className="shrink-0 text-xs text-app-muted">
+                      {formatConversationTimestamp(item.createdAt)}
+                    </p>
+                  ) : null}
+                </div>
+              );
+            })}
             {items.length === 0 ? <p className="text-sm text-app-muted">No files in this filter.</p> : null}
           </div>
         ) : null}

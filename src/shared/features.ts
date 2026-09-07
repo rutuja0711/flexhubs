@@ -1,3 +1,5 @@
+import { normalizeCalendarEventsDetailed } from './extras';
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -41,6 +43,10 @@ export type SavedMessageItem = {
   content: string;
   source: string;
   createdAt: string;
+  savedAt: string;
+  messageAt: string;
+  conversationTitle: string;
+  senderName: string;
   conversationId: string | null;
   messageId: string | null;
 };
@@ -50,22 +56,46 @@ export type FileItem = {
   name: string;
   sharedBy: string;
   conversationName: string;
+  conversationId: string | null;
+  messageId: string | null;
   createdAt: string;
   filter: string;
+  url?: string;
+  mimeType?: string;
+};
+
+export type CalendarEventInvitee = {
+  userId?: string | null;
+  username: string;
+  name: string;
+  status: string;
 };
 
 export type CalendarEventItem = {
   id: string;
   title: string;
   startsAt: string;
+  createdAt?: string;
+  createdById?: string | null;
   description: string;
+  notes?: string;
+  status?: string | null;
+  myResponseStatus?: string | null;
+  sharedBy?: string;
+  invitees?: CalendarEventInvitee[];
+  isOwner?: boolean;
+  canRespond?: boolean;
+  canDelete?: boolean;
 };
 
 export type ChannelItem = {
   id: string;
+  slug: string;
   name: string;
   memberCount: number;
   description: string;
+  isMember: boolean;
+  pendingInviteId: string | null;
 };
 
 export type HubInviteItem = {
@@ -83,6 +113,51 @@ export type FriendItem = {
   status: string | null;
 };
 
+export type BlockedUserItem = {
+  id: string;
+  username: string;
+  email: string;
+  avatar: string | null;
+};
+
+export type FriendRelationship = {
+  isFriend: boolean;
+  sameOrganization: boolean;
+  canMessage: boolean;
+  requestSent: boolean;
+  requestReceived: boolean;
+  requestId: string | null;
+  isBlocked: boolean;
+};
+
+export type ChannelInviteItem = {
+  id: string;
+  userId: string;
+  email: string;
+  username: string;
+  createdAt: string;
+};
+
+export type CreateChannelInput = {
+  name: string;
+  slug?: string;
+  description?: string;
+  memberIds?: string[];
+};
+
+export type CreatedChannelResult = {
+  conversationId: string;
+  channel: ChannelItem;
+};
+
+export function slugifyChannelName(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 export function normalizeSavedMessages(payload: unknown): SavedMessageItem[] {
   return extractArray(payload, ['saved', 'items', 'messages', 'data'])
     .map(asRecord)
@@ -90,8 +165,16 @@ export function normalizeSavedMessages(payload: unknown): SavedMessageItem[] {
     .map((record, index) => {
       const message = asRecord(record.message);
       const sender = message ? asRecord(message.sender) : null;
-      const conversationTitle = readString(record.conversationTitle);
-      const senderName = sender ? readString(sender.username) ?? readString(sender.name) : null;
+      const conversationTitle =
+        readString(record.conversationTitle) ??
+        readString(asRecord(record.conversation)?.name) ??
+        readString(asRecord(record.conversation)?.title) ??
+        'Chat';
+      const senderName = sender
+        ? readString(sender.username) ??
+          readString(sender.name) ??
+          readString(sender.displayName)
+        : readString(record.senderName) ?? readString(record.senderUsername);
 
       let source = 'Unknown';
 
@@ -103,6 +186,12 @@ export function normalizeSavedMessages(payload: unknown): SavedMessageItem[] {
         source = senderName;
       }
 
+      const savedAt = readString(record.savedAt) ?? readString(record.createdAt) ?? '';
+      const messageAt =
+        (message ? readString(message.createdAt) ?? readString(message.sentAt) : null) ??
+        readString(record.messageAt) ??
+        '';
+
       return {
         id: readString(record.id) ?? `saved-${index}`,
         content:
@@ -112,7 +201,11 @@ export function normalizeSavedMessages(payload: unknown): SavedMessageItem[] {
           readString(record.preview) ??
           '',
         source,
-        createdAt: readString(record.savedAt) ?? readString(record.createdAt) ?? '',
+        createdAt: savedAt,
+        savedAt,
+        messageAt,
+        conversationTitle,
+        senderName: senderName ?? '',
         conversationId:
           readString(record.conversationId) ??
           (message ? readString(message.conversationId) : null),
@@ -125,37 +218,82 @@ export function normalizeFiles(payload: unknown): FileItem[] {
   return extractArray(payload, ['files', 'items', 'data'])
     .map(asRecord)
     .filter((item): item is Record<string, unknown> => item !== null)
-    .map((record, index) => ({
-      id: readString(record.id) ?? `file-${index}`,
-      name: readString(record.name) ?? readString(record.fileName) ?? 'File',
-      sharedBy:
+    .map((record, index) => {
+      const message = asRecord(record.message);
+      const conversation = asRecord(record.conversation);
+      const sender =
+        asRecord(record.sender) ??
+        asRecord(record.user) ??
+        asRecord(record.uploader) ??
+        (message ? asRecord(message.sender) : null);
+
+      const sharedBy =
         readString(record.sharedBy) ??
-        readString(asRecord(record.user)?.name) ??
-        'Unknown',
-      conversationName:
-        readString(record.conversationName) ??
-        readString(record.channelName) ??
-        readString(record.hubName) ??
-        '',
-      createdAt: readString(record.createdAt) ?? '',
-      filter: readString(record.filter) ?? readString(record.type) ?? 'all',
-    }));
+        readString(record.senderUsername) ??
+        readString(record.senderName) ??
+        readString(record.uploadedBy) ??
+        (sender
+          ? readString(sender.displayName) ??
+            readString(sender.name) ??
+            readString(sender.username)
+          : null) ??
+        '';
+
+      return {
+        id:
+          readString(record.id) ??
+          (message ? readString(message.id) : null) ??
+          `file-${index}`,
+        name: readString(record.fileName) ?? readString(record.name) ?? 'File',
+        sharedBy,
+        conversationName:
+          readString(record.conversationTitle) ??
+          readString(record.conversationName) ??
+          readString(conversation?.title) ??
+          readString(conversation?.name) ??
+          readString(record.channelName) ??
+          readString(record.hubName) ??
+          '',
+        conversationId:
+          readString(record.conversationId) ??
+          readString(conversation?.id) ??
+          (message ? readString(message.conversationId) : null),
+        messageId:
+          readString(record.messageId) ?? (message ? readString(message.id) : null),
+        createdAt: readString(record.createdAt) ?? readString(record.uploadedAt) ?? '',
+        filter: readString(record.filter) ?? readString(record.type) ?? 'all',
+        url:
+          readString(record.url) ??
+          readString(record.fileUrl) ??
+          readString(record.downloadUrl) ??
+          (message ? readString(message.fileUrl) : null) ??
+          undefined,
+        mimeType:
+          readString(record.mimeType) ??
+          readString(record.contentType) ??
+          (message ? readString(message.mimeType) : null) ??
+          undefined,
+      };
+    });
 }
 
 export function normalizeCalendarEvents(payload: unknown): CalendarEventItem[] {
-  return extractArray(payload, ['events', 'items', 'data'])
-    .map(asRecord)
-    .filter((item): item is Record<string, unknown> => item !== null)
-    .map((record, index) => ({
-      id: readString(record.id) ?? `event-${index}`,
-      title: readString(record.title) ?? readString(record.name) ?? 'Event',
-      startsAt:
-        readString(record.startsAt) ??
-        readString(record.startAt) ??
-        readString(record.date) ??
-        '',
-      description: readString(record.description) ?? '',
-    }));
+  return normalizeCalendarEventsDetailed(payload).map((event) => ({
+    id: event.id,
+    title: event.title,
+    startsAt: event.startsAt,
+    createdAt: event.createdAt,
+    createdById: event.createdById,
+    description: event.description || event.notes,
+    notes: event.notes,
+    status: event.status,
+    myResponseStatus: event.myResponseStatus,
+    sharedBy: event.sharedBy,
+    invitees: event.invitees,
+    isOwner: event.isOwner,
+    canRespond: event.canRespond,
+    canDelete: event.canDelete,
+  }));
 }
 
 export function normalizeChannels(payload: unknown): ChannelItem[] {
@@ -164,10 +302,79 @@ export function normalizeChannels(payload: unknown): ChannelItem[] {
     .filter((item): item is Record<string, unknown> => item !== null)
     .map((record, index) => ({
       id: readString(record.id) ?? readString(record.channelId) ?? `channel-${index}`,
+      slug: readString(record.slug) ?? '',
       name: readString(record.name) ?? readString(record.title) ?? 'Hub',
       memberCount: typeof record.memberCount === 'number' ? record.memberCount : 0,
       description: readString(record.description) ?? '',
+      isMember: record.isMember === true,
+      pendingInviteId: readString(record.pendingInviteId),
     }));
+}
+
+function normalizeChannelRecord(record: Record<string, unknown>, index: number): ChannelItem {
+  return {
+    id: readString(record.id) ?? readString(record.channelId) ?? `channel-${index}`,
+    slug: readString(record.slug) ?? '',
+    name: readString(record.name) ?? readString(record.title) ?? 'Hub',
+    memberCount: typeof record.memberCount === 'number' ? record.memberCount : 0,
+    description: readString(record.description) ?? '',
+    isMember: record.isMember === true,
+    pendingInviteId: readString(record.pendingInviteId),
+  };
+}
+
+export function normalizeCreatedChannel(payload: unknown): CreatedChannelResult {
+  const record = asRecord(payload);
+  const conversation = asRecord(record?.conversation) ?? record ?? {};
+  const channel = normalizeChannelRecord(conversation, 0);
+
+  return {
+    conversationId: channel.id,
+    channel,
+  };
+}
+
+export function normalizeBlockedUsers(payload: unknown): BlockedUserItem[] {
+  return extractArray(payload, ['users', 'blocks', 'items', 'data'])
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => item !== null)
+    .map((record, index) => ({
+      id: readString(record.id) ?? `blocked-${index}`,
+      username: readString(record.username) ?? '',
+      email: readString(record.email) ?? '',
+      avatar: readString(record.avatar),
+    }));
+}
+
+export function normalizeFriendRelationship(payload: unknown): FriendRelationship {
+  const record = asRecord(payload) ?? {};
+
+  return {
+    isFriend: record.isFriend === true,
+    sameOrganization: record.sameOrganization === true,
+    canMessage: record.canMessage === true,
+    requestSent: record.requestSent === true,
+    requestReceived: record.requestReceived === true,
+    requestId: readString(record.requestId),
+    isBlocked: record.isBlocked === true,
+  };
+}
+
+export function normalizeChannelInvites(payload: unknown): ChannelInviteItem[] {
+  return extractArray(payload, ['invites', 'items', 'data'])
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => item !== null)
+    .map((record, index) => {
+      const user = asRecord(record.user) ?? record;
+
+      return {
+        id: readString(record.id) ?? `invite-${index}`,
+        userId: readString(record.userId) ?? readString(user.id) ?? '',
+        email: readString(record.email) ?? readString(user.email) ?? '',
+        username: readString(record.username) ?? readString(user.username) ?? '',
+        createdAt: readString(record.createdAt) ?? '',
+      };
+    });
 }
 
 export function normalizeHubInvites(payload: unknown): HubInviteItem[] {

@@ -52,6 +52,24 @@ export async function markAllNotificationsRead(token: string): Promise<ApiResult
   return { ok: true, data: { ok: true } };
 }
 
+export async function markNotificationRead(
+  token: string,
+  notificationId: string,
+): Promise<ApiResult<{ ok: true }>> {
+  const result = await apiPatch<unknown>(
+    `${API_BASE_URL}/notifications/${notificationId}/read`,
+    token,
+    'Notification Read API',
+    {},
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return { ok: true, data: { ok: true } };
+}
+
 export async function fetchPendingFriends(
   token: string,
 ): Promise<ApiResult<PendingFriendsPayload>> {

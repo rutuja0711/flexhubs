@@ -6,6 +6,7 @@ node_modules/
 out/
 dist/
 src/renderer/.vite/
+assets/icon.iconset/
 
 # Logs
 *.log

@@ -7,8 +7,11 @@ type HubsViewProps = {
   friends: FriendItem[];
   loading: boolean;
   error: string;
+  joiningChannelId: string | null;
   onRetry: () => void;
-  onAcceptInvite: (channelId: string) => void;
+  onAcceptInvite: (inviteId: string) => void;
+  onDeclineInvite: (inviteId: string) => void;
+  onJoinChannel: (channelId: string) => void;
   onOpenChannel: (channelId: string) => void;
 };
 
@@ -18,14 +21,18 @@ export function HubsView({
   friends,
   loading,
   error,
+  joiningChannelId,
   onRetry,
   onAcceptInvite,
+  onDeclineInvite,
+  onJoinChannel,
   onOpenChannel,
 }: HubsViewProps) {
   return (
     <div className="flex h-full flex-col bg-app-chat-bg">
       <header className="border-b border-app-border px-8 py-6">
         <h1 className="text-[1.75rem] font-bold text-app-text">Hubs & friends</h1>
+        <p className="mt-1 text-sm text-app-muted">Browse hubs, manage invites, and view friends.</p>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-8 py-4">
@@ -56,13 +63,22 @@ export function HubsView({
                         {invite.createdAt ? ` · ${formatConversationTimestamp(invite.createdAt)}` : ''}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      className="rounded-[10px] bg-accent px-3 py-2 text-sm font-semibold text-white"
-                      onClick={() => onAcceptInvite(invite.channelId)}
-                    >
-                      Accept
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        className="rounded-[10px] border border-app-border px-3 py-2 text-sm text-app-muted"
+                        onClick={() => onDeclineInvite(invite.id)}
+                      >
+                        Decline
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded-[10px] bg-accent px-3 py-2 text-sm font-semibold text-white"
+                        onClick={() => onAcceptInvite(invite.id)}
+                      >
+                        Accept
+                      </button>
+                    </div>
                   </div>
                 ))}
               </section>
@@ -70,22 +86,51 @@ export function HubsView({
 
             <section className="mb-6">
               <h2 className="mb-3 text-sm font-semibold text-app-text">Browse hubs</h2>
-              {channels.map((channel) => (
-                <button
-                  key={channel.id}
-                  type="button"
-                  className="mb-2 flex w-full items-center justify-between rounded-[12px] border border-app-border bg-app-surface p-4 text-left"
-                  onClick={() => onOpenChannel(channel.id)}
-                >
-                  <div>
-                    <p className="font-medium text-app-text">{channel.name}</p>
-                    {channel.description ? (
-                      <p className="text-sm text-app-muted">{channel.description}</p>
-                    ) : null}
+              {channels.map((channel) => {
+                const canJoin = !channel.isMember && Boolean(channel.pendingInviteId);
+                const isJoining = joiningChannelId === channel.id;
+
+                return (
+                  <div
+                    key={channel.id}
+                    className="mb-2 flex items-center justify-between gap-4 rounded-[12px] border border-app-border bg-app-surface p-4"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-app-text">{channel.name}</p>
+                      {channel.description ? (
+                        <p className="text-sm text-app-muted">{channel.description}</p>
+                      ) : null}
+                      {!channel.isMember && !channel.pendingInviteId ? (
+                        <p className="text-xs text-app-muted">You need an invite to join this hub</p>
+                      ) : null}
+                      {!channel.isMember && channel.pendingInviteId ? (
+                        <p className="text-xs text-accent-soft">You have a pending invite</p>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-3">
+                      <span className="text-xs text-app-muted">{channel.memberCount} members</span>
+                      {channel.isMember ? (
+                        <button
+                          type="button"
+                          className="rounded-[10px] bg-accent px-3 py-2 text-sm font-semibold text-white"
+                          onClick={() => onOpenChannel(channel.id)}
+                        >
+                          Open
+                        </button>
+                      ) : canJoin ? (
+                        <button
+                          type="button"
+                          disabled={isJoining}
+                          className="rounded-[10px] bg-accent px-3 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                          onClick={() => onJoinChannel(channel.id)}
+                        >
+                          {isJoining ? 'Joining...' : 'Join'}
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
-                  <span className="text-xs text-app-muted">{channel.memberCount} members</span>
-                </button>
-              ))}
+                );
+              })}
               {channels.length === 0 ? <p className="text-sm text-app-muted">No hubs found.</p> : null}
             </section>
 

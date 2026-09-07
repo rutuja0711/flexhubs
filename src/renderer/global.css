@@ -19,11 +19,18 @@
     --app-chat-panel: #f9fafb;
     --app-chat-hover: #f3f4f6;
     --app-chat-active: #e5e7eb;
+    --app-elevated: #ffffff;
+    --app-inset: #f3f4f6;
+    --app-inset-active: #e5e7eb;
+    --app-avatar-fallback: #e5e7eb;
     --app-message-in: #ffffff;
     --app-message-out: #d8415f;
     --app-message-out-text: #ffffff;
     --app-placeholder: #9ca3af;
     --app-shadow: rgba(0, 0, 0, 0.08);
+    --scrollbar-track: transparent;
+    --scrollbar-thumb: #c4c4c4;
+    --scrollbar-thumb-hover: #a3a3a3;
   }
 
   .dark {
@@ -41,11 +48,47 @@
     --app-chat-panel: #1a1a1a;
     --app-chat-hover: #222222;
     --app-chat-active: #2a2a2a;
+    --app-elevated: #2c2c2e;
+    --app-inset: #1c1c1e;
+    --app-inset-active: #3a3a3c;
+    --app-avatar-fallback: #2d3340;
     --app-message-in: #2a2a2a;
     --app-message-out: #8b2940;
     --app-message-out-text: #ffffff;
     --app-placeholder: #666666;
     --app-shadow: rgba(0, 0, 0, 0.45);
+    --scrollbar-track: transparent;
+    --scrollbar-thumb: #3a3a3a;
+    --scrollbar-thumb-hover: #4f4f4f;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--scrollbar-thumb);
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--scrollbar-thumb-hover);
+  }
+
+  *::-webkit-scrollbar-corner {
+    background: transparent;
   }
 
   html,
@@ -66,5 +109,53 @@
   input[type='button']:not(:disabled),
   input[type='submit']:not(:disabled) {
     @apply cursor-pointer;
+  }
+
+  input[type='datetime-local'].datetime-input {
+    color-scheme: dark;
+  }
+
+  input[type='datetime-local'].datetime-input::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    filter: invert(1) brightness(1.15);
+    opacity: 0.9;
+  }
+
+  .light input[type='datetime-local'].datetime-input {
+    color-scheme: light;
+  }
+
+  .light input[type='datetime-local'].datetime-input::-webkit-calendar-picker-indicator {
+    filter: none;
+    opacity: 0.75;
+  }
+}
+
+@layer utilities {
+  @keyframes shimmer {
+    0% {
+      transform: translateX(-120%);
+    }
+    100% {
+      transform: translateX(420%);
+    }
+  }
+
+  .app-view-transition {
+    animation: app-view-fade-in 180ms ease-out;
+  }
+
+  @keyframes app-view-fade-in {
+    from {
+      opacity: 0.92;
+    }
+    to {
+      opacity: 1;
+    }
+  }
+
+  .message-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 88px;
   }
 }

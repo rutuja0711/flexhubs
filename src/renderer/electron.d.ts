@@ -2,16 +2,21 @@ import type { LoginCredentials, LoginResult } from '../shared/auth';
 import type { ApiResult } from '../shared/api';
 import type { ConversationsPayload, UnreadCountPayload } from '../shared/chat';
 import type {
+  BlockedUserItem,
   CalendarEventItem,
+  ChannelInviteItem,
   ChannelItem,
+  CreatedChannelResult,
   FileItem,
   FriendItem,
+  FriendRelationship,
   HubInviteItem,
   SavedMessageItem,
 } from '../shared/features';
 import type { GlobalSearchResult, MessageSearchResult, SearchPerson } from '../shared/search';
 import type { ConversationBootstrap, MessageDraft, MessageItem } from '../shared/messages';
 import type { RealtimeConnectionStatus } from '../shared/realtime';
+import type { OrganizationMemberItem, ProfileSettings } from '../shared/profile';
 
 type NotificationsPayload = {
   notifications: import('../shared/messages').NotificationItem[];
@@ -30,7 +35,85 @@ declare global {
     electronAPI: {
       login: (credentials: LoginCredentials) => Promise<LoginResult>;
       getCurrentUser: (token: string) => Promise<LoginResult>;
-      getConversations: (token: string) => Promise<ApiResult<ConversationsPayload>>;
+      createOrgOrder: (
+        token: string | null,
+        payloadJson: string,
+      ) => Promise<ApiResult<import('../shared/workspace').OrgOrderResult>>;
+      verifyOrgSubscription: (
+        token: string | null,
+        payloadJson: string,
+      ) => Promise<ApiResult<import('../shared/workspace').WorkspaceCreationResult>>;
+      getPaymentPlans: (
+        token: string | null,
+      ) => Promise<ApiResult<import('../shared/payments').PaymentPlanItem[]>>;
+      getOrgSubscription: (
+        token: string,
+      ) => Promise<ApiResult<import('../shared/payments').OrgSubscriptionInfo | null>>;
+      getPlanCompliance: (
+        token: string | null,
+        planId: string,
+        teamSize: number,
+      ) => Promise<ApiResult<import('../shared/payments').PlanComplianceInfo>>;
+      createUpgradeOrder: (
+        token: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<import('../shared/workspace').OrgOrderResult>>;
+      verifyUpgradeSubscription: (
+        token: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      getOrganizationMembersAdmin: (
+        token: string,
+      ) => Promise<ApiResult<OrganizationMemberItem[]>>;
+      removeOrganizationMember: (token: string, userId: string) => Promise<ApiResult<{ ok: true }>>;
+      leaveOrganizationWorkspace: (token: string) => Promise<ApiResult<{ ok: true }>>;
+      getOrganizationRoles: (
+        token: string,
+      ) => Promise<ApiResult<import('../shared/organization').OrganizationRoleItem[]>>;
+      createOrganizationRole: (
+        token: string,
+        name: string,
+      ) => Promise<ApiResult<import('../shared/organization').OrganizationRoleItem[]>>;
+      updateOrganizationRole: (
+        token: string,
+        roleId: string,
+        name: string,
+      ) => Promise<ApiResult<import('../shared/organization').OrganizationRoleItem[]>>;
+      deleteOrganizationRole: (
+        token: string,
+        roleId: string,
+      ) => Promise<ApiResult<import('../shared/organization').OrganizationRoleItem[]>>;
+      getOrganizationInvites: (
+        token: string,
+      ) => Promise<ApiResult<import('../shared/organization').OrganizationInviteItem[]>>;
+      sendOrganizationInvite: (
+        token: string,
+        email: string,
+        roleId: string | null,
+      ) => Promise<ApiResult<import('../shared/organization').OrganizationInviteItem[]>>;
+      revokeOrganizationInvite: (
+        token: string,
+        inviteId: string,
+      ) => Promise<ApiResult<import('../shared/organization').OrganizationInviteItem[]>>;
+      getMyOrganizationInvites: (
+        token: string,
+      ) => Promise<ApiResult<import('../shared/organization').OrganizationInviteItem[]>>;
+      acceptOrganizationInvite: (token: string, inviteId: string) => Promise<ApiResult<{ ok: true }>>;
+      declineOrganizationInvite: (token: string, inviteId: string) => Promise<ApiResult<{ ok: true }>>;
+      getOrganizationSeats: (
+        token: string,
+      ) => Promise<ApiResult<import('../shared/organization').OrganizationSeatsInfo>>;
+      getOrgInvoices: (
+        token: string,
+      ) => Promise<ApiResult<import('../shared/organization').OrgInvoiceItem[]>>;
+      getOrgInvoiceById: (
+        token: string,
+        invoiceId: string,
+      ) => Promise<ApiResult<import('../shared/organization').OrgInvoiceItem>>;
+      getConversations: (
+        token: string,
+        viewerUserId?: string | null,
+      ) => Promise<ApiResult<ConversationsPayload>>;
       getUnreadCount: (token: string) => Promise<ApiResult<UnreadCountPayload>>;
       getConversationBootstrap: (
         token: string,
@@ -64,11 +147,30 @@ declare global {
         content: string,
         replyToId?: string,
         threadRootId?: string,
+        mediaJson?: string,
       ) => Promise<ApiResult<MessageItem>>;
+      getTrendingGifs: (
+        token: string,
+        limit?: number,
+      ) => Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>>;
+      searchGifs: (
+        token: string,
+        query: string,
+        limit?: number,
+      ) => Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>>;
+      getTrendingStickers: (
+        token: string,
+        limit?: number,
+      ) => Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>>;
+      searchStickers: (
+        token: string,
+        query: string,
+        limit?: number,
+      ) => Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>>;
       createDirectConversation: (
         token: string,
         userId: string,
-      ) => Promise<ApiResult<{ conversationId: string }>>;
+      ) => Promise<ApiResult<{ conversationId: string; conversation: import('../shared/chat').ConversationItem | null }>>;
       addMessageReaction: (
         token: string,
         conversationId: string,
@@ -110,6 +212,10 @@ declare global {
       ) => Promise<ApiResult<SavedMessageItem[]>>;
       getNotifications: (token: string) => Promise<ApiResult<NotificationsPayload>>;
       markAllNotificationsRead: (token: string) => Promise<ApiResult<{ ok: true }>>;
+      markNotificationRead: (
+        token: string,
+        notificationId: string,
+      ) => Promise<ApiResult<{ ok: true }>>;
       getPendingFriends: (token: string) => Promise<ApiResult<PendingFriendsPayload>>;
       getOrganizationMembers: (token: string) => Promise<ApiResult<TeammatesPayload>>;
       globalSearch: (token: string, query: string) => Promise<ApiResult<GlobalSearchResult>>;
@@ -120,26 +226,198 @@ declare global {
         query: string,
       ) => Promise<ApiResult<MessageSearchResult>>;
       getSavedMessages: (token: string) => Promise<ApiResult<SavedMessageItem[]>>;
-      unsaveMessage: (token: string, messageId: string) => Promise<ApiResult<unknown>>;
-      renameConversation: (token: string, conversationId: string, name: string) => Promise<ApiResult<unknown>>;
-      addConversationMembers: (token: string, conversationId: string, userIds: string[]) => Promise<ApiResult<unknown>>;
-      removeConversationMember: (token: string, conversationId: string, userId: string) => Promise<ApiResult<unknown>>;
-      leaveConversation: (token: string, conversationId: string) => Promise<ApiResult<unknown>>;
-      deleteConversation: (token: string, conversationId: string) => Promise<ApiResult<unknown>>;
-      clearConversationHistory: (token: string, conversationId: string) => Promise<ApiResult<unknown>>;
-      getFiles: (token: string, filter: string) => Promise<ApiResult<FileItem[]>>;
-      getCalendarEvents: (token: string) => Promise<ApiResult<CalendarEventItem[]>>;
-      getChannels: (token: string) => Promise<ApiResult<ChannelItem[]>>;
-      getHubInvites: (token: string) => Promise<ApiResult<HubInviteItem[]>>;
-      getFriends: (token: string) => Promise<ApiResult<FriendItem[]>>;
-      acceptHubInvite: (token: string, channelId: string) => Promise<ApiResult<{ ok: true }>>;
-      sendFriendRequest: (token: string, userId: string) => Promise<ApiResult<{ ok: true }>>;
-      respondFriendRequest: (token: string, userId: string, status: 'ACCEPTED' | 'DECLINED') => Promise<ApiResult<{ ok: true }>>;
       unsaveMessage: (
         token: string,
         conversationId: string,
         messageId: string,
       ) => Promise<ApiResult<SavedMessageItem[]>>;
+      renameConversation: (token: string, conversationId: string, name: string) => Promise<ApiResult<unknown>>;
+      updateConversationNotificationSettings: (
+        token: string,
+        conversationId: string,
+        settingsJson: string,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      setConversationFavorite: (
+        token: string,
+        conversationId: string,
+        favorite: boolean,
+      ) => Promise<ApiResult<{ ok: true; favorite: boolean }>>;
+      addConversationMembers: (token: string, conversationId: string, userIds: string[]) => Promise<ApiResult<unknown>>;
+      removeConversationMember: (token: string, conversationId: string, userId: string) => Promise<ApiResult<unknown>>;
+      leaveConversation: (token: string, conversationId: string, isHub: boolean) => Promise<ApiResult<unknown>>;
+      deleteConversation: (token: string, conversationId: string) => Promise<ApiResult<unknown>>;
+      clearConversationHistory: (token: string, conversationId: string) => Promise<ApiResult<unknown>>;
+      createGroupConversation: (
+        token: string,
+        name: string,
+        userIds: string[],
+      ) => Promise<ApiResult<{ conversationId: string }>>;
+      getSelfConversation: (token: string) => Promise<ApiResult<{ conversationId: string }>>;
+      getConversationById: (token: string, conversationId: string) => Promise<ApiResult<unknown>>;
+      markConversationUnread: (token: string, conversationId: string) => Promise<ApiResult<{ ok: true }>>;
+      getPinnedMessages: (token: string, conversationId: string) => Promise<ApiResult<MessageItem[]>>;
+      getMessageById: (
+        token: string,
+        conversationId: string,
+        messageId: string,
+      ) => Promise<ApiResult<MessageItem>>;
+      getMentionSuggestions: (
+        token: string,
+        conversationId: string,
+        query: string,
+      ) => Promise<ApiResult<unknown[]>>;
+      createPollMessage: (
+        token: string,
+        conversationId: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<MessageItem>>;
+      votePollMessage: (
+        token: string,
+        conversationId: string,
+        messageId: string,
+        optionId: string,
+      ) => Promise<ApiResult<MessageItem>>;
+      getConversationScheduledMessages: (
+        token: string,
+        conversationId: string,
+      ) => Promise<ApiResult<unknown[]>>;
+      createConversationScheduledMessage: (
+        token: string,
+        conversationId: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<unknown>>;
+      deleteConversationScheduledMessage: (
+        token: string,
+        conversationId: string,
+        scheduledId: string,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      updateConversationMemberRole: (
+        token: string,
+        conversationId: string,
+        userId: string,
+        role: string,
+      ) => Promise<ApiResult<unknown>>;
+      getConversationNotificationSettings: (
+        token: string,
+        conversationId: string,
+      ) => Promise<ApiResult<Record<string, unknown>>>;
+      registerAccount: (payloadJson: string) => Promise<LoginResult>;
+      registerWorkspaceAccount: (payloadJson: string) => Promise<LoginResult>;
+      getInviteRegistrationDetails: (inviteToken: string) => Promise<ApiResult<unknown>>;
+      forgotPassword: (email: string) => Promise<ApiResult<{ message?: string; delivered?: boolean }>>;
+      verifyResetCode: (payloadJson: string) => Promise<ApiResult<{ message?: string }>>;
+      resetPassword: (payloadJson: string) => Promise<ApiResult<{ message?: string }>>;
+      createOrganizationWorkspace: (
+        token: string | null,
+        payloadJson: string,
+      ) => Promise<ApiResult<unknown>>;
+      getUserProfile: (token: string, userId: string) => Promise<ApiResult<unknown>>;
+      getMessageConversation: (
+        token: string,
+        messageId: string,
+      ) => Promise<ApiResult<{ conversationId: string }>>;
+      getFiles: (token: string, filter: string) => Promise<ApiResult<FileItem[]>>;
+      getCalendarEvents: (token: string) => Promise<ApiResult<CalendarEventItem[]>>;
+      getCalendarMentionableUsers: (
+        token: string,
+      ) => Promise<ApiResult<import('../shared/extras').CalendarMentionableUser[]>>;
+      createCalendarEvent: (
+        token: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<import('../shared/extras').CalendarEventItem>>;
+      respondToCalendarEvent: (
+        token: string,
+        eventId: string,
+        accept: boolean,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      deleteCalendarEvent: (token: string, eventId: string) => Promise<ApiResult<{ ok: true }>>;
+      getScheduledMessages: (
+        token: string,
+      ) => Promise<ApiResult<import('../shared/extras').ScheduledMessageItem[]>>;
+      enhanceMessageText: (
+        token: string,
+        text: string,
+      ) => Promise<ApiResult<import('../shared/extras').AiTextResult>>;
+      generateMessageText: (
+        token: string,
+        description: string,
+      ) => Promise<ApiResult<import('../shared/extras').AiTextResult>>;
+      parseFlexCommand: (
+        token: string,
+        input: string,
+      ) => Promise<ApiResult<import('../shared/extras').AiTextResult>>;
+      transcribeAudioFile: (
+        token: string,
+        fileName: string,
+        mimeType: string,
+        base64Data: string,
+      ) => Promise<ApiResult<import('../shared/extras').AiTextResult>>;
+      getPushVapidPublicKey: (
+        token: string,
+      ) => Promise<ApiResult<import('../shared/extras').PushVapidKeyResult>>;
+      subscribePushNotifications: (
+        token: string,
+        subscriptionJson: string,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      unsubscribePushEndpoint: (token: string, endpoint: string) => Promise<ApiResult<{ ok: true }>>;
+      deletePushSubscriptions: (token: string) => Promise<ApiResult<{ ok: true }>>;
+      getChannels: (token: string) => Promise<ApiResult<ChannelItem[]>>;
+      getHubInvites: (token: string) => Promise<ApiResult<HubInviteItem[]>>;
+      getFriends: (token: string) => Promise<ApiResult<FriendItem[]>>;
+      acceptHubInvite: (token: string, channelId: string) => Promise<ApiResult<{ ok: true }>>;
+      acceptHubInviteById: (token: string, inviteId: string) => Promise<ApiResult<{ ok: true }>>;
+      declineHubInvite: (token: string, inviteId: string) => Promise<ApiResult<{ ok: true }>>;
+      getBlockedUsers: (token: string) => Promise<ApiResult<BlockedUserItem[]>>;
+      blockUser: (token: string, userId: string) => Promise<ApiResult<{ success: true }>>;
+      unblockUser: (token: string, userId: string) => Promise<ApiResult<{ success: true }>>;
+      getFriendRelationship: (token: string, userId: string) => Promise<ApiResult<FriendRelationship>>;
+      createChannel: (token: string, payloadJson: string) => Promise<ApiResult<CreatedChannelResult>>;
+      updateChannelName: (
+        token: string,
+        channelId: string,
+        name: string,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      updateChannelDescription: (
+        token: string,
+        channelId: string,
+        description: string,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      updateChannelSettings: (
+        token: string,
+        channelId: string,
+        settingsJson: string,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      getChannelInvites: (token: string, channelId: string) => Promise<ApiResult<ChannelInviteItem[]>>;
+      revokeChannelInvite: (
+        token: string,
+        channelId: string,
+        inviteId: string,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      deleteChannel: (token: string, channelId: string) => Promise<ApiResult<{ ok: true }>>;
+      sendFriendRequest: (token: string, userId: string) => Promise<ApiResult<{ ok: true }>>;
+      respondFriendRequest: (token: string, userId: string, status: 'ACCEPTED' | 'DECLINED') => Promise<ApiResult<{ ok: true }>>;
+      getAvatarStyles: (token: string) => Promise<ApiResult<import('../shared/profile').AvatarStyleItem[]>>;
+      getNotificationSettings: (token: string) => Promise<ApiResult<ProfileSettings>>;
+      updateNotificationSettings: (
+        token: string,
+        updatesJson: string,
+      ) => Promise<ApiResult<ProfileSettings>>;
+      updateUserProfile: (token: string, updatesJson: string) => Promise<ApiResult<unknown>>;
+      updateUserStatus: (
+        token: string,
+        status: string,
+        message?: string,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      updateUserTimezone: (token: string, timezone: string) => Promise<ApiResult<{ ok: true }>>;
+      uploadProfileImage: (
+        token: string,
+        fileName: string,
+        mimeType: string,
+        base64Data: string,
+      ) => Promise<ApiResult<{ url: string }>>;
+      getOrganizationMembersDetailed: (
+        token: string,
+      ) => Promise<ApiResult<OrganizationMemberItem[]>>;
       startRealtime: (token: string) => Promise<{ ok: true }>;
       stopRealtime: () => Promise<{ ok: true }>;
       sendTyping: (
@@ -147,6 +425,10 @@ declare global {
         conversationId: string,
         isTyping: boolean,
       ) => Promise<ApiResult<{ ok: true }>>;
+      getUserPresence: (
+        token: string,
+        userIds: string[],
+      ) => Promise<ApiResult<import('../shared/realtime').PresenceItem[]>>;
       onRealtimeEvent: (callback: (event: unknown) => void) => () => void;
       onRealtimeStatus: (callback: (status: RealtimeConnectionStatus) => void) => () => void;
     };
