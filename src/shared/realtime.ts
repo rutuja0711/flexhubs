@@ -12,6 +12,62 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function readBoolean(value: unknown): boolean | null {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (value === 'true') {
+    return true;
+  }
+
+  if (value === 'false') {
+    return false;
+  }
+
+  return null;
+}
+
+export function unwrapRealtimePayload(value: unknown): unknown {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+
+    if (
+      (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+      (trimmed.startsWith('[') && trimmed.endsWith(']'))
+    ) {
+      try {
+        return JSON.parse(trimmed);
+      } catch {
+        return value;
+      }
+    }
+  }
+
+  return value;
+}
+
+export type TypingUpdate = {
+  userId: string;
+  conversationId: string;
+  username: string | null;
+  isTyping: boolean;
+};
+
+export function buildConversationTypingChannel(conversationId: string): string {
+  return `conversation:${conversationId}`;
+}
+
+export function isSameTypingUser(
+  left: string | null | undefined,
+  right: string | null | undefined,
+): boolean {
+  const normalizedLeft = (left ?? '').trim().toLowerCase();
+  const normalizedRight = (right ?? '').trim().toLowerCase();
+
+  return Boolean(normalizedLeft && normalizedRight && normalizedLeft === normalizedRight);
+}
+
 export type RealtimeConnectionStatus =
   | 'idle'
   | 'connecting'
@@ -157,23 +213,28 @@ export function parseRealtimeEvent(data: unknown): RealtimeEvent {
     const channel = readString(record.channel) ?? '';
     let type = readString(nestedEvent.type) ?? 'unknown';
 
-    if (channel.includes('typing')) {
+    if (channel.includes('typing') || type.toLowerCase().includes('typing')) {
       type = 'typing';
     }
 
-    const payload = nestedEvent.payload ?? nestedEvent.data ?? nestedEvent;
+    const payload = unwrapRealtimePayload(nestedEvent.payload ?? nestedEvent.data ?? nestedEvent);
 
     return { type, payload, raw: data };
   }
 
-  const type =
+  const channel = readString(record.channel) ?? '';
+  let type =
     readString(record.type) ??
     readString(record.event) ??
     readString(record.name) ??
     readString(record.action) ??
     'unknown';
 
-  const payload = record.payload ?? record.data ?? record;
+  if (channel.includes('typing') || type.toLowerCase().includes('typing')) {
+    type = 'typing';
+  }
+
+  const payload = unwrapRealtimePayload(record.payload ?? record.data ?? record);
 
   return { type, payload, raw: data };
 }
@@ -205,7 +266,7 @@ export function normalizeRealtimeStatus(payload: unknown): RealtimeStatusPayload
   };
 }
 
-export function extractRealtimeToken(payload: unknown): string | null {
+export function extractRealtimeAccessToken(payload: unknown): string | null {
   if (typeof payload === 'string' && payload.trim()) {
     return payload.trim();
   }
@@ -222,6 +283,55 @@ export function extractRealtimeToken(payload: unknown): string | null {
     readString(record.realtimeToken) ??
     readString(record.jwt)
   );
+}
+
+export function extractRealtimeToken(payload: unknown): string | null {
+  return extractRealtimeAccessToken(payload);
+}
+
+export type RealtimeClientConfig = {
+  accessToken: string;
+  supabaseUrl: string;
+  supabaseAnonKey: string;
+};
+
+// Same values as the web app NEXT_PUBLIC_SUPABASE_* env vars (for call signaling).
+export const FLEXHUBS_SUPABASE_URL = '';
+export const FLEXHUBS_SUPABASE_ANON_KEY = '';
+
+export function extractRealtimeClientConfig(payload: unknown): RealtimeClientConfig | null {
+  const accessToken = extractRealtimeAccessToken(payload);
+
+  if (!accessToken) {
+    return null;
+  }
+
+  const record = asRecord(payload);
+
+  const supabaseUrl =
+    readString(record?.supabaseUrl) ??
+    readString(record?.url) ??
+    readString(record?.realtimeUrl) ??
+    readString(record?.projectUrl) ??
+    (FLEXHUBS_SUPABASE_URL || null);
+
+  const supabaseAnonKey =
+    readString(record?.supabaseAnonKey) ??
+    readString(record?.anonKey) ??
+    readString(record?.publicKey) ??
+    readString(record?.apiKey) ??
+    readString(record?.supabaseKey) ??
+    (FLEXHUBS_SUPABASE_ANON_KEY || null);
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    return null;
+  }
+
+  return {
+    accessToken,
+    supabaseUrl,
+    supabaseAnonKey,
+  };
 }
 
 export function extractConversationId(payload: unknown): string | null {
@@ -420,6 +530,10 @@ export function isMessageDeleteEvent(type: string): boolean {
 export function isConversationUpdateEvent(type: string): boolean {
   const normalized = type.toLowerCase();
 
+  if (normalized.includes('typing')) {
+    return false;
+  }
+
   return normalized.includes('conversation') || normalized.includes('chat');
 }
 
@@ -472,17 +586,33 @@ export function extractConversationIdFromChannel(channel: string | null): string
     return null;
   }
 
-  const conversationMatch = channel.match(/conversation[:/][^:/]+/i);
+  const normalized = channel.trim();
+
+  const conversationMatch = normalized.match(/conversation[:/][^:/]+/i);
 
   if (conversationMatch) {
-    const id = conversationMatch[0].split(/[:/]/).pop();
-    return id && id.length > 8 ? id : null;
+    const id = conversationMatch[0].split(/[:/]/).slice(1).join(':').split(':')[0];
+    return id && id.length > 4 ? id : null;
   }
 
-  const parts = channel.split(':');
+  const typingMatch = normalized.match(/typing[:/][^:/]+/i);
+
+  if (typingMatch) {
+    const id = typingMatch[0].split(/[:/]/).slice(1).join(':').split(':')[0];
+    return id && id.length > 4 ? id : null;
+  }
+
+  const parts = normalized.split(':').filter(Boolean);
+
+  for (const part of parts) {
+    if (part.length > 8 && /^c[a-z0-9-]+$/i.test(part)) {
+      return part;
+    }
+  }
+
   const last = parts[parts.length - 1];
 
-  if (last && last.length > 12 && /^c[a-z0-9]+$/i.test(last)) {
+  if (last && last.length > 12 && /^c[a-z0-9-]+$/i.test(last)) {
     return last;
   }
 
@@ -501,55 +631,207 @@ export function isTypingChannelEvent(rawEvent: unknown): boolean {
   return Boolean(channel?.includes('typing'));
 }
 
+function readTypingEventType(rawEvent: unknown, record: Record<string, unknown>): string {
+  const rawRecord = asRecord(rawEvent);
+
+  return (
+    readString(record.eventType) ??
+    readString(record.event_type) ??
+    readString(rawRecord?.eventType) ??
+    readString(rawRecord?.event_type) ??
+    readString(rawRecord?.type) ??
+    ''
+  ).toLowerCase();
+}
+
+function extractPostgresTypingUpdate(
+  record: Record<string, unknown>,
+  rawEvent: unknown,
+  fallbackConversationId?: string | null,
+): TypingUpdate | null {
+  const table =
+    readString(record.table) ??
+    readString(asRecord(rawEvent)?.table);
+
+  if (!table || !/typing/i.test(table)) {
+    return null;
+  }
+
+  const row =
+    asRecord(record.record) ??
+    asRecord(record.new) ??
+    asRecord(record.old) ??
+    record;
+  const eventType = readTypingEventType(rawEvent, record);
+  const conversationId =
+    readString(row.conversation_id) ??
+    readString(row.conversationId) ??
+    readString(row.channel_id) ??
+    readString(row.channelId) ??
+    fallbackConversationId ??
+    null;
+  const userId =
+    readString(row.user_id) ??
+    readString(row.userId) ??
+    readString(row.sender_id) ??
+    readString(row.senderId) ??
+    readString(asRecord(row.user)?.id);
+  const username =
+    readString(row.username) ??
+    readString(asRecord(row.user)?.name) ??
+    readString(asRecord(row.user)?.username) ??
+    readString(row.displayName);
+
+  if (!conversationId || (!userId && !username)) {
+    return null;
+  }
+
+  const explicitTyping =
+    readBoolean(row.isTyping) ??
+    readBoolean(row.is_typing) ??
+    readBoolean(row.typing);
+
+  const isTyping =
+    explicitTyping ??
+    (eventType.includes('delete') || eventType.includes('remove') || eventType.includes('stop')
+      ? false
+      : true);
+
+  return {
+    userId: userId ?? username ?? 'unknown',
+    conversationId,
+    username,
+    isTyping,
+  };
+}
+
 export function extractTypingUpdate(
   payload: unknown,
   fallbackConversationId?: string | null,
   rawEvent?: unknown,
-): { userId: string; conversationId: string; username: string | null; isTyping: boolean } | null {
-  const record = asRecord(payload);
+): TypingUpdate | null {
+  const unwrappedPayload = unwrapRealtimePayload(payload);
+  const rawRecord = asRecord(rawEvent);
+  const nestedEvent = asRecord(rawRecord?.event);
+  const record =
+    asRecord(unwrappedPayload) ??
+    asRecord(unwrapRealtimePayload(rawRecord?.payload)) ??
+    asRecord(unwrapRealtimePayload(rawRecord?.data)) ??
+    nestedEvent ??
+    rawRecord;
 
   if (!record) {
     return null;
   }
 
+  const postgresUpdate = extractPostgresTypingUpdate(record, rawEvent, fallbackConversationId);
+
+  if (postgresUpdate) {
+    return postgresUpdate;
+  }
+
+  const typingRecord = asRecord(record.typing);
+  const user =
+    asRecord(record.user) ??
+    asRecord(record.sender) ??
+    asRecord(nestedEvent?.user) ??
+    asRecord(typingRecord?.user);
   const userId =
     readString(record.userId) ??
+    readString(record.user_id) ??
+    readString(record.senderId) ??
+    readString(record.sender_id) ??
     readString(record.id) ??
-    readString(asRecord(record.user)?.id);
+    readString(user?.id) ??
+    readString(user?.userId) ??
+    readString(typingRecord?.userId) ??
+    readString(typingRecord?.user_id) ??
+    readString(rawRecord?.userId) ??
+    readString(rawRecord?.user_id);
 
-  const rawRecord = asRecord(rawEvent);
   const channelConversationId = extractConversationIdFromChannel(
     rawRecord ? readString(rawRecord.channel) : null,
   );
 
   const conversationId =
     readString(record.conversationId) ??
+    readString(record.conversation_id) ??
     readString(record.channelId) ??
+    readString(record.channel_id) ??
     readString(record.chatId) ??
+    readString(record.chat_id) ??
+    readString(typingRecord?.conversationId) ??
+    readString(typingRecord?.conversation_id) ??
+    readString(rawRecord?.conversationId) ??
+    readString(rawRecord?.conversation_id) ??
     channelConversationId ??
     fallbackConversationId ??
     null;
 
-  if (!userId || !conversationId) {
+  if (!conversationId) {
     return null;
   }
 
+  const username =
+    readString(record.username) ??
+    readString(user?.username) ??
+    readString(user?.name) ??
+    readString(record.name) ??
+    readString(record.displayName) ??
+    readString(record.display_name) ??
+    readString(typingRecord?.username) ??
+    readString(typingRecord?.name);
+
+  if (!userId && !username) {
+    return null;
+  }
+
+  const action = readString(record.action) ?? readString(record.state) ?? readString(record.event);
+  const explicitTyping =
+    readBoolean(record.isTyping) ??
+    readBoolean(record.is_typing) ??
+    (typeof record.typing === 'boolean' ? record.typing : null) ??
+    readBoolean(typingRecord?.isTyping) ??
+    readBoolean(typingRecord?.is_typing);
   const isTyping =
-    record.isTyping === true ||
-    record.typing === true ||
-    (record.isTyping !== false &&
-      record.typing !== false &&
-      record.stopped !== true &&
-      record.action !== 'stop');
+    explicitTyping ??
+    (action === 'start' ||
+    action === 'typing' ||
+    action === 'typing_start' ||
+    action === 'typing:start'
+      ? true
+      : action === 'stop' ||
+          action === 'stopped' ||
+          action === 'typing_stop' ||
+          action === 'typing:stop'
+        ? false
+        : readTypingEventType(rawEvent, record).includes('stop') ||
+            readTypingEventType(rawEvent, record).includes('delete')
+          ? false
+          : true);
 
   return {
-    userId,
+    userId: userId ?? username ?? 'unknown',
     conversationId,
-    username:
-      readString(record.username) ??
-      readString(asRecord(record.user)?.username) ??
-      readString(asRecord(record.user)?.name) ??
-      readString(record.name),
+    username,
     isTyping,
   };
+}
+
+export function formatTypingIndicatorLabel(names: string[]): string {
+  const unique = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
+
+  if (unique.length === 0) {
+    return '';
+  }
+
+  if (unique.length === 1) {
+    return `${unique[0]} is typing…`;
+  }
+
+  if (unique.length === 2) {
+    return `${unique[0]} and ${unique[1]} are typing…`;
+  }
+
+  return `${unique[0]} and ${unique.length - 1} others are typing…`;
 }

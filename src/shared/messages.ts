@@ -1,3 +1,10 @@
+import {
+  formatCallLogPreview,
+  isCallLogMessage as isCallLogContent,
+  parseCallLogContent,
+} from './calls';
+import { resolveAvatarUrl } from './profile';
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -49,7 +56,7 @@ export type MessageItem = {
   editedAt: string | null;
   pinnedAt: string | null;
   isOwn: boolean;
-  status: 'sent' | 'seen' | null;
+  status: 'sending' | 'delivered' | 'seen' | null;
   reactions: MessageReaction[];
   replyToMessageId?: string;
   replyToMessage?: MessageItem;
@@ -575,6 +582,95 @@ export function enrichMessageReplies(messages: MessageItem[]): MessageItem[] {
   });
 }
 
+export function extractPeerLastReadMessageIds(
+  conversation: Record<string, unknown> | null,
+  currentUserId: string | null,
+): string[] {
+  if (!conversation) {
+    return [];
+  }
+
+  const ids = new Set<string>();
+
+  const addId = (value: unknown) => {
+    const id = readString(value);
+    if (id) {
+      ids.add(id);
+    }
+  };
+
+  addId(conversation.peerLastReadMessageId);
+  addId(conversation.otherLastReadMessageId);
+  addId(conversation.lastSeenByOtherMessageId);
+
+  for (const key of ['members', 'participants', 'users']) {
+    const value = conversation[key];
+
+    if (!Array.isArray(value)) {
+      continue;
+    }
+
+    for (const entry of value) {
+      const member = asRecord(entry);
+      if (!member) {
+        continue;
+      }
+
+      const user = asRecord(member.user) ?? member;
+      const userId =
+        readString(user.id) ??
+        readString(member.userId) ??
+        readString(member.id);
+
+      if (currentUserId && userId === currentUserId) {
+        continue;
+      }
+
+      addId(member.lastReadMessageId);
+      addId(member.readUpToMessageId);
+      addId(member.lastSeenMessageId);
+      addId(user.lastReadMessageId);
+      addId(user.readUpToMessageId);
+    }
+  }
+
+  return [...ids];
+}
+
+export function applyMessageReadReceipts(
+  messages: MessageItem[],
+  peerLastReadIds: string[],
+): MessageItem[] {
+  if (messages.length === 0) {
+    return messages;
+  }
+
+  let farthestSeenIndex = -1;
+
+  for (const id of peerLastReadIds) {
+    const index = messages.findIndex((message) => message.id === id);
+    if (index > farthestSeenIndex) {
+      farthestSeenIndex = index;
+    }
+  }
+
+  return messages.map((message, index) => {
+    if (!message.isOwn) {
+      return message;
+    }
+
+    if (message.status === 'seen') {
+      return message;
+    }
+
+    const seen = farthestSeenIndex >= 0 && index <= farthestSeenIndex;
+    return {
+      ...message,
+      status: seen ? 'seen' : message.status === 'sending' ? 'sending' : 'delivered',
+    };
+  });
+}
+
 export function readLastReadMessageId(conversation: Record<string, unknown> | null): string | null {
   if (!conversation) {
     return null;
@@ -640,11 +736,86 @@ export function findFirstUnreadMessageId(
   return messages.find(isIncoming)?.id ?? null;
 }
 
+const PREVIEW_ICON = {
+  sticker: '🎭',
+  poll: '📊',
+  gif: '🎬',
+  photo: '📷',
+  video: '📹',
+  audio: '📞',
+} as const;
+
+function decoratePreviewLabel(label: string): string {
+  const trimmed = label.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  if (/^🎞️\s*gif$/i.test(trimmed) || /^gif$/i.test(trimmed)) {
+    return `${PREVIEW_ICON.gif} GIF`;
+  }
+
+  if (/^[🎭📊📹📞🎬📷]\s/.test(trimmed)) {
+    return trimmed;
+  }
+
+  if (/^sticker$/i.test(trimmed)) {
+    return `${PREVIEW_ICON.sticker} Sticker`;
+  }
+
+  if (/^poll$/i.test(trimmed)) {
+    return `${PREVIEW_ICON.poll} Poll`;
+  }
+
+  if (/^(photo|image)$/i.test(trimmed)) {
+    return `${PREVIEW_ICON.photo} Photo`;
+  }
+
+  if (/^video call/i.test(trimmed) || /^missed video/i.test(trimmed)) {
+    return `${PREVIEW_ICON.video} ${trimmed}`;
+  }
+
+  if (/^(voice call|audio call|missed voice|missed audio)/i.test(trimmed)) {
+    return `${PREVIEW_ICON.audio} ${trimmed}`;
+  }
+
+  return trimmed;
+}
+
+export function decoratePreviewText(preview: string): string {
+  const trimmed = preview.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const separator = trimmed.indexOf(': ');
+  if (separator > 0 && separator < 48) {
+    const sender = trimmed.slice(0, separator);
+    const rest = trimmed.slice(separator + 2);
+    const decoratedRest = decoratePreviewLabel(rest);
+    return decoratedRest === rest ? trimmed : `${sender}: ${decoratedRest}`;
+  }
+
+  return decoratePreviewLabel(trimmed);
+}
+
 export function formatMessagePreview(
-  message: Pick<MessageItem, 'content' | 'media' | 'messageType' | 'deletedForEveryone'>,
+  message: Pick<MessageItem, 'content' | 'media' | 'messageType' | 'deletedForEveryone' | 'poll'>,
+  currentUserId: string | null = null,
 ): string {
   if (isDeletedMessage(message)) {
     return DELETED_MESSAGE_TEXT;
+  }
+
+  const callLog = parseCallLogContent(message.content);
+
+  if (callLog) {
+    const icon = callLog.mode === 'video' ? PREVIEW_ICON.video : PREVIEW_ICON.audio;
+    return `${icon} ${formatCallLogPreview(callLog, currentUserId)}`;
+  }
+
+  if (isPollMessage(message)) {
+    return `${PREVIEW_ICON.poll} Poll`;
   }
 
   const trimmedContent =
@@ -657,14 +828,19 @@ export function formatMessagePreview(
   if (message.media.length > 0) {
     const primary = message.media[0];
     const label =
-      primary.kind === 'sticker' ? 'Sticker' : primary.kind === 'gif' ? 'GIF' : 'Photo';
+      primary.kind === 'sticker'
+        ? `${PREVIEW_ICON.sticker} Sticker`
+        : primary.kind === 'gif'
+          ? `${PREVIEW_ICON.gif} GIF`
+          : `${PREVIEW_ICON.photo} Photo`;
     return trimmedContent ? `${trimmedContent} (${label})` : label;
   }
 
   const type = String(message.messageType ?? '').toLowerCase();
-  if (type.includes('sticker')) return 'Sticker';
-  if (type.includes('gif')) return 'GIF';
-  if (type.includes('image')) return 'Photo';
+  if (type.includes('sticker')) return `${PREVIEW_ICON.sticker} Sticker`;
+  if (type.includes('gif')) return `${PREVIEW_ICON.gif} GIF`;
+  if (type.includes('image')) return `${PREVIEW_ICON.photo} Photo`;
+  if (type.includes('poll')) return `${PREVIEW_ICON.poll} Poll`;
 
   return trimmedContent;
 }
@@ -697,6 +873,14 @@ export function isPollMessage(
 
   return String(message.messageType ?? '').toUpperCase() === 'POLL';
 }
+
+export function isCallLogMessage(
+  message: Pick<MessageItem, 'content' | 'messageType'>,
+): boolean {
+  return isCallLogContent(message);
+}
+
+export { parseCallLogContent } from './calls';
 
 function normalizePollOption(
   record: Record<string, unknown> | string,
@@ -878,13 +1062,30 @@ export function normalizeMessage(record: Record<string, unknown>, index: number)
 
   const media = deletedForEveryone ? [] : extractMessageMedia(record, content);
 
-  const statusRaw = String(record.status ?? record.deliveryStatus ?? '').toLowerCase();
+  const statusRaw = String(record.status ?? record.deliveryStatus ?? record.readStatus ?? '').toLowerCase();
   let status: MessageItem['status'] = null;
+  const readBy = record.readBy ?? record.seenBy ?? record.readReceipts;
+  const hasReaders = Array.isArray(readBy) && readBy.length > 0;
 
-  if (statusRaw.includes('seen') || statusRaw.includes('read')) {
+  if (
+    statusRaw.includes('seen') ||
+    statusRaw.includes('read') ||
+    record.isRead === true ||
+    record.read === true ||
+    record.seen === true ||
+    Boolean(readString(record.readAt)) ||
+    Boolean(readString(record.seenAt)) ||
+    hasReaders
+  ) {
     status = 'seen';
-  } else if (statusRaw.includes('sent') || statusRaw.includes('delivered')) {
-    status = 'sent';
+  } else if (
+    statusRaw.includes('deliver') ||
+    statusRaw.includes('sent') ||
+    statusRaw.includes('success')
+  ) {
+    status = 'delivered';
+  } else if (statusRaw.includes('pending') || statusRaw.includes('sending')) {
+    status = 'sending';
   }
 
   return {
@@ -1216,7 +1417,7 @@ export function normalizeTeammates(payload: unknown): TeammateItem[] {
         id: readString(record.id) ?? readString(record.userId) ?? `member-${index}`,
         name,
         username: readString(record.username) ?? '',
-        avatarUrl: readString(record.avatarUrl) ?? readString(record.avatar),
+        avatarUrl: resolveAvatarUrl(record),
         initials: initialsFromName(name),
         statusMessage:
           readString(record.statusMessage) ??

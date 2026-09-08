@@ -49,7 +49,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (message: string, tone: ToastTone) => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-      setToasts((current) => [...current, { id, message, tone }]);
+      setToasts((current) => [{ id, message, tone }, ...current]);
 
       window.setTimeout(() => {
         dismiss(id);
@@ -71,7 +71,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     <ToastContext.Provider value={toast}>
       {children}
       <div
-        className="pointer-events-none fixed bottom-6 right-6 z-[120] flex w-full max-w-sm flex-col gap-2"
+        className="pointer-events-none fixed top-6 right-6 z-[120] flex w-full max-w-sm flex-col gap-2"
         aria-live="polite"
         aria-relevant="additions"
       >

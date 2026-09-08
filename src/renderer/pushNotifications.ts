@@ -60,20 +60,20 @@ export function isDesktopNotificationsEnabled(): boolean {
 }
 
 export function shouldDeliverDesktopNotifications(): boolean {
-  if (typeof Notification === 'undefined') {
-    return false;
-  }
-
-  if (Notification.permission !== 'granted') {
-    return false;
-  }
-
   if (localStorage.getItem(DESKTOP_NOTIFICATIONS_DISABLED_KEY) === 'true') {
     return false;
   }
 
   if (isElectronShell()) {
     return true;
+  }
+
+  if (typeof Notification === 'undefined') {
+    return false;
+  }
+
+  if (Notification.permission !== 'granted') {
+    return false;
   }
 
   return isDesktopNotificationsEnabled();

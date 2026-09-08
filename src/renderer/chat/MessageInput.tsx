@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FiBarChart2, FiClock, FiImage, FiLink, FiMic, FiPaperclip, FiPlus, FiSmile, FiZap } from 'react-icons/fi';
+import { FiBarChart2, FiClock, FiImage, FiLink, FiMic, FiPaperclip, FiPlus, FiSend, FiSmile, FiZap } from 'react-icons/fi';
 import type { GifPickerItem } from '../../shared/gifs';
 import type { MessageItem } from '../../shared/messages';
 import { buildScheduleMessageBody, validateMessageDraft } from '../../shared/messages';
@@ -37,6 +37,7 @@ type MessageInputProps = {
   onPollCreated?: () => void;
   onScheduled?: () => void;
   onUnauthorized?: (status?: number) => boolean;
+  onOpenFlexAi?: () => void;
 };
 
 type MentionSuggestion = {
@@ -134,6 +135,7 @@ export function MessageInput({
   onPollCreated,
   onScheduled,
   onUnauthorized,
+  onOpenFlexAi,
 }: MessageInputProps) {
   const toast = useToast();
   const [draftError, setDraftError] = useState('');
@@ -620,15 +622,22 @@ export function MessageInput({
             <button
               type="button"
               disabled={aiDisabled}
-              aria-label="AI assist"
-              title="AI assist"
+              aria-label="Flex AI"
+              title="Flex AI"
               aria-expanded={aiMenuOpen}
               className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
                 aiMenuOpen
                   ? 'bg-accent/15 text-accent-soft'
                   : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
               } disabled:cursor-not-allowed disabled:opacity-50`}
-              onClick={() => setAiMenuOpen((open) => !open)}
+              onClick={() => {
+                if (onOpenFlexAi) {
+                  onOpenFlexAi();
+                  return;
+                }
+
+                setAiMenuOpen((open) => !open);
+              }}
             >
               <FiZap className="h-[18px] w-[18px]" />
             </button>
@@ -890,11 +899,11 @@ export function MessageInput({
         <button
           type="button"
           disabled={disabled || isSending || aiBusy || !value.trim()}
-          aria-label="Send message"
-          className="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label={isSending ? 'Sending message' : aiBusy ? 'Working' : 'Send message'}
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
           onClick={onSend}
         >
-          {isSending ? 'Sending...' : aiBusy ? 'Working...' : 'Send'}
+          <FiSend className="text-base" />
         </button>
       </div>
 

@@ -14,12 +14,13 @@ import { SearchField } from './SearchField';
 import { TeammatesSection } from './TeammatesSection';
 import { FiSettings, FiBox } from 'react-icons/fi';
 
-type ChatTab = ConversationKind;
+type ChatTab = 'all' | ConversationKind;
 
 type ChatSidebarProps = {
   workspaceName: string;
   selfLabel: string;
   conversations: ConversationItem[];
+  typingPreviews?: Record<string, string>;
   teammates: TeammateItem[];
   unreadCount: number;
   loading: boolean;
@@ -55,6 +56,7 @@ export function ChatSidebar({
   workspaceName,
   selfLabel,
   conversations,
+  typingPreviews = {},
   teammates,
   unreadCount,
   loading,
@@ -85,7 +87,8 @@ export function ChatSidebar({
   openingTeammateId = null,
   directChatMetadata = {},
 }: ChatSidebarProps) {
-  const [activeTab, setActiveTab] = useState<ChatTab>('direct');
+  const [activeTab, setActiveTab] = useState<ChatTab>('all');
+  const [composeMode, setComposeMode] = useState<'direct' | 'hub' | 'group'>('direct');
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchError, setSearchError] = useState('');
@@ -137,7 +140,17 @@ export function ChatSidebar({
       return [];
     }
 
-    const tabItems = conversations.filter((conversation) => conversation.kind === activeTab);
+    const tabItems = conversations.filter((conversation) => {
+      if (activeTab === 'all') {
+        return true;
+      }
+
+      if (activeTab === 'hub') {
+        return conversation.kind === 'hub';
+      }
+
+      return conversation.kind === 'direct';
+    });
     const validation = validateSearchQuery(searchQuery);
 
     if (!validation.ok || !validation.value) {
@@ -157,7 +170,17 @@ export function ChatSidebar({
       return 0;
     }
 
-    return conversations.filter((conversation) => conversation.kind !== activeTab).length;
+    if (activeTab === 'all') {
+      return 0;
+    }
+
+    return conversations.filter((conversation) => {
+      if (activeTab === 'direct') {
+        return conversation.kind === 'hub';
+      }
+
+      return conversation.kind === 'direct';
+    }).length;
   }, [activeTab, conversations, isGlobalSearch]);
 
   const availableTeammates = useMemo(() => {
@@ -197,13 +220,17 @@ export function ChatSidebar({
   };
 
   const emptyMessage =
-    activeTab === 'direct'
+    activeTab === 'all'
       ? searchQuery.trim()
-        ? 'No direct messages match your search.'
-        : 'No direct messages yet.'
-      : searchQuery.trim()
-        ? 'No hubs match your search.'
-        : 'No hubs yet.';
+        ? 'No chats match your search.'
+        : 'No conversations yet.'
+      : activeTab === 'direct'
+        ? searchQuery.trim()
+          ? 'No chats match your search.'
+          : 'No recent chats yet.'
+        : searchQuery.trim()
+          ? 'No hubs match your search.'
+          : 'No hubs yet.';
 
   return (
     <aside className="relative flex h-full w-[320px] shrink-0 flex-col border-r border-app-border bg-app-chat-sidebar">
@@ -264,7 +291,10 @@ export function ChatSidebar({
             type="button"
             aria-label="New conversation"
             className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-accent text-white transition-colors hover:bg-accent-hover active:bg-accent-active"
-            onClick={() => onNewConversationOpenChange(true)}
+            onClick={() => {
+              setComposeMode('direct');
+              onNewConversationOpenChange(true);
+            }}
           >
             <PlusIcon />
           </button>
@@ -281,7 +311,18 @@ export function ChatSidebar({
           <div className="mb-3 flex items-center justify-between">
             <span className="text-sm font-medium text-app-text">Chats</span>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                activeTab === 'all'
+                  ? 'border border-accent text-accent-soft'
+                  : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
+              }`}
+              onClick={() => setActiveTab('all')}
+            >
+              All
+            </button>
             <button
               type="button"
               className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -356,6 +397,7 @@ export function ChatSidebar({
             ) : null}
             <ConversationList
               conversations={filteredConversations}
+              typingPreviews={typingPreviews}
               selectedId={selectedId}
               onSelect={onSelect}
               onPrefetch={onPrefetch}
@@ -392,6 +434,8 @@ export function ChatSidebar({
       {newConversationOpen ? (
         <NewConversationModal
           selfLabel={selfLabel}
+          teammates={teammates}
+          initialMode={composeMode}
           onClose={() => onNewConversationOpenChange(false)}
           onMessageSelf={() => {
             onNewConversationOpenChange(false);

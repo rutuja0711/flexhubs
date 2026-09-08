@@ -522,7 +522,7 @@ function AuthShell({
   children: ReactNode;
 }) {
   return (
-    <div className="flex min-h-full items-center justify-center bg-app-bg-login p-6">
+    <div className="flex min-h-full items-center justify-center bg-app-bg p-6">
       <div className="w-full max-w-[420px] rounded-[20px] border border-app-border bg-app-surface p-8 shadow-app">
         <button type="button" className="mb-4 text-sm text-app-muted hover:text-app-text" onClick={onBack}>
           ← Back to login

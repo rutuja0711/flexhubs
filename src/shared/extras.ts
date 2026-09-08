@@ -81,6 +81,13 @@ export type ScheduledMessageItem = {
 
 export type AiTextResult = {
   text: string;
+  action: string | null;
+  conversationId: string | null;
+  conversationName: string | null;
+  message: string | null;
+  scheduledAt: string | null;
+  snoozeUntil: string | null;
+  snoozeHours: number | null;
 };
 
 export type PushVapidKeyResult = {
@@ -479,15 +486,198 @@ export function normalizeScheduledMessages(payload: unknown): ScheduledMessageIt
 
 export function normalizeAiTextResult(payload: unknown): AiTextResult {
   const record = asRecord(payload) ?? {};
+  const nested =
+    asRecord(record.data) ??
+    asRecord(record.result) ??
+    asRecord(record.command) ??
+    asRecord(record.actionPayload) ??
+    {};
+
+  const hoursValue = nested.snoozeHours ?? record.snoozeHours ?? nested.hours ?? record.hours;
+  const snoozeHours =
+    typeof hoursValue === 'number' && Number.isFinite(hoursValue)
+      ? hoursValue
+      : typeof hoursValue === 'string' && Number.isFinite(Number(hoursValue))
+        ? Number(hoursValue)
+        : null;
 
   return {
     text:
+      readString(record.reply) ??
       readString(record.text) ??
       readString(record.content) ??
-      readString(record.result) ??
       readString(record.output) ??
+      readString(record.transcript) ??
+      readString(record.transcription) ??
+      readString(nested.reply) ??
+      readString(nested.text) ??
+      readString(nested.content) ??
+      readString(nested.output) ??
+      readString(nested.transcript) ??
       '',
+    action:
+      readString(record.action) ??
+      readString(record.intent) ??
+      readString(nested.action) ??
+      readString(nested.intent),
+    conversationId:
+      readString(record.conversationId) ??
+      readString(nested.conversationId) ??
+      readString(record.channelId) ??
+      readString(nested.channelId),
+    conversationName:
+      readString(record.conversationName) ??
+      readString(record.conversation) ??
+      readString(record.channel) ??
+      readString(nested.conversationName) ??
+      readString(nested.conversation) ??
+      readString(nested.channel),
+    message:
+      readString(record.message) ??
+      readString(record.body) ??
+      readString(nested.message) ??
+      readString(nested.body),
+    scheduledAt:
+      readString(record.scheduledAt) ??
+      readString(record.sendAt) ??
+      readString(nested.scheduledAt) ??
+      readString(nested.sendAt),
+    snoozeUntil:
+      readString(record.snoozeUntil) ??
+      readString(record.snoozedUntil) ??
+      readString(nested.snoozeUntil) ??
+      readString(nested.snoozedUntil),
+    snoozeHours,
   };
+}
+
+export function sanitizeAiApiError(error: string): string {
+  if (/incorrect api key|invalid api key|api key provided/i.test(error)) {
+    return 'Flex AI is unavailable because the server API key is invalid. Ask an admin to update it.';
+  }
+
+  return error;
+}
+
+export function parseFlexDateTime(raw: string | null | undefined): string | null {
+  if (!raw?.trim()) {
+    return null;
+  }
+
+  const trimmed = raw.trim();
+  if (trimmed.includes('T') || /^\d{4}-\d{2}-\d{2}/.test(trimmed)) {
+    const parsed = Date.parse(trimmed);
+    if (!Number.isNaN(parsed)) {
+      return new Date(parsed).toISOString();
+    }
+  }
+
+  const lower = trimmed.toLowerCase().replace(/\./g, '');
+  const timeMatch = lower.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+
+  if (!timeMatch) {
+    return null;
+  }
+
+  let hours = Number(timeMatch[1]);
+  const minutes = timeMatch[2] ? Number(timeMatch[2]) : 0;
+  const meridian = timeMatch[3];
+
+  if (meridian === 'pm' && hours < 12) {
+    hours += 12;
+  }
+
+  if (meridian === 'am' && hours === 12) {
+    hours = 0;
+  }
+
+  const date = new Date();
+  if (/\btomorrow\b/.test(lower)) {
+    date.setDate(date.getDate() + 1);
+  }
+
+  date.setHours(hours, minutes, 0, 0);
+
+  if (date.getTime() <= Date.now()) {
+    date.setDate(date.getDate() + 1);
+  }
+
+  return date.toISOString();
+}
+
+export function inferFlexIntent(input: string, result: AiTextResult): AiTextResult {
+  const next: AiTextResult = { ...result };
+  const text = input.trim();
+
+  if (!next.action) {
+    if (/^open\s+/i.test(text)) {
+      next.action = 'open';
+    } else if (/keep me on snooze|snooze (?:me|notifications|all)\b/i.test(text)) {
+      next.action = 'snooze_me';
+    } else if (/^snooze\s+/i.test(text)) {
+      next.action = 'snooze';
+    } else if (/^send\b/i.test(text) && /\bfor\s+/i.test(text)) {
+      next.action = 'schedule';
+    } else if (/^send\b/i.test(text)) {
+      next.action = 'send';
+    }
+  }
+
+  if (!next.conversationName) {
+    const openName = text.match(/^open\s+(.+)$/i)?.[1];
+    const snoozeName = text.match(/^snooze\s+(.+?)(?:\s+for\b|$)/i)?.[1];
+    next.conversationName = openName?.trim() || snoozeName?.trim() || null;
+  }
+
+  if (!next.message) {
+    const scheduledSend = text.match(/^send\s+(.+?)\s+for\s+.+$/i)?.[1];
+    const immediateSend = text.match(/^send\s+(.+)$/i)?.[1];
+    next.message = scheduledSend?.trim() || immediateSend?.trim() || null;
+  }
+
+  if (!next.scheduledAt) {
+    const forMatch = text.match(/\bfor\s+(.+)$/i)?.[1];
+    const parsed = parseFlexDateTime(forMatch ?? next.scheduledAt);
+    if (parsed && (next.action === 'schedule' || next.action === 'send')) {
+      next.scheduledAt = parsed;
+      next.action = 'schedule';
+    }
+  } else {
+    next.scheduledAt = parseFlexDateTime(next.scheduledAt) ?? next.scheduledAt;
+  }
+
+  if (next.snoozeHours == null) {
+    const hours = text.match(/for\s+(\d+(?:\.\d+)?)\s*hours?/i)?.[1];
+    if (hours) {
+      next.snoozeHours = Number(hours);
+    }
+  }
+
+  return next;
+}
+
+export function hoursToSnoozePreset(hours: number): string {
+  if (hours <= 0.75) {
+    return '30m';
+  }
+
+  if (hours <= 1.5) {
+    return '1h';
+  }
+
+  if (hours <= 3) {
+    return '2h';
+  }
+
+  if (hours <= 6) {
+    return '4h';
+  }
+
+  if (hours <= 12) {
+    return '8h';
+  }
+
+  return '24h';
 }
 
 export function normalizeVapidPublicKey(payload: unknown): PushVapidKeyResult {

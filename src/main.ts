@@ -1,8 +1,9 @@
-import { app, BrowserWindow, ipcMain } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, Notification, screen, session, systemPreferences } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { performLogin } from './main/authLogin';
 import { performGetMe } from './main/authMe';
+import { API_BASE_URL } from './shared/auth';
 import {
   fetchInviteRegistrationDetails,
   performForgotPassword,
@@ -72,7 +73,23 @@ import {
   startRealtimeStream,
   stopRealtimeStream,
 } from './main/realtimeStream';
-import { sendTypingIndicator, fetchRealtimePresence } from './main/realtimeApi';
+import {
+  sendTypingIndicator,
+  fetchRealtimePresence,
+  fetchRealtimeClientConfig,
+  fetchRealtimeToken,
+} from './main/realtimeApi';
+import {
+  endGroupMeeting,
+  fetchCallToken,
+  fetchMeetingJoinRequests,
+  logCallHistory,
+  muteMeetingParticipant,
+  notifyGroupMeeting,
+  removeMeetingParticipant,
+  requestMeetingJoin,
+  respondMeetingJoinRequest,
+} from './main/callsApi';
 import {
   fetchAvatarStyles,
   fetchNotificationSettings,
@@ -131,6 +148,10 @@ declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
 let mainWindow: BrowserWindow | null = null;
+let callPresentationActive = false;
+let savedMainBounds: Electron.Rectangle | null = null;
+const DEFAULT_MIN_SIZE = { width: 960, height: 640 };
+const CALL_PIP_SIZE = { width: 360, height: 300 };
 
 if (started) {
   app.quit();
@@ -562,8 +583,10 @@ ipcMain.handle('extras:ai-enhance', (_event, token: string, text: string) =>
 ipcMain.handle('extras:ai-generate', (_event, token: string, description: string) =>
   generateMessageText(token, description),
 );
-ipcMain.handle('extras:ai-flex-command', (_event, token: string, input: string) =>
-  parseFlexCommand(token, input),
+ipcMain.handle(
+  'extras:ai-flex-command',
+  (_event, token: string, input: string, conversationId?: string) =>
+    parseFlexCommand(token, input, conversationId),
 );
 ipcMain.handle(
   'extras:ai-transcribe',
@@ -718,6 +741,8 @@ ipcMain.handle(
 ipcMain.handle('user:organization-members-detailed', (_event, token: string) =>
   fetchOrganizationMembersDetailed(token),
 );
+ipcMain.handle('realtime:config', (_event, token: string) => fetchRealtimeClientConfig(token));
+ipcMain.handle('realtime:access-token', (_event, token: string) => fetchRealtimeToken(token));
 ipcMain.handle('realtime:start', async (_event, token: string) => {
   await startRealtimeStream(token);
   return { ok: true as const };
@@ -744,6 +769,118 @@ ipcMain.handle('realtime:presence', (_event, token: string, userIdsJson: string)
   }
 
   return fetchRealtimePresence(token, userIds);
+});
+
+ipcMain.handle('calls:token', (_event, token: string, payloadJson: string) => {
+  try {
+    const payload = JSON.parse(payloadJson) as {
+      conversationId?: string;
+      roomName?: string;
+      video: boolean;
+    };
+    return fetchCallToken(token, payload);
+  } catch {
+    return { ok: false as const, error: 'Invalid call token payload.' };
+  }
+});
+
+ipcMain.handle('calls:ensure-media-permissions', async (_event, video: boolean) =>
+  ensureMacMediaPermissions(Boolean(video)),
+);
+
+ipcMain.handle('calls:ensure-screen-capture', async () => ensureMacScreenCaptureAccess());
+
+ipcMain.handle(
+  'window:set-call-always-on-top',
+  (_event, enabled: boolean, mode?: string) => {
+    setCallWindowPresentation(Boolean(enabled), mode);
+    return { ok: true as const };
+  },
+);
+
+ipcMain.handle('window:move-call-by', (_event, deltaX: number, deltaY: number) => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { ok: false as const };
+  }
+
+  const [x, y] = mainWindow.getPosition();
+  mainWindow.setPosition(Math.round(x + Number(deltaX)), Math.round(y + Number(deltaY)));
+  return { ok: true as const };
+});
+
+ipcMain.handle('window:focus-call', () => {
+  setCallWindowPresentation(true);
+  return { ok: true as const };
+});
+
+ipcMain.handle('app:get-name', () => readMediaAppName());
+
+ipcMain.handle('calls:log', (_event, token: string, payloadJson: string) => {
+  try {
+    const payload = JSON.parse(payloadJson) as Parameters<typeof logCallHistory>[1];
+    return logCallHistory(token, payload);
+  } catch {
+    return { ok: false as const, error: 'Invalid call log payload.' };
+  }
+});
+
+ipcMain.handle('calls:notify-meeting', (_event, token: string, payloadJson: string) => {
+  try {
+    const payload = JSON.parse(payloadJson) as Parameters<typeof notifyGroupMeeting>[1];
+    return notifyGroupMeeting(token, payload);
+  } catch {
+    return { ok: false as const, error: 'Invalid meeting notify payload.' };
+  }
+});
+
+ipcMain.handle(
+  'calls:mute-participant',
+  (_event, token: string, conversationId: string, participantIdentity: string, muted: boolean) =>
+    muteMeetingParticipant(token, conversationId, participantIdentity, muted),
+);
+
+ipcMain.handle(
+  'calls:remove-participant',
+  (_event, token: string, conversationId: string, participantIdentity: string) =>
+    removeMeetingParticipant(token, conversationId, participantIdentity),
+);
+
+ipcMain.handle('calls:end-meeting', (_event, token: string, conversationId: string) =>
+  endGroupMeeting(token, conversationId),
+);
+
+ipcMain.handle('calls:join-request', (_event, token: string, payloadJson: string) => {
+  try {
+    const payload = JSON.parse(payloadJson) as { conversationId: string; callId?: string };
+    return requestMeetingJoin(token, payload);
+  } catch {
+    return { ok: false as const, error: 'Invalid join request payload.' };
+  }
+});
+
+ipcMain.handle('calls:join-requests', (_event, token: string, conversationId: string) =>
+  fetchMeetingJoinRequests(token, conversationId),
+);
+
+ipcMain.handle('calls:join-request-respond', (_event, token: string, payloadJson: string) => {
+  try {
+    const payload = JSON.parse(payloadJson) as {
+      conversationId: string;
+      requestId: string;
+      approved: boolean;
+    };
+    return respondMeetingJoinRequest(token, payload);
+  } catch {
+    return { ok: false as const, error: 'Invalid join response payload.' };
+  }
+});
+
+ipcMain.handle('renderer:debug-log', (_event, message: string) => {
+  if (typeof message === 'string' && message.trim()) {
+    console.log(message);
+  }
+
+  return { ok: true };
 });
 
 setRealtimeHandlers({
@@ -788,13 +925,287 @@ const createWindow = (): void => {
     mainWindow?.show();
   });
 
+  mainWindow.on('blur', () => {
+    if (callPresentationActive && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(true, 'screen-saver');
+      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    }
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
     stopRealtimeStream();
   });
 };
 
+function isAllowedSessionPermission(permission: string): boolean {
+  return (
+    permission === 'notifications' ||
+    permission === 'media' ||
+    permission === 'audioCapture' ||
+    permission === 'videoCapture' ||
+    permission === 'display-capture' ||
+    permission === 'screenCapture'
+  );
+}
+
+async function ensureMacMediaPermissions(
+  video: boolean,
+): Promise<{ ok: true } | { ok: false; error: string; appName: string }> {
+  const appName = app.isPackaged ? app.getName() : 'Electron';
+
+  if (process.platform !== 'darwin') {
+    return { ok: true, appName };
+  }
+
+  const micStatus = systemPreferences.getMediaAccessStatus('microphone');
+  let micGranted = micStatus === 'granted';
+
+  if (!micGranted) {
+    micGranted = await systemPreferences.askForMediaAccess('microphone');
+  }
+
+  if (!micGranted) {
+    return {
+      ok: false,
+      appName,
+      error: `Microphone access is required for calls. Open System Settings → Privacy & Security → Microphone and enable ${appName}.`,
+    };
+  }
+
+  if (!video) {
+    return { ok: true, appName };
+  }
+
+  const cameraStatus = systemPreferences.getMediaAccessStatus('camera');
+  let cameraGranted = cameraStatus === 'granted';
+
+  if (!cameraGranted) {
+    cameraGranted = await systemPreferences.askForMediaAccess('camera');
+  }
+
+  if (!cameraGranted) {
+    return {
+      ok: false,
+      appName,
+      error: `Camera access is required for video calls. Open System Settings → Privacy & Security → Camera and enable ${appName}.`,
+    };
+  }
+
+  return { ok: true, appName };
+}
+
+function readMediaAppName(): string {
+  return app.isPackaged ? app.getName() : 'Electron';
+}
+
+async function ensureMacScreenCaptureAccess(): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (process.platform !== 'darwin') {
+    return { ok: true };
+  }
+
+  const appName = readMediaAppName();
+  const execPath = process.execPath;
+  const reportedStatus = systemPreferences.getMediaAccessStatus('screen');
+
+  console.log(`[ScreenShare] execPath: ${execPath}`);
+  console.log(`[ScreenShare] getMediaAccessStatus('screen'): ${reportedStatus}`);
+
+  try {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 1, height: 1 },
+    });
+
+    console.log(`[ScreenShare] Permission probe found ${sources.length} screen source(s).`);
+
+    if (sources.length > 0) {
+      return { ok: true };
+    }
+  } catch (error) {
+    console.error('[ScreenShare] Permission probe failed.', error);
+  }
+
+  const enableTarget = execPath.includes('Electron.app') ? execPath : appName;
+
+  return {
+    ok: false,
+    error:
+      `Screen recording is still blocked for this app.\n\n` +
+      `1. Open System Settings → Privacy & Security → Screen & System Audio Recording\n` +
+      `2. Click + and add this exact app:\n${execPath}\n` +
+      `3. Turn it ON, then fully quit the app (Cmd+Q) and run npm start again\n\n` +
+      `(Settings currently reports "${reportedStatus}" for ${appName}. macOS often lists the wrong name until the correct binary is added.)`,
+  };
+}
+
+function logScreenCaptureStartupHint(): void {
+  if (process.platform !== 'darwin') {
+    return;
+  }
+
+  const status = systemPreferences.getMediaAccessStatus('screen');
+  console.log(`[ScreenShare] Startup check — status: ${status}, binary: ${process.execPath}`);
+
+  if (status !== 'granted') {
+    console.log(
+      '[ScreenShare] If screen share fails, add the binary above in System Settings → Privacy & Security → Screen & System Audio Recording.',
+    );
+  }
+}
+
+function setupDisplayMediaHandler(): void {
+  session.defaultSession.setDisplayMediaRequestHandler(
+    (request, callback) => {
+      void desktopCapturer
+        .getSources({
+          types: ['screen', 'window'],
+          thumbnailSize: { width: 320, height: 180 },
+          fetchWindowIcons: true,
+        })
+        .then((sources) => {
+          console.log(`[ScreenShare] Found ${sources.length} capture source(s).`);
+
+          const screenSource =
+            sources.find((source) => source.id.startsWith('screen:')) ??
+            sources.find((source) => /screen|display|monitor/i.test(source.name)) ??
+            sources[0];
+
+          if (!screenSource) {
+            console.warn('[ScreenShare] No capture sources available.');
+            console.warn(`[ScreenShare] execPath: ${process.execPath}`);
+            console.warn(
+              `[ScreenShare] screen status: ${systemPreferences.getMediaAccessStatus('screen')}`,
+            );
+            callback({});
+            return;
+          }
+
+          console.log(`[ScreenShare] Using source: ${screenSource.name} (${screenSource.id})`);
+
+          callback({
+            video: screenSource,
+            audio: request.audioRequested
+              ? process.platform === 'darwin'
+                ? 'loopback'
+                : true
+              : undefined,
+          });
+        })
+        .catch((error) => {
+          console.error('[ScreenShare] Failed to enumerate capture sources.', error);
+          callback({});
+        });
+    },
+    { useSystemPicker: process.platform === 'darwin' },
+  );
+}
+
+function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  callPresentationActive = active;
+
+  if (!active || mode === 'idle') {
+    if (savedMainBounds) {
+      mainWindow.setMinimumSize(DEFAULT_MIN_SIZE.width, DEFAULT_MIN_SIZE.height);
+      mainWindow.setBounds(savedMainBounds);
+      savedMainBounds = null;
+    }
+
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setVisibleOnAllWorkspaces(false);
+    callPresentationActive = false;
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  mainWindow.setAlwaysOnTop(true, 'screen-saver');
+  mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+
+  if (mode === 'minimized') {
+    if (!savedMainBounds) {
+      savedMainBounds = mainWindow.getBounds();
+    }
+
+    const anchor = savedMainBounds ?? mainWindow.getBounds();
+    const display = screen.getDisplayMatching(anchor);
+    const workArea = display.workArea;
+
+    mainWindow.setMinimumSize(280, 200);
+    mainWindow.setBounds({
+      x: workArea.x + workArea.width - CALL_PIP_SIZE.width - 16,
+      y: workArea.y + workArea.height - CALL_PIP_SIZE.height - 16,
+      width: CALL_PIP_SIZE.width,
+      height: CALL_PIP_SIZE.height,
+    });
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
+  if (savedMainBounds) {
+    mainWindow.setMinimumSize(DEFAULT_MIN_SIZE.width, DEFAULT_MIN_SIZE.height);
+    mainWindow.setBounds(savedMainBounds);
+    savedMainBounds = null;
+  }
+
+  mainWindow.show();
+  mainWindow.focus();
+}
+
 app.whenReady().then(() => {
+  console.log('[FlexHubs] API base URL:', API_BASE_URL);
+  console.log('[FlexHubs] Call debug: lines starting with [Calls] appear here after login.');
+
+  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
+    callback(isAllowedSessionPermission(permission));
+  });
+
+  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
+    return isAllowedSessionPermission(permission);
+  });
+
+  setupDisplayMediaHandler();
+  logScreenCaptureStartupHint();
+
+  ipcMain.handle(
+    'desktop:notify',
+    (_event, payload: { title?: string; body?: string; tag?: string }) => {
+      if (!Notification.isSupported()) {
+        return { ok: false };
+      }
+
+      const notification = new Notification({
+        title: payload.title?.trim() || 'FlexHubs',
+        body: payload.body ?? '',
+        silent: false,
+      });
+
+      notification.on('click', () => {
+        if (!mainWindow) {
+          return;
+        }
+
+        if (mainWindow.isMinimized()) {
+          mainWindow.restore();
+        }
+
+        mainWindow.show();
+        mainWindow.focus();
+        mainWindow.webContents.send('desktop:notify-click', payload.tag ?? '');
+      });
+
+      notification.show();
+      return { ok: true };
+    },
+  );
+
   createWindow();
 
   app.on('activate', () => {

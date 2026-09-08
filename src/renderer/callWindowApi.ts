@@ -1,0 +1,22 @@
+import type { CallPanelLayout } from './call/CallFloatingPanel';
+
+export type CallWindowPresentationMode = CallPanelLayout | 'ringing' | 'idle';
+
+export function setCallWindowPresentation(
+  active: boolean,
+  mode: CallWindowPresentationMode = 'floating',
+): void {
+  void window.electronAPI?.setCallAlwaysOnTop?.(active, mode);
+}
+
+export function setCallWindowAlwaysOnTop(enabled: boolean): void {
+  setCallWindowPresentation(enabled, enabled ? 'floating' : 'idle');
+}
+
+export function focusCallWindow(): void {
+  void window.electronAPI?.focusCallWindow?.();
+}
+
+export function moveCallWindowBy(deltaX: number, deltaY: number): void {
+  void window.electronAPI?.moveCallWindowBy?.(deltaX, deltaY);
+}

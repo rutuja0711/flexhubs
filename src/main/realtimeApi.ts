@@ -1,12 +1,37 @@
 import { API_BASE_URL } from '../shared/api';
 import type { ApiResult } from '../shared/api';
+import { buildRealtimeClientConfig } from '../shared/supabaseEnv';
 import {
+  extractRealtimeAccessToken,
+  extractRealtimeClientConfig,
   extractRealtimeToken,
   normalizePresencePayload,
   normalizeRealtimeStatus,
+  type RealtimeClientConfig,
   type RealtimeStatusPayload,
 } from '../shared/realtime';
 import { apiGet, apiPatch, apiPost } from './apiRequest';
+
+function readMainSupabaseEnv(): Record<string, string | undefined> {
+  return {
+    VITE_SUPABASE_URL:
+      typeof __FLEXHUBS_SUPABASE_URL__ !== 'undefined' ? __FLEXHUBS_SUPABASE_URL__ : process.env.VITE_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_URL:
+      typeof __FLEXHUBS_SUPABASE_URL__ !== 'undefined'
+        ? __FLEXHUBS_SUPABASE_URL__
+        : process.env.NEXT_PUBLIC_SUPABASE_URL,
+    VITE_SUPABASE_ANON_KEY:
+      typeof __FLEXHUBS_SUPABASE_ANON_KEY__ !== 'undefined'
+        ? __FLEXHUBS_SUPABASE_ANON_KEY__
+        : process.env.VITE_SUPABASE_ANON_KEY,
+    NEXT_PUBLIC_SUPABASE_ANON_KEY:
+      typeof __FLEXHUBS_SUPABASE_ANON_KEY__ !== 'undefined'
+        ? __FLEXHUBS_SUPABASE_ANON_KEY__
+        : process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
+    VITE_SUPABASE_PUBLISHABLE_KEY: process.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  };
+}
 
 export async function fetchRealtimeStatus(token: string): Promise<ApiResult<RealtimeStatusPayload>> {
   const result = await apiGet<unknown>(
@@ -43,6 +68,47 @@ export async function fetchRealtimeToken(token: string): Promise<ApiResult<strin
   }
 
   return { ok: true, data: realtimeToken };
+}
+
+export async function fetchRealtimeClientConfig(
+  token: string,
+): Promise<ApiResult<RealtimeClientConfig>> {
+  const result = await apiGet<unknown>(
+    `${API_BASE_URL}/realtime/token`,
+    token,
+    'Realtime Config API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const config = extractRealtimeClientConfig(result.data);
+
+  if (config) {
+    return { ok: true, data: config };
+  }
+
+  const accessToken = extractRealtimeAccessToken(result.data);
+
+  if (!accessToken) {
+    return {
+      ok: false,
+      error: 'Realtime config missing from response.',
+    };
+  }
+
+  const envConfig = buildRealtimeClientConfig(accessToken, readMainSupabaseEnv());
+
+  if (envConfig) {
+    return { ok: true, data: envConfig };
+  }
+
+  return {
+    ok: false,
+    error:
+      'Call signaling is not configured. Copy NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY from the web app .env into this project’s .env, then restart.',
+  };
 }
 
 export async function setUserOnline(token: string): Promise<ApiResult<{ ok: true }>> {
@@ -82,11 +148,13 @@ export async function sendTypingIndicator(
 ): Promise<ApiResult<{ ok: true }>> {
   const bodyOptions: unknown[] = isTyping
     ? [
+        { conversationId, isTyping: true, typing: true },
         { conversationId, isTyping: true },
         { conversationId, typing: true },
         { conversationId },
       ]
     : [
+        { conversationId, isTyping: false, typing: false },
         { conversationId, isTyping: false },
         { conversationId, typing: false },
       ];

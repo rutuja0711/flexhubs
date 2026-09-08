@@ -27,7 +27,7 @@ import {
 } from '../../shared/profile';
 import { formatTimezoneLabel, getTimezoneOptions } from '../../shared/timezones';
 import { getUserAvatarUrl, getUserInitials } from '../../shared/user';
-import { clearAuth, getCurrentUser, performLogout } from '../authApi';
+import { getCurrentUser } from '../authApi';
 import {
   setManualPresenceStatus,
   setPresenceStatusMessage,
@@ -43,6 +43,7 @@ import {
   unblockUser,
   uploadUserProfileImage,
 } from '../chatApi';
+import { ColorThemePicker } from '../theme/ColorThemePicker';
 import { useTheme } from '../theme/ThemeProvider';
 import { useToast } from '../ui/Toast';
 import {
@@ -725,14 +726,6 @@ export function ProfileSettingsView({
     if (ok) setSavedUsername(usernameDraft.trim());
   };
 
-  const handleLogout = async () => {
-    setSaving(true);
-    await performLogout();
-    clearProfileCache();
-    setSaving(false);
-    onLogout();
-  };
-
   if (loading && !profile) {
     return (
       <div className="flex h-full flex-col gap-4 bg-app-chat-bg p-6" aria-busy="true">
@@ -768,8 +761,8 @@ export function ProfileSettingsView({
     avatarStyles.find((style) => style.id === selectedStyle)?.name ?? selectedStyle;
 
   return (
-    <div className="flex h-full w-full flex-col overflow-y-auto bg-app-chat-bg px-8 py-6 text-app-text">
-      <div className="mx-auto w-full max-w-3xl">
+    <div className="flex h-full w-full flex-col overflow-y-auto bg-app-chat-bg px-12 py-8 text-app-text">
+      <div className="mx-auto w-full max-w-7xl">
         <div className="mb-6 flex items-center justify-between">
           <h1 className="text-[1.75rem] font-bold text-app-text">Profile & settings</h1>
           {saving ? <span className="text-xs text-app-muted">Saving...</span> : null}
@@ -780,7 +773,7 @@ export function ProfileSettingsView({
         ) : null}
 
         {/* Profile card */}
-        <SectionCard className="mb-8 flex items-start gap-4 p-6">
+        <SectionCard className="mb-12 flex items-start gap-4 p-6">
           <div className="relative shrink-0">
             <div className="flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-full bg-blue-400">
               {previewAvatarUrl && avatarTab !== 'initials' ? (
@@ -834,11 +827,13 @@ export function ProfileSettingsView({
           </div>
         </SectionCard>
 
+        <div className="grid grid-cols-1 items-start gap-x-24 gap-y-12 xl:grid-cols-2">
+        <div className="space-y-12">
         {/* Status */}
-        <section className="mb-8">
+        <section>
           <h3 className="text-base font-bold text-app-text">Status</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">
-            Set Available, Away, Busy, or Do not disturb. Your status message appears under your name in the chat list and on your profile card. When set to Available, you stay available while the app is open and only switch to away after the app has been in the background for about a minute.
+            Shown under your name in chats. Available stays on while the app is open.
           </p>
           <div className="mb-4 grid grid-cols-2 gap-3">
             {STATUS_OPTIONS.map((option) => (
@@ -869,7 +864,7 @@ export function ProfileSettingsView({
         </section>
 
         {/* Online status */}
-        <section className="mb-8">
+        <section>
           <h3 className="text-base font-bold text-app-text">Online status</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">
             Control whether teammates and friends can see when you are online, when you were last active, and when you read messages.
@@ -897,7 +892,7 @@ export function ProfileSettingsView({
         </section>
 
         {/* Local time */}
-        <section className="mb-8">
+        <section>
           <h3 className="text-base font-bold text-app-text">Local time</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">
             When you share online status, others can see your current local time while you are connected.
@@ -937,9 +932,11 @@ export function ProfileSettingsView({
         </section>
 
         {/* Appearance */}
-        <section className="mb-8">
+        <section>
           <h3 className="text-base font-bold text-app-text">Appearance</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">Choose how Flexhubs looks on this device.</p>
+          <p className="mt-1 mb-4 text-sm text-app-muted">
+            Choose light or dark mode, then pick any color. Matching shades are applied across the app.
+          </p>
           <div className="grid grid-cols-2 gap-4">
             <button
               type="button"
@@ -978,10 +975,15 @@ export function ProfileSettingsView({
               </div>
             </button>
           </div>
+          <div className="mt-4">
+            <ColorThemePicker />
+          </div>
         </section>
+        </div>
 
+        <div className="space-y-12">
         {/* App snooze */}
-        <section className="mb-8">
+        <section>
           <h3 className="text-base font-bold text-app-text">App snooze</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">
             Pause all notifications app-wide. Snooze individual hubs and groups from their chat header.
@@ -1025,7 +1027,7 @@ export function ProfileSettingsView({
         </section>
 
         {/* Do Not Disturb */}
-        <section className="mb-8">
+        <section>
           <h3 className="text-base font-bold text-app-text">Do Not Disturb</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">Block all alerts until you turn it off or the timer ends.</p>
           <div className="relative">
@@ -1066,7 +1068,7 @@ export function ProfileSettingsView({
         </section>
 
         {/* Message sounds */}
-        <section className="mb-8">
+        <section>
           <h3 className="text-base font-bold text-app-text">Message sounds</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">Discord-style ping when new messages arrive in other chats.</p>
           <SectionCard className="p-4">
@@ -1097,7 +1099,7 @@ export function ProfileSettingsView({
         </section>
 
         {/* Push notifications */}
-        <section className="mb-8">
+        <section>
           <h3 className="text-base font-bold text-app-text">Push notifications</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">Receive alerts when you are away from Flexhubs.</p>
           <SectionCard className="p-4">
@@ -1153,7 +1155,7 @@ export function ProfileSettingsView({
         </section>
 
         {/* Profile photo */}
-        <section className="mb-8">
+        <section>
           <h3 className="text-base font-bold text-app-text">Profile photo</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">Pick a generated avatar, upload a photo, or use your initials.</p>
           <div className="mb-4 flex items-center gap-2 rounded-xl border border-app-border bg-app-surface p-2">
@@ -1241,7 +1243,7 @@ export function ProfileSettingsView({
         </section>
 
         {/* Account details */}
-        <section className="mb-8">
+        <section>
           <h3 className="text-base font-bold text-app-text">Account details</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">Your username is visible to others in chats and search.</p>
           <label className="mb-2 block text-sm font-semibold text-app-text">Username</label>
@@ -1270,7 +1272,7 @@ export function ProfileSettingsView({
         </section>
 
         {/* Blocked users */}
-        <section className="mb-8">
+        <section>
           <h3 className="text-base font-bold text-app-text">Blocked users</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">People you have blocked cannot message you.</p>
           {blockedLoading ? (
@@ -1305,17 +1307,19 @@ export function ProfileSettingsView({
         </section>
 
         {/* Session */}
-        <section className="mb-12">
+        <section className="pb-4">
           <h3 className="text-base font-bold text-app-text">Session</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">Sign out of Flexhubs on this device.</p>
           <button
             type="button"
-            onClick={() => void handleLogout()}
+            onClick={() => void onLogout()}
             className="inline-flex items-center gap-2 rounded-xl border border-red-500/40 px-4 py-2 text-sm font-semibold text-red-400 hover:bg-red-500/10"
           >
             <FiLogOut /> Sign out
           </button>
         </section>
+        </div>
+        </div>
       </div>
     </div>
   );

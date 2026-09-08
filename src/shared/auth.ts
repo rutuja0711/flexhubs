@@ -17,7 +17,7 @@ export type MeSuccess = {
 
 export type LoginResult =
   | { ok: true; data: LoginSuccess }
-  | { ok: false; error: string; status?: number };
+  | { ok: false; error: string; status?: number; field?: 'email' | 'password' };
 
 export type RegisterAccountInput = {
   email: string;
@@ -63,6 +63,8 @@ export function readInviteRegistrationEmail(payload: unknown): string {
   return typeof email === 'string' ? email.trim() : '';
 }
 
-export const API_BASE_URL = 'https://flexhubs.in/api';
+import { readConfiguredApiBaseUrl } from './apiBaseUrl';
+
+export const API_BASE_URL = readConfiguredApiBaseUrl();
 export const LOGIN_URL = `${API_BASE_URL}/auth/login`;
 export const ME_URL = `${API_BASE_URL}/auth/me`;

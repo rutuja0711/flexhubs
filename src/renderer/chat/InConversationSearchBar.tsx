@@ -32,29 +32,18 @@ export function InConversationSearchBar({
             placeholder="Search in conversation"
             aria-invalid={Boolean(error)}
             autoFocus
-            className="min-w-0 flex-1 bg-transparent py-2.5 pr-3 text-sm text-app-text outline-none placeholder:text-app-placeholder"
+            className="min-w-0 flex-1 bg-transparent py-2.5 pr-1 text-sm text-app-text outline-none placeholder:text-app-placeholder"
             onChange={(event) => onChange(event.target.value)}
           />
-          {value ? (
-            <button
-              type="button"
-              aria-label="Clear search"
-              className="mr-2 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
-              onClick={() => onChange('')}
-            >
-              ×
-            </button>
-          ) : null}
+          <button
+            type="button"
+            aria-label="Close search"
+            className="mr-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+            onClick={onClose}
+          >
+            ×
+          </button>
         </div>
-
-        <button
-          type="button"
-          aria-label="Close search"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
-          onClick={onClose}
-        >
-          ×
-        </button>
 
         {value.trim() ? (
           <span className="shrink-0 text-sm tabular-nums text-app-muted">

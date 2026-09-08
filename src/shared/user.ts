@@ -1,3 +1,5 @@
+import { resolveAvatarUrl } from './profile';
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -96,17 +98,7 @@ export function getWorkspaceShortName(user: unknown): string {
 }
 
 export function getUserAvatarUrl(user: unknown): string | null {
-  const record = asRecord(user);
-
-  if (!record) {
-    return null;
-  }
-
-  return (
-    readString(record.avatarUrl) ??
-    readString(record.avatar) ??
-    readString(record.imageUrl)
-  );
+  return resolveAvatarUrl(user);
 }
 
 export function getUserInitials(user: unknown): string {

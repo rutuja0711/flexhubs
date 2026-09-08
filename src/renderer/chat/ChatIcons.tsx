@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 
 export function FlexLogo() {
   return (
@@ -257,14 +257,20 @@ export function Avatar({
   initials: string;
   size?: 'sm' | 'md';
 }) {
+  const [failed, setFailed] = useState(false);
   const sizeClass = size === 'sm' ? 'h-8 w-8 text-xs' : 'h-10 w-10 text-sm';
 
-  if (imageUrl) {
+  useEffect(() => {
+    setFailed(false);
+  }, [imageUrl]);
+
+  if (imageUrl && !failed) {
     return (
       <img
         src={imageUrl}
         alt=""
         className={`${sizeClass} rounded-full object-cover`}
+        onError={() => setFailed(true)}
       />
     );
   }

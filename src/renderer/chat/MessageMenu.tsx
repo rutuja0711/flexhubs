@@ -4,6 +4,7 @@ import { createPortal } from 'react-dom';
 type MessageMenuProps = {
   isOwn: boolean;
   isPinned: boolean;
+  isSaved: boolean;
   align: 'left' | 'right';
   onReply: () => void;
   onReplyInThread: () => void;
@@ -27,6 +28,7 @@ const MENU_WIDTH = 212;
 export function MessageMenu({
   isOwn,
   isPinned,
+  isSaved,
   align,
   onReply,
   onReplyInThread,
@@ -54,8 +56,9 @@ export function MessageMenu({
     ...(isOwn ? [{ label: 'Edit', onClick: () => run(onEdit) }] : []),
     { label: 'Forward', onClick: () => run(onForward) },
     { label: isPinned ? 'Unpin' : 'Pin', onClick: () => run(onPinToggle) },
-    { label: 'Save', onClick: () => run(onSave) },
-    { label: 'Unsave', onClick: () => run(onUnsave) },
+    ...(isSaved
+      ? [{ label: 'Unsave', onClick: () => run(onUnsave) }]
+      : [{ label: 'Save', onClick: () => run(onSave) }]),
     { label: 'Delete for me', onClick: () => run(onDeleteForMe), tone: 'danger' },
     ...(isOwn
       ? [{ label: 'Delete for everyone', onClick: () => run(onDeleteForEveryone), tone: 'danger' }]

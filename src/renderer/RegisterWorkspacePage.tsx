@@ -433,7 +433,7 @@ export default function RegisterWorkspacePage({
 
   return (
     <div className="flex h-screen w-full flex-col bg-app-bg text-app-text">
-      <header className="flex items-center justify-between border-b border-app-border px-8 py-4">
+      <header className="flex items-center justify-between px-8 py-4">
         <button
           type="button"
           onClick={step === 1 ? onBackToLogin : () => setStep(1)}
@@ -441,10 +441,6 @@ export default function RegisterWorkspacePage({
         >
           ← {step === 1 ? 'Back to sign in' : 'Back to plans'}
         </button>
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-sm font-bold text-white">F</div>
-          <span className="text-lg font-semibold tracking-tight">Flexhubs</span>
-        </div>
         <button
           type="button"
           aria-label="Toggle theme"

@@ -14,6 +14,7 @@ import {
   normalizeCalendarMentionableUsers,
   normalizeScheduledMessages,
   normalizeVapidPublicKey,
+  sanitizeAiApiError,
 } from '../shared/extras';
 import { apiDelete, apiGet, apiPost } from './apiRequest';
 
@@ -197,7 +198,7 @@ export async function enhanceMessageText(
   );
 
   if (!result.ok) {
-    return result;
+    return { ...result, error: sanitizeAiApiError(result.error) };
   }
 
   return { ok: true, data: normalizeAiTextResult(result.data) };
@@ -215,7 +216,7 @@ export async function generateMessageText(
   );
 
   if (!result.ok) {
-    return result;
+    return { ...result, error: sanitizeAiApiError(result.error) };
   }
 
   return { ok: true, data: normalizeAiTextResult(result.data) };
@@ -224,16 +225,20 @@ export async function generateMessageText(
 export async function parseFlexCommand(
   token: string,
   input: string,
+  conversationId?: string,
 ): Promise<ApiResult<AiTextResult>> {
   const result = await apiPost<unknown>(
     `${API_BASE_URL}/ai/flex-command`,
     token,
     'AI Flex Command API',
-    { input },
+    {
+      input,
+      ...(conversationId ? { conversationId } : {}),
+    },
   );
 
   if (!result.ok) {
-    return result;
+    return { ...result, error: sanitizeAiApiError(result.error) };
   }
 
   return { ok: true, data: normalizeAiTextResult(result.data) };

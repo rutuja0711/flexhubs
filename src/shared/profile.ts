@@ -89,6 +89,7 @@ export type OrganizationMemberItem = {
   avatarUrl: string | null;
   initials: string;
   isAdmin: boolean;
+  isOwner: boolean;
 };
 
 const UI_STATUS_TO_API: Record<string, UserPresenceStatus> = {
@@ -174,6 +175,52 @@ export function buildGeneratedAvatarUrl(style: string, seed: string): string {
   return `https://api.dicebear.com/7.x/${safeStyle}/svg?seed=${safeSeed}`;
 }
 
+export function resolveAvatarUrl(source: unknown): string | null {
+  const record = asRecord(source);
+
+  if (!record) {
+    return null;
+  }
+
+  if (
+    record.useInitials === true ||
+    readString(record.avatarType) === 'initials' ||
+    readString(record.avatarMode) === 'initials'
+  ) {
+    return null;
+  }
+
+  const avatarStyle =
+    readString(record.avatarStyle) ??
+    readString(record.avatarStyleId) ??
+    readString(record.style);
+
+  if (avatarStyle) {
+    const seed =
+      readString(record.avatarSeed) ??
+      readString(record.seed) ??
+      readString(record.username) ??
+      readString(record.email) ??
+      readString(record.id) ??
+      'flexhubs';
+
+    return buildGeneratedAvatarUrl(avatarStyle, seed);
+  }
+
+  const rawUrl =
+    readString(record.avatarUrl) ??
+    readString(record.avatar) ??
+    readString(record.imageUrl) ??
+    readString(record.iconUrl) ??
+    readString(record.icon);
+
+  if (!rawUrl) {
+    return null;
+  }
+
+  return normalizeUploadUrl(rawUrl);
+}
+
 export function normalizeAvatarStyles(payload: unknown): AvatarStyleItem[] {
   const items = extractArray(payload, ['styles', 'items', 'data']);
 
@@ -210,8 +257,10 @@ export function normalizeUserProfile(user: unknown, settings?: ProfileSettings):
   const organizationRoleRecord = asRecord(record.organizationRole);
   const roleName =
     readString(organizationRoleRecord?.name) ??
-    readString(record.role) ??
-    readString(record.organizationRoleName);
+    readString(typeof record.organizationRole === 'string' ? record.organizationRole : null) ??
+    readString(record.organizationRoleName) ??
+    readString(record.orgRole) ??
+    readString(record.role);
 
   const name =
     readString(record.name) ??
@@ -231,8 +280,7 @@ export function normalizeUserProfile(user: unknown, settings?: ProfileSettings):
     name,
     username: readString(record.username) ?? '',
     email: readString(record.email) ?? '',
-    avatarUrl:
-      readString(record.avatarUrl) ?? readString(record.avatar) ?? readString(record.imageUrl),
+    avatarUrl: resolveAvatarUrl(record),
     avatarStyle:
       readString(record.avatarStyle) ?? readString(record.avatarStyleId) ?? readString(record.style),
     avatarSeed: readString(record.avatarSeed) ?? readString(record.seed),
@@ -264,6 +312,79 @@ export function normalizeUserProfile(user: unknown, settings?: ProfileSettings):
   };
 }
 
+export function isOrganizationAdminRole(role: string | null | undefined): boolean {
+  const normalized = (role ?? '').trim().toLowerCase();
+
+  return (
+    normalized.includes('admin') ||
+    normalized.includes('founder') ||
+    normalized.includes('owner') ||
+    normalized.includes('director')
+  );
+}
+
+function isWorkspaceOwnerRole(role: string | null | undefined): boolean {
+  const normalized = (role ?? '').trim().toLowerCase();
+
+  return (
+    normalized === 'admin' ||
+    normalized.includes('founder') ||
+    normalized.includes('owner') ||
+    normalized.includes('workspace creator')
+  );
+}
+
+export function userIsWorkspaceOwner(user: unknown): boolean {
+  const record = asRecord(user) ?? {};
+  const organization = asRecord(record.organization);
+  const membership = asRecord(record.membership) ?? asRecord(record.organizationMembership);
+  const organizationRole = asRecord(record.organizationRole);
+  const userId = readString(record.id) ?? readString(record.userId);
+
+  if (
+    record.isOwner === true ||
+    record.isFounder === true ||
+    record.isWorkspaceOwner === true ||
+    record.createdWorkspace === true ||
+    record.organizationOwner === true ||
+    membership?.isOwner === true ||
+    membership?.isFounder === true ||
+    membership?.isCreator === true
+  ) {
+    return true;
+  }
+
+  const ownerId =
+    readString(record.organizationOwnerId) ??
+    readString(organization?.ownerId) ??
+    readString(organization?.createdById) ??
+    readString(organization?.founderId) ??
+    readString(asRecord(organization?.owner)?.id) ??
+    readString(asRecord(organization?.createdBy)?.id);
+
+  if (userId && ownerId && userId === ownerId) {
+    return true;
+  }
+
+  const roleCandidates = [
+    readString(organizationRole?.name),
+    readString(organizationRole?.title),
+    readString(typeof record.organizationRole === 'string' ? record.organizationRole : null),
+    readString(record.organizationRoleName),
+    readString(record.orgRole),
+    readString(membership?.role),
+    readString(asRecord(membership?.role)?.name),
+    readString(record.workspaceRole),
+    readString(record.memberRole),
+  ];
+
+  return roleCandidates.some((role) => isWorkspaceOwnerRole(role));
+}
+
+export function userCanManageOrganization(user: unknown): boolean {
+  return userIsWorkspaceOwner(user);
+}
+
 export function normalizeOrganizationMembers(payload: unknown): OrganizationMemberItem[] {
   return extractArray(payload, ['members', 'users', 'items', 'data'])
     .map(asRecord)
@@ -287,11 +408,17 @@ export function normalizeOrganizationMembers(payload: unknown): OrganizationMemb
         'Member';
 
       const normalizedRole = role.toLowerCase();
-      const isAdmin =
-        normalizedRole.includes('admin') ||
-        normalizedRole.includes('director') ||
+      const isOwner =
+        record.isOwner === true ||
+        userRecord.isOwner === true ||
+        record.isFounder === true ||
+        userRecord.isFounder === true ||
         normalizedRole.includes('founder') ||
         normalizedRole.includes('owner');
+      const isAdmin =
+        isOwner ||
+        normalizedRole.includes('admin') ||
+        normalizedRole.includes('director');
 
       return {
         id:
@@ -306,12 +433,10 @@ export function normalizeOrganizationMembers(payload: unknown): OrganizationMemb
           readString(record.email) ??
           '',
         role,
-        avatarUrl:
-          readString(userRecord.avatarUrl) ??
-          readString(userRecord.avatar) ??
-          readString(record.avatarUrl),
+        avatarUrl: resolveAvatarUrl(userRecord) ?? resolveAvatarUrl(record),
         initials: initialsFromName(name),
         isAdmin,
+        isOwner,
       };
     });
 }

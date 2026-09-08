@@ -13,7 +13,7 @@ function formatSavedMessageContent(content: string): string {
   const trimmed = content.trim();
 
   if (!trimmed || trimmed === 'sticker') {
-    return 'Sticker';
+    return '🎭 Sticker';
   }
 
   return trimmed;

@@ -22,10 +22,11 @@ type NavRailProps = {
   user: unknown;
   activeView: MainView;
   onNavigate: (view: MainView) => void;
+  onOpenFlexAi?: () => void;
   onLogout?: () => void;
 };
 
-export function NavRail({ unreadCount, user, activeView, onNavigate, onLogout }: NavRailProps) {
+export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexAi, onLogout }: NavRailProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [presenceStatus, setPresenceStatus] = useState<UserPresenceStatus>(() => getEffectivePresenceStatus());
   const menuRef = useRef<HTMLDivElement>(null);
@@ -52,7 +53,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onLogout }:
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [menuOpen]);
   return (
-    <aside className="flex w-[72px] shrink-0 flex-col items-center border-r border-app-border bg-app-chat-rail py-4">
+    <aside className="relative z-[80] flex w-[72px] shrink-0 flex-col items-center overflow-visible border-r border-app-border bg-app-chat-rail py-4">
       <div className="mb-6">
         <FlexLogo />
       </div>
@@ -96,14 +97,26 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onLogout }:
         </NavIconButton>
       </nav>
 
-      <div className="mt-auto flex w-full flex-col items-center gap-3 px-2 pb-1">
-        <button
-          type="button"
-          aria-label="Quick actions"
-          className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-white transition-colors hover:bg-accent-hover"
-        >
-          <SparkleIcon />
-        </button>
+      <div className="mt-auto flex w-full flex-col items-center gap-3 overflow-visible px-2 pb-1">
+        <div className="group relative z-[80]">
+          <button
+            type="button"
+            aria-label="Ask Flex"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-white transition-colors hover:bg-accent-hover"
+            onClick={onOpenFlexAi}
+          >
+            <SparkleIcon />
+          </button>
+          <div
+            className="pointer-events-none absolute top-1/2 left-0 z-[80] flex -translate-y-1/2 items-center rounded-full border border-app-border bg-app-surface py-1.5 pr-4 pl-1.5 opacity-0 shadow-app transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+            aria-hidden="true"
+          >
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-white">
+              <SparkleIcon />
+            </span>
+            <span className="ml-2 whitespace-nowrap text-sm font-semibold text-app-text">Ask Flex!</span>
+          </div>
+        </div>
         <div className="relative" ref={menuRef}>
           <button
             type="button"

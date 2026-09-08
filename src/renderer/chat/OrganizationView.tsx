@@ -1,13 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  FiEdit2,
   FiBriefcase,
+  FiClock,
+  FiCreditCard,
+  FiEdit2,
   FiFileText,
+  FiHeadphones,
+  FiHome,
   FiLogOut,
   FiSend,
   FiTrash2,
   FiUserPlus,
   FiUsers,
+  FiZap,
 } from 'react-icons/fi';
 import {
   billingPeriodLabel,
@@ -24,7 +29,7 @@ import type {
   OrgInvoiceItem,
 } from '../../shared/organization';
 import { toProductionRegisterUrl } from '../../shared/organization';
-import { normalizeUserProfile, type OrganizationMemberItem } from '../../shared/profile';
+import { userIsWorkspaceOwner, type OrganizationMemberItem } from '../../shared/profile';
 import type { WorkspaceBillingPeriod, WorkspacePlanId } from '../../shared/workspace';
 import { getUserId } from '../../shared/user';
 import {
@@ -47,8 +52,17 @@ import {
   sendOrganizationInvite,
   verifyUpgradeSubscription,
 } from '../organizationApi';
+import { Avatar } from './ChatIcons';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
+
+const DEFAULT_PLAN_RULES = [
+  'Each plan covers a fixed member range: Starter 2–10, Team 11–15, Business 16–20, Custom 21+.',
+  'Seat count must cover all active members and pending invites.',
+  'Downgrades are blocked while admins or seats in use exceed the target plan limits.',
+  'Starter has no Flex assistant. Team and Business include Flex; Business unlocks all command patterns.',
+  'Custom plans (21+ members) are arranged with support — they cannot be purchased self-serve.',
+];
 
 type OrganizationViewProps = {
   user: unknown;
@@ -83,31 +97,61 @@ function planSeatLabel(plan: PaymentPlanItem): string {
     return `${plan.minSeats}–${plan.maxSeats} seats`;
   }
 
-  return `${plan.minSeats}+ members`;
+  return `${plan.minSeats}+ seats`;
+}
+
+function planCardSubtitle(plan: PaymentPlanItem): string {
+  if (plan.contactOnly) {
+    return `${plan.minSeats}+ seats • custom limits • support@flexhub.app`;
+  }
+
+  const maxInclGst = plan.maxSeats
+    ? calculatePlanTotal(plan.pricePerMember, plan.maxSeats, 'annual').total
+    : 0;
+  const adminLabel = `${plan.adminCount} admin${plan.adminCount === 1 ? '' : 's'}`;
+
+  return `${planSeatLabel(plan)} • ${adminLabel} • up to ₹${maxInclGst.toLocaleString()} incl. GST`;
+}
+
+function planIcon(planId: WorkspacePlanId) {
+  if (planId === 'starter') return <FiZap size={18} />;
+  if (planId === 'team') return <FiUsers size={18} />;
+  if (planId === 'business') return <FiHome size={18} />;
+  return <FiHeadphones size={18} />;
 }
 
 export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: OrganizationViewProps) {
   const toast = useToast();
   const confirm = useConfirm();
-  const profile = normalizeUserProfile(user);
   const currentUserId = getUserId(user);
 
-  const role = profile.organizationRole || 'Member';
-  const isAdmin =
-    role === 'Admin' ||
-    role === 'Director' ||
-    role === 'Founder' ||
-    role.toLowerCase().includes('admin');
+  const [members, setMembers] = useState<OrganizationMemberItem[]>([]);
+  const isOwner = useMemo(() => {
+    if (userIsWorkspaceOwner(user)) {
+      return true;
+    }
+
+    const profileEmail =
+      typeof user === 'object' && user && 'email' in user && typeof user.email === 'string'
+        ? user.email.toLowerCase()
+        : '';
+
+    return members.some(
+      (member) =>
+        member.isOwner &&
+        (member.id === currentUserId || (profileEmail !== '' && member.email.toLowerCase() === profileEmail)),
+    );
+  }, [currentUserId, members, user]);
+  const isAdmin = isOwner;
 
   const [loading, setLoading] = useState(true);
   const [plans, setPlans] = useState<PaymentPlanItem[]>(getDefaultPaymentPlans());
   const [subscription, setSubscription] = useState<OrgSubscriptionInfo | null>(null);
   const [seats, setSeats] = useState<OrganizationSeatsInfo>({ used: 0, total: 0, remaining: 0 });
-  const [members, setMembers] = useState<OrganizationMemberItem[]>([]);
   const [roles, setRoles] = useState<OrganizationRoleItem[]>([]);
   const [invites, setInvites] = useState<OrganizationInviteItem[]>([]);
   const [invoices, setInvoices] = useState<OrgInvoiceItem[]>([]);
-  const [complianceRules, setComplianceRules] = useState<string[]>([]);
+  const [complianceRules, setComplianceRules] = useState<string[]>(DEFAULT_PLAN_RULES);
 
   const [billingPeriod, setBillingPeriod] = useState<WorkspaceBillingPeriod>('monthly');
   const [selectedPlanId, setSelectedPlanId] = useState<WorkspacePlanId>('team');
@@ -117,6 +161,7 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
   const [inviteRoleId, setInviteRoleId] = useState('');
   const [lastInviteLink, setLastInviteLink] = useState<string | null>(null);
   const [paying, setPaying] = useState(false);
+  const [leaving, setLeaving] = useState(false);
   const [sendingInvite, setSendingInvite] = useState(false);
 
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? plans[1] ?? plans[0];
@@ -146,11 +191,17 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
       loadOrgInvoices(),
     ]);
 
-    if (
-      [subscriptionResult, seatsResult, membersResult, rolesResult, invitesResult, invoicesResult].some(
-        (result) => !result.ok && onUnauthorized(result.status),
-      )
-    ) {
+    const unauthorized = [
+      subscriptionResult,
+      seatsResult,
+      membersResult,
+      rolesResult,
+      invitesResult,
+      invoicesResult,
+    ].some((result) => !result.ok && onUnauthorized(result.status));
+
+    if (unauthorized) {
+      setLoading(false);
       return;
     }
 
@@ -179,17 +230,20 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
   }, [loadAll]);
 
   useEffect(() => {
-    if (!isAdmin || !selectedPlanId) return;
+    if (!selectedPlanId) return;
 
     void loadPlanCompliance(selectedPlanId, teamSize).then((result) => {
-      if (result.ok) {
+      if (result.ok && result.data.rules.length > 0) {
         setComplianceRules(result.data.rules);
+        return;
       }
+
+      setComplianceRules(DEFAULT_PLAN_RULES);
     });
-  }, [isAdmin, selectedPlanId, teamSize]);
+  }, [selectedPlanId, teamSize]);
 
   const handlePayUpgrade = async () => {
-    if (!isAdmin || selectedPlan.contactOnly) {
+    if (selectedPlan.contactOnly) {
       toast.info('Contact FlexHubs support for custom workspace pricing.');
       return;
     }
@@ -418,15 +472,22 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
 
   const handleLeave = async () => {
     const confirmed = await confirm({
-      title: 'Leave organization',
-      message: 'Leave this workspace? You will lose access to organization chats and hubs.',
+      title: 'Leave organization?',
+      message:
+        'You will lose access to this workspace, organization chats, and hubs. This cannot be undone from the app.',
       confirmLabel: 'Leave organization',
+      cancelLabel: 'Stay',
       tone: 'danger',
     });
 
-    if (!confirmed) return;
+    if (!confirmed) {
+      return;
+    }
 
+    setLeaving(true);
     const result = await leaveOrganizationWorkspace();
+    setLeaving(false);
+
     if (!result.ok) {
       if (onUnauthorized(result.status)) return;
       toast.error(result.error);
@@ -445,60 +506,80 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
     );
   }
 
-  return (
-    <div className="h-full overflow-y-auto bg-app-chat-bg px-6 py-6 text-app-text">
-      <div className="mx-auto max-w-5xl space-y-5">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-semibold text-app-text">Organization</h1>
-          {isAdmin ? (
-            <span className="rounded-md border border-red-500/25 px-2 py-0.5 text-[11px] font-medium text-red-400">
-              Admin
-            </span>
-          ) : null}
-        </div>
+  const seatTotal = seats.total || subscription?.teamSize || teamSize;
+  const seatsRemaining = seats.remaining || Math.max(0, seatTotal - seats.used);
+  const displayedRules = complianceRules.length > 0 ? complianceRules : DEFAULT_PLAN_RULES;
 
-        {subscription ? (
-          <section className="rounded-xl border border-app-border bg-app-surface p-4">
-            <p className="text-[10px] font-medium uppercase tracking-wide text-app-muted">Active plan</p>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <h2 className="text-base font-semibold text-app-text">{subscription.planName}</h2>
-              <span className="rounded-full bg-[#3ecf8e]/15 px-2 py-0.5 text-[11px] font-medium text-[#3ecf8e] capitalize">
+  return (
+    <div className="h-full overflow-y-auto bg-app-chat-bg px-8 py-8 text-app-text">
+      <div className="mx-auto w-full max-w-6xl space-y-8">
+        {isOwner ? (
+        <div className="flex items-start gap-3">
+          <FiCreditCard className="mt-1 text-accent" size={22} />
+          <div>
+            <h1 className="text-2xl font-bold text-app-text">Subscription</h1>
+            <p className="mt-1 text-sm text-app-muted">
+              Choose a plan and team size. Price is calculated per member.
+            </p>
+          </div>
+        </div>
+        ) : (
+        <div>
+          <h1 className="text-2xl font-bold text-app-text">Organization</h1>
+          <p className="mt-1 text-sm text-app-muted">View teammates in this workspace.</p>
+        </div>
+        )}
+
+        {isOwner && subscription ? (
+          <section className="rounded-2xl border border-app-border bg-app-surface p-6">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-accent">Active plan</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <h2 className="text-xl font-semibold capitalize text-app-text">{subscription.planName}</h2>
+              <span className="rounded-full bg-[#3ecf8e]/15 px-2.5 py-1 text-xs font-medium text-[#3ecf8e] capitalize">
                 {subscription.status}
               </span>
             </div>
-            <div className="mt-3 grid grid-cols-2 gap-3 text-xs md:grid-cols-4">
+            <div className="mt-5 grid grid-cols-2 gap-5 text-sm md:grid-cols-4">
               <div>
                 <p className="text-app-muted">Team size</p>
-                <p className="mt-0.5 font-medium text-app-text">
+                <p className="mt-1 font-medium text-app-text">
                   {subscription.teamSize} members · {subscription.usedSeats} in use
                 </p>
               </div>
               <div>
-                <p className="text-app-muted">Billing</p>
-                <p className="mt-0.5 font-medium text-app-text">{billingPeriodLabel(subscription.billingPeriod)}</p>
+                <p className="text-app-muted">Billing period</p>
+                <p className="mt-1 font-medium text-app-text">{billingPeriodLabel(subscription.billingPeriod)}</p>
               </div>
               <div>
-                <p className="text-app-muted">Activated</p>
-                <p className="mt-0.5 font-medium text-app-text">{formatDate(subscription.activatedAt)}</p>
+                <p className="text-app-muted">Activated on</p>
+                <p className="mt-1 font-medium text-app-text">{formatDate(subscription.activatedAt)}</p>
               </div>
               <div>
-                <p className="text-app-muted">Renews</p>
-                <p className="mt-0.5 font-medium text-app-text">{formatDate(subscription.renewsAt)}</p>
+                <p className="text-app-muted">Renews on</p>
+                <p className="mt-1 font-medium text-app-text">{formatDate(subscription.renewsAt)}</p>
               </div>
             </div>
           </section>
+        ) : isOwner ? (
+          <section className="rounded-2xl border border-dashed border-app-border bg-app-surface p-6">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-accent">Active plan</p>
+            <h2 className="mt-2 text-xl font-semibold text-app-text">No subscription on file</h2>
+            <p className="mt-1 text-sm text-app-muted">
+              Choose a plan below to activate billing for this workspace.
+            </p>
+          </section>
         ) : null}
 
-        {isAdmin ? (
-          <section className="rounded-xl border border-app-border bg-app-surface p-4">
-            <div className="mb-4 flex justify-center">
-              <div className="inline-flex rounded-lg bg-app-surface-input p-0.5">
+        {isOwner ? (
+        <>
+            <div className="flex justify-center">
+              <div className="inline-flex rounded-xl bg-app-surface-input p-1">
                 {(['monthly', '6months', 'annual'] as WorkspaceBillingPeriod[]).map((period) => (
                   <button
                     key={period}
                     type="button"
                     onClick={() => setBillingPeriod(period)}
-                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                    className={`rounded-lg px-5 py-2 text-sm font-medium transition-colors ${
                       billingPeriod === period ? 'bg-app-chat-active text-app-text' : 'text-app-muted hover:text-app-text'
                     }`}
                   >
@@ -508,7 +589,7 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
               </div>
             </div>
 
-            <div className="mb-4 grid grid-cols-2 gap-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
               {plans.map((plan, index) => {
                 const isSelected = selectedPlanId === plan.id;
                 const isCurrent = subscription?.planId === plan.id;
@@ -519,57 +600,57 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
                     type="button"
                     onClick={() => {
                       setSelectedPlanId(plan.id);
-                      if (!plan.contactOnly) setTeamSize(plan.minSeats);
+                      if (plan.contactOnly) return;
+                      const next = Math.max(plan.minSeats, teamSize);
+                      setTeamSize(plan.maxSeats ? Math.min(plan.maxSeats, next) : next);
                     }}
-                    className={`relative rounded-lg border p-3 text-left transition-all ${
+                    className={`relative rounded-xl border p-4 text-left transition-all ${
                       isSelected
-                        ? 'border-accent ring-1 ring-accent/40 bg-accent/[0.06]'
+                        ? 'border-accent bg-accent/[0.07] ring-1 ring-accent/30'
                         : 'border-app-border hover:border-app-border-strong'
                     }`}
                   >
-                    {isSelected ? (
-                      <span className="absolute top-2 right-2 flex h-4 w-4 items-center justify-center rounded-full bg-accent text-[10px] text-white">
-                        ✓
-                      </span>
-                    ) : null}
                     {isCurrent ? (
-                      <span className="mb-1 inline-block rounded bg-app-chat-hover px-1.5 py-0.5 text-[9px] font-semibold uppercase">
+                      <span className="absolute top-3 right-3 rounded bg-accent px-1.5 py-0.5 text-[9px] font-semibold uppercase text-white">
                         Current
                       </span>
                     ) : null}
-                    <p className="text-sm font-medium text-app-text">{plan.name}</p>
+                    <span className="text-accent">{planIcon(plan.id)}</span>
+                    <p className="mt-3 text-base font-semibold text-app-text">{plan.name}</p>
                     {plan.contactOnly ? (
-                      <p className="mt-1 text-sm font-semibold text-accent">Contact us</p>
+                      <p className="mt-1 text-lg font-bold text-accent">Contact us</p>
                     ) : (
-                      <p className="mt-1 text-lg font-semibold text-app-text">₹{plan.pricePerMember}</p>
+                      <p className="mt-1 text-lg font-bold text-app-text">
+                        ₹{plan.pricePerMember}{' '}
+                        <span className="text-xs font-medium text-app-muted">/ member / mo.</span>
+                      </p>
                     )}
-                    <p className="mt-1 text-[10px] leading-snug text-app-muted">
-                      {plan.contactOnly ? plan.features : `${planSeatLabel(plan)} · ${plan.adminCount} admin${plan.adminCount === 1 ? '' : 's'}`}
-                    </p>
+                    <p className="mt-2 text-xs leading-relaxed text-app-muted">{planCardSubtitle(plan)}</p>
                   </button>
                 );
               })}
             </div>
 
             {!selectedPlan.contactOnly ? (
-              <div className="space-y-3 rounded-lg border border-app-border bg-app-surface-input p-3">
-                <div className="flex items-center justify-between gap-3">
+              <section className="space-y-5">
+                <div className="flex flex-wrap items-center justify-between gap-4">
                   <div>
-                    <p className="text-sm font-medium text-app-text">Team size</p>
-                    <p className="text-[11px] text-app-muted">
+                    <p className="text-base font-semibold text-app-text">Member seats</p>
+                    <p className="mt-1 text-sm text-app-muted">
                       {selectedPlan.minSeats}
-                      {selectedPlan.maxSeats ? `–${selectedPlan.maxSeats}` : '+'} on {selectedPlan.name}
+                      {selectedPlan.maxSeats ? `–${selectedPlan.maxSeats}` : '+'} allowed · minimum{' '}
+                      {selectedPlan.minSeats} (includes active members and pending invites)
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-3">
                     <button
                       type="button"
                       onClick={() => setTeamSize(Math.max(selectedPlan.minSeats, teamSize - 1))}
-                      className="flex h-7 w-7 items-center justify-center rounded-md bg-app-chat-active text-sm hover:bg-app-chat-hover"
+                      className="flex h-9 w-9 items-center justify-center rounded-lg bg-app-chat-active text-lg hover:bg-app-chat-hover"
                     >
                       −
                     </button>
-                    <span className="min-w-[1.5rem] text-center text-sm font-medium">{teamSize}</span>
+                    <span className="min-w-[2rem] text-center text-base font-semibold">{teamSize}</span>
                     <button
                       type="button"
                       onClick={() =>
@@ -577,31 +658,34 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
                           selectedPlan.maxSeats ? Math.min(selectedPlan.maxSeats, teamSize + 1) : teamSize + 1,
                         )
                       }
-                      className="flex h-7 w-7 items-center justify-center rounded-md bg-app-chat-active text-sm hover:bg-app-chat-hover"
+                      className="flex h-9 w-9 items-center justify-center rounded-lg bg-app-chat-active text-lg hover:bg-app-chat-hover"
                     >
                       +
                     </button>
                   </div>
                 </div>
 
-                <div className="text-xs text-app-muted">
+                <div className="text-sm text-app-muted">
                   <p>
-                    {teamSize} × ₹{selectedPlan.pricePerMember} × {billingPeriodMultiplier(billingPeriod)} mo ={' '}
-                    <span className="text-app-text">₹{pricing.subtotal.toLocaleString()}</span>
+                    {teamSize} × ₹{selectedPlan.pricePerMember} × {billingPeriodMultiplier(billingPeriod)} months ={' '}
+                    <span className="font-semibold text-app-text">₹{pricing.subtotal.toLocaleString()}</span>
                   </p>
                   <p>
-                    GST (18%): <span className="text-app-text">₹{pricing.gst.toLocaleString()}</span>
+                    + GST (18%): <span className="font-semibold text-app-text">₹{pricing.gst.toLocaleString()}</span>
                   </p>
-                  <p className="mt-1 text-sm font-semibold text-app-text">Total: ₹{pricing.total.toLocaleString()}</p>
+                  <p className="mt-1 text-base font-bold text-app-text">
+                    Total payable: ₹{pricing.total.toLocaleString()}
+                  </p>
                 </div>
 
-                {complianceRules.length > 0 ? (
-                  <ul className="list-disc space-y-0.5 pl-4 text-[11px] text-app-muted">
-                    {complianceRules.map((rule) => (
+                <section className="rounded-xl border border-app-border bg-app-surface p-5">
+                  <p className="mb-3 text-sm font-semibold text-app-text">Plan change rules</p>
+                  <ul className="list-disc space-y-1.5 pl-5 text-sm text-app-muted">
+                    {displayedRules.map((rule) => (
                       <li key={rule}>{rule}</li>
                     ))}
                   </ul>
-                ) : null}
+                </section>
 
                 <button
                   type="button"
@@ -609,257 +693,300 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
                   onClick={() => {
                     void handlePayUpgrade();
                   }}
-                  className="w-full rounded-lg bg-accent py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                  className="w-full rounded-xl bg-accent py-3 text-sm font-semibold text-white hover:bg-accent-hover disabled:opacity-50"
                 >
-                  {paying ? 'Processing…' : `Pay ₹${pricing.total.toLocaleString()} & update`}
+                  {paying ? 'Processing…' : `Pay ₹${pricing.total.toLocaleString()} & update subscription`}
                 </button>
-              </div>
-            ) : null}
-          </section>
-        ) : null}
+                <p className="text-center text-xs text-app-muted">
+                  After payment, invite members from the section below — they inherit your plan features.
+                </p>
+              </section>
+            ) : (
+              <p className="text-sm text-app-muted">
+                Custom workspaces are arranged with support at support@flexhub.app.
+              </p>
+            )}
 
-        <div className="grid gap-4 lg:grid-cols-2">
-          {isAdmin ? (
-            <section className="rounded-xl border border-app-border bg-app-surface p-4">
-              <div className="mb-3 flex items-center gap-2">
-                <FiUserPlus className="text-accent" size={16} />
-                <div>
-                  <h3 className="text-sm font-semibold text-app-text">Invite members</h3>
-                  <p className="text-[11px] text-app-muted">
-                    {seats.used}/{seats.total || subscription?.teamSize || teamSize} seats · {seats.remaining} left
-                  </p>
+            <div className="grid items-start gap-6 lg:grid-cols-2">
+              <section className="rounded-2xl border border-app-border bg-app-surface p-6">
+                <div className="mb-2 flex items-center gap-2">
+                  <FiUserPlus className="text-accent" size={18} />
+                  <h3 className="text-lg font-semibold text-app-text">Invite members</h3>
                 </div>
-              </div>
-              <input
-                type="email"
-                value={inviteEmail}
-                onChange={(event) => setInviteEmail(event.target.value)}
-                placeholder="colleague@company.com"
-                className="mb-2 w-full rounded-lg border border-app-border bg-app-surface-input px-3 py-2 text-sm focus:border-accent focus:outline-none"
-              />
-              <select
-                value={inviteRoleId}
-                onChange={(event) => setInviteRoleId(event.target.value)}
-                className="mb-3 w-full rounded-lg border border-app-border bg-app-surface-input px-3 py-2 text-sm focus:border-accent focus:outline-none"
-              >
-                <option value="">No role assigned</option>
-                {roles.map((roleItem) => (
-                  <option key={roleItem.id} value={roleItem.id}>
-                    {roleItem.name}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                disabled={sendingInvite}
-                onClick={() => {
-                  void handleSendInvite();
-                }}
-                className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent py-2 text-sm font-medium text-white disabled:opacity-50"
-              >
-                <FiSend size={14} />
-                {sendingInvite ? 'Sending…' : 'Send invitation'}
-              </button>
-              {lastInviteLink ? (
-                <div className="mt-3 rounded-lg border border-accent-soft/30 bg-accent-soft/5 p-3">
-                  <p className="mb-2 text-[11px] text-app-muted">
-                    Registration link (use this if the email button is broken):
-                  </p>
-                  <p className="mb-2 break-all text-[11px] text-app-text">{lastInviteLink}</p>
-                  <button
-                    type="button"
-                    className="text-[11px] font-medium text-accent-soft hover:underline"
-                    onClick={() => {
-                      void navigator.clipboard.writeText(lastInviteLink).then(() => {
-                        toast.success('Invite link copied.');
-                      });
-                    }}
-                  >
-                    Copy link
-                  </button>
-                </div>
-              ) : null}
-              <div className="mt-3 space-y-1.5">
-                {invites.length === 0 ? (
-                  <p className="text-xs text-app-muted">No pending invitations.</p>
-                ) : (
-                  invites.map((invite) => (
-                    <div
-                      key={invite.id}
-                      className="flex items-center justify-between rounded-lg border border-app-border px-2.5 py-2"
+                <p className="text-sm text-app-muted">
+                  Invite teammates by email. They&apos;ll receive a link to register and join automatically.
+                </p>
+                <p className="mt-3 text-sm font-medium text-accent-soft">
+                  {seats.used}/{seatTotal} seats used · {seatsRemaining} remaining
+                </p>
+                <label className="mt-4 mb-1.5 block text-sm font-medium text-app-text">Email address</label>
+                <input
+                  type="email"
+                  value={inviteEmail}
+                  onChange={(event) => setInviteEmail(event.target.value)}
+                  placeholder="colleague@company.com"
+                  className="mb-3 w-full rounded-lg border border-app-border bg-app-surface-input px-3 py-2.5 text-sm focus:border-accent focus:outline-none"
+                />
+                <label className="mb-1.5 block text-sm font-medium text-app-text">Assign role</label>
+                <select
+                  value={inviteRoleId}
+                  onChange={(event) => setInviteRoleId(event.target.value)}
+                  className="mb-4 w-full rounded-lg border border-app-border bg-app-surface-input px-3 py-2.5 text-sm focus:border-accent focus:outline-none"
+                >
+                  <option value="">No role assigned</option>
+                  {roles.map((roleItem) => (
+                    <option key={roleItem.id} value={roleItem.id}>
+                      {roleItem.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={sendingInvite}
+                  onClick={() => {
+                    void handleSendInvite();
+                  }}
+                  className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-accent py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                >
+                  <FiSend size={14} />
+                  {sendingInvite ? 'Sending…' : 'Send invitation'}
+                </button>
+                {lastInviteLink ? (
+                  <div className="mt-3 rounded-lg border border-accent-soft/30 bg-accent-soft/5 p-3">
+                    <p className="mb-2 text-[11px] text-app-muted">
+                      Registration link (use this if the email button is broken):
+                    </p>
+                    <p className="mb-2 break-all text-[11px] text-app-text">{lastInviteLink}</p>
+                    <button
+                      type="button"
+                      className="text-[11px] font-medium text-accent-soft hover:underline"
+                      onClick={() => {
+                        void navigator.clipboard.writeText(lastInviteLink).then(() => {
+                          toast.success('Invite link copied.');
+                        });
+                      }}
                     >
-                      <div className="min-w-0">
-                        <p className="truncate text-xs text-app-text">{invite.email}</p>
-                        <p className="text-[10px] text-app-muted">{invite.role}</p>
-                      </div>
-                      <button
-                        type="button"
-                        className="shrink-0 text-[11px] text-accent-soft hover:underline"
-                        onClick={() => {
-                          void handleRevokeInvite(invite);
-                        }}
+                      Copy link
+                    </button>
+                  </div>
+                ) : null}
+                <div className="mt-4 space-y-2">
+                  {invites.length === 0 ? (
+                    <p className="text-sm text-app-muted">No pending invitations.</p>
+                  ) : (
+                    invites.map((invite) => (
+                      <div
+                        key={invite.id}
+                        className="flex items-center justify-between rounded-xl border border-app-border px-3 py-2.5"
                       >
-                        Revoke
-                      </button>
-                    </div>
-                  ))
-                )}
-              </div>
-            </section>
-          ) : null}
+                        <div className="min-w-0">
+                          <p className="truncate text-sm text-app-text">{invite.email}</p>
+                          <p className="mt-0.5 flex items-center gap-1.5 text-xs text-app-muted">
+                            <FiClock size={12} />
+                            Invited · waiting for registration
+                            {invite.role ? ` · ${invite.role}` : ''}
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          aria-label={`Revoke invite for ${invite.email}`}
+                          className="shrink-0 text-app-muted hover:text-accent-soft"
+                          onClick={() => {
+                            void handleRevokeInvite(invite);
+                          }}
+                        >
+                          <FiTrash2 size={15} />
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
 
-          {isAdmin ? (
-            <section className="rounded-xl border border-app-border bg-app-surface p-4">
-              <div className="mb-3 flex items-center gap-2">
-                <FiBriefcase className="text-accent" size={16} />
-                <div>
-                  <h3 className="text-sm font-semibold text-app-text">Roles</h3>
-                  <p className="text-[11px] text-app-muted">
+              <section className="rounded-2xl border border-app-border bg-app-surface p-6">
+                <div className="mb-2 flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <FiBriefcase className="text-accent" size={18} />
+                    <h3 className="text-lg font-semibold text-app-text">Organization roles</h3>
+                  </div>
+                  <p className="text-sm text-app-muted">
                     {roles.length} roles · {members.length} members
                   </p>
                 </div>
-              </div>
-              <form
-                className="mb-3 flex gap-2"
-                onSubmit={(event) => {
-                  event.preventDefault();
-                  void handleAddRole();
-                }}
-              >
-                <input
-                  type="text"
-                  value={newRoleName}
-                  onChange={(event) => setNewRoleName(event.target.value)}
-                  placeholder="Engineer, Designer…"
-                  className="min-w-0 flex-1 rounded-lg border border-app-border bg-app-surface-input px-3 py-2 text-sm focus:border-accent focus:outline-none"
-                />
-                <button
-                  type="submit"
-                  className="shrink-0 rounded-lg bg-accent px-3 py-2 text-sm font-medium text-white hover:bg-accent-hover"
+                <p className="text-sm text-app-muted">Roles you can assign when inviting new members.</p>
+                <form
+                  className="mt-4 flex gap-2"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void handleAddRole();
+                  }}
                 >
-                  Add
-                </button>
-              </form>
-              <div className="flex flex-wrap gap-1.5">
-                {roles.map((roleItem) => (
-                  <div
-                    key={roleItem.id}
-                    className="flex items-center gap-1.5 rounded-md border border-app-border px-2 py-1"
+                  <input
+                    type="text"
+                    value={newRoleName}
+                    onChange={(event) => setNewRoleName(event.target.value)}
+                    placeholder="Engineer, Designer, Manager…"
+                    className="min-w-0 flex-1 rounded-lg border border-app-border bg-app-surface-input px-3 py-2.5 text-sm focus:border-accent focus:outline-none"
+                  />
+                  <button
+                    type="submit"
+                    className="shrink-0 rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-hover"
                   >
-                    <span className="text-xs text-app-text">{roleItem.name}</span>
-                    <span className="text-[10px] text-app-muted">({roleItem.memberCount})</span>
-                    <button
-                      type="button"
-                      aria-label={`Edit ${roleItem.name}`}
-                      className="text-app-muted hover:text-app-text"
-                      onClick={() => {
-                        void handleEditRole(roleItem);
-                      }}
+                    + Add role
+                  </button>
+                </form>
+                <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                  {roles.map((roleItem) => (
+                    <div
+                      key={roleItem.id}
+                      className="flex items-center justify-between rounded-xl border border-app-border px-3 py-2.5"
                     >
-                      <FiEdit2 size={12} />
-                    </button>
-                    <button
-                      type="button"
-                      aria-label={`Delete ${roleItem.name}`}
-                      className="text-app-muted hover:text-accent-soft"
-                      onClick={() => {
-                        void handleDeleteRole(roleItem);
-                      }}
-                    >
-                      <FiTrash2 size={12} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            </section>
-          ) : null}
-        </div>
-
-        {isAdmin && invoices.length > 0 ? (
-          <section className="rounded-xl border border-app-border bg-app-surface p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <FiFileText className="text-accent" size={16} />
-              <h3 className="text-sm font-semibold text-app-text">Billing history</h3>
-            </div>
-            <div className="overflow-hidden rounded-lg border border-app-border text-xs">
-              {invoices.map((invoice) => (
-                <div
-                  key={invoice.id}
-                  className="flex items-center justify-between gap-2 border-b border-app-border/50 px-3 py-2 last:border-b-0"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-app-text">{invoice.invoiceNumber}</p>
-                    <p className="text-[10px] text-app-muted">
-                      {formatDate(invoice.date)} · {invoice.planLabel}
-                    </p>
-                  </div>
-                  <div className="flex shrink-0 items-center gap-2">
-                    <span className="text-app-text">₹{invoice.amount.toLocaleString()}</span>
-                    <button
-                      type="button"
-                      className="text-accent-soft hover:underline"
-                      onClick={() => {
-                        void handleViewInvoice(invoice.id);
-                      }}
-                    >
-                      View
-                    </button>
-                  </div>
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-app-text">{roleItem.name}</p>
+                        <p className="text-xs text-app-muted">
+                          {roleItem.memberCount} member{roleItem.memberCount === 1 ? '' : 's'}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <button
+                          type="button"
+                          aria-label={`Edit ${roleItem.name}`}
+                          className="text-app-muted hover:text-app-text"
+                          onClick={() => {
+                            void handleEditRole(roleItem);
+                          }}
+                        >
+                          <FiEdit2 size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Delete ${roleItem.name}`}
+                          className="text-app-muted hover:text-accent-soft"
+                          onClick={() => {
+                            void handleDeleteRole(roleItem);
+                          }}
+                        >
+                          <FiTrash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </section>
             </div>
-          </section>
+
+            <section className="rounded-2xl border border-app-border bg-app-surface p-6">
+              <div className="mb-2 flex items-center gap-2">
+                <FiFileText className="text-accent" size={18} />
+                <h3 className="text-lg font-semibold text-app-text">Billing history</h3>
+              </div>
+              <p className="mb-4 text-sm text-app-muted">
+                Invoices generated after successful subscription payments.
+              </p>
+              {invoices.length === 0 ? (
+                <div className="rounded-xl border border-app-border px-4 py-6 text-sm text-app-muted">
+                  No invoices yet. Complete a subscription payment to generate your first invoice.
+                </div>
+              ) : (
+                <div className="overflow-hidden rounded-xl border border-app-border text-sm">
+                  {invoices.map((invoice) => (
+                    <div
+                      key={invoice.id}
+                      className="flex items-center justify-between gap-2 border-b border-app-border/50 px-4 py-3 last:border-b-0"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-app-text">{invoice.invoiceNumber}</p>
+                        <p className="text-xs text-app-muted">
+                          {formatDate(invoice.date)} · {invoice.planLabel}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-3">
+                        <span className="text-app-text">₹{invoice.amount.toLocaleString()}</span>
+                        <button
+                          type="button"
+                          className="text-accent-soft hover:underline"
+                          onClick={() => {
+                            void handleViewInvoice(invoice.id);
+                          }}
+                        >
+                          View
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+        </>
         ) : null}
 
-        <section className="rounded-xl border border-app-border bg-app-surface p-4">
-          <div className="mb-3 flex items-center gap-2">
-            <FiUsers className="text-accent" size={16} />
-            <h3 className="text-sm font-semibold text-app-text">Team members ({members.length})</h3>
+        <section className="rounded-2xl border border-app-border bg-app-surface p-6">
+          <div className="mb-2 flex items-center gap-2.5">
+            <FiUsers className="text-accent" size={20} />
+            <h3 className="text-lg font-semibold text-app-text">Team members {members.length}</h3>
           </div>
-          <div className="space-y-1.5">
+          <p className="mb-5 text-sm text-app-muted">
+            {isOwner
+              ? 'View teammates, transfer ownership, or remove members from your workspace.'
+              : 'Teammates in this workspace.'}
+          </p>
+          <div className="space-y-2">
             {members.map((member) => (
               <div
                 key={member.id}
-                className="flex items-center justify-between rounded-lg border border-app-border px-3 py-2"
+                className="flex items-center justify-between rounded-xl border border-app-border px-4 py-3.5"
               >
-                <div className="min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <p className="truncate text-xs font-medium text-app-text">
-                      {member.name}
-                      {member.id === currentUserId ? ' (you)' : ''}
+                <div className="flex min-w-0 items-center gap-3">
+                  <Avatar imageUrl={member.avatarUrl} initials={member.initials} size="sm" />
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <p className="truncate text-sm font-semibold text-app-text">
+                        {member.name}
+                        {member.id === currentUserId ? ' (you)' : ''}
+                      </p>
+                      {member.isAdmin ? (
+                        <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent-soft">
+                          Admin
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="mt-0.5 truncate text-xs text-app-muted">
+                      {member.role || 'No role'}
+                      {member.email ? ` · ${member.email}` : ''}
                     </p>
-                    {member.isAdmin ? (
-                      <span className="rounded border border-red-500/25 px-1.5 py-0.5 text-[9px] text-red-400">Admin</span>
-                    ) : null}
                   </div>
-                  <p className="truncate text-[10px] text-app-muted">
-                    {member.role}
-                    {member.email ? ` · ${member.email}` : ''}
-                  </p>
                 </div>
                 {isAdmin && member.id !== currentUserId ? (
                   <button
                     type="button"
-                    className="shrink-0 text-[11px] text-accent-soft hover:underline"
+                    aria-label={`Remove ${member.name}`}
+                    className="shrink-0 text-app-muted hover:text-accent-soft"
                     onClick={() => {
                       void handleRemoveMember(member);
                     }}
                   >
-                    Remove
+                    <FiTrash2 size={16} />
                   </button>
                 ) : null}
               </div>
             ))}
           </div>
+          {isOwner ? (
+          <p className="mt-5 text-sm text-app-muted">
+            Transfer ownership to hand off billing, invoices, and admin controls to another teammate. You will
+            keep your account as a regular member.
+          </p>
+          ) : null}
           <button
             type="button"
+            disabled={leaving}
             onClick={() => {
               void handleLeave();
             }}
-            className="mt-3 flex items-center gap-1.5 text-xs text-accent-soft hover:underline"
+            className="mt-4 inline-flex items-center gap-2 rounded-xl border border-red-500/40 px-4 py-2.5 text-sm font-semibold text-red-400 hover:bg-red-500/10 disabled:opacity-50"
           >
-            <FiLogOut size={12} />
-            Leave organization
+            <FiLogOut size={16} />
+            {leaving ? 'Leaving…' : 'Leave organization'}
           </button>
         </section>
       </div>

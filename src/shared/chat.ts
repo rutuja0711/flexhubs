@@ -1,4 +1,5 @@
-import { formatMessagePreview, normalizeMessage } from './messages';
+import { resolveAvatarUrl } from './profile';
+import { decoratePreviewText, formatMessagePreview, normalizeMessage } from './messages';
 
 export type ConversationKind = 'direct' | 'hub';
 
@@ -20,6 +21,8 @@ export type ConversationItem = {
   status: PresenceStatus | null;
   unreadCount: number;
   peerUserId: string | null;
+  channelId: string | null;
+  notificationsSnoozed?: boolean;
 };
 
 export type ConversationsPayload = {
@@ -97,6 +100,164 @@ function readNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function isTruthyFlag(value: unknown): boolean {
+  return value === true || value === 1 || value === 'true' || value === '1';
+}
+
+const CONVERSATION_SNOOZE_KEYS = ['snoozed', 'isSnoozed', 'notificationsSnoozed'] as const;
+
+function conversationSnoozeSources(
+  record: Record<string, unknown>,
+): Record<string, unknown>[] {
+  return [
+    record,
+    asRecord(record.notificationSettings),
+    asRecord(asRecord(record.membership)?.notificationSettings),
+    asRecord(asRecord(record.member)?.notificationSettings),
+    asRecord(asRecord(record.currentMember)?.notificationSettings),
+  ].filter((item): item is Record<string, unknown> => item !== null);
+}
+
+export function readConversationSnoozeState(
+  record: Record<string, unknown> | null | undefined,
+): boolean | null {
+  if (!record) {
+    return null;
+  }
+
+  let sawSignal = false;
+
+  for (const source of conversationSnoozeSources(record)) {
+    for (const key of CONVERSATION_SNOOZE_KEYS) {
+      if (source[key] === undefined || source[key] === null) {
+        continue;
+      }
+
+      sawSignal = true;
+      if (isTruthyFlag(source[key])) {
+        return true;
+      }
+    }
+  }
+
+  return sawSignal ? false : null;
+}
+
+export function readConversationSnoozed(record: Record<string, unknown> | null | undefined): boolean {
+  return readConversationSnoozeState(record) === true;
+}
+
+export const CONVERSATION_SNOOZE_OPTIONS = [
+  { value: '30m', label: '30 minutes' },
+  { value: '1h', label: '1 hour' },
+  { value: '2h', label: '2 hours' },
+  { value: '4h', label: '4 hours' },
+  { value: '8h', label: '8 hours' },
+  { value: '24h', label: '24 hours' },
+  { value: 'tomorrow', label: 'Until tomorrow 9:00 AM' },
+  { value: 'forever', label: 'Forever' },
+] as const;
+
+export function conversationSnoozeUntil(duration: string): string | null {
+  if (duration === 'off' || duration === 'forever') {
+    return null;
+  }
+
+  if (duration === 'tomorrow') {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(9, 0, 0, 0);
+    return tomorrow.toISOString();
+  }
+
+  const match = duration.match(/^(\d+)(m|h)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const amount = Number(match[1]);
+  const until = new Date();
+
+  if (match[2] === 'm') {
+    until.setMinutes(until.getMinutes() + amount);
+  } else {
+    until.setHours(until.getHours() + amount);
+  }
+
+  return until.toISOString();
+}
+
+export function formatConversationSnoozeUntil(until: string | null, forever = false): string {
+  if (forever || !until) {
+    return 'Snoozed indefinitely';
+  }
+
+  const date = new Date(until);
+
+  if (Number.isNaN(date.getTime())) {
+    return 'Snoozed';
+  }
+
+  return `Snoozed until ${date.toLocaleString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+    month: 'short',
+    day: 'numeric',
+  })}`;
+}
+
+export function buildConversationSnoozePayload(duration: string): Record<string, unknown> {
+  if (duration === 'off') {
+    return {
+      snoozed: false,
+      snoozedForever: false,
+      snoozedUntil: null,
+      duration: 'off',
+      snoozeDuration: 'off',
+    };
+  }
+
+  if (duration === 'forever') {
+    return {
+      snoozed: true,
+      snoozedForever: true,
+      snoozedUntil: null,
+      duration: 'forever',
+      snoozeDuration: 'forever',
+    };
+  }
+
+  const snoozedUntil = conversationSnoozeUntil(duration);
+
+  return {
+    snoozed: true,
+    snoozedForever: false,
+    snoozedUntil,
+    duration,
+    snoozeDuration: duration,
+  };
+}
+
+export function withConversationSnoozed(
+  record: Record<string, unknown> | null,
+  snoozed: boolean,
+): Record<string, unknown> | null {
+  if (!record) {
+    return record;
+  }
+
+  const existing = asRecord(record.notificationSettings) ?? {};
+
+  return {
+    ...record,
+    notificationSettings: {
+      ...existing,
+      snoozed,
+    },
+  };
+}
+
 function initialsFromName(name: string): string {
   const parts = name.split(/\s+/).filter(Boolean);
 
@@ -126,8 +287,29 @@ function inferKind(record: Record<string, unknown>): ConversationKind {
     type.includes('GROUP') ||
     record.isHub === true ||
     record.isChannel === true ||
-    record.isGroup === true
+    record.isGroup === true ||
+    Boolean(record.hubId) ||
+    Boolean(record.channelId)
   ) {
+    return 'hub';
+  }
+
+  for (const key of ['members', 'participants', 'users', 'groupMembers']) {
+    const value = record[key];
+    if (Array.isArray(value) && value.length > 2) {
+      return 'hub';
+    }
+  }
+
+  const memberCount =
+    (typeof record.memberCount === 'number' && Number.isFinite(record.memberCount)
+      ? record.memberCount
+      : null) ??
+    (typeof record.participantCount === 'number' && Number.isFinite(record.participantCount)
+      ? record.participantCount
+      : null);
+
+  if (memberCount !== null && memberCount > 2) {
     return 'hub';
   }
 
@@ -381,11 +563,11 @@ function readLastMessagePreview(record: Record<string, unknown>): string {
     }
   }
 
-  return (
+  return decoratePreviewText(
     readString(record.preview) ??
-    readString(record.lastMessagePreview) ??
-    readString(record.subtitle) ??
-    ''
+      readString(record.lastMessagePreview) ??
+      readString(record.subtitle) ??
+      '',
   );
 }
 
@@ -491,33 +673,59 @@ function readConversationId(record: Record<string, unknown>, index: number): str
   return id ?? `conversation-${index}`;
 }
 
-function readAvatar(record: Record<string, unknown>): { url: string | null; initials: string } {
-  const title = readConversationTitle(record);
-  const url =
-    readString(record.avatarUrl) ??
-    readString(record.avatar) ??
-    readString(record.imageUrl);
+function readAvatarPeerRecord(
+  record: Record<string, unknown>,
+  viewerUserId: string | null,
+): Record<string, unknown> | null {
+  for (const key of ['otherUser', 'peer', 'recipient', 'participant', 'partner', 'dmUser'] as const) {
+    const nested = asRecord(record[key]);
 
-  if (url) {
-    return { url, initials: initialsFromName(title) };
+    if (nested) {
+      return nested;
+    }
   }
 
-  const participants = Array.isArray(record.participants) ? record.participants : [];
-  const firstParticipant = participants.map(asRecord).find(Boolean);
+  for (const member of readMemberPeople(record)) {
+    const user = asRecord(member.user) ?? member;
+    const memberId =
+      readString(user.id) ??
+      readString(member.userId) ??
+      readString(member.id);
 
-  if (firstParticipant) {
-    const participantUrl =
-      readString(firstParticipant.avatarUrl) ??
-      readString(firstParticipant.avatar);
+    if (viewerUserId && memberId === viewerUserId) {
+      continue;
+    }
 
-    const participantName =
-      readString(firstParticipant.name) ??
-      readString(firstParticipant.displayName) ??
+    return user;
+  }
+
+  return null;
+}
+
+function readAvatar(
+  record: Record<string, unknown>,
+  viewerUserId: string | null = readViewerUserId(record),
+): { url: string | null; initials: string } {
+  const title = readConversationTitle(record, viewerUserId);
+  const conversationUrl = resolveAvatarUrl(record);
+
+  if (conversationUrl) {
+    return { url: conversationUrl, initials: initialsFromName(title) };
+  }
+
+  const peerRecord = readAvatarPeerRecord(record, viewerUserId);
+
+  if (peerRecord) {
+    const peerUrl = resolveAvatarUrl(peerRecord);
+    const peerName =
+      readString(peerRecord.name) ??
+      readString(peerRecord.displayName) ??
+      readString(peerRecord.username) ??
       title;
 
     return {
-      url: participantUrl,
-      initials: initialsFromName(participantName),
+      url: peerUrl,
+      initials: initialsFromName(peerName),
     };
   }
 
@@ -562,8 +770,20 @@ export function extractConversationRecords(payload: unknown): Record<string, unk
     const value = record[key];
 
     if (Array.isArray(value)) {
+      const fromHubList = key === 'hubs' || key === 'channels' || key === 'groups';
       collected.push(
-        ...value.map(asRecord).filter((item): item is Record<string, unknown> => item !== null),
+        ...value
+          .map(asRecord)
+          .filter((item): item is Record<string, unknown> => item !== null)
+          .map((item) =>
+            fromHubList
+              ? {
+                  ...item,
+                  isHub: item.isHub === false ? item.isHub : true,
+                  isGroup: key === 'groups' ? true : item.isGroup,
+                }
+              : item,
+          ),
       );
     }
   }
@@ -674,7 +894,7 @@ export function normalizeConversation(
   const source = flattenConversationRecord(record);
   const viewerId = viewerUserId ?? readViewerUserId(source);
   const title = readConversationTitle(source, viewerId);
-  const avatar = readAvatar(source);
+  const avatar = readAvatar(source, viewerId);
   const messagePreview = readLastMessagePreview(source);
   const draftPreview = readDraftPreview(source);
   const { subtitle, isDraftPreview } = buildConversationSubtitle(messagePreview, draftPreview);
@@ -695,7 +915,38 @@ export function normalizeConversation(
     status: inferPresence(source),
     unreadCount: readConversationUnread(source),
     peerUserId: readDirectPeerUserId(source, viewerId),
+    channelId: readHubChannelId(source),
+    notificationsSnoozed: readConversationSnoozed(source),
   };
+}
+
+export function readHubChannelId(
+  source: Record<string, unknown> | null | undefined,
+  fallbackId?: string | null,
+): string | null {
+  const record = source ?? {};
+  const channel = asRecord(record.channel);
+  const hub = asRecord(record.hub);
+
+  return (
+    readString(record.channelId) ??
+    readString(record.hubId) ??
+    readString(channel?.id) ??
+    readString(hub?.id) ??
+    (fallbackId?.trim() ? fallbackId.trim() : null)
+  );
+}
+
+export function resolveTypingConversationId(
+  rawConversationId: string,
+  conversations: ConversationItem[],
+): string {
+  if (conversations.some((item) => item.id === rawConversationId)) {
+    return rawConversationId;
+  }
+
+  const matchedByChannel = conversations.find((item) => item.channelId === rawConversationId);
+  return matchedByChannel?.id ?? rawConversationId;
 }
 
 export function normalizeConversations(
@@ -1078,7 +1329,86 @@ export function buildPlaceholderDirectConversation(
     status: null,
     unreadCount: 0,
     peerUserId,
+    channelId: null,
+    notificationsSnoozed: false,
   };
+}
+
+function collectHubMembers(record: Record<string, unknown>): Record<string, unknown>[] {
+  const rawMembers = [record.groupMembers, record.members, record.participants, record.users].find((value) =>
+    Array.isArray(value),
+  );
+
+  if (!Array.isArray(rawMembers)) {
+    return [];
+  }
+
+  return rawMembers.map(asRecord).filter((item): item is Record<string, unknown> => item !== null);
+}
+
+function isHubAdminMember(member: Record<string, unknown>): boolean {
+  const user = asRecord(member.user);
+  const role = String(member.role ?? user?.role ?? '').toUpperCase();
+  return (
+    role === 'ADMIN' ||
+    role === 'OWNER' ||
+    member.isAdmin === true ||
+    user?.isAdmin === true
+  );
+}
+
+function statsFromHubRecord(record: Record<string, unknown>): { memberCount: number; adminCount: number } {
+  const nestedCount = asRecord(record._count) ?? asRecord(record.count);
+  const members = collectHubMembers(record);
+  const memberCount =
+    readNumber(record.memberCount) ??
+    readNumber(record.membersCount) ??
+    readNumber(record.participantCount) ??
+    readNumber(nestedCount?.members) ??
+    readNumber(nestedCount?.memberCount) ??
+    (members.length > 0 ? members.length : 0);
+  const admins = members.filter(isHubAdminMember);
+  const adminCount =
+    readNumber(record.adminCount) ??
+    readNumber(record.adminsCount) ??
+    (admins.length > 0 ? admins.length : 0);
+
+  return { memberCount, adminCount };
+}
+
+export function readHubMemberStats(hub: Record<string, unknown> | null): {
+  memberCount: number;
+  adminCount: number;
+} {
+  if (!hub) {
+    return { memberCount: 0, adminCount: 0 };
+  }
+
+  const sources = [hub, asRecord(hub.conversation), asRecord(hub.channel), asRecord(hub.group), asRecord(hub.details)];
+  let memberCount = 0;
+  let adminCount = 0;
+
+  for (const source of sources) {
+    if (!source) {
+      continue;
+    }
+
+    const stats = statsFromHubRecord(source);
+    memberCount = Math.max(memberCount, stats.memberCount);
+    adminCount = Math.max(adminCount, stats.adminCount);
+  }
+
+  if (memberCount > 0 && adminCount === 0) {
+    adminCount = 1;
+  }
+
+  return { memberCount, adminCount };
+}
+
+export function formatHubMemberSubtitle(memberCount: number, adminCount: number): string {
+  const membersLabel = `${memberCount} member${memberCount === 1 ? '' : 's'}`;
+  const adminsLabel = `${adminCount} admin${adminCount === 1 ? '' : 's'}`;
+  return `${membersLabel} · ${adminsLabel}`;
 }
 
 export function normalizeUnreadCount(payload: unknown): number {

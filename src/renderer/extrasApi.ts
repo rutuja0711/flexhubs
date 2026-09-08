@@ -93,12 +93,15 @@ export async function generateMessageText(description: string): Promise<ApiResul
   return withToken((token) => window.electronAPI.generateMessageText(token, description));
 }
 
-export async function parseFlexCommand(input: string): Promise<ApiResult<AiTextResult>> {
+export async function parseFlexCommand(
+  input: string,
+  conversationId?: string,
+): Promise<ApiResult<AiTextResult>> {
   if (!window.electronAPI?.parseFlexCommand) {
     return unavailable();
   }
 
-  return withToken((token) => window.electronAPI.parseFlexCommand(token, input));
+  return withToken((token) => window.electronAPI.parseFlexCommand(token, input, conversationId));
 }
 
 export async function transcribeAudioFile(

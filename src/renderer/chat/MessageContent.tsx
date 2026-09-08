@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
 import type { MessageItem } from '../../shared/messages';
-import { DELETED_MESSAGE_TEXT, isDeletedMessage, isPollMessage } from '../../shared/messages';
+import { DELETED_MESSAGE_TEXT, isCallLogMessage, isDeletedMessage, isPollMessage, parseCallLogContent } from '../../shared/messages';
 import { PollMessage } from './PollMessage';
+import { CallMessage } from './CallMessage';
 
 type MessageContentProps = {
   message: Pick<MessageItem, 'content' | 'media' | 'messageType' | 'deletedForEveryone' | 'poll'>;
@@ -9,6 +10,7 @@ type MessageContentProps = {
   onVotePoll?: (optionId: string) => void;
   pollDisabled?: boolean;
   compact?: boolean;
+  currentUserId?: string | null;
 };
 
 function renderMentionText(content: string): ReactNode {
@@ -62,6 +64,7 @@ export function MessageContent({
   onVotePoll,
   pollDisabled = false,
   compact = false,
+  currentUserId = null,
 }: MessageContentProps) {
   if (isDeletedMessage(message)) {
     if (compact) {
@@ -93,6 +96,14 @@ export function MessageContent({
         <p className="text-xs text-app-muted">Reload the chat to see poll options.</p>
       </div>
     );
+  }
+
+  if (isCallLogMessage(message)) {
+    const callLog = parseCallLogContent(message.content);
+
+    if (callLog) {
+      return <CallMessage callLog={callLog} currentUserId={currentUserId} compact={compact} />;
+    }
   }
 
   const media = message.media ?? [];

@@ -3,10 +3,12 @@ import { FiMessageSquare, FiUser, FiUsers, FiX } from 'react-icons/fi';
 import { FiStar } from 'react-icons/fi';
 import type { SearchPerson } from '../../shared/search';
 import type { FriendRelationship } from '../../shared/features';
+import type { TeammateItem } from '../../shared/messages';
 import { validateSearchInput } from '../../shared/search';
 import {
   blockUser,
   loadFriendRelationship,
+  loadOrganizationMembers,
   loadUserSearch,
   respondFriendRequest,
   sendFriendRequest,
@@ -15,8 +17,12 @@ import {
 import { Avatar } from './ChatIcons';
 import { SearchField } from './SearchField';
 
+type ComposeMode = 'direct' | 'hub' | 'group';
+
 type NewConversationModalProps = {
   selfLabel: string;
+  teammates?: TeammateItem[];
+  initialMode?: ComposeMode;
   onClose: () => void;
   onMessageUser: (userId: string) => void;
   onMessageSelf: () => void;
@@ -24,34 +30,71 @@ type NewConversationModalProps = {
   onCreateGroup?: (name: string, memberIds: string[]) => Promise<{ ok: boolean; error?: string }>;
 };
 
-function validateTeammateSearch(query: string): { ok: true; value: string } | { ok: false; error: string } {
-  const trimmed = query.trim();
+function normalizeTeammateQuery(query: string): string {
+  return query.trim().replace(/^@+/, '').trim();
+}
 
-  if (!trimmed) {
+function validateTeammateSearch(query: string): { ok: true; value: string } | { ok: false; error: string } {
+  const normalized = normalizeTeammateQuery(query);
+
+  if (!normalized) {
     return { ok: true, value: '' };
   }
 
-  if (trimmed.length < 3) {
-    return { ok: false, error: 'Type at least 3 characters to search.' };
+  if (normalized.length < 2) {
+    return { ok: false, error: 'Type at least 2 characters to search.' };
   }
 
-  if (trimmed.length > 120) {
+  if (normalized.length > 120) {
     return { ok: false, error: 'Search must be 120 characters or fewer.' };
   }
 
-  return { ok: true, value: trimmed };
+  return { ok: true, value: normalized };
+}
+
+function teammateToPerson(member: TeammateItem): SearchPerson {
+  return {
+    id: member.id,
+    name: member.name,
+    username: member.username,
+    avatarUrl: member.avatarUrl,
+    initials: member.initials,
+    status: null,
+  };
+}
+
+function personMatchesQuery(person: { name: string; username: string }, query: string): boolean {
+  const needle = query.toLowerCase();
+  return (
+    person.name.toLowerCase().includes(needle) || person.username.toLowerCase().includes(needle)
+  );
+}
+
+function mergeSearchPeople(primary: SearchPerson[], extra: SearchPerson[]): SearchPerson[] {
+  const byId = new Map<string, SearchPerson>();
+
+  for (const person of [...primary, ...extra]) {
+    if (!person.id || byId.has(person.id)) {
+      continue;
+    }
+
+    byId.set(person.id, person);
+  }
+
+  return [...byId.values()];
 }
 
 export function NewConversationModal({
   selfLabel,
+  teammates = [],
+  initialMode = 'direct',
   onClose,
   onMessageUser,
   onMessageSelf,
   onCreateHub,
   onCreateGroup,
 }: NewConversationModalProps) {
-  const [mode, setMode] = useState<'direct' | 'group'>('direct');
-  const [groupKind, setGroupKind] = useState<'hub' | 'group'>('hub');
+  const [mode, setMode] = useState<ComposeMode>(initialMode);
   const [username, setUsername] = useState('');
   const [searchError, setSearchError] = useState('');
   const [actionError, setActionError] = useState('');
@@ -70,6 +113,11 @@ export function NewConversationModal({
   const [groupName, setGroupName] = useState('');
   const [selectedMembers, setSelectedMembers] = useState<SearchPerson[]>([]);
   const [creatingHub, setCreatingHub] = useState(false);
+  const [orgTeammates, setOrgTeammates] = useState<TeammateItem[]>(teammates);
+
+  useEffect(() => {
+    setMode(initialMode);
+  }, [initialMode]);
 
   const refreshRelationship = useCallback(async (userId: string) => {
     setRelationshipLoading(true);
@@ -139,7 +187,31 @@ export function NewConversationModal({
   }, [mode, username]);
 
   useEffect(() => {
-    if (mode !== 'group') {
+    setOrgTeammates(teammates);
+  }, [teammates]);
+
+  useEffect(() => {
+    if ((mode !== 'group' && mode !== 'hub') || orgTeammates.length > 0) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void loadOrganizationMembers().then((response) => {
+      if (cancelled || !response.ok) {
+        return;
+      }
+
+      setOrgTeammates(response.data);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, orgTeammates.length]);
+
+  useEffect(() => {
+    if (mode !== 'group' && mode !== 'hub') {
       return;
     }
 
@@ -158,6 +230,10 @@ export function NewConversationModal({
     }
 
     setTeammateSearchError('');
+    setActionError('');
+    setTeammateResults(
+      orgTeammates.filter((member) => personMatchesQuery(member, validation.value)).map(teammateToPerson),
+    );
     setTeammateLoading(true);
 
     const timer = window.setTimeout(() => {
@@ -165,18 +241,20 @@ export function NewConversationModal({
         setTeammateLoading(false);
 
         if (!response.ok) {
-          setActionError(response.error);
-          setTeammateResults([]);
           return;
         }
 
-        setActionError('');
-        setTeammateResults(response.data);
+        setTeammateResults((current) =>
+          mergeSearchPeople(
+            current,
+            response.data.filter((person) => personMatchesQuery(person, validation.value)),
+          ),
+        );
       });
-    }, 300);
+    }, 200);
 
     return () => window.clearTimeout(timer);
-  }, [mode, teammateQuery]);
+  }, [mode, orgTeammates, teammateQuery]);
 
   useEffect(() => {
     if (!result) {
@@ -217,19 +295,21 @@ export function NewConversationModal({
   const selectedCount = selectedMembers.length + 1;
   const otherMemberCount = selectedMembers.length;
 
+  const createKind = mode === 'hub' ? 'hub' : 'group';
+
   const createButtonLabel = useMemo(() => {
     if (!groupName.trim()) {
-      return 'Enter a hub name';
+      return createKind === 'hub' ? 'Enter a hub name' : 'Enter a group name';
     }
 
     if (otherMemberCount < 1) {
       return 'Select 1 more member';
     }
 
-    return groupKind === 'group' ? 'Create group' : 'Create hub';
-  }, [groupName, otherMemberCount, groupKind]);
+    return createKind === 'hub' ? 'Create hub' : 'Create group';
+  }, [createKind, groupName, otherMemberCount]);
 
-  const canCreateHub = groupName.trim().length > 0 && otherMemberCount >= 1 && !creatingHub;
+  const canCreateGroup = groupName.trim().length > 0 && otherMemberCount >= 1 && !creatingHub;
 
   const addMember = (person: SearchPerson) => {
     setSelectedMembers((current) => {
@@ -245,23 +325,25 @@ export function NewConversationModal({
     setSelectedMembers((current) => current.filter((member) => member.id !== personId));
   };
 
-  const handleCreateHub = async () => {
-    if (!canCreateHub) {
+  const handleCreateGroup = async () => {
+    if (!canCreateGroup) {
       return;
     }
 
     setCreatingHub(true);
     setActionError('');
 
-    const response =
-      groupKind === 'hub' || !onCreateGroup
-        ? await onCreateHub(groupName.trim(), selectedMembers.map((member) => member.id))
-        : await onCreateGroup(groupName.trim(), selectedMembers.map((member) => member.id));
+    const create =
+      mode === 'hub' ? onCreateHub : (onCreateGroup ?? onCreateHub);
+    const response = await create(
+      groupName.trim(),
+      selectedMembers.map((member) => member.id),
+    );
 
     setCreatingHub(false);
 
     if (!response.ok) {
-      setActionError(response.error ?? 'Could not create hub.');
+      setActionError(response.error ?? `Could not create ${createKind}.`);
       return;
     }
 
@@ -276,7 +358,7 @@ export function NewConversationModal({
         className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
         onClick={onClose}
       />
-      <div className="fixed top-1/2 left-1/2 z-50 flex max-h-[90vh] w-full max-w-[420px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[20px] border border-app-border bg-app-elevated shadow-app">
+      <div className="fixed top-1/2 left-1/2 z-50 flex max-h-[90vh] w-full max-w-[560px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[20px] border border-app-border bg-app-elevated shadow-app">
         <div className="border-b border-app-border/40 px-5 py-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-3">
@@ -285,7 +367,7 @@ export function NewConversationModal({
               </div>
               <div>
                 <h2 className="text-base font-semibold text-app-text">New conversation</h2>
-                <p className="text-sm text-app-muted">Search organization teammates by username</p>
+                <p className="text-sm text-app-muted">Start a chat, hub, or group</p>
               </div>
             </div>
             <button type="button" className="text-app-muted hover:text-app-text" onClick={onClose} aria-label="Close">
@@ -298,7 +380,7 @@ export function NewConversationModal({
           <div className="mb-4 flex rounded-xl bg-app-inset p-1">
             <button
               type="button"
-              className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2.5 text-sm font-medium transition-colors ${
                 mode === 'direct' ? 'bg-app-inset-active text-app-text' : 'text-app-muted hover:text-app-text'
               }`}
               onClick={() => setMode('direct')}
@@ -308,7 +390,17 @@ export function NewConversationModal({
             </button>
             <button
               type="button"
-              className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2.5 text-sm font-medium transition-colors ${
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2.5 text-sm font-medium transition-colors ${
+                mode === 'hub' ? 'bg-app-inset-active text-app-text' : 'text-app-muted hover:text-app-text'
+              }`}
+              onClick={() => setMode('hub')}
+            >
+              <FiUsers />
+              Hub
+            </button>
+            <button
+              type="button"
+              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2.5 text-sm font-medium transition-colors ${
                 mode === 'group' ? 'bg-app-inset-active text-app-text' : 'text-app-muted hover:text-app-text'
               }`}
               onClick={() => setMode('group')}
@@ -473,46 +565,12 @@ export function NewConversationModal({
           ) : (
             <>
               <p className="mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
-                Search teammates
-              </p>
-              <SearchField
-                value={teammateQuery}
-                placeholder="Teammate username..."
-                error={teammateSearchError}
-                variant="modal"
-                onChange={setTeammateQuery}
-              />
-              <p className="mt-2 text-xs text-app-muted">
-                Type at least 3 characters to find teammates in your organization.
-              </p>
-
-              <p className="mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
-                Type
-              </p>
-              <div className="mb-4 flex rounded-xl bg-app-inset p-1">
-                <button
-                  type="button"
-                  className={`flex-1 rounded-lg px-3 py-2 text-sm ${groupKind === 'hub' ? 'bg-app-inset-active text-app-text' : 'text-app-muted'}`}
-                  onClick={() => setGroupKind('hub')}
-                >
-                  Hub
-                </button>
-                <button
-                  type="button"
-                  className={`flex-1 rounded-lg px-3 py-2 text-sm ${groupKind === 'group' ? 'bg-app-inset-active text-app-text' : 'text-app-muted'}`}
-                  onClick={() => setGroupKind('group')}
-                >
-                  Group chat
-                </button>
-              </div>
-
-              <p className="mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
-                {groupKind === 'hub' ? 'Hub name' : 'Group name'}
+                {createKind === 'hub' ? 'Hub name' : 'Group name'}
               </p>
               <input
                 type="text"
                 value={groupName}
-                placeholder="e.g. Project team"
+                placeholder={createKind === 'hub' ? 'e.g. Training' : 'e.g. Project team'}
                 className="w-full rounded-[10px] border border-app-border bg-app-surface-input px-3 py-3 text-sm text-app-text outline-none placeholder:text-app-placeholder focus:border-accent"
                 onChange={(event) => setGroupName(event.target.value)}
               />
@@ -547,48 +605,51 @@ export function NewConversationModal({
                 ) : null}
               </div>
 
-              <div className="mt-6 flex min-h-[160px] flex-col items-center justify-center px-4 py-6 text-center">
-                {teammateLoading ? (
-                  <p className="text-sm text-app-muted">Searching...</p>
-                ) : teammateResults.length > 0 ? (
-                  <div className="w-full space-y-2">
-                    {teammateResults.map((person) => {
-                      const isSelected = selectedMembers.some((member) => member.id === person.id);
+              <p className="mt-5 mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
+                Search teammates
+              </p>
+              <SearchField
+                value={teammateQuery}
+                placeholder="Teammate username..."
+                error={teammateSearchError}
+                variant="modal"
+                onChange={setTeammateQuery}
+              />
+              <p className="mt-2 text-xs text-app-muted">
+                Type a name or username to find teammates in your organization.
+              </p>
 
-                      return (
-                        <button
-                          key={person.id}
-                          type="button"
-                          className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                            isSelected
-                              ? 'border-accent/40 bg-accent/10'
-                              : 'border-app-border bg-app-inset hover:bg-app-inset-active'
-                          }`}
-                          onClick={() => addMember(person)}
-                        >
-                          <Avatar imageUrl={person.avatarUrl} initials={person.initials} size="sm" />
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-medium text-app-text">{person.name}</p>
-                            <p className="truncate text-xs text-app-muted">@{person.username}</p>
-                          </div>
-                          <span className="text-xs text-app-muted">{isSelected ? 'Added' : 'Add'}</span>
-                        </button>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <>
-                    <div className="mb-3 flex h-14 w-14 items-center justify-center rounded-full bg-app-chat-hover text-app-muted">
-                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <circle cx="11" cy="11" r="7" stroke="currentColor" strokeWidth="1.75" />
-                        <path d="M20 20L16.65 16.65" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
-                      </svg>
-                    </div>
-                    <p className="text-sm font-medium text-app-text">Search for teammates</p>
-                    <p className="mt-1 text-sm text-app-muted">Pick members, then create your hub.</p>
-                  </>
-                )}
-              </div>
+              {teammateResults.length > 0 ? (
+                <div className="mt-4 space-y-2">
+                  {teammateResults.map((person) => {
+                    const isSelected = selectedMembers.some((member) => member.id === person.id);
+
+                    return (
+                      <button
+                        key={person.id}
+                        type="button"
+                        className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
+                          isSelected
+                            ? 'border-accent/40 bg-accent/10'
+                            : 'border-app-border bg-app-inset hover:bg-app-inset-active'
+                        }`}
+                        onClick={() => addMember(person)}
+                      >
+                        <Avatar imageUrl={person.avatarUrl} initials={person.initials} size="sm" />
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-app-text">{person.name}</p>
+                          <p className="truncate text-xs text-app-muted">@{person.username}</p>
+                        </div>
+                        <span className="text-xs text-app-muted">{isSelected ? 'Added' : 'Add'}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : teammateLoading ? (
+                <p className="mt-4 text-sm text-app-muted">Searching...</p>
+              ) : normalizeTeammateQuery(teammateQuery).length >= 2 ? (
+                <p className="mt-4 text-sm text-app-muted">No teammates match that search.</p>
+              ) : null}
             </>
           )}
 
@@ -605,14 +666,14 @@ export function NewConversationModal({
           ) : null}
         </div>
 
-        {mode === 'group' ? (
+        {mode === 'group' || mode === 'hub' ? (
           <div className="border-t border-app-border/40 p-5">
             <button
               type="button"
               className="w-full rounded-xl bg-accent py-3.5 text-sm font-semibold text-white transition-opacity disabled:opacity-50"
-              disabled={!canCreateHub}
+              disabled={!canCreateGroup}
               onClick={() => {
-                void handleCreateHub();
+                void handleCreateGroup();
               }}
             >
               {createButtonLabel}

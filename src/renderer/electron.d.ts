@@ -345,6 +345,7 @@ declare global {
       parseFlexCommand: (
         token: string,
         input: string,
+        conversationId?: string,
       ) => Promise<ApiResult<import('../shared/extras').AiTextResult>>;
       transcribeAudioFile: (
         token: string,
@@ -431,6 +432,62 @@ declare global {
       ) => Promise<ApiResult<import('../shared/realtime').PresenceItem[]>>;
       onRealtimeEvent: (callback: (event: unknown) => void) => () => void;
       onRealtimeStatus: (callback: (status: RealtimeConnectionStatus) => void) => () => void;
+      getRealtimeConfig: (
+        token: string,
+      ) => Promise<ApiResult<import('../shared/realtime').RealtimeClientConfig>>;
+      getRealtimeAccessToken: (token: string) => Promise<ApiResult<string>>;
+      getCallToken: (
+        token: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<import('../shared/calls').CallTokenResult>>;
+      ensureCallMediaPermissions: (video: boolean) => Promise<ApiResult<{ ok: true }>>;
+      getAppName: () => Promise<string>;
+      ensureScreenCapturePermission: () => Promise<ApiResult<{ ok: true }>>;
+      setCallAlwaysOnTop: (enabled: boolean, mode?: string) => Promise<{ ok: true }>;
+      moveCallWindowBy: (deltaX: number, deltaY: number) => Promise<{ ok: boolean }>;
+      focusCallWindow: () => Promise<{ ok: true }>;
+      logCall: (
+        token: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<{ message?: unknown }>>;
+      notifyCallMeeting: (
+        token: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<{ notified?: number }>>;
+      muteCallParticipant: (
+        token: string,
+        conversationId: string,
+        participantIdentity: string,
+        muted: boolean,
+      ) => Promise<ApiResult<{ muted?: boolean }>>;
+      removeCallParticipant: (
+        token: string,
+        conversationId: string,
+        participantIdentity: string,
+      ) => Promise<ApiResult<{ removed?: boolean }>>;
+      endCallMeeting: (
+        token: string,
+        conversationId: string,
+      ) => Promise<ApiResult<{ ended?: boolean }>>;
+      requestMeetingJoin: (
+        token: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<unknown>>;
+      listMeetingJoinRequests: (
+        token: string,
+        conversationId: string,
+      ) => Promise<ApiResult<import('../shared/calls').MeetingJoinRequestItem[]>>;
+      respondMeetingJoinRequest: (
+        token: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<unknown>>;
+      showDesktopNotification: (
+        title: string,
+        body: string,
+        tag?: string,
+      ) => Promise<{ ok: boolean }>;
+      logRendererDebug: (message: string) => Promise<{ ok: boolean }>;
+      onDesktopNotificationClick: (callback: (tag: string) => void) => () => void;
     };
   }
 }

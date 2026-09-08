@@ -5,6 +5,7 @@ import { Avatar, PinIcon, PresenceDot } from './ChatIcons';
 
 type ConversationRowProps = {
   conversation: ConversationItem;
+  typingPreview?: string;
   selected: boolean;
   onSelect: (id: string) => void;
   onPrefetch?: (id: string) => void;
@@ -14,6 +15,7 @@ type ConversationRowProps = {
 
 export const ConversationRow = memo(function ConversationRow({
   conversation,
+  typingPreview,
   selected,
   onSelect,
   onPrefetch,
@@ -24,7 +26,9 @@ export const ConversationRow = memo(function ConversationRow({
 
   return (
     <div
-      className="group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 transition-[background-color] duration-150 hover:bg-app-chat-hover"
+      className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 transition-[background-color] duration-150 ${
+        selected ? 'bg-app-chat-hover hover:bg-app-chat-active' : 'hover:bg-app-chat-hover'
+      }`}
       onMouseEnter={() => onPrefetch?.(conversation.id)}
     >
       <button
@@ -40,7 +44,16 @@ export const ConversationRow = memo(function ConversationRow({
 
         <div className="min-w-0 flex-1">
           <span className="block truncate text-[0.9375rem] font-medium text-app-text">{displayTitle}</span>
-          {conversation.isDraftPreview && conversation.draftPreview ? (
+          {typingPreview ? (
+            <p className="flex min-w-0 items-center gap-1.5 truncate text-sm text-accent-soft">
+              <span className="inline-flex shrink-0 items-end gap-0.5" aria-hidden="true">
+                <span className="h-1 w-1 animate-bounce rounded-full bg-accent [animation-delay:-0.2s]" />
+                <span className="h-1 w-1 animate-bounce rounded-full bg-accent [animation-delay:-0.1s]" />
+                <span className="h-1 w-1 animate-bounce rounded-full bg-accent" />
+              </span>
+              <span className="truncate italic">{typingPreview}</span>
+            </p>
+          ) : conversation.isDraftPreview && conversation.draftPreview ? (
             <p className="truncate text-sm">
               <span className="text-accent-soft">Draft: </span>
               <span className="text-app-muted">{conversation.draftPreview}</span>
@@ -106,6 +119,7 @@ export const ConversationRow = memo(function ConversationRow({
 
 type ConversationListProps = {
   conversations: ConversationItem[];
+  typingPreviews?: Record<string, string>;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onPrefetch?: (id: string) => void;
@@ -116,6 +130,7 @@ type ConversationListProps = {
 
 export function ConversationList({
   conversations,
+  typingPreviews = {},
   selectedId,
   onSelect,
   onPrefetch,
@@ -137,6 +152,7 @@ export function ConversationList({
         <ConversationRow
           key={conversation.id}
           conversation={conversation}
+          typingPreview={typingPreviews[conversation.id]}
           selected={selectedId === conversation.id}
           onSelect={onSelect}
           onPrefetch={onPrefetch}

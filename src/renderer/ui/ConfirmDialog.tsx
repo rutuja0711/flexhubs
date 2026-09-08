@@ -71,7 +71,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           <button
             type="button"
             aria-label="Close confirmation dialog"
-            className="fixed inset-0 z-[110] bg-black/55 backdrop-blur-sm"
+            className="fixed inset-0 z-[200] bg-black/55 backdrop-blur-sm"
             onClick={() => close(false)}
           />
           <div
@@ -79,10 +79,10 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             aria-modal="true"
             aria-labelledby="confirm-dialog-title"
             aria-describedby="confirm-dialog-message"
-            className="fixed top-1/2 left-1/2 z-[111] w-full max-w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-[20px] border border-app-border bg-app-elevated p-6 shadow-app"
+            className="fixed top-1/2 left-1/2 z-[201] w-full max-w-[440px] -translate-x-1/2 -translate-y-1/2 rounded-[20px] border border-app-border bg-app-elevated p-6 shadow-app"
           >
-            <div className="mb-4 flex items-start justify-between gap-3">
-              <div className="flex items-start gap-3">
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-3">
                 <div
                   className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${
                     isDanger ? 'bg-accent/15 text-accent-soft' : 'bg-app-chat-hover text-app-text'
@@ -90,11 +90,9 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 >
                   <FiAlertTriangle className="text-xl" aria-hidden="true" />
                 </div>
-                <div className="min-w-0">
-                  <h2 id="confirm-dialog-title" className="text-lg font-semibold text-app-text">
-                    {request.title}
-                  </h2>
-                </div>
+                <h2 id="confirm-dialog-title" className="min-w-0 text-lg leading-none font-semibold text-app-text">
+                  {request.title}
+                </h2>
               </div>
               <button
                 type="button"

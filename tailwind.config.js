@@ -6,10 +6,10 @@ module.exports = {
     extend: {
       colors: {
         accent: {
-          DEFAULT: '#d8415f',
-          hover: '#c43754',
-          active: '#b0304a',
-          soft: '#f07188',
+          DEFAULT: 'rgb(var(--accent-rgb) / <alpha-value>)',
+          hover: 'rgb(var(--accent-hover-rgb) / <alpha-value>)',
+          active: 'rgb(var(--accent-active-rgb) / <alpha-value>)',
+          soft: 'rgb(var(--accent-soft-rgb) / <alpha-value>)',
         },
         app: {
           bg: 'var(--app-bg)',

@@ -1,6 +1,14 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
-import { FiBell, FiCalendar, FiMapPin, FiMoreVertical, FiUsers } from 'react-icons/fi';
+import { FiBell, FiCalendar, FiMapPin, FiMoreVertical, FiPhone, FiUsers, FiVideo } from 'react-icons/fi';
 import type { ConversationItem, PresenceStatus } from '../../shared/chat';
+import {
+  buildConversationSnoozePayload,
+  CONVERSATION_SNOOZE_OPTIONS,
+  formatConversationSnoozeUntil,
+  formatHubMemberSubtitle,
+  readConversationSnoozed,
+  readHubMemberStats,
+} from '../../shared/chat';
 import type { GifPickerItem } from '../../shared/gifs';
 import type { MessageItem } from '../../shared/messages';
 import { formatMessagePreview } from '../../shared/messages';
@@ -50,8 +58,10 @@ type ConversationThreadProps = {
   onPinMessage: (messageId: string, isPinned: boolean) => void;
   onSaveMessage: (messageId: string) => void;
   onUnsaveMessage: (messageId: string) => void;
+  savedMessageIds?: ReadonlySet<string>;
   onVotePoll?: (messageId: string, optionId: string) => void;
   onConversationUpdated?: () => void;
+  onNotificationsSnoozedChange?: (snoozed: boolean) => void;
   onTogglePin?: (conversationId: string, isPinned: boolean) => void;
   onHubDeleted?: () => void;
   pinnedMessageIds?: string[];
@@ -59,6 +69,10 @@ type ConversationThreadProps = {
   focusMessageId?: string | null;
   unreadAnchorMessageId?: string | null;
   onFocusMessageHandled?: () => void;
+  onStartVoiceCall?: () => void;
+  onStartVideoCall?: () => void;
+  callBusy?: boolean;
+  onOpenFlexAi?: () => void;
 };
 
 export function ConversationThread({
@@ -86,8 +100,10 @@ export function ConversationThread({
   onPinMessage,
   onSaveMessage,
   onUnsaveMessage,
+  savedMessageIds = new Set<string>(),
   onVotePoll,
   onConversationUpdated,
+  onNotificationsSnoozedChange,
   onTogglePin,
   onHubDeleted,
   pinnedMessageIds = [],
@@ -95,6 +111,10 @@ export function ConversationThread({
   focusMessageId = null,
   unreadAnchorMessageId = null,
   onFocusMessageHandled,
+  onStartVoiceCall,
+  onStartVideoCall,
+  callBusy = false,
+  onOpenFlexAi,
 }: ConversationThreadProps) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -116,8 +136,11 @@ export function ConversationThread({
   const [pinnedBannerDismissed, setPinnedBannerDismissed] = useState(false);
   const [pinnedBannerIndex, setPinnedBannerIndex] = useState(0);
   const [bannerScrollTargetId, setBannerScrollTargetId] = useState<string | null>(null);
+  const [scrollRequestKey, setScrollRequestKey] = useState(0);
   const [menuBusy, setMenuBusy] = useState(false);
+  const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const highlightTimeoutsRef = useRef<number[]>([]);
 
   // Close menu on outside click
   useEffect(() => {
@@ -153,13 +176,16 @@ export function ConversationThread({
       return 'Message yourself';
     }
 
-    const presence = presenceLabel(conversation.status);
+    if (conversation.kind === 'hub') {
+      const stats = readHubMemberStats(hubDetails ?? conversationDetails ?? null);
+      if (stats.memberCount > 0) {
+        return formatHubMemberSubtitle(stats.memberCount, stats.adminCount);
+      }
 
-    if (conversation.kind === 'direct') {
-      return presence ?? 'Available';
+      return 'Hub';
     }
 
-    return presence ?? (conversation.subtitle || 'Available');
+    return presenceLabel(conversation.status) ?? 'Available';
   })();
 
   useEffect(() => {
@@ -175,12 +201,23 @@ export function ConversationThread({
     setThreadRootMessage(null);
     setSettingsOpen(false);
     setMenuOpen(false);
+    setSnoozeMenuOpen(false);
     setPinnedPanelOpen(false);
     setPinnedBannerDismissed(false);
     setPinnedBannerIndex(0);
     setBannerScrollTargetId(null);
+    setScrollRequestKey(0);
     setLoadedPinnedMessages([]);
+    highlightTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+    highlightTimeoutsRef.current = [];
   }, [conversation.id]);
+
+  useEffect(() => {
+    return () => {
+      highlightTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
+      highlightTimeoutsRef.current = [];
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -239,24 +276,48 @@ export function ConversationThread({
     setPinnedBannerIndex(0);
   }, [pinnedMessages.map((message) => message.id).join('|')]);
 
-  const notificationSettings =
-    conversationDetails && typeof conversationDetails === 'object' && conversationDetails.notificationSettings
-      ? (conversationDetails.notificationSettings as Record<string, unknown>)
-      : null;
-  const notificationsSnoozed = notificationSettings?.snoozed === true;
+  const notificationsSnoozedFromProps =
+    conversation.notificationsSnoozed === true || readConversationSnoozed(conversationDetails);
+  const [notificationsSnoozed, setNotificationsSnoozed] = useState(notificationsSnoozedFromProps);
+
+  useEffect(() => {
+    setNotificationsSnoozed(notificationsSnoozedFromProps);
+  }, [conversation.id, notificationsSnoozedFromProps]);
+
+  const jumpToMessage = (messageId: string) => {
+    setBannerScrollTargetId(messageId);
+    setScrollRequestKey((current) => current + 1);
+    setHighlightedMessageIds((current) => [...new Set([...current, messageId])]);
+
+    const timeoutId = window.setTimeout(() => {
+      setHighlightedMessageIds((current) => current.filter((id) => id !== messageId));
+      highlightTimeoutsRef.current = highlightTimeoutsRef.current.filter((id) => id !== timeoutId);
+    }, 2200);
+
+    highlightTimeoutsRef.current.push(timeoutId);
+  };
 
   const handlePinnedBannerJump = () => {
-    if (pinnedMessages.length === 0) {
+    if (!featuredPinnedMessage) {
       return;
     }
 
-    const target = pinnedMessages[pinnedBannerIndex % pinnedMessages.length];
+    jumpToMessage(featuredPinnedMessage.id);
+  };
 
-    if (!target) {
+  const handlePinnedBannerPrev = () => {
+    if (pinnedMessages.length < 2) {
       return;
     }
 
-    setBannerScrollTargetId(target.id);
+    setPinnedBannerIndex((current) => (current - 1 + pinnedMessages.length) % pinnedMessages.length);
+  };
+
+  const handlePinnedBannerNext = () => {
+    if (pinnedMessages.length < 2) {
+      return;
+    }
+
     setPinnedBannerIndex((current) => (current + 1) % pinnedMessages.length);
   };
 
@@ -283,24 +344,35 @@ export function ConversationThread({
     onConversationUpdated?.();
   };
 
-  const handleToggleNotifications = async () => {
+  const handleSnooze = async (duration: string) => {
+    const next = duration !== 'off';
+    setNotificationsSnoozed(next);
+    onNotificationsSnoozedChange?.(next);
     setMenuBusy(true);
-    const result = await updateConversationNotificationSettings(conversation.id, {
-      snoozed: !notificationsSnoozed,
-    });
+    const result = await updateConversationNotificationSettings(
+      conversation.id,
+      buildConversationSnoozePayload(duration),
+    );
     setMenuBusy(false);
     setMenuOpen(false);
+    setSnoozeMenuOpen(false);
 
     if (!result.ok) {
+      setNotificationsSnoozed(!next);
+      onNotificationsSnoozedChange?.(!next);
       if (onUnauthorized(result.status)) return;
       toast.error(result.error);
       return;
     }
 
     toast.success(
-      notificationsSnoozed ? 'Notifications enabled for this chat.' : 'Notifications snoozed for this chat.',
+      next
+        ? formatConversationSnoozeUntil(
+            duration === 'forever' ? null : (buildConversationSnoozePayload(duration).snoozedUntil as string | null),
+            duration === 'forever',
+          )
+        : 'Notifications enabled for this chat.',
     );
-    onConversationUpdated?.();
   };
 
   const handleMarkUnread = async () => {
@@ -434,6 +506,10 @@ export function ConversationThread({
     setSearchResultCount(0);
   };
 
+  const canCallDirect =
+    conversation.kind === 'direct' && !conversation.isSelf && Boolean(conversation.peerUserId);
+  const canCallHub = conversation.kind === 'hub';
+
   return (
     <div className="flex h-full w-full flex-row overflow-hidden">
       <div className="flex h-full flex-1 min-h-0 min-w-0 flex-col bg-app-chat-bg relative">
@@ -470,6 +546,28 @@ export function ConversationThread({
           >
             <SearchIcon className="h-[18px] w-[18px]" />
           </button>
+          {canCallDirect || canCallHub ? (
+            <>
+              <button
+                type="button"
+                aria-label={canCallHub ? 'Start voice meeting' : 'Start voice call'}
+                disabled={callBusy}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text disabled:opacity-50"
+                onClick={() => onStartVoiceCall?.()}
+              >
+                <FiPhone className="text-lg" />
+              </button>
+              <button
+                type="button"
+                aria-label={canCallHub ? 'Start video meeting' : 'Start video call'}
+                disabled={callBusy}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text disabled:opacity-50"
+                onClick={() => onStartVideoCall?.()}
+              >
+                <FiVideo className="text-lg" />
+              </button>
+            </>
+          ) : null}
           <div className="relative" ref={menuRef}>
             <button
               type="button"
@@ -513,19 +611,51 @@ export function ConversationThread({
                   </span>
                   <span className="text-app-muted">{pinnedMessages.length > 0 ? pinnedMessages.length : '›'}</span>
                 </button>
-                <button
-                  type="button"
-                  disabled={menuBusy}
-                  onClick={() => {
-                    void handleToggleNotifications();
-                  }}
-                  className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
-                >
-                  <span className="flex items-center gap-2">
-                    <FiBell />
-                    {notificationsSnoozed ? 'Enable notifications' : 'Snooze notifications'}
-                  </span>
-                </button>
+                {notificationsSnoozed ? (
+                  <button
+                    type="button"
+                    disabled={menuBusy}
+                    onClick={() => {
+                      void handleSnooze('off');
+                    }}
+                    className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                  >
+                    <span className="flex items-center gap-2">
+                      <FiBell />
+                      Enable notifications
+                    </span>
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      disabled={menuBusy}
+                      onClick={() => setSnoozeMenuOpen((open) => !open)}
+                      className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                    >
+                      <span className="flex items-center gap-2">
+                        <FiBell />
+                        Snooze notifications
+                      </span>
+                      <span className="text-app-muted">{snoozeMenuOpen ? '⌃' : '›'}</span>
+                    </button>
+                    {snoozeMenuOpen
+                      ? CONVERSATION_SNOOZE_OPTIONS.map((option) => (
+                          <button
+                            key={option.value}
+                            type="button"
+                            disabled={menuBusy}
+                            onClick={() => {
+                              void handleSnooze(option.value);
+                            }}
+                            className="flex w-full px-8 py-1.5 text-left text-xs text-app-muted hover:bg-app-chat-hover hover:text-app-text disabled:opacity-50"
+                          >
+                            {option.label}
+                          </button>
+                        ))
+                      : null}
+                  </>
+                )}
                 <button
                   type="button"
                   disabled={menuBusy}
@@ -605,7 +735,11 @@ export function ConversationThread({
         <PinnedMessageBanner
           message={featuredPinnedMessage}
           pinnedCount={pinnedMessages.length}
+          pinnedIndex={pinnedBannerIndex % pinnedMessages.length}
           onJump={handlePinnedBannerJump}
+          onPrev={handlePinnedBannerPrev}
+          onNext={handlePinnedBannerNext}
+          onOpenAll={() => setPinnedPanelOpen(true)}
           onUnpin={() => onPinMessage(featuredPinnedMessage.id, true)}
         />
       ) : null}
@@ -621,7 +755,9 @@ export function ConversationThread({
             : highlightedMessageIds
         }
         scrollToMessageId={focusMessageId ?? bannerScrollTargetId}
+        scrollRequestKey={scrollRequestKey}
         unreadAnchorMessageId={focusMessageId ? null : unreadAnchorMessageId}
+        onJumpToMessage={jumpToMessage}
         onScrollToMessageComplete={() => {
           setBannerScrollTargetId(null);
           onFocusMessageHandled?.();
@@ -643,6 +779,7 @@ export function ConversationThread({
         onPinMessage={onPinMessage}
         onSaveMessage={onSaveMessage}
         onUnsaveMessage={onUnsaveMessage}
+        savedMessageIds={savedMessageIds}
         expandedThreadMessageId={threadRootMessage?.id}
         onSendThreadMessage={async (content, threadRootId) => {
           const { sendChatMessage } = await import('../chatApi');
@@ -657,9 +794,17 @@ export function ConversationThread({
       />
 
       {typingLabel ? (
-        <p className="border-t border-app-border px-6 py-2 text-xs italic text-app-muted" role="status">
-          {typingLabel}
-        </p>
+        <div
+          className="flex items-center gap-2 border-t border-app-border/60 px-6 py-2 text-sm text-app-text"
+          role="status"
+        >
+          <span className="flex items-end gap-0.5" aria-hidden="true">
+            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.2s]" />
+            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.1s]" />
+            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent" />
+          </span>
+          <span>{typingLabel}</span>
+        </div>
       ) : null}
 
       <MessageInput
@@ -695,6 +840,7 @@ export function ConversationThread({
             : undefined
         }
         onUnauthorized={onUnauthorized}
+        onOpenFlexAi={onOpenFlexAi}
       />
 
         <ForwardMessageModal
@@ -761,7 +907,7 @@ export function ConversationThread({
                       onClick={() => {
                         setPinnedPanelOpen(false);
                         setPinnedBannerDismissed(false);
-                        setBannerScrollTargetId(message.id);
+                        jumpToMessage(message.id);
                       }}
                     >
                       <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/10">
@@ -805,6 +951,7 @@ export function ConversationThread({
           onConversationUpdated={() => {
             onConversationUpdated?.();
           }}
+          onNotificationsSnoozedChange={onNotificationsSnoozedChange}
           onHubDeleted={() => {
             onHubDeleted?.();
           }}

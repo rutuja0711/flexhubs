@@ -103,6 +103,10 @@ export async function fetchOrgSubscription(token: string): Promise<ApiResult<Org
     return { ok: true, data: normalizeOrgSubscription(orgResult.data) };
   }
 
+  if (!orgResult.status) {
+    return orgResult as ApiResult<OrgSubscriptionInfo | null>;
+  }
+
   const fallback = await apiGet<unknown>(
     `${API_BASE_URL}/payments/subscription`,
     token,

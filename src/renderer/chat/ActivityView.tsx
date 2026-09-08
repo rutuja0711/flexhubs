@@ -9,6 +9,148 @@ import { SearchIcon } from './ChatIcons';
 const FILTERS = ['All', 'Unread', 'Requests', 'Mentions', 'Replies', 'Reactions'] as const;
 
 type ActivityFilter = (typeof FILTERS)[number];
+type ActivityKind = 'message' | 'reaction' | 'mention' | 'reply' | 'request' | 'calendar';
+
+type ActivityListItem = {
+  id: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  kind: ActivityKind;
+  notification: NotificationItem | null;
+  isUnread: boolean;
+};
+
+function classifyNotification(item: NotificationItem): ActivityKind {
+  const haystack = `${item.type} ${item.title} ${item.body}`.toLowerCase();
+
+  if (haystack.includes('reaction')) {
+    return 'reaction';
+  }
+
+  if (haystack.includes('mention')) {
+    return 'mention';
+  }
+
+  if (haystack.includes('reply') || haystack.includes('replied')) {
+    return 'reply';
+  }
+
+  if (
+    haystack.includes('calendar') ||
+    haystack.includes('event accepted') ||
+    haystack.includes('event declined') ||
+    haystack.includes('event shared')
+  ) {
+    return 'calendar';
+  }
+
+  if (
+    haystack.includes('hub invite') ||
+    haystack.includes('group invitation') ||
+    haystack.includes('group invite') ||
+    haystack.includes('friend request') ||
+    haystack.includes('added you')
+  ) {
+    return 'request';
+  }
+
+  return 'message';
+}
+
+function ActivityKindIcon({ kind }: { kind: ActivityKind }) {
+  const iconClass = 'text-accent-soft';
+
+  if (kind === 'reaction') {
+    return (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true" className={iconClass}>
+        <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.75" />
+        <circle cx="9" cy="10" r="1" fill="currentColor" />
+        <circle cx="15" cy="10" r="1" fill="currentColor" />
+        <path d="M8.5 14.5c1.2 1.3 2.6 2 3.5 2s2.3-.7 3.5-2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === 'mention') {
+    return (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true" className={iconClass}>
+        <circle cx="12" cy="12" r="4" stroke="currentColor" strokeWidth="1.75" />
+        <path
+          d="M16 8v5a3 3 0 1 0 6 0v-1a8 8 0 1 0-2.343 5.657"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+        />
+      </svg>
+    );
+  }
+
+  if (kind === 'reply') {
+    return (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true" className={iconClass}>
+        <path
+          d="M9 17H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v3"
+          stroke="currentColor"
+          strokeWidth="1.75"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path d="m13 15 3-3-3-3M16 12H9" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    );
+  }
+
+  if (kind === 'request') {
+    return (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true" className={iconClass}>
+        <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+        <circle cx="9" cy="7" r="4" stroke="currentColor" strokeWidth="1.75" />
+        <path d="M19 8v6M22 11h-6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  if (kind === 'calendar') {
+    return (
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true" className={iconClass}>
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+        <path d="M13.73 21a2 2 0 0 1-3.46 0" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" />
+      </svg>
+    );
+  }
+
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true" className={iconClass}>
+      <path
+        d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5Z"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+function ActivityRowContent({ item }: { item: ActivityListItem }) {
+  return (
+    <>
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-accent/25 bg-accent/[0.08]">
+        <ActivityKindIcon kind={item.kind} />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="font-semibold text-app-text">{item.title}</p>
+        {item.body ? <p className="mt-0.5 text-sm text-app-muted">{item.body}</p> : null}
+      </div>
+      {item.createdAt ? (
+        <span className="shrink-0 pt-0.5 text-xs text-app-muted">
+          {formatConversationTimestamp(item.createdAt)}
+        </span>
+      ) : null}
+    </>
+  );
+}
 
 type ActivityViewProps = {
   notifications: NotificationItem[];
@@ -35,30 +177,25 @@ export function ActivityView({
   const [searchError, setSearchError] = useState('');
   const [activeFilter, setActiveFilter] = useState<ActivityFilter>('All');
 
-  const combinedItems = useMemo(() => {
-    const pendingItems = pendingFriends.map((item) => ({
+  const combinedItems = useMemo<ActivityListItem[]>(() => {
+    const pendingItems: ActivityListItem[] = pendingFriends.map((item) => ({
       id: `pending-${item.id}`,
       title: item.title,
       body: item.body,
       createdAt: item.createdAt,
-      kind: 'request' as const,
-      notification: null as NotificationItem | null,
+      kind: 'request',
+      notification: null,
+      isUnread: true,
     }));
 
-    const notificationItems = notifications.map((item) => ({
+    const notificationItems: ActivityListItem[] = notifications.map((item) => ({
       id: item.id,
       title: item.title,
       body: item.body,
       createdAt: item.createdAt,
-      kind:
-        item.type.toLowerCase().includes('reaction') || item.title.toLowerCase().includes('reaction')
-          ? ('reaction' as const)
-          : item.type.toLowerCase().includes('mention') || item.title.toLowerCase().includes('mention')
-            ? ('mention' as const)
-            : item.type.toLowerCase().includes('hub') || item.title.toLowerCase().includes('hub invite')
-              ? ('request' as const)
-              : ('message' as const),
+      kind: classifyNotification(item),
       notification: item,
+      isUnread: !item.isRead,
     }));
 
     return [...pendingItems, ...notificationItems];
@@ -74,6 +211,10 @@ export function ActivityView({
       items = items.filter((item) => item.kind === 'reaction');
     } else if (activeFilter === 'Mentions') {
       items = items.filter((item) => item.kind === 'mention');
+    } else if (activeFilter === 'Replies') {
+      items = items.filter((item) => item.kind === 'reply');
+    } else if (activeFilter === 'Unread') {
+      items = items.filter((item) => item.isUnread);
     }
 
     if (validation.ok && validation.value) {
@@ -157,7 +298,7 @@ export function ActivityView({
         ) : null}
 
         {!loading && !error ? (
-          <div className="flex flex-col gap-1">
+          <div className="flex flex-col">
             {filteredItems.map((item) => {
               const isClickable =
                 Boolean(item.notification) &&
@@ -168,40 +309,21 @@ export function ActivityView({
                   <button
                     key={item.id}
                     type="button"
-                    className="flex w-full items-start justify-between gap-4 rounded-xl px-3 py-3 text-left transition-colors hover:bg-app-chat-hover"
+                    className="flex w-full items-start gap-3 border-b border-app-border/40 px-1 py-4 text-left transition-colors hover:bg-app-chat-hover"
                     onClick={() => onNotificationClick(item.notification!)}
                   >
-                    <div className="min-w-0">
-                      <p className="font-medium text-app-text">{item.title}</p>
-                      <p className="text-sm text-app-muted">{item.body}</p>
-                    </div>
-                    {item.createdAt ? (
-                      <span className="shrink-0 text-xs text-app-muted">
-                        {formatConversationTimestamp(item.createdAt)}
-                      </span>
-                    ) : null}
+                    <ActivityRowContent item={item} />
                   </button>
                 );
               }
 
               return (
-                <div
-                  key={item.id}
-                  className="flex flex-col gap-2 rounded-xl px-3 py-3"
-                >
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="min-w-0">
-                      <p className="font-medium text-app-text">{item.title}</p>
-                      <p className="text-sm text-app-muted">{item.body}</p>
-                    </div>
-                    {item.createdAt ? (
-                      <span className="shrink-0 pt-1 text-xs text-app-muted">
-                        {formatConversationTimestamp(item.createdAt)}
-                      </span>
-                    ) : null}
+                <div key={item.id} className="border-b border-app-border/40 px-1 py-4">
+                  <div className="flex items-start gap-3">
+                    <ActivityRowContent item={item} />
                   </div>
                   {item.kind === 'request' && onRespondFriend ? (
-                    <div className="mt-1 flex gap-2">
+                    <div className="mt-3 flex gap-2 pl-[52px]">
                       <button
                         type="button"
                         className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-accent-hover"

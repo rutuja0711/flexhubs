@@ -1,6 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FiBell, FiUserMinus, FiX } from 'react-icons/fi';
+import { FiBell, FiChevronDown, FiUserMinus, FiX } from 'react-icons/fi';
 import type { ConversationItem } from '../../shared/chat';
+import {
+  buildConversationSnoozePayload,
+  CONVERSATION_SNOOZE_OPTIONS,
+  conversationSnoozeUntil,
+  formatConversationSnoozeUntil,
+  readConversationSnoozed,
+  readHubChannelId,
+} from '../../shared/chat';
 import type { ChannelInviteItem } from '../../shared/features';
 import {
   deleteHubChannel,
@@ -24,6 +32,7 @@ type GroupSidebarProps = {
   currentUserId: string | null;
   onClose: () => void;
   onConversationUpdated: () => void;
+  onNotificationsSnoozedChange?: (snoozed: boolean) => void;
   onHubDeleted: () => void;
 };
 
@@ -55,8 +64,12 @@ function extractHubMembers(hub: Record<string, unknown>): Record<string, unknown
 }
 
 function resolveHubAdmin(hub: Record<string, unknown>, currentUserId: string | null): boolean {
+  if (hub.isAdmin === true || hub.isOwner === true) {
+    return true;
+  }
+
   const myRole = String(hub.myRole ?? hub.role ?? '').toUpperCase();
-  if (myRole === 'ADMIN') {
+  if (myRole === 'ADMIN' || myRole.includes('FOUNDER') || myRole.includes('OWNER')) {
     return true;
   }
 
@@ -69,7 +82,7 @@ function resolveHubAdmin(hub: Record<string, unknown>, currentUserId: string | n
     const memberId = readRecordString(user, 'id') || readRecordString(member, 'userId') || readRecordString(member, 'id');
     const role = String(member.role ?? '').toUpperCase();
 
-    if (memberId === currentUserId && role === 'ADMIN') {
+    if (memberId === currentUserId && (role === 'ADMIN' || role.includes('FOUNDER') || role.includes('OWNER'))) {
       return true;
     }
   }
@@ -101,8 +114,8 @@ function deriveHubPanelState(
       readReceiptsEnabled: true,
       memberCount: 1,
       adminCount: 1,
-      isAdmin: true,
-      snoozed: false,
+      isAdmin: false,
+      snoozed: conversation.notificationsSnoozed === true,
     };
   }
 
@@ -118,7 +131,10 @@ function deriveHubPanelState(
     memberCount: members.length > 0 ? members.length : 1,
     adminCount: admins.length > 0 ? admins.length : 1,
     isAdmin: resolveHubAdmin(hub, currentUserId),
-    snoozed: notificationSettings?.snoozed === true,
+    snoozed:
+      readConversationSnoozed(hub) ||
+      conversation.notificationsSnoozed === true ||
+      notificationSettings?.snoozed === true,
   };
 }
 
@@ -128,6 +144,7 @@ export function GroupSidebar({
   currentUserId,
   onClose,
   onConversationUpdated,
+  onNotificationsSnoozedChange,
   onHubDeleted,
 }: GroupSidebarProps) {
   const confirm = useConfirm();
@@ -149,9 +166,12 @@ export function GroupSidebar({
   const [adminCount, setAdminCount] = useState(initialState.adminCount);
   const [isAdmin, setIsAdmin] = useState(initialState.isAdmin);
   const [snoozed, setSnoozed] = useState(initialState.snoozed);
+  const [snoozedUntil, setSnoozedUntil] = useState<string | null>(null);
+  const [snoozedForever, setSnoozedForever] = useState(false);
   const [pendingInvites, setPendingInvites] = useState<ChannelInviteItem[]>([]);
   const [invitesLoading, setInvitesLoading] = useState(false);
   const [revokingInviteId, setRevokingInviteId] = useState<string | null>(null);
+  const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
 
   const loadPendingInvites = useCallback(async () => {
     if (!isAdmin) {
@@ -184,7 +204,7 @@ export function GroupSidebar({
     setIsAdmin(state.isAdmin);
     setSnoozed(state.snoozed);
     setError('');
-  }, [hubDetails, conversation.id, conversation.title, currentUserId]);
+  }, [hubDetails, conversation.id, conversation.notificationsSnoozed, conversation.title, currentUserId]);
 
   useEffect(() => {
     if (hubDetails) {
@@ -301,25 +321,43 @@ export function GroupSidebar({
     toast.success('Hub settings updated.');
   };
 
-  const handleSnoozeToggle = async () => {
-    const next = !snoozed;
+  const handleSnooze = async (duration: string) => {
+    const next = duration !== 'off';
+    const until = conversationSnoozeUntil(duration);
+    const forever = duration === 'forever';
     setSnoozeSaving(true);
     setError('');
 
-    const result = await updateConversationNotificationSettings(conversation.id, {
-      snoozed: next,
-    });
+    setSnoozed(next);
+    setSnoozedUntil(until);
+    setSnoozedForever(forever);
+    onNotificationsSnoozedChange?.(next);
+
+    const result = await updateConversationNotificationSettings(
+      conversation.id,
+      buildConversationSnoozePayload(duration),
+    );
 
     setSnoozeSaving(false);
 
     if (!result.ok) {
+      setSnoozed(!next);
+      setSnoozedUntil(null);
+      setSnoozedForever(false);
+      onNotificationsSnoozedChange?.(!next);
       setError(result.error);
       toast.error(result.error);
       return;
     }
 
-    setSnoozed(next);
-    toast.success(next ? 'Notifications snoozed for this hub.' : 'Notifications enabled for this hub.');
+    toast.success(
+      next
+        ? forever
+          ? 'Notifications snoozed indefinitely for this hub.'
+          : formatConversationSnoozeUntil(until)
+        : 'Notifications enabled for this hub.',
+    );
+    setSnoozeMenuOpen(false);
   };
 
   const handleLeave = async () => {
@@ -338,7 +376,19 @@ export function GroupSidebar({
     setLeaving(true);
     setError('');
 
-    const result = await leaveConversation(conversation.id, true);
+    const hubId =
+      readHubChannelId(hubDetails, conversation.channelId) ??
+      conversation.channelId ??
+      conversation.id;
+    const looksLikeGroup =
+      String(hubDetails?.type ?? hubDetails?.kind ?? hubDetails?.conversationType ?? '')
+        .toUpperCase()
+        .includes('GROUP') &&
+      !String(hubDetails?.type ?? hubDetails?.kind ?? '').toUpperCase().includes('HUB');
+
+    const result = looksLikeGroup
+      ? await leaveConversation(conversation.id, false)
+      : await leaveConversation(hubId, true);
 
     setLeaving(false);
 
@@ -439,75 +489,84 @@ export function GroupSidebar({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <section className="border-b border-app-border/40 p-5">
-          <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub details</span>
+        {isAdmin ? (
+          <section className="border-b border-app-border/40 p-5">
+            <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub details</span>
 
-          {!isAdmin ? (
-            <p className="mb-3 text-xs text-app-muted">Only hub admins can edit these details.</p>
-          ) : null}
+            <label className="mb-1 block text-xs text-app-muted">Display name</label>
+            <input
+              type="text"
+              value={displayName}
+              disabled={saving}
+              className="mb-2 w-full rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent disabled:opacity-60"
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+            <p className="mb-3 text-xs text-app-muted">
+              {memberCount} member{memberCount === 1 ? '' : 's'} · {adminCount} admin
+              {adminCount === 1 ? '' : 's'}
+            </p>
 
-          <label className="mb-1 block text-xs text-app-muted">Display name</label>
-          <input
-            type="text"
-            value={displayName}
-            disabled={saving || !isAdmin}
-            className="mb-3 w-full rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent disabled:opacity-60"
-            onChange={(event) => setDisplayName(event.target.value)}
-          />
+            {slug ? <p className="mb-3 text-xs text-app-muted">Slug: #{slug}</p> : null}
 
-          {slug ? <p className="mb-3 text-xs text-app-muted">Slug: #{slug}</p> : null}
+            <label className="mb-1 block text-xs text-app-muted">Description</label>
+            <textarea
+              value={description}
+              maxLength={500}
+              rows={4}
+              disabled={saving}
+              placeholder="Describe this hub..."
+              className="mb-1 w-full resize-none rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent disabled:opacity-60"
+              onChange={(event) => setDescription(event.target.value)}
+            />
+            <p className="mb-4 text-right text-xs text-app-muted">{description.length}/500</p>
 
-          <label className="mb-1 block text-xs text-app-muted">Description</label>
-          <textarea
-            value={description}
-            maxLength={500}
-            rows={4}
-            disabled={saving || !isAdmin}
-            placeholder="Describe this hub..."
-            className="mb-1 w-full resize-none rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent disabled:opacity-60"
-            onChange={(event) => setDescription(event.target.value)}
-          />
-          <p className="mb-4 text-right text-xs text-app-muted">{description.length}/500</p>
-
-          <button
-            type="button"
-            disabled={saving || !isAdmin}
-            className="w-full rounded-xl bg-accent py-3 text-sm font-semibold text-white transition-opacity disabled:opacity-50"
-            onClick={() => {
-              void handleSaveDetails();
-            }}
-          >
-            {saving ? 'Saving...' : 'Save hub details'}
-          </button>
-        </section>
-
-        <section className="border-b border-app-border/40 p-5">
-          <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub settings</span>
-          <div className="flex items-center justify-between gap-3">
-            <div>
-              <p className="text-sm font-medium text-app-text">Read receipts</p>
-              <p className="text-xs text-app-muted">Show when members have read messages.</p>
-            </div>
             <button
               type="button"
-              role="switch"
-              aria-checked={readReceiptsEnabled}
-              disabled={!isAdmin || saving}
-              className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
-                readReceiptsEnabled ? 'bg-accent' : 'bg-app-inset-active'
-              }`}
+              disabled={saving}
+              className="w-full rounded-xl bg-accent py-3 text-sm font-semibold text-white transition-opacity disabled:opacity-50"
               onClick={() => {
-                void handleReadReceiptsChange(!readReceiptsEnabled);
+                void handleSaveDetails();
               }}
             >
-              <span
-                className={`absolute top-0.5 h-6 w-6 rounded-full bg-white transition-transform ${
-                  readReceiptsEnabled ? 'left-[22px]' : 'left-0.5'
-                }`}
-              />
+              {saving ? 'Saving...' : 'Save hub details'}
             </button>
-          </div>
-        </section>
+          </section>
+        ) : description.trim() ? (
+          <section className="border-b border-app-border/40 p-5">
+            <span className="mb-2 block text-[10px] font-bold tracking-wider text-app-muted uppercase">About</span>
+            <p className="text-sm leading-relaxed text-app-text">{description.trim()}</p>
+          </section>
+        ) : null}
+
+        {isAdmin ? (
+          <section className="border-b border-app-border/40 p-5">
+            <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub settings</span>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-app-text">Read receipts</p>
+                <p className="text-xs text-app-muted">Show when members have read messages.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={readReceiptsEnabled}
+                disabled={saving}
+                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                  readReceiptsEnabled ? 'bg-accent' : 'bg-app-inset-active'
+                }`}
+                onClick={() => {
+                  void handleReadReceiptsChange(!readReceiptsEnabled);
+                }}
+              >
+                <span
+                  className={`absolute top-0.5 h-6 w-6 rounded-full bg-white transition-transform ${
+                    readReceiptsEnabled ? 'left-[22px]' : 'left-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+          </section>
+        ) : null}
 
         {isAdmin ? (
           <section className="border-b border-app-border/40 p-5">
@@ -570,26 +629,56 @@ export function GroupSidebar({
           <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">
             Snooze notifications
           </span>
-          <button
-            type="button"
-            disabled={snoozeSaving}
-            onClick={() => {
-              void handleSnoozeToggle();
-            }}
-            className={`mb-3 flex h-10 w-10 items-center justify-center rounded-full border transition-colors disabled:opacity-50 ${
-              snoozed
-                ? 'border-accent bg-accent/20 text-accent'
-                : 'border-app-border bg-app-elevated text-app-muted hover:border-app-muted hover:text-app-text'
-            }`}
-            aria-label={snoozed ? 'Unsnooze notifications' : 'Snooze notifications'}
-          >
-            <FiBell />
-          </button>
-          <p className="text-xs leading-relaxed text-app-muted">
-            {snoozed
-              ? "You won't receive alerts for new messages in this conversation."
-              : "You'll receive alerts for new messages in this conversation."}
-          </p>
+          <div className="relative">
+            <button
+              type="button"
+              disabled={snoozeSaving}
+              onClick={() => setSnoozeMenuOpen((open) => !open)}
+              className="flex w-full items-center justify-between rounded-xl border border-app-border bg-app-elevated px-3 py-3 text-left transition-colors hover:border-app-muted disabled:opacity-50"
+            >
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-app-text">Snooze for this hub</p>
+                <p className="mt-0.5 text-xs text-app-muted">
+                  {snoozed
+                    ? formatConversationSnoozeUntil(snoozedUntil, snoozedForever)
+                    : 'Notifications on'}
+                </p>
+              </div>
+              <FiChevronDown
+                className={`ml-2 shrink-0 text-app-muted transition-transform ${snoozeMenuOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+            {snoozeMenuOpen ? (
+              <div className="absolute z-10 mt-2 w-full rounded-xl border border-app-border bg-app-elevated py-1 shadow-lg">
+                {snoozed ? (
+                  <button
+                    type="button"
+                    disabled={snoozeSaving}
+                    onClick={() => {
+                      void handleSnooze('off');
+                    }}
+                    className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                  >
+                    <FiBell className="text-base text-accent-soft" />
+                    Turn notifications back on
+                  </button>
+                ) : null}
+                {CONVERSATION_SNOOZE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    disabled={snoozeSaving}
+                    onClick={() => {
+                      void handleSnooze(option.value);
+                    }}
+                    className="block w-full px-4 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
         </section>
       </div>
 

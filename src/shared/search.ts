@@ -1,4 +1,6 @@
 import { validateSearchQuery } from './chat';
+import { decoratePreviewText } from './messages';
+import { resolveAvatarUrl } from './profile';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
@@ -89,7 +91,7 @@ function normalizePerson(record: Record<string, unknown>, index: number): Search
     id: readString(record.id) ?? readString(record.userId) ?? `user-${index}`,
     name,
     username: readString(record.username) ?? '',
-    avatarUrl: readString(record.avatarUrl) ?? readString(record.avatar),
+    avatarUrl: resolveAvatarUrl(record),
     initials: initialsFromName(name),
     status: readString(record.status) ?? readString(record.presence),
   };
@@ -106,11 +108,12 @@ function normalizeSearchChat(record: Record<string, unknown>, index: number): Se
   return {
     id: readString(record.id) ?? readString(record.conversationId) ?? `chat-${index}`,
     title,
-    subtitle:
+    subtitle: decoratePreviewText(
       readString(record.preview) ??
-      readString(record.lastMessagePreview) ??
-      readString(record.subtitle) ??
-      '',
+        readString(record.lastMessagePreview) ??
+        readString(record.subtitle) ??
+        '',
+    ),
     kind:
       type.includes('HUB') || type.includes('CHANNEL') || type.includes('GROUP') ? 'hub' : 'direct',
   };

@@ -475,8 +475,56 @@ export async function removeConversationMember(token: string, conversationId: st
 
 export async function leaveConversation(token: string, conversationId: string, isHub: boolean): Promise<ApiResult<unknown>> {
   if (isHub) {
-    return apiDelete<unknown>(`${API_BASE_URL}/channels/${conversationId}/leave`, token, 'Leave Hub API');
+    const channelLeave = await apiDelete<unknown>(
+      `${API_BASE_URL}/channels/${conversationId}/leave`,
+      token,
+      'Leave Hub API',
+    );
+
+    if (channelLeave.ok) {
+      return channelLeave;
+    }
+
+    const channelPostLeave = await apiPost<unknown>(
+      `${API_BASE_URL}/channels/${conversationId}/leave`,
+      token,
+      'Leave Hub API',
+      {},
+    );
+
+    if (channelPostLeave.ok) {
+      return channelPostLeave;
+    }
+
+    const conversationLeave = await apiDelete<unknown>(
+      `${API_BASE_URL}/conversations/${conversationId}/leave`,
+      token,
+      'Leave Conversation API',
+    );
+
+    if (conversationLeave.ok) {
+      return conversationLeave;
+    }
+
+    const notFound =
+      channelLeave.status === 404 ||
+      /not found/i.test(channelLeave.error ?? '') ||
+      conversationLeave.status === 404 ||
+      /not found/i.test(conversationLeave.error ?? '');
+
+    if (notFound) {
+      return {
+        ok: false,
+        error: 'Unable to leave this hub. Try again from the conversation, or ask an admin to remove you.',
+        status: channelLeave.status ?? conversationLeave.status,
+      };
+    }
+
+    return conversationLeave.ok === false && conversationLeave.error
+      ? conversationLeave
+      : channelLeave;
   }
+
   return apiDelete<unknown>(`${API_BASE_URL}/conversations/${conversationId}/leave`, token, 'Leave Conversation API');
 }
 

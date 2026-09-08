@@ -430,8 +430,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     description: string,
   ): Promise<ApiResult<import('../shared/extras').AiTextResult>> =>
     ipcRenderer.invoke('extras:ai-generate', token, description),
-  parseFlexCommand: (token: string, input: string): Promise<ApiResult<import('../shared/extras').AiTextResult>> =>
-    ipcRenderer.invoke('extras:ai-flex-command', token, input),
+  parseFlexCommand: (
+    token: string,
+    input: string,
+    conversationId?: string,
+  ): Promise<ApiResult<import('../shared/extras').AiTextResult>> =>
+    ipcRenderer.invoke('extras:ai-flex-command', token, input, conversationId),
   transcribeAudioFile: (
     token: string,
     fileName: string,
@@ -579,6 +583,84 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     return () => {
       ipcRenderer.removeListener('realtime:status', handler);
+    };
+  },
+  getRealtimeConfig: (
+    token: string,
+  ): Promise<ApiResult<import('../shared/realtime').RealtimeClientConfig>> =>
+    ipcRenderer.invoke('realtime:config', token),
+  getRealtimeAccessToken: (token: string): Promise<ApiResult<string>> =>
+    ipcRenderer.invoke('realtime:access-token', token),
+  getCallToken: (
+    token: string,
+    payloadJson: string,
+  ): Promise<ApiResult<import('../shared/calls').CallTokenResult>> =>
+    ipcRenderer.invoke('calls:token', token, payloadJson),
+  ensureCallMediaPermissions: (video: boolean): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('calls:ensure-media-permissions', video),
+  getAppName: (): Promise<string> => ipcRenderer.invoke('app:get-name'),
+  ensureScreenCapturePermission: (): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('calls:ensure-screen-capture'),
+      setCallAlwaysOnTop: (enabled: boolean, mode?: string): Promise<{ ok: true }> =>
+        ipcRenderer.invoke('window:set-call-always-on-top', enabled, mode),
+      moveCallWindowBy: (deltaX: number, deltaY: number): Promise<{ ok: boolean }> =>
+        ipcRenderer.invoke('window:move-call-by', deltaX, deltaY),
+      focusCallWindow: (): Promise<{ ok: true }> => ipcRenderer.invoke('window:focus-call'),
+  logCall: (token: string, payloadJson: string): Promise<ApiResult<{ message?: unknown }>> =>
+    ipcRenderer.invoke('calls:log', token, payloadJson),
+  notifyCallMeeting: (
+    token: string,
+    payloadJson: string,
+  ): Promise<ApiResult<{ notified?: number }>> =>
+    ipcRenderer.invoke('calls:notify-meeting', token, payloadJson),
+  muteCallParticipant: (
+    token: string,
+    conversationId: string,
+    participantIdentity: string,
+    muted: boolean,
+  ): Promise<ApiResult<{ muted?: boolean }>> =>
+    ipcRenderer.invoke('calls:mute-participant', token, conversationId, participantIdentity, muted),
+  removeCallParticipant: (
+    token: string,
+    conversationId: string,
+    participantIdentity: string,
+  ): Promise<ApiResult<{ removed?: boolean }>> =>
+    ipcRenderer.invoke('calls:remove-participant', token, conversationId, participantIdentity),
+  endCallMeeting: (
+    token: string,
+    conversationId: string,
+  ): Promise<ApiResult<{ ended?: boolean }>> =>
+    ipcRenderer.invoke('calls:end-meeting', token, conversationId),
+  requestMeetingJoin: (
+    token: string,
+    payloadJson: string,
+  ): Promise<ApiResult<unknown>> => ipcRenderer.invoke('calls:join-request', token, payloadJson),
+  listMeetingJoinRequests: (
+    token: string,
+    conversationId: string,
+  ): Promise<ApiResult<import('../shared/calls').MeetingJoinRequestItem[]>> =>
+    ipcRenderer.invoke('calls:join-requests', token, conversationId),
+  respondMeetingJoinRequest: (
+    token: string,
+    payloadJson: string,
+  ): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('calls:join-request-respond', token, payloadJson),
+  showDesktopNotification: (
+    title: string,
+    body: string,
+    tag?: string,
+  ): Promise<{ ok: boolean }> => ipcRenderer.invoke('desktop:notify', { title, body, tag }),
+  logRendererDebug: (message: string): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('renderer:debug-log', message).catch(() => ({ ok: false })),
+  onDesktopNotificationClick: (callback: (tag: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, tag: string) => {
+      callback(tag);
+    };
+
+    ipcRenderer.on('desktop:notify-click', handler);
+
+    return () => {
+      ipcRenderer.removeListener('desktop:notify-click', handler);
     };
   },
 });

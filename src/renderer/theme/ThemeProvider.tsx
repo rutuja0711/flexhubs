@@ -1,5 +1,14 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  ACCENT_STORAGE_KEY,
+  applyAccentColor,
+  normalizeHexColor,
+  readStoredAccentColor,
+  resolveInitialAccentColor,
+  storeAccentColor,
+} from '../../shared/colorTheme';
+import {
+  THEME_STORAGE_KEY,
   applyTheme,
   readStoredTheme,
   resolveInitialTheme,
@@ -9,7 +18,9 @@ import {
 
 type ThemeContextValue = {
   theme: ThemeMode;
+  accentColor: string;
   setTheme: (mode: ThemeMode) => void;
+  setAccentColor: (hex: string) => void;
   toggleTheme: () => void;
 };
 
@@ -17,22 +28,30 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>(() => resolveInitialTheme());
+  const [accentColor, setAccentColorState] = useState(() => resolveInitialAccentColor());
 
   useEffect(() => {
     applyTheme(theme);
     storeTheme(theme);
-  }, [theme]);
+    applyAccentColor(accentColor, theme);
+    storeAccentColor(accentColor);
+  }, [accentColor, theme]);
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
-      if (event.key !== 'flexhubs-theme') {
+      if (event.key === THEME_STORAGE_KEY) {
+        const stored = readStoredTheme();
+        if (stored) {
+          setThemeState(stored);
+        }
         return;
       }
 
-      const stored = readStoredTheme();
-
-      if (stored) {
-        setThemeState(stored);
+      if (event.key === ACCENT_STORAGE_KEY) {
+        const stored = readStoredAccentColor();
+        if (stored) {
+          setAccentColorState(stored);
+        }
       }
     };
 
@@ -40,13 +59,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('storage', onStorage);
   }, []);
 
+  const setAccentColor = useCallback((hex: string) => {
+    const normalized = normalizeHexColor(hex);
+    if (normalized) {
+      setAccentColorState(normalized);
+    }
+  }, []);
+
   const value = useMemo(
     () => ({
       theme,
+      accentColor,
       setTheme: (mode: ThemeMode) => setThemeState(mode),
+      setAccentColor,
       toggleTheme: () => setThemeState((current) => (current === 'dark' ? 'light' : 'dark')),
     }),
-    [theme],
+    [accentColor, setAccentColor, theme],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

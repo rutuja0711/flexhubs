@@ -81,7 +81,6 @@ function App() {
     return (
       <LoginPage
         onLoggedIn={() => setScreen('chat')}
-        onRegister={() => setScreen('signup')}
         onCreateWorkspace={() => setScreen('register')}
         onForgotPassword={() => setScreen('forgot')}
       />

@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FiThumbsUp } from 'react-icons/fi';
+import { FiCheck, FiThumbsUp } from 'react-icons/fi';
 import type { MessageItem } from '../../shared/messages';
-import { groupMessageReactions, isMediaOnlyMessage, isPollMessage, resolveReplyTarget } from '../../shared/messages';
+import { groupMessageReactions, isCallLogMessage, isMediaOnlyMessage, isPollMessage, resolveReplyTarget } from '../../shared/messages';
 import { formatConversationTimestamp, formatMessageDayDivider, messageDayKey } from './format';
 import { Avatar } from './ChatIcons';
 import { MessageMenu } from './MessageMenu';
@@ -108,15 +108,35 @@ type MessageRowProps = {
   onAddReaction: (messageId: string, emoji: string) => void;
   onReplyMessage: (messageId: string) => void;
   onReplyInThread: (messageId: string) => void;
+  onJumpToMessage?: (messageId: string) => void;
   onEditMessage: (messageId: string, content: string) => void;
   onDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
   onForwardMessage: (messageId: string) => void;
   onPinMessage: (messageId: string, isPinned: boolean) => void;
   onSaveMessage: (messageId: string) => void;
   onUnsaveMessage: (messageId: string) => void;
+  savedMessageIds: ReadonlySet<string>;
   onSendThreadMessage?: (content: string, threadRootId: string) => Promise<string | null>;
   onVotePoll?: (messageId: string, optionId: string) => void;
 };
+
+function DoubleCheckIcon() {
+  return (
+    <span className="relative inline-block h-3 w-3.5 shrink-0" aria-hidden="true">
+      <FiCheck className="absolute top-0 left-0 text-[11px]" strokeWidth={2.5} />
+      <FiCheck className="absolute top-0 left-[5px] text-[11px]" strokeWidth={2.5} />
+    </span>
+  );
+}
+
+function isAppearingMessage(message: MessageItem): boolean {
+  if (message.id.startsWith('local-')) {
+    return true;
+  }
+
+  const created = Date.parse(message.createdAt);
+  return Number.isFinite(created) && Date.now() - created < 2500;
+}
 
 function MessageTimeInline({
   message,
@@ -125,20 +145,24 @@ function MessageTimeInline({
   message: MessageItem;
   className?: string;
 }) {
-  if (!message.createdAt && !message.editedAt) {
+  if (!message.createdAt && !message.editedAt && !message.isOwn) {
     return null;
   }
 
   return (
     <span
-      className={`inline-block whitespace-nowrap text-[0.6875rem] leading-none ${
+      className={`inline-flex items-center gap-1 whitespace-nowrap text-[0.6875rem] leading-none ${
         message.isOwn
           ? 'text-app-message-out-text/75'
           : 'text-app-muted'
       } ${className}`}
     >
-      {message.editedAt ? <span className="mr-1 lowercase">edited</span> : null}
+      {message.editedAt ? <span className="lowercase">edited</span> : null}
       {message.createdAt ? formatConversationTimestamp(message.createdAt) : null}
+      {message.isOwn && message.status === 'seen' ? <DoubleCheckIcon /> : null}
+      {message.isOwn && message.status === 'delivered' ? (
+        <FiCheck className="text-[11px]" strokeWidth={2.5} aria-hidden="true" />
+      ) : null}
     </span>
   );
 }
@@ -160,11 +184,13 @@ const MessageRow = memo(function MessageRow({
   onAddReaction,
   onReplyMessage,
   onReplyInThread,
+  onJumpToMessage,
   onDeleteMessage,
   onForwardMessage,
   onPinMessage,
   onSaveMessage,
   onUnsaveMessage,
+  savedMessageIds,
   onSendThreadMessage,
   onVotePoll,
 }: MessageRowProps) {
@@ -172,9 +198,10 @@ const MessageRow = memo(function MessageRow({
   const isPinned = Boolean(message.pinnedAt);
   const isEditing = editingId === message.id;
   const isPoll = isPollMessage(message);
-  const isMediaOnly = !isPoll && isMediaOnlyMessage(message);
+  const isCallLog = isCallLogMessage(message);
+  const isMediaOnly = !isPoll && !isCallLog && isMediaOnlyMessage(message);
   const hasMedia = (message.media?.length ?? 0) > 0;
-  const isTextOnly = !isPoll && !isMediaOnly && !hasMedia;
+  const isTextOnly = !isPoll && !isCallLog && !isMediaOnly && !hasMedia;
 
   const bubbleClassName = `inline-block w-fit max-w-full rounded-2xl px-2.5 py-1.5 text-sm leading-snug ${
     message.isOwn
@@ -186,8 +213,12 @@ const MessageRow = memo(function MessageRow({
     <div
       data-message-id={message.id}
       className={`message-row group flex gap-3 ${message.isOwn ? 'flex-row-reverse' : 'flex-row'} ${
-        isHighlighted ? 'rounded-xl bg-accent/10 p-2' : ''
-      }`}
+        isAppearingMessage(message)
+          ? message.isOwn
+            ? 'message-appear message-appear-own'
+            : 'message-appear'
+          : ''
+      } ${isHighlighted ? 'message-target-highlight rounded-xl p-2' : ''}`}
     >
       {!message.isOwn ? (
         <Avatar imageUrl={null} initials={message.senderInitials} size="sm" />
@@ -197,28 +228,28 @@ const MessageRow = memo(function MessageRow({
           <p className="mb-1 text-xs font-medium text-app-muted">{message.senderName}</p>
         ) : null}
         {message.replyToMessage || message.replyToMessageId ? (
-          <div
-            className={`mb-1 flex max-w-full cursor-pointer flex-col rounded-[8px] border-l-2 bg-app-surface px-3 py-1.5 text-xs text-app-muted hover:bg-app-chat-hover ${
-              message.isOwn ? 'mr-1 border-l-accent' : 'ml-1 border-l-app-border'
-            }`}
-          >
-            {(() => {
-              const replyTarget = resolveReplyTarget(message, messages);
+          (() => {
+            const replyTarget = resolveReplyTarget(message, messages);
 
-              if (!replyTarget) {
-                return null;
-              }
+            if (!replyTarget) {
+              return null;
+            }
 
-              return (
-                <>
-                  <span className="mb-0.5 font-medium text-app-text">
-                    {replyTarget.senderName || replyTarget.senderId}
-                  </span>
-                  <MessageReplyPreview message={replyTarget} />
-                </>
-              );
-            })()}
-          </div>
+            return (
+              <button
+                type="button"
+                className={`mb-1 flex max-w-full cursor-pointer flex-col rounded-[8px] border-l-2 bg-app-surface px-3 py-1.5 text-left text-xs text-app-muted transition-colors hover:bg-app-chat-hover ${
+                  message.isOwn ? 'mr-1 border-l-accent' : 'ml-1 border-l-app-border'
+                }`}
+                onClick={() => onJumpToMessage?.(replyTarget.id)}
+              >
+                <span className="mb-0.5 font-medium text-app-text">
+                  {replyTarget.senderName || replyTarget.senderId}
+                </span>
+                <MessageReplyPreview message={replyTarget} />
+              </button>
+            );
+          })()
         ) : null}
         {isEditing ? (
           <div className="space-y-2">
@@ -257,6 +288,7 @@ const MessageRow = memo(function MessageRow({
                   <MessageContent
                     message={message}
                     highlightTerm={highlightTerm}
+                    currentUserId={currentUserId}
                     onVotePoll={
                       onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
                     }
@@ -274,6 +306,7 @@ const MessageRow = memo(function MessageRow({
                           message={message}
                           highlightTerm={highlightTerm}
                           compact
+                          currentUserId={currentUserId}
                           onVotePoll={
                             onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
                           }
@@ -286,6 +319,7 @@ const MessageRow = memo(function MessageRow({
                       <MessageContent
                         message={message}
                         highlightTerm={highlightTerm}
+                        currentUserId={currentUserId}
                         onVotePoll={
                           onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
                         }
@@ -337,6 +371,7 @@ const MessageRow = memo(function MessageRow({
               <MessageMenu
                 isOwn={message.isOwn}
                 isPinned={isPinned}
+                isSaved={savedMessageIds.has(message.id)}
                 align={message.isOwn ? 'right' : 'left'}
                 onReply={() => onReplyMessage(message.id)}
                 onReplyInThread={() => onReplyInThread(message.id)}
@@ -371,18 +406,21 @@ type MessageListProps = {
   highlightTerm?: string;
   highlightedMessageIds?: string[];
   scrollToMessageId?: string | null;
+  scrollRequestKey?: number;
   unreadAnchorMessageId?: string | null;
   onScrollToMessageComplete?: () => void;
   currentUserId: string | null;
   onAddReaction: (messageId: string, emoji: string) => void;
   onReplyMessage: (messageId: string) => void;
   onReplyInThread: (messageId: string) => void;
+  onJumpToMessage?: (messageId: string) => void;
   onEditMessage: (messageId: string, content: string) => void;
   onDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
   onForwardMessage: (messageId: string) => void;
   onPinMessage: (messageId: string, isPinned: boolean) => void;
   onSaveMessage: (messageId: string) => void;
   onUnsaveMessage: (messageId: string) => void;
+  savedMessageIds: ReadonlySet<string>;
   expandedThreadMessageId?: string | null;
   onSendThreadMessage?: (content: string, threadRootId: string) => Promise<string | null>;
   conversationId?: string;
@@ -396,18 +434,21 @@ export function MessageList({
   highlightTerm = '',
   highlightedMessageIds = [],
   scrollToMessageId = null,
+  scrollRequestKey = 0,
   unreadAnchorMessageId = null,
   onScrollToMessageComplete,
   currentUserId,
   onAddReaction,
   onReplyMessage,
   onReplyInThread,
+  onJumpToMessage,
   onEditMessage,
   onDeleteMessage,
   onForwardMessage,
   onPinMessage,
   onSaveMessage,
   onUnsaveMessage,
+  savedMessageIds,
   expandedThreadMessageId,
   onSendThreadMessage,
   conversationId,
@@ -457,18 +498,18 @@ export function MessageList({
     });
 
     return () => window.cancelAnimationFrame(frame);
-  }, [onScrollToMessageComplete, scrollToMessageId, showInitialLoading, messages]);
+  }, [messages, onScrollToMessageComplete, scrollRequestKey, scrollToMessageId, showInitialLoading]);
 
   useEffect(() => {
     if (showInitialLoading || scrollToMessageId || messages.length === 0) {
       return;
     }
 
+    const lastMessage = messages[messages.length - 1];
+    const behavior = lastMessage && isAppearingMessage(lastMessage) ? 'smooth' : 'auto';
+
     const frame = window.requestAnimationFrame(() => {
-      scrollToBottom('auto');
-      window.requestAnimationFrame(() => {
-        scrollToBottom('auto');
-      });
+      scrollToBottom(behavior);
     });
 
     return () => window.cancelAnimationFrame(frame);
@@ -559,12 +600,14 @@ export function MessageList({
               onAddReaction={onAddReaction}
               onReplyMessage={onReplyMessage}
               onReplyInThread={onReplyInThread}
+              onJumpToMessage={onJumpToMessage}
               onEditMessage={onEditMessage}
               onDeleteMessage={onDeleteMessage}
               onForwardMessage={onForwardMessage}
               onPinMessage={onPinMessage}
               onSaveMessage={onSaveMessage}
               onUnsaveMessage={onUnsaveMessage}
+              savedMessageIds={savedMessageIds}
               onSendThreadMessage={onSendThreadMessage}
               onVotePoll={onVotePoll}
             />

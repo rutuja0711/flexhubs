@@ -1,4 +1,5 @@
 import { API_BASE_URL } from '../shared/api';
+import { getUnreachableRemainingMs } from './apiRequest';
 import {
   fetchRealtimeStatus,
   fetchRealtimeToken,
@@ -7,8 +8,8 @@ import {
 } from './realtimeApi';
 
 const HEARTBEAT_MS = 30_000;
-const RECONNECT_BASE_MS = 2_000;
-const RECONNECT_MAX_MS = 30_000;
+const RECONNECT_BASE_MS = 5_000;
+const RECONNECT_MAX_MS = 60_000;
 
 import type { RealtimeConnectionStatus } from '../shared/realtime';
 
@@ -25,9 +26,18 @@ let reconnectAttempt = 0;
 let onEventHandler: EventHandler | null = null;
 let onStatusHandler: StatusHandler | null = null;
 let shouldRun = false;
+let connecting = false;
+let loggedNetworkWait = false;
 
 function setStatus(status: RealtimeConnectionStatus): void {
   onStatusHandler?.(status);
+}
+
+function clearReconnectTimer(): void {
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
 }
 
 function clearTimers(): void {
@@ -36,22 +46,31 @@ function clearTimers(): void {
     heartbeatTimer = null;
   }
 
-  if (reconnectTimer) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
+  clearReconnectTimer();
 }
 
-function scheduleReconnect(): void {
-  if (!shouldRun || !sessionToken) {
+function isNetworkResult(result: { ok: boolean; status?: number }): boolean {
+  return !result.ok && (result.status === 0 || result.status === undefined);
+}
+
+function scheduleReconnect(reason?: string): void {
+  if (!shouldRun || !sessionToken || reconnectTimer) {
     return;
   }
 
-  const delay = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempt, RECONNECT_MAX_MS);
+  const cooldownMs = getUnreachableRemainingMs();
+  const backoffMs = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempt, RECONNECT_MAX_MS);
+  const delay = Math.max(cooldownMs, backoffMs);
   reconnectAttempt += 1;
   setStatus('disconnected');
 
+  if (reason && !loggedNetworkWait) {
+    loggedNetworkWait = true;
+    console.warn(`[Realtime] ${reason}. Retrying in ${Math.round(delay / 1000)}s.`);
+  }
+
   reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
     void connect(sessionToken as string);
   }, delay);
 }
@@ -102,11 +121,11 @@ async function openEventStream(
       });
 
       if (!response.ok || !response.body) {
-        console.log('[Realtime Events] failed:', url, response.status);
         continue;
       }
 
-      console.log('[Realtime Events] connected:', url);
+      console.log('[Realtime] connected');
+      loggedNetworkWait = false;
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -135,12 +154,12 @@ async function openEventStream(
       }
 
       return true;
-    } catch (error) {
+    } catch {
       if (signal.aborted) {
         return false;
       }
 
-      console.error('[Realtime Events] stream error:', error);
+      console.warn('[Realtime] stream dropped.');
     }
   }
 
@@ -148,53 +167,68 @@ async function openEventStream(
 }
 
 async function connect(authToken: string): Promise<void> {
-  if (!shouldRun) {
+  if (!shouldRun || connecting) {
     return;
   }
 
+  connecting = true;
   abortController?.abort();
   abortController = new AbortController();
   const signal = abortController.signal;
 
   setStatus('connecting');
 
-  const statusResult = await fetchRealtimeStatus(authToken);
+  try {
+    const statusResult = await fetchRealtimeStatus(authToken);
 
-  if (!statusResult.ok) {
-    console.log('[Realtime] status unavailable:', statusResult.error);
-  } else if (!statusResult.data.enabled) {
-    console.log('[Realtime] disabled by server');
-    setStatus('unavailable');
-    return;
-  }
+    if (!statusResult.ok) {
+      if (isNetworkResult(statusResult)) {
+        scheduleReconnect('Realtime is unreachable');
+        return;
+      }
 
-  const tokenResult = await fetchRealtimeToken(authToken);
+      scheduleReconnect();
+      return;
+    }
 
-  if (!tokenResult.ok) {
-    console.log('[Realtime] token unavailable:', tokenResult.error);
-    setStatus('unavailable');
+    if (!statusResult.data.enabled) {
+      setStatus('unavailable');
+      return;
+    }
+
+    const tokenResult = await fetchRealtimeToken(authToken);
+
+    if (!tokenResult.ok) {
+      if (isNetworkResult(tokenResult)) {
+        scheduleReconnect('Realtime is unreachable');
+        return;
+      }
+
+      scheduleReconnect();
+      return;
+    }
+
+    void setUserOnline(authToken);
+
+    const connected = await openEventStream(authToken, tokenResult.data, signal, (event) => {
+      onEventHandler?.(event);
+    });
+
+    if (signal.aborted) {
+      return;
+    }
+
+    if (connected) {
+      reconnectAttempt = 0;
+      loggedNetworkWait = false;
+      setStatus('connected');
+      return;
+    }
+
     scheduleReconnect();
-    return;
+  } finally {
+    connecting = false;
   }
-
-  void setUserOnline(authToken);
-
-  const streamToken = tokenResult.data;
-  const connected = await openEventStream(authToken, streamToken, signal, (event) => {
-    onEventHandler?.(event);
-  });
-
-  if (signal.aborted) {
-    return;
-  }
-
-  if (connected) {
-    reconnectAttempt = 0;
-    setStatus('connected');
-    return;
-  }
-
-  scheduleReconnect();
 }
 
 export function setRealtimeHandlers(handlers: {
@@ -206,21 +240,24 @@ export function setRealtimeHandlers(handlers: {
 }
 
 export async function startRealtimeStream(authToken: string): Promise<void> {
+  if (shouldRun && sessionToken === authToken) {
+    return;
+  }
+
   shouldRun = true;
   sessionToken = authToken;
   reconnectAttempt = 0;
-  clearTimers();
+  loggedNetworkWait = false;
+  clearReconnectTimer();
   abortController?.abort();
 
-  if (heartbeatTimer) {
-    clearInterval(heartbeatTimer);
+  if (!heartbeatTimer) {
+    heartbeatTimer = setInterval(() => {
+      if (sessionToken && getUnreachableRemainingMs() === 0) {
+        void sendRealtimeHeartbeat(sessionToken);
+      }
+    }, HEARTBEAT_MS);
   }
-
-  heartbeatTimer = setInterval(() => {
-    if (sessionToken) {
-      void sendRealtimeHeartbeat(sessionToken);
-    }
-  }, HEARTBEAT_MS);
 
   await connect(authToken);
 }
@@ -229,6 +266,8 @@ export function stopRealtimeStream(): void {
   shouldRun = false;
   sessionToken = null;
   reconnectAttempt = 0;
+  connecting = false;
+  loggedNetworkWait = false;
   clearTimers();
   abortController?.abort();
   abortController = null;

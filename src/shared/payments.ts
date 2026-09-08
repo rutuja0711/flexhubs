@@ -193,11 +193,17 @@ export function normalizePaymentPlans(payload: unknown): PaymentPlanItem[] {
 }
 
 export function normalizeOrgSubscription(payload: unknown): OrgSubscriptionInfo | null {
-  const record = asRecord(payload);
+  const root = asRecord(payload);
 
-  if (!record) {
+  if (!root) {
     return null;
   }
+
+  const record =
+    asRecord(root.subscription) ??
+    asRecord(root.orgSubscription) ??
+    asRecord(root.data) ??
+    root;
 
   const plan = asRecord(record.plan) ?? record;
   const planId = normalizePlanId(plan.id ?? record.planId ?? record.planTier);

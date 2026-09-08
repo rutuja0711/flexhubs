@@ -8,6 +8,11 @@ const isWindowsHost = process.platform === 'win32';
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    extendInfo: {
+      NSMicrophoneUsageDescription: 'FlexHubs needs microphone access for voice and video calls.',
+      NSCameraUsageDescription: 'FlexHubs needs camera access for video calls.',
+      NSScreenCaptureUsageDescription: 'FlexHubs needs screen recording access to share your screen during calls.',
+    },
   },
   rebuildConfig: {},
   makers: [

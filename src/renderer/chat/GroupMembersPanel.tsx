@@ -67,13 +67,19 @@ function resolveIsAdmin(details: Record<string, unknown> | null, currentUserId: 
     return false;
   }
 
+  if (details.isAdmin === true || details.isOwner === true) {
+    return true;
+  }
+
   const myRole = String(details.myRole ?? details.role ?? '').toUpperCase();
-  if (myRole === 'ADMIN') {
+  if (myRole === 'ADMIN' || myRole.includes('FOUNDER') || myRole.includes('OWNER')) {
     return true;
   }
 
   return extractMembers(details).some(
-    (member) => member.id === currentUserId && member.role === 'ADMIN',
+    (member) =>
+      member.id === currentUserId &&
+      (member.role === 'ADMIN' || member.role.includes('FOUNDER') || member.role.includes('OWNER')),
   );
 }
 
@@ -202,37 +208,39 @@ export function GroupMembersPanel({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-5">
-        <section className="mb-6">
-          <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Add members</span>
-          <input
-            type="text"
-            value={query}
-            placeholder="Search people..."
-            className="mb-2 w-full rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent"
-            onChange={(event) => {
-              const next = event.target.value;
-              setQuery(next);
-              void runSearch(next);
-            }}
-          />
-          {searching ? <p className="text-xs text-app-muted">Searching...</p> : null}
-          {searchResults.length > 0 ? (
-            <div className="space-y-2">
-              {searchResults.map((person) => (
-                <button
-                  key={person.id}
-                  type="button"
-                  disabled={adding}
-                  className="flex w-full items-center justify-between rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-left text-sm hover:bg-app-chat-hover disabled:opacity-50"
-                  onClick={() => void handleAddMember(person.id)}
-                >
-                  <span className="truncate text-app-text">{person.name}</span>
-                  <FiUserPlus className="shrink-0 text-accent-soft" />
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </section>
+        {isAdmin ? (
+          <section className="mb-6">
+            <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Add members</span>
+            <input
+              type="text"
+              value={query}
+              placeholder="Search people..."
+              className="mb-2 w-full rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent"
+              onChange={(event) => {
+                const next = event.target.value;
+                setQuery(next);
+                void runSearch(next);
+              }}
+            />
+            {searching ? <p className="text-xs text-app-muted">Searching...</p> : null}
+            {searchResults.length > 0 ? (
+              <div className="space-y-2">
+                {searchResults.map((person) => (
+                  <button
+                    key={person.id}
+                    type="button"
+                    disabled={adding}
+                    className="flex w-full items-center justify-between rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-left text-sm hover:bg-app-chat-hover disabled:opacity-50"
+                    onClick={() => void handleAddMember(person.id)}
+                  >
+                    <span className="truncate text-app-text">{person.name}</span>
+                    <FiUserPlus className="shrink-0 text-accent-soft" />
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
         <section>
           <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Members</span>
@@ -273,7 +281,7 @@ export function GroupMembersPanel({
                           ))}
                         </select>
                       ) : null}
-                      {!isSelf ? (
+                      {isAdmin && !isSelf ? (
                         <button
                           type="button"
                           disabled={Boolean(busyUserId)}
