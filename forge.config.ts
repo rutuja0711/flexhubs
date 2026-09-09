@@ -4,10 +4,21 @@ import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 
 const isWindowsHost = process.platform === 'win32';
+const isDarwinHost = process.platform === 'darwin';
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    ...(isDarwinHost
+      ? {
+          arch: 'universal' as const,
+          osxUniversal: {
+            minimumSystemVersion: '11.0.0',
+          },
+        }
+      : {
+          arch: 'x64' as const,
+        }),
     extendInfo: {
       NSMicrophoneUsageDescription: 'FlexHubs needs microphone access for voice and video calls.',
       NSCameraUsageDescription: 'FlexHubs needs camera access for video calls.',

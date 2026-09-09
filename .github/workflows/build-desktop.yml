@@ -28,14 +28,19 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build installers
-        run: npm run make
+      - name: Build Mac universal app
+        if: matrix.os == 'macos-latest'
+        run: npm run make:mac
+
+      - name: Build Windows x64 installer
+        if: matrix.os == 'windows-latest'
+        run: npm run make:win
 
       - name: Upload Mac zip
         if: matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: FlexHubs-Desktop-mac
+          name: FlexHubs-Desktop-mac-universal
           path: out/make/zip/darwin/**/*.zip
           if-no-files-found: error
 
@@ -43,6 +48,6 @@ jobs:
         if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: FlexHubs-Desktop-windows
+          name: FlexHubs-Desktop-windows-x64
           path: out/make/squirrel.windows/**/*
           if-no-files-found: error
