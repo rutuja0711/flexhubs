@@ -28,14 +28,28 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Install WiX Toolset (Windows MSI)
-        if: matrix.os == 'windows-latest'
-        run: choco install wixtoolset --version=3.14.0 -y
-
-      - name: Add WiX to PATH
+      - name: Ensure WiX Toolset (Windows MSI)
         if: matrix.os == 'windows-latest'
         shell: pwsh
-        run: Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files (x86)\WiX Toolset v3.14\bin'
+        run: |
+          $candidates = @(
+            'C:\Program Files (x86)\WiX Toolset v3.14\bin',
+            'C:\Program Files\WiX Toolset v3.14\bin'
+          )
+
+          $wixBin = $candidates | Where-Object { Test-Path (Join-Path $_ 'candle.exe') } | Select-Object -First 1
+
+          if (-not $wixBin) {
+            choco install wixtoolset -y
+            $wixBin = $candidates | Where-Object { Test-Path (Join-Path $_ 'candle.exe') } | Select-Object -First 1
+          }
+
+          if (-not $wixBin) {
+            throw 'WiX Toolset not found. candle.exe is required to build the MSI.'
+          }
+
+          Write-Host "Using WiX at $wixBin"
+          Add-Content -Path $env:GITHUB_PATH -Value $wixBin
 
       - name: Build Mac universal app
         if: matrix.os == 'macos-latest'
