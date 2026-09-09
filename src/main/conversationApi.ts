@@ -46,7 +46,7 @@ export async function fetchMessageThread(
 
   return {
     ok: true,
-    data: normalizeMessageThread(result.data),
+    data: normalizeMessageThread(result.data, messageId),
   };
 }
 
@@ -188,6 +188,87 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function stampThreadRootId(message: MessageItem, rootMessageId: string): MessageItem {
+  return {
+    ...message,
+    threadRootId: message.threadRootId ?? rootMessageId,
+  };
+}
+
+export async function sendThreadReply(
+  token: string,
+  conversationId: string,
+  rootMessageId: string,
+  content: string,
+  mediaJson?: string,
+): Promise<ApiResult<MessageItem>> {
+  const payload: Record<string, unknown> = {
+    threadRootId: rootMessageId,
+  };
+
+  if (mediaJson) {
+    try {
+      const media = JSON.parse(mediaJson) as Record<string, unknown>;
+
+      if (media.type) payload.type = media.type;
+      if (typeof media.content === 'string') payload.content = media.content;
+      if (media.fileUrl) payload.fileUrl = media.fileUrl;
+      if (media.fileName) payload.fileName = media.fileName;
+      if (media.mimeType) payload.mimeType = media.mimeType;
+    } catch {
+      // Ignore malformed media payload and send as plain text.
+    }
+
+    const result = await apiPost<unknown>(
+      `${API_BASE_URL}/conversations/${conversationId}/messages`,
+      token,
+      'Send Thread Reply API',
+      payload,
+    );
+
+    if (!result.ok) {
+      return result;
+    }
+
+    return {
+      ok: true,
+      data: stampThreadRootId(normalizeMessageResult(result.data), rootMessageId),
+    };
+  }
+
+  payload.content = content;
+
+  const streamResult = await apiPost<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages/stream`,
+    token,
+    'Send Thread Reply Stream API',
+    payload,
+  );
+
+  if (streamResult.ok) {
+    return {
+      ok: true,
+      data: stampThreadRootId(normalizeMessageResult(streamResult.data), rootMessageId),
+    };
+  }
+
+  const result = await apiPost<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages`,
+    token,
+    'Send Thread Reply API',
+    payload,
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return {
+    ok: true,
+    data: stampThreadRootId(normalizeMessageResult(result.data), rootMessageId),
+  };
+}
+
 export async function sendMessage(
   token: string,
   conversationId: string,
@@ -196,9 +277,12 @@ export async function sendMessage(
   threadRootId?: string,
   mediaJson?: string,
 ): Promise<ApiResult<MessageItem>> {
+  if (threadRootId) {
+    return sendThreadReply(token, conversationId, threadRootId, content, mediaJson);
+  }
+
   const payload: Record<string, unknown> = {};
   if (replyToId) payload.replyToId = replyToId;
-  if (threadRootId) payload.threadRootId = threadRootId;
 
   if (mediaJson) {
     try {
@@ -298,6 +382,13 @@ export async function deleteMessage(
   );
 
   if (!result.ok) {
+    if (scope === 'everyone' && /already deleted/i.test(result.error ?? '')) {
+      return {
+        ok: true,
+        data: { messageId, scope: 'everyone' as const },
+      };
+    }
+
     return result;
   }
 
@@ -615,9 +706,12 @@ export async function sendMessageStream(
   replyToId?: string,
   threadRootId?: string,
 ): Promise<ApiResult<MessageItem>> {
+  if (threadRootId) {
+    return sendThreadReply(token, conversationId, threadRootId, content);
+  }
+
   const payload: Record<string, unknown> = { content };
   if (replyToId) payload.replyToId = replyToId;
-  if (threadRootId) payload.threadRootId = threadRootId;
 
   const streamResult = await apiPost<unknown>(
     `${API_BASE_URL}/conversations/${conversationId}/messages/stream`,

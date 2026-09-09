@@ -5,6 +5,8 @@ import { FiX } from 'react-icons/fi';
 import type { RemoteParticipant, Room } from 'livekit-client';
 import type { CallSession } from '../callManager';
 import { CallFloatingPanel, type CallPanelLayout } from '../call/CallFloatingPanel';
+import { MediasoupMediaPlayback } from '../call/MediasoupMediaPlayback';
+import type { MediasoupRemotePeer } from '../call/mediasoupAdapter';
 import { RemoteAudioPlayback } from '../call/RemoteAudioPlayback';
 import { CallRingingView } from '../call/CallRingingView';
 import { MeetingJoinRequestsBar } from '../call/MeetingJoinRequestsBar';
@@ -20,6 +22,8 @@ type CallOverlayProps = {
   busy: boolean;
   room: Room | null;
   remoteParticipants: RemoteParticipant[];
+  mediasoupPeers?: MediasoupRemotePeer[];
+  mediasoupLocalVideo?: MediaStream | null;
   micEnabled: boolean;
   cameraEnabled: boolean;
   screenShareEnabled: boolean;
@@ -52,6 +56,8 @@ export function CallOverlay({
   busy,
   room,
   remoteParticipants,
+  mediasoupPeers = [],
+  mediasoupLocalVideo = null,
   micEnabled,
   cameraEnabled,
   screenShareEnabled,
@@ -100,6 +106,8 @@ export function CallOverlay({
   const isLive = session.phase === 'active';
   const durationLabel = useCallDuration(session.connectedAt, isLive);
 
+  const usesMediasoup = session.liveToken?.engine === 'mediasoup';
+
   const showVideoLayout = useMemo(() => {
     if (session.isGroup) {
       return true;
@@ -109,15 +117,25 @@ export function CallOverlay({
       session.video ||
       cameraEnabled ||
       screenShareEnabled ||
-      remoteHasVideo(remoteParticipants)
+      remoteHasVideo(remoteParticipants) ||
+      Boolean(mediasoupLocalVideo) ||
+      mediasoupPeers.some((peer) => peer.videoStream)
     );
-  }, [cameraEnabled, remoteParticipants, screenShareEnabled, session.isGroup, session.video]);
+  }, [
+    cameraEnabled,
+    mediasoupLocalVideo,
+    mediasoupPeers,
+    remoteParticipants,
+    screenShareEnabled,
+    session.isGroup,
+    session.video,
+  ]);
 
   const statusLabel =
     session.phase === 'connecting'
       ? 'Connecting...'
       : session.isGroup
-        ? `${remoteParticipants.length + 1} in meeting`
+        ? `${(usesMediasoup ? mediasoupPeers.length : remoteParticipants.length) + 1} in meeting`
         : isLive
           ? 'Connected'
           : 'In call';
@@ -191,7 +209,14 @@ export function CallOverlay({
   if (showRinging) {
     return createPortal(
       <>
-        {room ? <RemoteAudioPlayback room={room} /> : null}
+        {usesMediasoup ? (
+          <MediasoupMediaPlayback
+            localVideoStream={mediasoupLocalVideo}
+            remotePeers={mediasoupPeers}
+          />
+        ) : room ? (
+          <RemoteAudioPlayback room={room} />
+        ) : null}
         <CallRingingView
           session={session}
           busy={busy}
@@ -235,6 +260,19 @@ export function CallOverlay({
         onEnd={onEnd}
       />
     </>
+  ) : showVideoLayout && usesMediasoup ? (
+    <div className="relative flex h-full min-h-[280px] flex-col bg-[#0b0c10]">
+      <div className="border-b border-white/10 px-4 py-3">
+        <p className="truncate text-sm font-semibold text-white">{session.peerLabel || 'Call'}</p>
+        <p className="text-xs text-white/55">{statusLabel}</p>
+      </div>
+      <div className="relative min-h-0 flex-1">
+        <MediasoupMediaPlayback
+          localVideoStream={mediasoupLocalVideo}
+          remotePeers={mediasoupPeers}
+        />
+      </div>
+    </div>
   ) : showVideoLayout ? (
     <VideoCallView
       session={session}
@@ -254,7 +292,14 @@ export function CallOverlay({
 
   return createPortal(
     <>
-      <RemoteAudioPlayback room={room} />
+      {usesMediasoup ? (
+        <MediasoupMediaPlayback
+          localVideoStream={mediasoupLocalVideo}
+          remotePeers={mediasoupPeers}
+        />
+      ) : (
+        <RemoteAudioPlayback room={room} />
+      )}
       <CallFloatingPanel
       session={session}
       layout={panelLayout}

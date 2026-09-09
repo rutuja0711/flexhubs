@@ -109,10 +109,12 @@ const submitClassName =
 
 export default function LoginPage({
   onLoggedIn,
+  onCreatePersonalAccount,
   onCreateWorkspace,
   onForgotPassword,
 }: {
   onLoggedIn: () => void;
+  onCreatePersonalAccount?: () => void;
   onCreateWorkspace?: () => void;
   onForgotPassword?: () => void;
 }) {
@@ -264,17 +266,33 @@ export default function LoginPage({
           </button>
         </form>
 
-        {onCreateWorkspace ? (
-        <footer className="mt-7 border-t border-app-border pt-6 text-center text-sm text-app-muted">
-          Starting a new company workspace?{' '}
-          <button
-            type="button"
-            className="font-medium text-accent underline transition-opacity hover:opacity-85"
-            onClick={onCreateWorkspace}
-          >
-            Create a workspace
-          </button>
-        </footer>
+        {onCreatePersonalAccount || onCreateWorkspace ? (
+          <footer className="mt-7 space-y-3 border-t border-app-border pt-6 text-center text-sm text-app-muted">
+            {onCreatePersonalAccount ? (
+              <p>
+                New here?{' '}
+                <button
+                  type="button"
+                  className="font-medium text-accent underline transition-opacity hover:opacity-85"
+                  onClick={onCreatePersonalAccount}
+                >
+                  Create a personal account
+                </button>
+              </p>
+            ) : null}
+            {onCreateWorkspace ? (
+              <p>
+                Starting a company workspace?{' '}
+                <button
+                  type="button"
+                  className="font-medium text-accent underline transition-opacity hover:opacity-85"
+                  onClick={onCreateWorkspace}
+                >
+                  Create a workspace
+                </button>
+              </p>
+            ) : null}
+          </footer>
         ) : null}
       </div>
     </div>

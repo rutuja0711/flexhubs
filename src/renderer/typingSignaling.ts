@@ -150,19 +150,12 @@ export async function broadcastTypingIndicator(
 
   if (!channel) {
     const channelName = buildConversationTypingChannel(conversationId);
-    channel = supabase.channel(channelName, {
-      config: { broadcast: { self: false, ack: false } },
-    });
+    await subscribeChannelName(supabase, channelName, conversationId);
+    channel = channels.get(`${conversationId}::${channelName}`) ?? null;
+  }
 
-    await new Promise<void>((resolve) => {
-      channel!.subscribe((status) => {
-        if (status === 'SUBSCRIBED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-          resolve();
-        }
-      });
-    });
-
-    channels.set(`${conversationId}::${channelName}`, channel);
+  if (!channel) {
+    return;
   }
 
   await channel.send({

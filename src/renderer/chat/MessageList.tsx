@@ -1,11 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FiCheck, FiThumbsUp } from 'react-icons/fi';
+import { FiCheck, FiThumbsUp, FiMessageSquare, FiChevronUp } from 'react-icons/fi';
 import type { MessageItem } from '../../shared/messages';
 import { groupMessageReactions, isCallLogMessage, isMediaOnlyMessage, isPollMessage, resolveReplyTarget } from '../../shared/messages';
 import { formatConversationTimestamp, formatMessageDayDivider, messageDayKey } from './format';
 import { Avatar } from './ChatIcons';
 import { MessageMenu } from './MessageMenu';
-import { InlineThread } from './InlineThread';
+
 import { MessageContent, MessageReplyPreview } from './MessageContent';
 
 function DateDivider({ label }: { label: string }) {
@@ -118,6 +118,7 @@ type MessageRowProps = {
   savedMessageIds: ReadonlySet<string>;
   onSendThreadMessage?: (content: string, threadRootId: string) => Promise<string | null>;
   onVotePoll?: (messageId: string, optionId: string) => void;
+  threadsEnabled?: boolean;
 };
 
 function DoubleCheckIcon() {
@@ -193,6 +194,7 @@ const MessageRow = memo(function MessageRow({
   savedMessageIds,
   onSendThreadMessage,
   onVotePoll,
+  threadsEnabled = false,
 }: MessageRowProps) {
   const reactionGroups = groupMessageReactions(message.reactions, currentUserId);
   const isPinned = Boolean(message.pinnedAt);
@@ -373,6 +375,7 @@ const MessageRow = memo(function MessageRow({
                 isPinned={isPinned}
                 isSaved={savedMessageIds.has(message.id)}
                 align={message.isOwn ? 'right' : 'left'}
+                showReplyInThread={threadsEnabled}
                 onReply={() => onReplyMessage(message.id)}
                 onReplyInThread={() => onReplyInThread(message.id)}
                 onEdit={() => onStartEdit(message)}
@@ -387,12 +390,21 @@ const MessageRow = memo(function MessageRow({
           </div>
         )}
 
-        {expandedThreadMessageId === message.id && conversationId && onSendThreadMessage ? (
-          <InlineThread
-            conversationId={conversationId}
-            rootMessageId={message.id}
-            onSendThreadMessage={onSendThreadMessage}
-          />
+        {threadsEnabled && message.threadReplyCount && message.threadReplyCount > 0 ? (
+          <div className={`mt-1 flex flex-col ${message.isOwn ? 'items-end' : 'items-start'}`}>
+            <button
+              type="button"
+              className="group/reply flex items-center gap-1.5 text-xs text-accent-soft hover:text-accent transition-colors"
+              onClick={() => onReplyInThread(message.id)}
+            >
+              <FiChevronUp className="text-[10px]" />
+              <span className="font-medium">{message.threadReplyCount} {message.threadReplyCount === 1 ? 'reply' : 'replies'} - {formatConversationTimestamp(message.createdAt)}</span>
+              <FiMessageSquare className="text-[10px]" />
+            </button>
+            <span className="text-[10px] text-app-muted mt-0.5 pr-0.5 cursor-pointer hover:underline" onClick={() => onReplyInThread(message.id)}>
+              Open thread panel
+            </span>
+          </div>
         ) : null}
       </div>
     </div>
@@ -425,6 +437,7 @@ type MessageListProps = {
   onSendThreadMessage?: (content: string, threadRootId: string) => Promise<string | null>;
   conversationId?: string;
   onVotePoll?: (messageId: string, optionId: string) => void;
+  threadsEnabled?: boolean;
 };
 
 export function MessageList({
@@ -453,11 +466,14 @@ export function MessageList({
   onSendThreadMessage,
   conversationId,
   onVotePoll,
+  threadsEnabled = false,
 }: MessageListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const bottomAnchorRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
   const showInitialLoading = loading && messages.length === 0;
   const showRefreshing = loading && messages.length > 0;
   const listEntries = useMemo(
@@ -501,18 +517,77 @@ export function MessageList({
   }, [messages, onScrollToMessageComplete, scrollRequestKey, scrollToMessageId, showInitialLoading]);
 
   useEffect(() => {
-    if (showInitialLoading || scrollToMessageId || messages.length === 0) {
+    stickToBottomRef.current = true;
+  }, [conversationId]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    const onScroll = () => {
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      stickToBottomRef.current = distanceFromBottom < 150;
+    };
+
+    container.addEventListener('scroll', onScroll, { passive: true });
+    return () => container.removeEventListener('scroll', onScroll);
+  }, [messages.length]);
+
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content) {
+      return;
+    }
+
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current) {
+        scrollToBottom('auto');
+      }
+    });
+
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, [scrollToBottom]);
+
+  useEffect(() => {
+    if (showInitialLoading || messages.length === 0) {
       return;
     }
 
     const lastMessage = messages[messages.length - 1];
-    const behavior = lastMessage && isAppearingMessage(lastMessage) ? 'smooth' : 'auto';
+    const isOwnNewMessage =
+      lastMessage?.isOwn === true ||
+      lastMessage?.id.startsWith('local-') ||
+      (lastMessage ? isAppearingMessage(lastMessage) && lastMessage.isOwn : false);
 
-    const frame = window.requestAnimationFrame(() => {
-      scrollToBottom(behavior);
+    if (scrollToMessageId && !isOwnNewMessage && !stickToBottomRef.current) {
+      return;
+    }
+
+    if (!isOwnNewMessage && !stickToBottomRef.current) {
+      return;
+    }
+
+    if (isOwnNewMessage) {
+      stickToBottomRef.current = true;
+    }
+
+    const behavior = isOwnNewMessage ? 'smooth' : 'auto';
+    let innerFrame = 0;
+
+    const outerFrame = window.requestAnimationFrame(() => {
+      innerFrame = window.requestAnimationFrame(() => {
+        scrollToBottom(behavior);
+      });
     });
 
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      window.cancelAnimationFrame(outerFrame);
+      window.cancelAnimationFrame(innerFrame);
+    };
   }, [conversationId, messages, scrollToBottom, scrollToMessageId, showInitialLoading]);
 
   const startEdit = useCallback((message: MessageItem) => {
@@ -568,8 +643,9 @@ export function MessageList({
 
       <div
         ref={scrollContainerRef}
-        className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain px-6 py-4"
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 py-4"
       >
+        <div ref={contentRef} className="flex flex-col gap-4">
         {listEntries.map((entry) => {
           if (entry.kind === 'date') {
             return <DateDivider key={entry.key} label={entry.label} />;
@@ -610,10 +686,12 @@ export function MessageList({
               savedMessageIds={savedMessageIds}
               onSendThreadMessage={onSendThreadMessage}
               onVotePoll={onVotePoll}
+              threadsEnabled={threadsEnabled}
             />
           );
         })}
         <div ref={bottomAnchorRef} aria-hidden="true" className="h-px shrink-0" />
+        </div>
       </div>
     </div>
   );

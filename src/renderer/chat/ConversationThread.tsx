@@ -11,7 +11,12 @@ import {
 } from '../../shared/chat';
 import type { GifPickerItem } from '../../shared/gifs';
 import type { MessageItem } from '../../shared/messages';
-import { formatMessagePreview } from '../../shared/messages';
+import {
+  filterMainChatMessages,
+  formatMessagePreview,
+  registerThreadReplyMessage,
+  trackPendingThreadSend,
+} from '../../shared/messages';
 import { validateSearchInput } from '../../shared/search';
 import {
   loadMessageSearch,
@@ -32,6 +37,7 @@ import { MessageList } from './MessageList';
 import { PinnedMessageBanner } from './PinnedMessageBanner';
 import { GroupSidebar } from './GroupSidebar';
 import { GroupMembersPanel } from './GroupMembersPanel';
+import { ThreadSidebar } from './ThreadSidebar';
 
 type ConversationThreadProps = {
   conversation: ConversationItem;
@@ -47,8 +53,8 @@ type ConversationThreadProps = {
   isSending: boolean;
   onDraftChange: (value: string) => void;
   onSend: (replyToId?: string) => void;
-  onSendMedia?: (item: GifPickerItem, kind: 'gif' | 'sticker', replyToId?: string) => void;
-  onSendFile?: (file: File, replyToId?: string) => void;
+  onSendMedia?: (item: GifPickerItem, kind: 'gif' | 'sticker', replyToId?: string, threadRootId?: string) => void;
+  onSendFile?: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
   onUnauthorized: (status?: number) => boolean;
   currentUserId: string | null;
   onAddReaction: (messageId: string, emoji: string) => void;
@@ -73,6 +79,8 @@ type ConversationThreadProps = {
   onStartVideoCall?: () => void;
   callBusy?: boolean;
   onOpenFlexAi?: () => void;
+  onThreadReplySent?: (threadRootId: string) => void;
+  onThreadMessagesRegistered?: () => void;
 };
 
 export function ConversationThread({
@@ -115,6 +123,8 @@ export function ConversationThread({
   onStartVideoCall,
   callBusy = false,
   onOpenFlexAi,
+  onThreadReplySent,
+  onThreadMessagesRegistered,
 }: ConversationThreadProps) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -267,6 +277,9 @@ export function ConversationThread({
       return right.createdAt.localeCompare(left.createdAt);
     });
   }, [loadedPinnedMessages, messages, pinnedMessageIds]);
+
+  const mainChatMessages = useMemo(() => filterMainChatMessages(messages), [messages]);
+  const threadsEnabled = conversation.kind === 'hub';
 
   const featuredPinnedMessage =
     pinnedMessages[pinnedBannerIndex % Math.max(pinnedMessages.length, 1)] ?? null;
@@ -745,7 +758,7 @@ export function ConversationThread({
       ) : null}
 
       <MessageList
-        messages={messages}
+        messages={mainChatMessages}
         loading={loading}
         error={error}
         highlightTerm={searchOpen && searchQuery.trim() ? searchQuery : ''}
@@ -770,7 +783,12 @@ export function ConversationThread({
             setReplyingToMessage(message);
           }
         }}
+        threadsEnabled={threadsEnabled}
         onReplyInThread={(messageId) => {
+          if (!threadsEnabled) {
+            return;
+          }
+
           setThreadRootMessage(threadRootMessage?.id === messageId ? null : messages.find((m) => m.id === messageId) || null);
         }}
         onEditMessage={onEditMessage}
@@ -783,10 +801,13 @@ export function ConversationThread({
         expandedThreadMessageId={threadRootMessage?.id}
         onSendThreadMessage={async (content, threadRootId) => {
           const { sendChatMessage } = await import('../chatApi');
+          trackPendingThreadSend(content, threadRootId);
           const result = await sendChatMessage(conversation.id, content, undefined, threadRootId);
           if (!result.ok) {
             return result.error;
           }
+          registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
+          onThreadMessagesRegistered?.();
           return null;
         }}
         conversationId={conversation.id}
@@ -833,8 +854,8 @@ export function ConversationThread({
         }
         onSendFile={
           onSendFile
-            ? (file) => {
-                onSendFile(file, replyingToMessage?.id);
+            ? (file, caption) => {
+                onSendFile(file, caption, replyingToMessage?.id);
                 setReplyingToMessage(null);
               }
             : undefined
@@ -966,6 +987,31 @@ export function ConversationThread({
           onConversationUpdated={() => {
             onConversationUpdated?.();
           }}
+        />
+      ) : null}
+      {threadsEnabled && threadRootMessage ? (
+        <ThreadSidebar
+          conversationId={conversation.id}
+          rootMessage={threadRootMessage}
+          currentUserId={currentUserId}
+          onClose={() => setThreadRootMessage(null)}
+          onSendThreadMessage={async (content, threadRootId) => {
+            const { sendChatMessage } = await import('../chatApi');
+            trackPendingThreadSend(content, threadRootId);
+            const result = await sendChatMessage(conversation.id, content, undefined, threadRootId);
+            if (!result.ok) {
+              return result.error;
+            }
+            registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
+            onThreadMessagesRegistered?.();
+            return null;
+          }}
+          onSendMedia={onSendMedia}
+          onSendFile={onSendFile}
+          onUnauthorized={onUnauthorized}
+          onOpenFlexAi={onOpenFlexAi}
+          onThreadReplySent={onThreadReplySent}
+          onThreadMessagesRegistered={onThreadMessagesRegistered}
         />
       ) : null}
     </div>

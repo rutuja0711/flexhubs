@@ -1,4 +1,4 @@
-import type { LoginResult, RegisterAccountInput } from '../shared/auth';
+import type { IndividualRegisterInput, LoginResult, RegisterAccountInput } from '../shared/auth';
 import type { ApiResult } from '../shared/api';
 
 function unavailable<T>(): ApiResult<T> {
@@ -61,4 +61,35 @@ export async function resetAccountPassword(payload: {
   }
 
   return window.electronAPI.resetPassword(JSON.stringify(payload));
+}
+
+export async function sendIndividualRegistrationOtp(
+  email: string,
+): Promise<ApiResult<{ message?: string; delivered?: boolean }>> {
+  if (!window.electronAPI?.sendIndividualOtp) {
+    return unavailable();
+  }
+
+  return window.electronAPI.sendIndividualOtp(email);
+}
+
+export async function verifyIndividualRegistrationOtp(payload: {
+  email: string;
+  code: string;
+}): Promise<ApiResult<{ message?: string; verificationToken?: string; token?: string }>> {
+  if (!window.electronAPI?.verifyIndividualOtp) {
+    return unavailable();
+  }
+
+  return window.electronAPI.verifyIndividualOtp(JSON.stringify(payload));
+}
+
+export async function registerIndividualAccount(
+  payload: IndividualRegisterInput,
+): Promise<LoginResult> {
+  if (!window.electronAPI?.registerIndividualAccount) {
+    return unavailable();
+  }
+
+  return window.electronAPI.registerIndividualAccount(JSON.stringify(payload));
 }

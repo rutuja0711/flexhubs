@@ -182,12 +182,27 @@ export function resolveAvatarUrl(source: unknown): string | null {
     return null;
   }
 
+  const avatarMode =
+    readString(record.avatarMode) ??
+    readString(record.avatarType) ??
+    (record.useInitials === true ? 'initials' : null);
+
   if (
     record.useInitials === true ||
-    readString(record.avatarType) === 'initials' ||
-    readString(record.avatarMode) === 'initials'
+    avatarMode === 'initials'
   ) {
     return null;
+  }
+
+  const rawUrl =
+    readString(record.avatarUrl) ??
+    readString(record.avatar) ??
+    readString(record.imageUrl) ??
+    readString(record.iconUrl) ??
+    readString(record.icon);
+
+  if (avatarMode === 'upload' && rawUrl) {
+    return normalizeUploadUrl(rawUrl);
   }
 
   const avatarStyle =
@@ -195,7 +210,7 @@ export function resolveAvatarUrl(source: unknown): string | null {
     readString(record.avatarStyleId) ??
     readString(record.style);
 
-  if (avatarStyle) {
+  if (avatarStyle && avatarMode !== 'upload') {
     const seed =
       readString(record.avatarSeed) ??
       readString(record.seed) ??
@@ -206,13 +221,6 @@ export function resolveAvatarUrl(source: unknown): string | null {
 
     return buildGeneratedAvatarUrl(avatarStyle, seed);
   }
-
-  const rawUrl =
-    readString(record.avatarUrl) ??
-    readString(record.avatar) ??
-    readString(record.imageUrl) ??
-    readString(record.iconUrl) ??
-    readString(record.icon);
 
   if (!rawUrl) {
     return null;
@@ -509,6 +517,18 @@ export function normalizeUploadUrl(url: string): string {
   return trimmed;
 }
 
+function omitNullishValues(payload: Record<string, unknown>): Record<string, unknown> {
+  const cleaned: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(payload)) {
+    if (value !== null && value !== undefined) {
+      cleaned[key] = value;
+    }
+  }
+
+  return cleaned;
+}
+
 export function buildProfileUpdatePayload(
   updates: Record<string, unknown>,
 ): Record<string, unknown> {
@@ -516,32 +536,32 @@ export function buildProfileUpdatePayload(
   const avatarUrl = readString(updates.avatarUrl);
   const avatarMode = readString(updates.avatarMode);
 
+  delete payload.avatarMode;
+
   if (avatarUrl) {
     payload.avatarUrl = avatarUrl;
     payload.avatar = avatarUrl;
   }
 
-  if (avatarMode) {
-    payload.avatarType = avatarMode;
-  }
-
   if (updates.useInitials === true || avatarMode === 'initials') {
     payload.useInitials = true;
     payload.avatarType = 'initials';
-    payload.avatarUrl = null;
-    payload.avatar = null;
-  }
-
-  if (avatarMode === 'upload' && avatarUrl) {
+    delete payload.avatarUrl;
+    delete payload.avatar;
+    delete payload.avatarStyle;
+    delete payload.avatarStyleId;
+    delete payload.avatarSeed;
+    delete payload.style;
+    delete payload.seed;
+  } else if (avatarMode === 'upload' && avatarUrl) {
     payload.avatarType = 'upload';
     payload.useInitials = false;
-    payload.avatarStyle = null;
-    payload.avatarSeed = null;
-    payload.style = null;
-    payload.seed = null;
-  }
-
-  if (avatarMode === 'avatar') {
+    delete payload.avatarStyle;
+    delete payload.avatarStyleId;
+    delete payload.avatarSeed;
+    delete payload.style;
+    delete payload.seed;
+  } else if (avatarMode === 'avatar') {
     payload.avatarType = 'avatar';
     payload.useInitials = false;
   }
@@ -563,19 +583,17 @@ export function buildProfileUpdatePayload(
   }
 
   if (typeof updates.avatarStyle === 'string') {
+    payload.avatarStyle = updates.avatarStyle;
     payload.avatarStyleId = updates.avatarStyle;
     payload.style = updates.avatarStyle;
   }
 
   if (typeof updates.avatarSeed === 'string') {
+    payload.avatarSeed = updates.avatarSeed;
     payload.seed = updates.avatarSeed;
   }
 
-  if (typeof updates.avatarMode === 'string') {
-    payload.avatarType = updates.avatarMode;
-  }
-
-  return payload;
+  return omitNullishValues(payload);
 }
 
 export type NotificationPreferenceUpdate = {

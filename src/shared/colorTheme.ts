@@ -1,10 +1,10 @@
 import { type ThemeMode } from './theme';
 
 export const ACCENT_STORAGE_KEY = 'flexhubs-accent-color';
-export const DEFAULT_ACCENT_COLOR = '#d8415f';
+export const DEFAULT_ACCENT_COLOR = '#881818';
 
 export const ACCENT_PRESETS = [
-  { label: 'Rose', value: '#d8415f' },
+  { label: 'Burgundy', value: '#881818' },
   { label: 'Coral', value: '#e85d4c' },
   { label: 'Orange', value: '#e67e22' },
   { label: 'Amber', value: '#d4a017' },
@@ -172,7 +172,7 @@ function hslToHex(hsl: HSL): string {
 }
 
 export function hexToHsv(hex: string): HSV {
-  const rgb = hexToRgb(hex) ?? { r: 216, g: 65, b: 95 };
+  const rgb = hexToRgb(hex) ?? { r: 136, g: 24, b: 24 };
   const red = rgb.r / 255;
   const green = rgb.g / 255;
   const blue = rgb.b / 255;
@@ -238,23 +238,19 @@ export function hsvToHex(h: number, s: number, v: number): string {
 
 function defaultPalette(mode: ThemeMode): AccentPalette {
   return {
-    accent: '#d8415f',
-    hover: '#c43754',
-    active: '#b0304a',
-    soft: '#f07188',
-    focus: '#e35a75',
-    border: '#d8415f',
-    surface: mode === 'dark' ? '#3a1a22' : '#fdecef',
-    messageOut: mode === 'dark' ? '#8b2940' : '#d8415f',
+    accent: '#881818',
+    hover: '#6f1313',
+    active: '#5a0f0f',
+    soft: '#c44a4a',
+    focus: '#9a1f1f',
+    border: '#881818',
+    surface: mode === 'dark' ? '#2a1212' : '#f9eded',
+    messageOut: mode === 'dark' ? '#6f1313' : '#881818',
   };
 }
 
 export function buildAccentPalette(hex: string, mode: ThemeMode): AccentPalette {
   const normalized = normalizeHexColor(hex) ?? DEFAULT_ACCENT_COLOR;
-
-  if (normalized === DEFAULT_ACCENT_COLOR) {
-    return defaultPalette(mode);
-  }
 
   const rgb = hexToRgb(normalized);
   if (!rgb) {
@@ -298,7 +294,7 @@ export function buildAccentPalette(hex: string, mode: ThemeMode): AccentPalette 
 }
 
 function themedSurfaces(hex: string, mode: ThemeMode): Record<(typeof SURFACE_VARS)[number], string> {
-  const rgb = hexToRgb(hex) ?? { r: 216, g: 65, b: 95 };
+  const rgb = hexToRgb(hex) ?? { r: 136, g: 24, b: 24 };
   const { h, s } = rgbToHsl(rgb);
   const sat = clamp(s * 0.22, 0.035, 0.16);
   const tone = (lightness: number, saturation = sat) => hslToHex({ h, s: saturation, l: lightness });
@@ -367,7 +363,8 @@ export function storeAccentColor(hex: string): void {
 }
 
 export function resolveInitialAccentColor(): string {
-  return readStoredAccentColor() ?? DEFAULT_ACCENT_COLOR;
+  // Custom accent picker is disabled for now — always use the brand default.
+  return DEFAULT_ACCENT_COLOR;
 }
 
 export function applyAccentColor(hex: string, mode: ThemeMode): void {

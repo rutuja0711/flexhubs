@@ -19,6 +19,7 @@ import type {
   MeetingStartedPayload,
 } from '../shared/calls';
 import { buildDirectCallRoomName, normalizeMeetingJoinRequestPayload } from '../shared/calls';
+import { MediasoupCallSession, type MediasoupRemotePeer } from './call/mediasoupAdapter';
 import {
   endCallMeeting,
   ensureCallMediaPermissions,
@@ -130,8 +131,13 @@ function formatCallApiError(error: string, status?: number): string {
     return 'Could not reach flexhubs.in. Check your internet connection and try again.';
   }
 
-  if (normalized.includes('livekit')) {
-    return 'Calls are not enabled on the server yet. Set LIVEKIT_URL, LIVEKIT_API_KEY, and LIVEKIT_API_SECRET on flexhubs.in hosting (same as the web app) — not in the desktop app.';
+  if (
+    normalized.includes('livekit') ||
+    normalized.includes('mediasoup') ||
+    normalized.includes('media server') ||
+    normalized.includes('not configured')
+  ) {
+    return 'Calls are not enabled on flexhubs.in yet. Your backend team must configure the call media server on production (same as the web app). This is not fixed in the desktop app or .env.';
   }
 
   if (normalized.includes('failed to subscribe') || normalized.includes('signaling channel unavailable')) {
@@ -180,9 +186,12 @@ export function useCallManager({
   const [busy, setBusy] = useState(false);
   const [pendingJoinRequests, setPendingJoinRequests] = useState<MeetingJoinRequestItem[]>([]);
   const [awaitingJoinApproval, setAwaitingJoinApproval] = useState(false);
+  const [mediasoupPeers, setMediasoupPeers] = useState<MediasoupRemotePeer[]>([]);
+  const [mediasoupLocalVideo, setMediasoupLocalVideo] = useState<MediaStream | null>(null);
 
   const sessionRef = useRef(session);
   const roomRef = useRef<Room | null>(null);
+  const mediasoupRef = useRef<MediasoupCallSession | null>(null);
   const removedFromMeetingRef = useRef(false);
   const pendingJoinConversationRef = useRef<ConversationItem | null>(null);
   const initiatorIdRef = useRef<string | null>(null);
@@ -273,6 +282,15 @@ export function useCallManager({
   );
 
   const disconnectRoom = useCallback(async () => {
+    const mediasoupSession = mediasoupRef.current;
+    mediasoupRef.current = null;
+    setMediasoupPeers([]);
+    setMediasoupLocalVideo(null);
+
+    if (mediasoupSession) {
+      await mediasoupSession.disconnect();
+    }
+
     const room = roomRef.current;
     roomRef.current = null;
 
@@ -368,6 +386,38 @@ export function useCallManager({
       }
 
       setSession((current) => ({ ...current, phase: 'connecting', liveToken: tokenResult }));
+
+      if (tokenResult.engine === 'mediasoup') {
+        const session = await MediasoupCallSession.connect(tokenResult, video, {
+          onConnected: () => {
+            setSession((current) =>
+              current.phase === 'connecting' || current.phase === 'outgoing' || current.phase === 'incoming'
+                ? { ...current, phase: 'active', connectedAt: Date.now() }
+                : current,
+            );
+            removedFromMeetingRef.current = false;
+          },
+          onPeersChanged: () => {
+            const active = mediasoupRef.current;
+
+            if (!active) {
+              return;
+            }
+
+            setMediasoupPeers(active.getRemotePeers());
+            setMediasoupLocalVideo(active.getLocalVideoStream());
+          },
+          onRoomEnded: () => {
+            removedFromMeetingRef.current = true;
+            logCallDebug('[Calls] Removed from mediasoup meeting');
+          },
+        });
+
+        mediasoupRef.current = session;
+        setMediasoupPeers(session.getRemotePeers());
+        setMediasoupLocalVideo(session.getLocalVideoStream());
+        return;
+      }
 
       const room = new Room({
         adaptiveStream: true,
@@ -1231,9 +1281,48 @@ export function useCallManager({
     session.phase,
   ]);
 
+  const ensureCallSignalingReady = useCallback(async (): Promise<boolean> => {
+    const configResult = await loadRealtimeConfig();
+
+    if (!configResult.ok) {
+      reportError(formatCallApiError(configResult.error, configResult.status));
+      return false;
+    }
+
+    try {
+      await initCallSignaling(configResult.data);
+
+      if (currentUserId) {
+        await subscribeUserCallChannel(currentUserId, {
+          onInvite: (payload) => directHandlersRef.current?.onInvite?.(payload),
+          onAccept: (payload) => directHandlersRef.current?.onAccept?.(payload),
+          onReject: (payload) => directHandlersRef.current?.onReject?.(payload),
+          onCancel: (payload) => directHandlersRef.current?.onCancel?.(payload),
+          onEnd: (payload) => directHandlersRef.current?.onEnd?.(payload),
+        });
+      }
+
+      return true;
+    } catch (error) {
+      reportError(error instanceof Error ? error.message : 'Call signaling is unavailable.');
+      return false;
+    }
+  }, [currentUserId, reportError]);
+
   const startDirectCall = useCallback(
     async (conversation: ConversationItem, video: boolean) => {
-      if (!currentUserId || !conversation.peerUserId || conversation.isSelf) {
+      if (!currentUserId) {
+        reportError('Sign in again to place a call.');
+        return;
+      }
+
+      if (conversation.isSelf) {
+        reportError('You cannot call yourself.');
+        return;
+      }
+
+      if (!conversation.peerUserId) {
+        reportError('Could not find who to call. Reopen this chat and try again.');
         return;
       }
 
@@ -1244,28 +1333,18 @@ export function useCallManager({
 
       setBusy(true);
 
-      const configResult = await loadRealtimeConfig();
-      if (!configResult.ok) {
-        setBusy(false);
-        reportError(formatCallApiError(configResult.error, configResult.status));
-        return;
-      }
+      const signalingReady = await ensureCallSignalingReady();
 
-      try {
-        await initCallSignaling(configResult.data);
-      } catch (error) {
+      if (!signalingReady) {
         setBusy(false);
-        reportError(error instanceof Error ? error.message : 'Call signaling is unavailable.');
         return;
       }
 
       const callId = createCallId();
-      const roomName = buildDirectCallRoomName(conversation.id);
       initiatorIdRef.current = currentUserId;
 
       const tokenResult = await loadCallToken({
         conversationId: conversation.id,
-        roomName,
         video,
       });
 
@@ -1274,6 +1353,8 @@ export function useCallManager({
         reportError(formatCallApiError(tokenResult.error, tokenResult.status));
         return;
       }
+
+      const roomName = tokenResult.data.roomName || buildDirectCallRoomName(conversation.id);
 
       setSession({
         phase: 'outgoing',
@@ -1304,6 +1385,8 @@ export function useCallManager({
         sentAt: new Date().toISOString(),
       };
 
+      let inviteDeliveryFailed = false;
+
       const sendInvite = () => {
         invitePayload.sentAt = new Date().toISOString();
         void sendSignalWithRetries(
@@ -1312,21 +1395,28 @@ export function useCallManager({
           invitePayload,
         )
           .then(() => {
+            inviteDeliveryFailed = false;
             logCallDebug(
               `[Calls] Sent invite to call:user:${conversation.peerUserId}`,
-              { callId, conversationId: conversation.id },
+              { callId, conversationId: conversation.id, roomName },
             );
           })
           .catch((error) => {
+            inviteDeliveryFailed = true;
+            const message = error instanceof Error ? error.message : 'Could not reach the other person.';
             logCallDebug(
               `[Calls] Invite send failed for call:user:${conversation.peerUserId}`,
-              error instanceof Error ? error.message : error,
+              message,
+            );
+            reportError(
+              'Call signaling failed — the other person may not get a ring. Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env, then restart the app.',
             );
           });
       };
 
       clearCallSignalTimers();
       sendInvite();
+      setBusy(false);
       inviteIntervalRef.current = window.setInterval(() => {
         const active = sessionRef.current;
 
@@ -1335,7 +1425,9 @@ export function useCallManager({
           return;
         }
 
-        sendInvite();
+        if (!inviteDeliveryFailed) {
+          sendInvite();
+        }
       }, SIGNAL_REPEAT_MS);
 
       ringTimeoutRef.current = window.setTimeout(() => {
@@ -1357,14 +1449,13 @@ export function useCallManager({
           void writeCallLogSnapshot(context, 'missed', 0);
         })();
       }, OUTGOING_RING_MS);
-
-      setBusy(false);
     },
     [
       clearCallSignalTimers,
       currentUserAvatar,
       currentUserId,
       currentUserLabel,
+      ensureCallSignalingReady,
       reportError,
       resetSession,
       snapshotCallContext,
@@ -1562,6 +1653,12 @@ export function useCallManager({
   const startGroupMeeting = useCallback(
     async (conversation: ConversationItem, video: boolean) => {
       if (!currentUserId) {
+        reportError('Sign in again to start a meeting.');
+        return;
+      }
+
+      if (conversation.kind !== 'hub') {
+        reportError('Meetings can only be started from a hub channel.');
         return;
       }
 
@@ -1571,6 +1668,13 @@ export function useCallManager({
       }
 
       setBusy(true);
+
+      const signalingReady = await ensureCallSignalingReady();
+
+      if (!signalingReady) {
+        setBusy(false);
+        return;
+      }
 
       const callId = createCallId();
       initiatorIdRef.current = currentUserId;
@@ -1606,15 +1710,22 @@ export function useCallManager({
         return;
       }
 
-      await broadcastCallEvent(getHubCallChannelName(conversation.id), 'call:meeting-started', {
-        callId,
-        conversationId: conversation.id,
-        roomName: tokenResult.data.roomName,
-        conversationTitle: conversation.title,
-        startedBy,
-        video,
-        startedAt,
-      });
+      try {
+        await broadcastCallEvent(getHubCallChannelName(conversation.id), 'call:meeting-started', {
+          callId,
+          conversationId: conversation.id,
+          roomName: tokenResult.data.roomName,
+          conversationTitle: conversation.title,
+          startedBy,
+          video,
+          startedAt,
+        });
+      } catch (error) {
+        logCallDebug(
+          '[Calls] Hub meeting broadcast failed',
+          error instanceof Error ? error.message : error,
+        );
+      }
 
       setSession({
         phase: 'connecting',
@@ -1641,7 +1752,15 @@ export function useCallManager({
         setBusy(false);
       }
     },
-    [connectLiveKit, currentUserAvatar, currentUserId, currentUserLabel, reportError, resetSession],
+    [
+      connectLiveKit,
+      currentUserAvatar,
+      currentUserId,
+      currentUserLabel,
+      ensureCallSignalingReady,
+      reportError,
+      resetSession,
+    ],
   );
 
   const joinGroupMeeting = useCallback(
@@ -1725,25 +1844,41 @@ export function useCallManager({
   }, []);
 
   const toggleMic = useCallback(async () => {
+    const next = !micEnabled;
+    const mediasoupSession = mediasoupRef.current;
+
+    if (mediasoupSession) {
+      await mediasoupSession.setMicEnabled(next);
+      setMicEnabled(next);
+      return;
+    }
+
     const room = roomRef.current;
 
     if (!room) {
       return;
     }
 
-    const next = !micEnabled;
     await room.localParticipant.setMicrophoneEnabled(next);
     setMicEnabled(next);
   }, [micEnabled]);
 
   const toggleCamera = useCallback(async () => {
+    const next = !cameraEnabled;
+    const mediasoupSession = mediasoupRef.current;
+
+    if (mediasoupSession) {
+      await mediasoupSession.setCameraEnabled(next);
+      setCameraEnabled(next);
+      return;
+    }
+
     const room = roomRef.current;
 
     if (!room) {
       return;
     }
 
-    const next = !cameraEnabled;
     await room.localParticipant.setCameraEnabled(next);
     setCameraEnabled(next);
   }, [cameraEnabled]);
@@ -1804,6 +1939,8 @@ export function useCallManager({
     pendingJoinRequests,
     awaitingJoinApproval,
     localVideoTrack,
+    mediasoupPeers,
+    mediasoupLocalVideo,
     room: roomRef.current,
     startDirectCall,
     acceptIncomingCall,

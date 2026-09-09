@@ -10,6 +10,7 @@ import {
 } from '../chatApi';
 import { addCustomSticker, readCustomStickers } from '../customStickersStorage';
 import { uploadChatFile } from '../extrasApi';
+import { RemoteImage } from '../RemoteImage';
 
 type MediaPickerTab = 'gif' | 'sticker';
 
@@ -145,7 +146,7 @@ export function MediaPicker({ open, onClose, onSelect, initialTab = 'gif' }: Med
 
     const item = createUploadedStickerItem(result.data.url, file.name, mimeType);
     setMyStickers(addCustomSticker(item));
-    onSelect(item, 'sticker');
+    setTab('sticker');
   };
 
   if (!open) {
@@ -226,7 +227,7 @@ export function MediaPicker({ open, onClose, onSelect, initialTab = 'gif' }: Med
                   onClick={() => onSelect(item, 'sticker')}
                   aria-label={item.title ?? 'Custom sticker'}
                 >
-                  <img
+                  <RemoteImage
                     src={item.previewUrl}
                     alt={item.title ?? ''}
                     loading="lazy"
@@ -262,7 +263,7 @@ export function MediaPicker({ open, onClose, onSelect, initialTab = 'gif' }: Med
                 onClick={() => onSelect(item, tab)}
                 aria-label={item.title ?? (tab === 'gif' ? 'GIF' : 'Sticker')}
               >
-                <img
+                <RemoteImage
                   src={item.previewUrl}
                   alt={item.title ?? ''}
                   loading="lazy"

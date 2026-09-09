@@ -15,6 +15,7 @@ import {
   FiUser,
   FiVolume2,
 } from 'react-icons/fi';
+import { RemoteImage } from '../RemoteImage';
 import {
   apiStatusToUi,
   applyNotificationPreferenceUpdate,
@@ -43,7 +44,7 @@ import {
   unblockUser,
   uploadUserProfileImage,
 } from '../chatApi';
-import { ColorThemePicker } from '../theme/ColorThemePicker';
+// import { ColorThemePicker } from '../theme/ColorThemePicker';
 import { useTheme } from '../theme/ThemeProvider';
 import { useToast } from '../ui/Toast';
 import {
@@ -144,6 +145,25 @@ function SectionCard({ children, className = '' }: { children: ReactNode; classN
   );
 }
 
+function SectionGroup({
+  title,
+  children,
+  className = '',
+}: {
+  title: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <h2 className="mb-8 border-b border-app-border pb-3 text-sm font-bold tracking-wide text-app-muted uppercase">
+        {title}
+      </h2>
+      <div className="space-y-12">{children}</div>
+    </div>
+  );
+}
+
 export function ProfileSettingsView({
   user,
   onLogout,
@@ -194,7 +214,7 @@ export function ProfileSettingsView({
       setManualPresenceStatus(nextProfile.status, nextProfile.statusMessage);
       setTimezone(nextProfile.timezone);
       setAvatarUrl(nextProfile.avatarUrl);
-      setAvatarTab('avatar');
+      setAvatarTab(nextProfile.avatarMode ?? 'avatar');
       setSelectedStyle(nextProfile.avatarStyle ?? 'notionists');
       setAvatarSeed(nextProfile.avatarSeed ?? nextProfile.username ?? nextProfile.id ?? 'flexhubs');
       setUsernameDraft(nextProfile.username);
@@ -607,6 +627,43 @@ export function ProfileSettingsView({
       setAvatarSeed('');
     }
 
+    if (updates.useInitials === true || updates.avatarMode === 'initials') {
+      setAvatarTab('initials');
+      setAvatarUrl(null);
+      setProfile((current) =>
+        current ? { ...current, avatarMode: 'initials', avatarUrl: null, avatarStyle: null } : current,
+      );
+    } else if (updates.avatarMode === 'upload') {
+      setAvatarTab('upload');
+      setProfile((current) =>
+        current
+          ? {
+              ...current,
+              avatarMode: 'upload',
+              avatarUrl: typeof updates.avatarUrl === 'string' ? updates.avatarUrl : current.avatarUrl,
+              avatarStyle: null,
+            }
+          : current,
+      );
+    } else if (updates.avatarMode === 'avatar') {
+      setAvatarTab('avatar');
+      setProfile((current) =>
+        current
+          ? {
+              ...current,
+              avatarMode: 'avatar',
+              avatarUrl: typeof updates.avatarUrl === 'string' ? updates.avatarUrl : current.avatarUrl,
+              avatarStyle:
+                typeof updates.avatarStyle === 'string'
+                  ? updates.avatarStyle
+                  : current.avatarStyle,
+              avatarSeed:
+                typeof updates.avatarSeed === 'string' ? updates.avatarSeed : current.avatarSeed,
+            }
+          : current,
+      );
+    }
+
     onUserUpdated?.();
     toast.success(successMessage);
     return true;
@@ -707,7 +764,7 @@ export function ProfileSettingsView({
   const handleUseInitials = async () => {
     setAvatarTab('initials');
     setAvatarUrl(null);
-    await handleAvatarSave({ avatarUrl: null, avatarMode: 'initials', useInitials: true }, 'Initials avatar applied.');
+    await handleAvatarSave({ avatarMode: 'initials', useInitials: true }, 'Initials avatar applied.');
   };
 
   const handleSaveUsername = async () => {
@@ -753,12 +810,20 @@ export function ProfileSettingsView({
 
   const displayName = profile.name || profile.username || 'Your account';
   const initials = getUserInitials(profile);
-  const previewAvatarUrl =
-    avatarTab === 'avatar'
-      ? buildGeneratedAvatarUrl(selectedStyle, avatarSeed)
-      : avatarUrl;
+  const previewAvatarUrl = (() => {
+    if (avatarTab === 'initials') {
+      return null;
+    }
+
+    if (avatarTab === 'upload') {
+      return avatarUrl;
+    }
+
+    return buildGeneratedAvatarUrl(selectedStyle, avatarSeed);
+  })();
   const selectedStyleName =
     avatarStyles.find((style) => style.id === selectedStyle)?.name ?? selectedStyle;
+  const usernameChanged = usernameDraft.trim() !== savedUsername;
 
   return (
     <div className="flex h-full w-full flex-col overflow-y-auto bg-app-chat-bg px-12 py-8 text-app-text">
@@ -775,12 +840,18 @@ export function ProfileSettingsView({
         {/* Profile card */}
         <SectionCard className="mb-12 flex items-start gap-4 p-6">
           <div className="relative shrink-0">
-            <div className="flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-full bg-blue-400">
-              {previewAvatarUrl && avatarTab !== 'initials' ? (
-                <img src={previewAvatarUrl} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <span className="text-xl font-bold text-app-text">{initials}</span>
-              )}
+            <div className="relative flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-full bg-blue-400">
+              <span className="absolute inset-0 flex items-center justify-center text-xl font-bold text-app-text">
+                {initials}
+              </span>
+              {previewAvatarUrl ? (
+                <RemoteImage
+                  src={previewAvatarUrl}
+                  alt=""
+                  loading="eager"
+                  className="relative z-10 h-full w-full object-cover"
+                />
+              ) : null}
             </div>
             <div className={`absolute right-0 bottom-0 h-4 w-4 rounded-full border-2 border-app-surface ${statusDotClass(statusUi)}`} />
           </div>
@@ -827,163 +898,277 @@ export function ProfileSettingsView({
           </div>
         </SectionCard>
 
-        <div className="grid grid-cols-1 items-start gap-x-24 gap-y-12 xl:grid-cols-2">
-        <div className="space-y-12">
-        {/* Status */}
-        <section>
-          <h3 className="text-base font-bold text-app-text">Status</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">
-            Shown under your name in chats. Available stays on while the app is open.
-          </p>
-          <div className="mb-4 grid grid-cols-2 gap-3">
-            {STATUS_OPTIONS.map((option) => (
-              <button
-                key={option.label}
-                type="button"
-                onClick={() => void handleStatusChange(option.label)}
-                className={`flex items-center justify-between rounded-xl border p-4 transition-colors ${
-                  statusUi === option.label ? option.activeBorder : 'border-app-border bg-app-surface hover:border-app-muted'
-                }`}
-              >
-                <span className="flex items-center gap-2 text-sm font-semibold text-app-text">
-                  <span className={`h-2 w-2 rounded-full ${option.dot}`} />
-                  {option.label}
-                </span>
-                {statusUi === option.label ? <span className="text-[10px] font-bold text-accent">ACTIVE</span> : null}
-              </button>
-            ))}
-          </div>
-          <label className="mb-2 block text-sm font-semibold text-app-text">Status message</label>
-          <input
-            type="text"
-            placeholder="What's on your mind?"
-            value={statusMessage}
-            onChange={(event) => handleStatusMessageChange(event.target.value)}
-            className="w-full rounded-xl border border-app-border bg-app-surface px-4 py-3 text-sm text-app-text placeholder-app-muted focus:border-accent focus:outline-none"
-          />
-        </section>
+        <div className="grid grid-cols-1 items-start gap-x-16 gap-y-12 xl:grid-cols-2">
+          <SectionGroup title="Profile">
+            {/* Profile photo */}
+            <section>
+              <h3 className="text-base font-bold text-app-text">Profile photo</h3>
+              <p className="mt-1 mb-4 text-sm text-app-muted">Pick a generated avatar, upload a photo, or use your initials.</p>
+              <div className="mb-4 flex items-center gap-2 rounded-xl border border-app-border bg-app-surface p-2">
+                {(['avatar', 'upload', 'initials'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setAvatarTab(tab)}
+                    className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-semibold transition-colors ${
+                      avatarTab === tab ? 'bg-app-chat-hover text-app-text' : 'text-app-muted hover:bg-app-chat-hover/60'
+                    }`}
+                  >
+                    {tab === 'avatar' ? <FiStar className="text-lg" /> : tab === 'upload' ? <FiUpload className="text-lg" /> : <FiUser className="text-lg" />}
+                    {tab === 'avatar' ? 'Avatar' : tab === 'upload' ? 'Upload' : 'Initials'}
+                  </button>
+                ))}
+              </div>
 
-        {/* Online status */}
-        <section>
-          <h3 className="text-base font-bold text-app-text">Online status</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">
-            Control whether teammates and friends can see when you are online, when you were last active, and when you read messages.
-          </p>
-          <SectionCard className="p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-semibold text-app-text">Share online status & read receipts</p>
-                <p className="mt-1 mb-4 text-xs text-app-muted">
-                  When off, others cannot see when you are online or when you read messages — and you will not see their status or read receipts either.
-                </p>
+              {avatarTab === 'avatar' ? (
+                <>
+                  <p className="mb-3 text-[10px] font-bold tracking-wider text-app-muted uppercase">Choose a style</p>
+                  <div className="mb-4 grid grid-cols-3 gap-3 sm:grid-cols-6">
+                    {avatarStyles.map((style) => (
+                      <button
+                        key={style.id}
+                        type="button"
+                        onClick={() => void handleSelectAvatarStyle(style.id)}
+                        className={`overflow-hidden rounded-xl border transition-colors ${
+                          selectedStyle === style.id ? 'border-accent ring-2 ring-accent/30' : 'border-app-border hover:border-app-muted'
+                        }`}
+                      >
+                        <img src={style.previewUrl} alt={style.name} className="aspect-square w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                  <p className="mb-3 text-sm text-app-muted">Selected: {selectedStyleName}</p>
+                  <label className="mb-2 block text-sm font-semibold text-app-text">Avatar seed</label>
+                  <div className="flex flex-wrap gap-3">
+                    <input
+                      type="text"
+                      value={avatarSeed}
+                      onChange={(event) => setAvatarSeed(event.target.value)}
+                      className="min-w-[12rem] flex-1 rounded-xl border border-app-border bg-app-surface px-4 py-3 text-sm text-app-text focus:border-accent focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => void handleRandomizeSeed()}
+                      className="inline-flex items-center gap-2 rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
+                    >
+                      <FiRefreshCw /> Randomize
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleApplyAvatar()}
+                      className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
+                    >
+                      Apply
+                    </button>
+                  </div>
+                </>
+              ) : null}
+
+              {avatarTab === 'upload' ? (
+                <div className="space-y-4">
+                  {avatarUrl ? (
+                    <div className="flex items-center gap-4">
+                      <div className="relative h-20 w-20 overflow-hidden rounded-full bg-blue-400">
+                        <span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-app-text">
+                          {initials}
+                        </span>
+                        <RemoteImage
+                          src={avatarUrl}
+                          alt=""
+                          loading="eager"
+                          className="relative z-10 h-full w-full object-cover"
+                        />
+                      </div>
+                      <p className="text-sm text-app-muted">Current uploaded photo</p>
+                    </div>
+                  ) : null}
+                  <button
+                    type="button"
+                    onClick={handleUploadAvatar}
+                    className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
+                  >
+                    {avatarUrl ? 'Replace image' : 'Choose image to upload'}
+                  </button>
+                </div>
+              ) : null}
+
+              {avatarTab === 'initials' ? (
+                <div>
+                  <p className="mb-4 text-sm text-app-muted">Your initials are shown when no photo is set.</p>
+                  <button
+                    type="button"
+                    onClick={() => void handleUseInitials()}
+                    className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
+                  >
+                    Use initials
+                  </button>
+                </div>
+              ) : null}
+            </section>
+
+            {/* Account details */}
+            <section>
+              <h3 className="text-base font-bold text-app-text">Account details</h3>
+              <p className="mt-1 mb-4 text-sm text-app-muted">Your username is visible to others in chats and search.</p>
+              <label className="mb-2 block text-sm font-semibold text-app-text">Username</label>
+              <input
+                type="text"
+                value={usernameDraft}
+                onChange={(event) => setUsernameDraft(event.target.value)}
+                className="w-full rounded-xl border border-app-border bg-app-surface px-4 py-3 text-sm text-app-text focus:border-accent focus:outline-none"
+              />
+            </section>
+
+            {/* Status */}
+            <section>
+              <h3 className="text-base font-bold text-app-text">Status</h3>
+              <p className="mt-1 mb-4 text-sm text-app-muted">
+                Shown under your name in chats. Available stays on while the app is open.
+              </p>
+              <div className="mb-4 grid grid-cols-2 gap-3">
+                {STATUS_OPTIONS.map((option) => (
+                  <button
+                    key={option.label}
+                    type="button"
+                    onClick={() => void handleStatusChange(option.label)}
+                    className={`flex items-center justify-between rounded-xl border p-4 transition-colors ${
+                      statusUi === option.label ? option.activeBorder : 'border-app-border bg-app-surface hover:border-app-muted'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 text-sm font-semibold text-app-text">
+                      <span className={`h-2 w-2 rounded-full ${option.dot}`} />
+                      {option.label}
+                    </span>
+                    {statusUi === option.label ? <span className="text-[10px] font-bold text-accent">ACTIVE</span> : null}
+                  </button>
+                ))}
+              </div>
+              <label className="mb-2 block text-sm font-semibold text-app-text">Status message</label>
+              <input
+                type="text"
+                placeholder="What's on your mind?"
+                value={statusMessage}
+                onChange={(event) => handleStatusMessageChange(event.target.value)}
+                className="w-full rounded-xl border border-app-border bg-app-surface px-4 py-3 text-sm text-app-text placeholder-app-muted focus:border-accent focus:outline-none"
+              />
+            </section>
+
+            {/* Online status */}
+            <section>
+              <h3 className="text-base font-bold text-app-text">Online status</h3>
+              <p className="mt-1 mb-4 text-sm text-app-muted">
+                Control whether teammates and friends can see when you are online, when you were last active, and when you read messages.
+              </p>
+              <SectionCard className="p-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-app-text">Share online status & read receipts</p>
+                    <p className="mt-1 mb-4 text-xs text-app-muted">
+                      When off, others cannot see when you are online or when you read messages — and you will not see their status or read receipts either.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => void handleOnlineStatusToggle()}
+                      className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
+                        settings.shareOnlineStatus ? 'bg-accent text-white' : 'bg-app-chat-hover text-app-text'
+                      }`}
+                    >
+                      {settings.shareOnlineStatus ? 'On' : 'Off'}
+                    </button>
+                  </div>
+                  <FiEye className="mt-1 shrink-0 text-lg text-accent-soft" />
+                </div>
+              </SectionCard>
+            </section>
+
+            {/* Local time */}
+            <section>
+              <h3 className="text-base font-bold text-app-text">Local time</h3>
+              <p className="mt-1 mb-4 text-sm text-app-muted">
+                When you share online status, others can see your current local time while you are connected.
+              </p>
+              <SectionCard className="mb-3 p-4">
+                <div className="mb-2 flex items-center gap-2">
+                  <FiClock className="text-app-muted" />
+                  <span className="text-sm font-semibold text-app-text">{formatLocalTime(timezone)}</span>
+                </div>
+                <p className="text-xs text-app-muted">Others in your workspace and friends list see this local time.</p>
+              </SectionCard>
+              <button
+                type="button"
+                onClick={handleUseDeviceTime}
+                className="mb-6 rounded-xl border border-app-border bg-transparent px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
+              >
+                Use device time ({formatTimezoneLabel(getDeviceTimezone())})
+              </button>
+              <label className="mb-2 block text-sm font-semibold text-app-text">Time zone</label>
+              <div className="relative">
+                <select
+                  value={timezone}
+                  onChange={(event) => void handleTimezoneChange(event.target.value)}
+                  className="w-full appearance-none rounded-xl border border-app-border bg-app-surface px-4 py-3 text-sm text-app-text focus:border-accent focus:outline-none"
+                >
+                  {!timezoneOptions.some((option) => option.value === timezone) ? (
+                    <option value={timezone}>{formatTimezoneLabel(timezone)}</option>
+                  ) : null}
+                  {timezoneOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+                <FiChevronDown className="pointer-events-none absolute top-1/2 right-4 -translate-y-1/2 text-app-muted" />
+              </div>
+            </section>
+          </SectionGroup>
+
+          <SectionGroup title="Settings">
+            {/* Appearance */}
+            <section>
+              <h3 className="text-base font-bold text-app-text">Appearance</h3>
+              <p className="mt-1 mb-4 text-sm text-app-muted">Choose light or dark mode for the app.</p>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <button
                   type="button"
-                  onClick={() => void handleOnlineStatusToggle()}
-                  className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
-                    settings.shareOnlineStatus ? 'bg-accent text-white' : 'bg-app-chat-hover text-app-text'
+                  onClick={() => {
+                    setTheme('light');
+                    toast.success('Light theme applied.');
+                  }}
+                  className={`flex items-center gap-4 rounded-xl border p-4 text-left transition-colors ${
+                    theme === 'light' ? 'border-accent bg-accent/10' : 'border-app-border bg-app-surface hover:border-app-muted'
                   }`}
                 >
-                  {settings.shareOnlineStatus ? 'On' : 'Off'}
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-app-chat-bg text-app-text">
+                    <FiSun className="text-lg" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-app-text">Light theme</p>
+                    <p className="text-xs text-app-muted">Bright background and dark text</p>
+                  </div>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setTheme('dark');
+                    toast.success('Dark theme applied.');
+                  }}
+                  className={`flex items-center gap-4 rounded-xl border p-4 text-left transition-colors ${
+                    theme === 'dark' ? 'border-accent bg-accent/10' : 'border-app-border bg-app-surface hover:border-app-muted'
+                  }`}
+                >
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full border border-app-border bg-app-surface-input text-app-text">
+                    <FiMoon className="text-lg" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold text-app-text">Dark theme</p>
+                    <p className="text-xs text-app-muted">Dark background and light text</p>
+                  </div>
                 </button>
               </div>
-              <FiEye className="mt-1 shrink-0 text-lg text-accent-soft" />
-            </div>
-          </SectionCard>
-        </section>
+            </section>
 
-        {/* Local time */}
-        <section>
-          <h3 className="text-base font-bold text-app-text">Local time</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">
-            When you share online status, others can see your current local time while you are connected.
-          </p>
-          <SectionCard className="mb-3 p-4">
-            <div className="mb-2 flex items-center gap-2">
-              <FiClock className="text-app-muted" />
-              <span className="text-sm font-semibold text-app-text">{formatLocalTime(timezone)}</span>
-            </div>
-            <p className="text-xs text-app-muted">Others in your workspace and friends list see this local time.</p>
-          </SectionCard>
-          <button
-            type="button"
-            onClick={handleUseDeviceTime}
-            className="mb-6 rounded-xl border border-app-border bg-transparent px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
-          >
-            Use device time ({formatTimezoneLabel(getDeviceTimezone())})
-          </button>
-          <label className="mb-2 block text-sm font-semibold text-app-text">Time zone</label>
-          <div className="relative">
-            <select
-              value={timezone}
-              onChange={(event) => void handleTimezoneChange(event.target.value)}
-              className="w-full appearance-none rounded-xl border border-app-border bg-app-surface px-4 py-3 text-sm text-app-text focus:border-accent focus:outline-none"
-            >
-              {!timezoneOptions.some((option) => option.value === timezone) ? (
-                <option value={timezone}>{formatTimezoneLabel(timezone)}</option>
-              ) : null}
-              {timezoneOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-            <FiChevronDown className="pointer-events-none absolute top-1/2 right-4 -translate-y-1/2 text-app-muted" />
-          </div>
-        </section>
-
-        {/* Appearance */}
-        <section>
-          <h3 className="text-base font-bold text-app-text">Appearance</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">
-            Choose light or dark mode, then pick any color. Matching shades are applied across the app.
-          </p>
-          <div className="grid grid-cols-2 gap-4">
-            <button
-              type="button"
-              onClick={() => {
-                setTheme('light');
-                toast.success('Light theme applied.');
-              }}
-              className={`flex items-center gap-4 rounded-xl border p-4 text-left transition-colors ${
-                theme === 'light' ? 'border-accent bg-accent/10' : 'border-app-border bg-app-surface hover:border-app-muted'
-              }`}
-            >
-              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-app-chat-bg text-app-text">
-                <FiSun className="text-lg" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-app-text">Light theme</p>
-                <p className="text-xs text-app-muted">Bright background and dark text</p>
-              </div>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setTheme('dark');
-                toast.success('Dark theme applied.');
-              }}
-              className={`flex items-center gap-4 rounded-xl border p-4 text-left transition-colors ${
-                theme === 'dark' ? 'border-accent bg-accent/10' : 'border-app-border bg-app-surface hover:border-app-muted'
-              }`}
-            >
-              <div className="flex h-10 w-10 items-center justify-center rounded-full border border-app-border bg-app-surface-input text-app-text">
-                <FiMoon className="text-lg" />
-              </div>
-              <div>
-                <p className="text-sm font-semibold text-app-text">Dark theme</p>
-                <p className="text-xs text-app-muted">Dark background and light text</p>
-              </div>
-            </button>
-          </div>
-          <div className="mt-4">
-            <ColorThemePicker />
-          </div>
-        </section>
-        </div>
-
-        <div className="space-y-12">
-        {/* App snooze */}
-        <section>
+            {/* App snooze */}
+            <section>
           <h3 className="text-base font-bold text-app-text">App snooze</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">
             Pause all notifications app-wide. Snooze individual hubs and groups from their chat header.
@@ -1153,126 +1338,40 @@ export function ProfileSettingsView({
             ) : null}
           </SectionCard>
         </section>
+          </SectionGroup>
+        </div>
 
-        {/* Profile photo */}
-        <section>
-          <h3 className="text-base font-bold text-app-text">Profile photo</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">Pick a generated avatar, upload a photo, or use your initials.</p>
-          <div className="mb-4 flex items-center gap-2 rounded-xl border border-app-border bg-app-surface p-2">
-            {(['avatar', 'upload', 'initials'] as const).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setAvatarTab(tab)}
-                className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-semibold transition-colors ${
-                  avatarTab === tab ? 'bg-app-chat-hover text-app-text' : 'text-app-muted hover:bg-app-chat-hover/60'
-                }`}
-              >
-                {tab === 'avatar' ? <FiStar className="text-lg" /> : tab === 'upload' ? <FiUpload className="text-lg" /> : <FiUser className="text-lg" />}
-                {tab === 'avatar' ? 'Avatar' : tab === 'upload' ? 'Upload' : 'Initials'}
-              </button>
-            ))}
-          </div>
-
-          {avatarTab === 'avatar' ? (
-            <>
-              <p className="mb-3 text-[10px] font-bold tracking-wider text-app-muted uppercase">Choose a style</p>
-              <div className="mb-4 grid grid-cols-3 gap-3 sm:grid-cols-6">
-                {avatarStyles.map((style) => (
-                  <button
-                    key={style.id}
-                    type="button"
-                    onClick={() => void handleSelectAvatarStyle(style.id)}
-                    className={`overflow-hidden rounded-xl border transition-colors ${
-                      selectedStyle === style.id ? 'border-accent ring-2 ring-accent/30' : 'border-app-border hover:border-app-muted'
-                    }`}
-                  >
-                    <img src={style.previewUrl} alt={style.name} className="aspect-square w-full object-cover" />
-                  </button>
-                ))}
-              </div>
-              <p className="mb-3 text-sm text-app-muted">Selected: {selectedStyleName}</p>
-              <label className="mb-2 block text-sm font-semibold text-app-text">Avatar seed</label>
-              <div className="flex gap-3">
-                <input
-                  type="text"
-                  value={avatarSeed}
-                  onChange={(event) => setAvatarSeed(event.target.value)}
-                  className="flex-1 rounded-xl border border-app-border bg-app-surface px-4 py-3 text-sm text-app-text focus:border-accent focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => void handleRandomizeSeed()}
-                  className="inline-flex items-center gap-2 rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
-                >
-                  <FiRefreshCw /> Randomize
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void handleApplyAvatar()}
-                  className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
-                >
-                  Apply
-                </button>
-              </div>
-            </>
-          ) : null}
-
-          {avatarTab === 'upload' ? (
-            <button
-              type="button"
-              onClick={handleUploadAvatar}
-              className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
-            >
-              Choose image to upload
-            </button>
-          ) : null}
-
-          {avatarTab === 'initials' ? (
+        <section className="mt-12 border-t border-app-border pt-8">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
             <div>
-              <p className="mb-4 text-sm text-app-muted">Your initials are shown when no photo is set.</p>
+              <h3 className="text-base font-bold text-app-text">Save profile changes</h3>
+              <p className="mt-1 text-sm text-app-muted">
+                Username changes are saved here. Status, timezone, avatar, and notification settings save automatically when you update them.
+              </p>
+            </div>
+            <div className="flex shrink-0 justify-end gap-3">
               <button
                 type="button"
-                onClick={() => void handleUseInitials()}
-                className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
+                disabled={!usernameChanged || saving}
+                onClick={() => setUsernameDraft(savedUsername)}
+                className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Use initials
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={!usernameChanged || saving || !usernameDraft.trim()}
+                onClick={() => void handleSaveUsername()}
+                className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Save changes
               </button>
             </div>
-          ) : null}
-        </section>
-
-        {/* Account details */}
-        <section>
-          <h3 className="text-base font-bold text-app-text">Account details</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">Your username is visible to others in chats and search.</p>
-          <label className="mb-2 block text-sm font-semibold text-app-text">Username</label>
-          <input
-            type="text"
-            value={usernameDraft}
-            onChange={(event) => setUsernameDraft(event.target.value)}
-            className="mb-4 w-full rounded-xl border border-app-border bg-app-surface px-4 py-3 text-sm text-app-text focus:border-accent focus:outline-none"
-          />
-          <div className="flex justify-end gap-3">
-            <button
-              type="button"
-              onClick={() => setUsernameDraft(savedUsername)}
-              className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleSaveUsername()}
-              className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
-            >
-              Save changes
-            </button>
           </div>
         </section>
 
         {/* Blocked users */}
-        <section>
+        <section className="mt-12">
           <h3 className="text-base font-bold text-app-text">Blocked users</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">People you have blocked cannot message you.</p>
           {blockedLoading ? (
@@ -1307,7 +1406,7 @@ export function ProfileSettingsView({
         </section>
 
         {/* Session */}
-        <section className="pb-4">
+        <section className="mt-12 pb-4">
           <h3 className="text-base font-bold text-app-text">Session</h3>
           <p className="mt-1 mb-4 text-sm text-app-muted">Sign out of Flexhubs on this device.</p>
           <button
@@ -1318,8 +1417,6 @@ export function ProfileSettingsView({
             <FiLogOut /> Sign out
           </button>
         </section>
-        </div>
-        </div>
       </div>
     </div>
   );

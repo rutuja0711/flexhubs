@@ -51,24 +51,35 @@ function EyeIcon({ hidden }: { hidden: boolean }) {
 
 export function RegisterPage({
   onBack,
+  onCreatePersonalAccount,
   onCreateWorkspace,
 }: {
   onBack: () => void;
+  onCreatePersonalAccount?: () => void;
   onCreateWorkspace?: () => void;
 }) {
   return (
     <AuthShell
       title="Create account"
-      subtitle="New FlexHubs accounts are created through a workspace or a team invitation."
+      subtitle="Start with a personal account, create a company workspace, or join with an invite link."
       onBack={onBack}
     >
       <div className="space-y-4 text-sm leading-relaxed text-app-muted">
         <p>
-          To get started, create a company workspace for your team, or open the invitation link you
-          received by email.
+          Personal accounts let you chat with friends by username. Workspaces are for teams that need
+          org hubs, roles, and billing.
         </p>
+        {onCreatePersonalAccount ? (
+          <button type="button" className={submitClassName} onClick={onCreatePersonalAccount}>
+            Create a personal account
+          </button>
+        ) : null}
         {onCreateWorkspace ? (
-          <button type="button" className={submitClassName} onClick={onCreateWorkspace}>
+          <button
+            type="button"
+            className="w-full rounded-[10px] border border-app-border bg-app-surface-input px-4 py-3.5 text-[0.9375rem] font-semibold text-app-text transition-colors hover:bg-app-chat-hover"
+            onClick={onCreateWorkspace}
+          >
             Create a workspace
           </button>
         ) : null}

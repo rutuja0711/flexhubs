@@ -382,6 +382,9 @@ export function extractMessageFromRealtimePayload(payload: unknown): MessageItem
     messageId &&
     (readString(record.content) ||
       readString(record.text) ||
+      readString(record.deletedForEveryoneAt) ||
+      record.deletedForEveryone === true ||
+      record.isDeletedForEveryone === true ||
       Array.isArray(record.reactions) ||
       readString(record.createdAt) ||
       readString(record.sentAt))
@@ -423,19 +426,31 @@ export function extractReactionEvent(payload: unknown): ReactionEventPatch | nul
     };
   }
 
+  const row =
+    asRecord(record.record) ??
+    asRecord(record.new) ??
+    asRecord(record.old) ??
+    record;
+
   const messageId =
+    readString(row.messageId) ??
+    readString(row.message_id) ??
+    readString(asRecord(row.message)?.id) ??
+    readString(row.id) ??
     readString(record.messageId) ??
-    readString(asRecord(record.message)?.id) ??
     readString(record.id);
 
   if (!messageId) {
     return null;
   }
 
-  const user = asRecord(record.user) ?? asRecord(record.sender);
-  const emoji = readString(record.emoji) ?? readString(record.reaction);
+  const user = asRecord(row.user) ?? asRecord(row.sender);
+  const emoji = readString(row.emoji) ?? readString(row.reaction);
   const userId =
-    readString(record.userId) ??
+    readString(row.userId) ??
+    readString(row.user_id) ??
+    readString(row.senderId) ??
+    readString(row.sender_id) ??
     readString(user?.id) ??
     readString(user?.userId);
   const username =
@@ -525,6 +540,42 @@ export function isMessageDeleteEvent(type: string): boolean {
   const normalized = type.toLowerCase();
 
   return normalized.includes('message') && normalized.includes('delete');
+}
+
+export function extractMessageDeleteScope(payload: unknown): 'me' | 'everyone' | null {
+  const record = asRecord(payload);
+
+  if (!record) {
+    return null;
+  }
+
+  const scope = readString(record.scope)?.toLowerCase();
+
+  if (scope === 'everyone' || scope === 'me') {
+    return scope;
+  }
+
+  const messageRecord = asRecord(record.message);
+
+  if (messageRecord) {
+    if (
+      readString(messageRecord.deletedForEveryoneAt) ||
+      messageRecord.deletedForEveryone === true ||
+      messageRecord.isDeletedForEveryone === true
+    ) {
+      return 'everyone';
+    }
+  }
+
+  if (
+    readString(record.deletedForEveryoneAt) ||
+    record.deletedForEveryone === true ||
+    record.isDeletedForEveryone === true
+  ) {
+    return 'everyone';
+  }
+
+  return null;
 }
 
 export function isConversationUpdateEvent(type: string): boolean {

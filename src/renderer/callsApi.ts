@@ -16,11 +16,18 @@ async function withToken<T>(
   return action(token);
 }
 
+function readInjectedSupabaseConfig(): { url: string; key: string } {
+  return {
+    url: typeof __FLEXHUBS_SUPABASE_URL__ !== 'undefined' ? __FLEXHUBS_SUPABASE_URL__.trim() : '',
+    key:
+      typeof __FLEXHUBS_SUPABASE_ANON_KEY__ !== 'undefined'
+        ? __FLEXHUBS_SUPABASE_ANON_KEY__.trim()
+        : '',
+  };
+}
+
 function readRendererSupabaseEnv(): Record<string, string | undefined> {
-  const injectedUrl =
-    typeof __FLEXHUBS_SUPABASE_URL__ !== 'undefined' ? __FLEXHUBS_SUPABASE_URL__.trim() : '';
-  const injectedKey =
-    typeof __FLEXHUBS_SUPABASE_ANON_KEY__ !== 'undefined' ? __FLEXHUBS_SUPABASE_ANON_KEY__.trim() : '';
+  const { url: injectedUrl, key: injectedKey } = readInjectedSupabaseConfig();
 
   return {
     VITE_SUPABASE_URL: injectedUrl || import.meta.env.VITE_SUPABASE_URL,
@@ -69,12 +76,17 @@ export function loadRealtimeConfig(): Promise<ApiResult<RealtimeClientConfig>> {
     const { supabaseUrl, supabaseAnonKey } = readSupabasePublicConfig(env);
 
     if (!supabaseUrl || !supabaseAnonKey) {
+      const injected = readInjectedSupabaseConfig();
+      const packagedBuild = !injected.url && !injected.key && !import.meta.env.DEV;
+
       return {
         ok: false,
         error:
           apiResult.ok === false
             ? apiResult.error
-            : 'Calls are not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env, then restart.',
+            : packagedBuild
+              ? 'Calls are not configured in this desktop build. Rebuild the app with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (GitHub Actions secrets), or use flexhubs.in in the browser for calls.'
+              : 'Calls are not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env, then restart.',
       };
     }
 
@@ -245,5 +257,29 @@ export function respondMeetingJoinRequestCall(payload: {
 }): Promise<ApiResult<unknown>> {
   return withToken((token) =>
     window.electronAPI.respondMeetingJoinRequest(token, JSON.stringify(payload)),
+  );
+}
+
+export function loadCallHistory(
+  filter: 'all' | 'missed' = 'all',
+): Promise<ApiResult<unknown>> {
+  return withToken((token) => window.electronAPI.getCallHistory(token, filter));
+}
+
+export function declineCallMeetingInvite(payload: {
+  conversationId: string;
+  callId: string;
+}): Promise<ApiResult<unknown>> {
+  return withToken((token) =>
+    window.electronAPI.declineCallMeetingInvite(token, JSON.stringify(payload)),
+  );
+}
+
+export function loadDeclinedCallMeetingInvites(
+  conversationId: string,
+  callId: string,
+): Promise<ApiResult<unknown>> {
+  return withToken((token) =>
+    window.electronAPI.getDeclinedCallMeetingInvites(token, conversationId, callId),
   );
 }

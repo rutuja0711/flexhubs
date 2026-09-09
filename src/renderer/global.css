@@ -6,10 +6,10 @@
   :root,
   .light,
   .dark {
-    --accent-rgb: 216 65 95;
-    --accent-hover-rgb: 196 55 84;
-    --accent-active-rgb: 176 48 74;
-    --accent-soft-rgb: 240 113 136;
+    --accent-rgb: 136 24 24;
+    --accent-hover-rgb: 111 19 19;
+    --accent-active-rgb: 90 15 15;
+    --accent-soft-rgb: 196 74 74;
   }
 
   :root,

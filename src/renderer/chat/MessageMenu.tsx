@@ -6,6 +6,7 @@ type MessageMenuProps = {
   isPinned: boolean;
   isSaved: boolean;
   align: 'left' | 'right';
+  showReplyInThread?: boolean;
   onReply: () => void;
   onReplyInThread: () => void;
   onEdit: () => void;
@@ -30,6 +31,7 @@ export function MessageMenu({
   isPinned,
   isSaved,
   align,
+  showReplyInThread = false,
   onReply,
   onReplyInThread,
   onEdit,
@@ -52,7 +54,9 @@ export function MessageMenu({
 
   const items: MenuItem[] = [
     { label: 'Reply', onClick: () => run(onReply) },
-    { label: 'Reply in thread', onClick: () => run(onReplyInThread) },
+    ...(showReplyInThread
+      ? [{ label: 'Reply in thread', onClick: () => run(onReplyInThread) }]
+      : []),
     ...(isOwn ? [{ label: 'Edit', onClick: () => run(onEdit) }] : []),
     { label: 'Forward', onClick: () => run(onForward) },
     { label: isPinned ? 'Unpin' : 'Pin', onClick: () => run(onPinToggle) },

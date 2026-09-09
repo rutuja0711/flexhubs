@@ -268,6 +268,32 @@ function initialsFromName(name: string): string {
   return name.slice(0, 2).toUpperCase();
 }
 
+function readMemberCount(record: Record<string, unknown>): number | null {
+  const explicit =
+    (typeof record.memberCount === 'number' && Number.isFinite(record.memberCount)
+      ? record.memberCount
+      : null) ??
+    (typeof record.participantCount === 'number' && Number.isFinite(record.participantCount)
+      ? record.participantCount
+      : null);
+
+  if (explicit !== null) {
+    return explicit;
+  }
+
+  let largest = 0;
+
+  for (const key of ['members', 'participants', 'users', 'groupMembers']) {
+    const value = record[key];
+
+    if (Array.isArray(value)) {
+      largest = Math.max(largest, value.length);
+    }
+  }
+
+  return largest > 0 ? largest : null;
+}
+
 function inferKind(record: Record<string, unknown>): ConversationKind {
   const type = String(record.type ?? record.kind ?? record.conversationType ?? '').toUpperCase();
 
@@ -281,6 +307,16 @@ function inferKind(record: Record<string, unknown>): ConversationKind {
     return 'direct';
   }
 
+  if (record.isDirect === true || record.isDm === true || record.isOneToOne === true) {
+    return 'direct';
+  }
+
+  const memberCount = readMemberCount(record);
+
+  if (memberCount !== null && memberCount <= 2) {
+    return 'direct';
+  }
+
   if (
     type.includes('HUB') ||
     type.includes('CHANNEL') ||
@@ -288,26 +324,14 @@ function inferKind(record: Record<string, unknown>): ConversationKind {
     record.isHub === true ||
     record.isChannel === true ||
     record.isGroup === true ||
-    Boolean(record.hubId) ||
-    Boolean(record.channelId)
+    Boolean(record.hubId)
   ) {
     return 'hub';
   }
 
-  for (const key of ['members', 'participants', 'users', 'groupMembers']) {
-    const value = record[key];
-    if (Array.isArray(value) && value.length > 2) {
-      return 'hub';
-    }
+  if (Boolean(record.channelId) && memberCount !== null && memberCount > 2) {
+    return 'hub';
   }
-
-  const memberCount =
-    (typeof record.memberCount === 'number' && Number.isFinite(record.memberCount)
-      ? record.memberCount
-      : null) ??
-    (typeof record.participantCount === 'number' && Number.isFinite(record.participantCount)
-      ? record.participantCount
-      : null);
 
   if (memberCount !== null && memberCount > 2) {
     return 'hub';

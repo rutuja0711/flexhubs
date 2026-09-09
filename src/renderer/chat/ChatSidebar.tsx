@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ConversationItem, ConversationKind, DirectChatMetadata } from '../../shared/chat';
 import type { TeammateItem } from '../../shared/messages';
 import type { GlobalSearchResult, SearchPerson } from '../../shared/search';
@@ -95,6 +95,7 @@ export function ChatSidebar({
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
   const [globalSearchError, setGlobalSearchError] = useState('');
   const [globalResults, setGlobalResults] = useState<GlobalSearchResult | null>(null);
+  const notificationsButtonRef = useRef<HTMLButtonElement>(null);
 
   const isGlobalSearch = useMemo(() => {
     const validation = validateSearchInput(searchQuery);
@@ -233,7 +234,7 @@ export function ChatSidebar({
           : 'No hubs yet.';
 
   return (
-    <aside className="relative flex h-full w-[320px] shrink-0 flex-col border-r border-app-border bg-app-chat-sidebar">
+    <aside className="relative z-[40] flex h-full w-[320px] shrink-0 flex-col border-r border-app-border bg-app-chat-sidebar">
       <div className="border-b border-app-border px-4 py-4">
         <div className="mb-4 flex items-start justify-between gap-3 relative">
           <button 
@@ -268,6 +269,7 @@ export function ChatSidebar({
           )}
           
           <button
+            ref={notificationsButtonRef}
             type="button"
             aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
             aria-expanded={notificationsOpen}
@@ -426,6 +428,7 @@ export function ChatSidebar({
           pendingFriends={panelPendingFriends}
           loading={notificationsLoading}
           error={notificationsError}
+          anchorRef={notificationsButtonRef}
           onClose={onCloseNotifications}
           onNotificationClick={onNotificationClick}
         />

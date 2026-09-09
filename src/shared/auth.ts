@@ -28,6 +28,14 @@ export type RegisterAccountInput = {
   name?: string;
 };
 
+export type IndividualRegisterInput = {
+  email: string;
+  username: string;
+  password: string;
+  confirmPassword: string;
+  emailVerificationCode: string;
+};
+
 export function buildRegisterAccountBody(input: RegisterAccountInput): Record<string, string> {
   const body: Record<string, string> = {
     email: input.email.trim(),

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, Notification, screen, session, systemPreferences } from 'electron';
+import { app, BrowserWindow, desktopCapturer, ipcMain, Notification, screen, session, shell, systemPreferences } from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { performLogin } from './main/authLogin';
@@ -8,8 +8,11 @@ import {
   fetchInviteRegistrationDetails,
   performForgotPassword,
   performRegister,
+  performRegisterIndividual,
   performRegisterWorkspace,
   performResetPassword,
+  performSendIndividualOtp,
+  performVerifyIndividualOtp,
   performVerifyResetCode,
 } from './main/authApi';
 import { fetchConversations, fetchUnreadCount } from './main/chatBootstrap';
@@ -81,7 +84,10 @@ import {
 } from './main/realtimeApi';
 import {
   endGroupMeeting,
+  declineMeetingInvite,
+  fetchCallHistory,
   fetchCallToken,
+  fetchDeclinedMeetingInvites,
   fetchMeetingJoinRequests,
   logCallHistory,
   muteMeetingParticipant,
@@ -101,6 +107,7 @@ import {
   updateUserTimezone,
   uploadProfileImage,
 } from './main/userApi';
+import { fetchAuthenticatedMedia } from './main/mediaApi';
 import {
   fetchTrendingGifs,
   searchGifs,
@@ -196,6 +203,29 @@ ipcMain.handle('auth:reset-password', (_event, payloadJson: string) => {
     return performResetPassword(payload);
   } catch {
     return { ok: false, error: 'Invalid reset password payload.' };
+  }
+});
+ipcMain.handle('auth:send-individual-otp', (_event, email: string) => performSendIndividualOtp(email));
+ipcMain.handle('auth:verify-individual-otp', (_event, payloadJson: string) => {
+  try {
+    const payload = JSON.parse(payloadJson) as { email: string; code: string };
+    return performVerifyIndividualOtp(payload);
+  } catch {
+    return { ok: false, error: 'Invalid verification payload.' };
+  }
+});
+ipcMain.handle('auth:register-individual', (_event, payloadJson: string) => {
+  try {
+    const payload = JSON.parse(payloadJson) as {
+      email: string;
+      username: string;
+      password: string;
+      confirmPassword: string;
+      emailVerificationCode: string;
+    };
+    return performRegisterIndividual(payload);
+  } catch {
+    return { ok: false, error: 'Invalid registration payload.' };
   }
 });
 ipcMain.handle('payments:create-org-order', (_event, token: string | null, payloadJson: string) => {
@@ -738,6 +768,24 @@ ipcMain.handle(
   (_event, token: string, fileName: string, mimeType: string, base64Data: string) =>
     uploadProfileImage(token, fileName, mimeType, base64Data),
 );
+ipcMain.handle('media:fetch-authenticated', (_event, token: string, url: string) =>
+  fetchAuthenticatedMedia(token, url),
+);
+ipcMain.handle('shell:open-external', async (_event, url: string) => {
+  if (typeof url !== 'string' || !/^https?:\/\//i.test(url.trim())) {
+    return { ok: false as const, error: 'Invalid URL.' };
+  }
+
+  try {
+    await shell.openExternal(url.trim());
+    return { ok: true as const, data: { ok: true as const } };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: error instanceof Error ? error.message : 'Unable to open link.',
+    };
+  }
+});
 ipcMain.handle('user:organization-members-detailed', (_event, token: string) =>
   fetchOrganizationMembersDetailed(token),
 );
@@ -874,6 +922,25 @@ ipcMain.handle('calls:join-request-respond', (_event, token: string, payloadJson
     return { ok: false as const, error: 'Invalid join response payload.' };
   }
 });
+
+ipcMain.handle('calls:history', (_event, token: string, filter?: 'all' | 'missed') =>
+  fetchCallHistory(token, filter ?? 'all'),
+);
+
+ipcMain.handle('calls:decline-invite', (_event, token: string, payloadJson: string) => {
+  try {
+    const payload = JSON.parse(payloadJson) as { conversationId: string; callId: string };
+    return declineMeetingInvite(token, payload);
+  } catch {
+    return { ok: false as const, error: 'Invalid decline invite payload.' };
+  }
+});
+
+ipcMain.handle(
+  'calls:declined-invites',
+  (_event, token: string, conversationId: string, callId: string) =>
+    fetchDeclinedMeetingInvites(token, conversationId, callId),
+);
 
 ipcMain.handle('renderer:debug-log', (_event, message: string) => {
   if (typeof message === 'string' && message.trim()) {

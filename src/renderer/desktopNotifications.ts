@@ -1,3 +1,4 @@
+import { formatNotificationDisplayBody } from '../shared/calls';
 import type { MessageItem, NotificationItem } from '../shared/messages';
 
 let notificationSnapshotReady = false;
@@ -181,7 +182,7 @@ export async function showDesktopNotification(
 
   await openDesktopNotification(
     notification.title || 'Flexhubs',
-    notification.body || '',
+    formatNotificationDisplayBody(notification.body || ''),
     notification.messageId ? `message-${notification.messageId}` : getNotificationKey(notification),
     onClick,
   );

@@ -17,6 +17,7 @@ async function postPublic<T>(url: string, label: string, body: unknown): Promise
     console.log(`[${label}] status:`, response.status);
 
     if (!response.ok) {
+      console.log(`[${label}] error:`, data);
       return {
         ok: false,
         error: data.error ?? 'Request failed. Please try again.',
@@ -104,6 +105,47 @@ export async function performResetPassword(payload: {
     `${API_BASE_URL}/auth/reset-password`,
     'Reset Password API',
     payload,
+  );
+}
+
+export async function performSendIndividualOtp(
+  email: string,
+): Promise<ApiResult<{ message?: string; delivered?: boolean }>> {
+  return postPublic<{ message?: string; delivered?: boolean }>(
+    `${API_BASE_URL}/auth/register/individual/send-otp`,
+    'Send Individual OTP API',
+    { email: email.trim() },
+  );
+}
+
+export async function performVerifyIndividualOtp(payload: {
+  email: string;
+  code: string;
+}): Promise<ApiResult<{ message?: string; verificationToken?: string; token?: string }>> {
+  return postPublic<{ message?: string; verificationToken?: string; token?: string }>(
+    `${API_BASE_URL}/auth/register/individual/verify-otp`,
+    'Verify Individual OTP API',
+    { email: payload.email.trim(), code: payload.code.trim() },
+  );
+}
+
+export async function performRegisterIndividual(payload: {
+  email: string;
+  username: string;
+  password: string;
+  confirmPassword: string;
+  emailVerificationCode: string;
+}): Promise<LoginResult> {
+  return postPublic<LoginSuccess>(
+    `${API_BASE_URL}/auth/register/individual`,
+    'Register Individual API',
+    {
+      email: payload.email.trim(),
+      username: payload.username.trim(),
+      password: payload.password,
+      confirmPassword: payload.confirmPassword,
+      emailVerificationCode: payload.emailVerificationCode.trim(),
+    },
   );
 }
 

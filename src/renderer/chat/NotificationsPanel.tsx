@@ -1,3 +1,6 @@
+import { useLayoutEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { formatNotificationDisplayBody } from '../../shared/calls';
 import type { NotificationItem, PendingFriendItem } from '../../shared/messages';
 import { formatConversationTimestamp } from './format';
 
@@ -6,6 +9,7 @@ type NotificationsPanelProps = {
   pendingFriends: PendingFriendItem[];
   loading: boolean;
   error: string;
+  anchorRef: React.RefObject<HTMLElement | null>;
   onClose: () => void;
   onNotificationClick: (notification: NotificationItem) => void;
 };
@@ -57,24 +61,62 @@ export function NotificationsPanel({
   pendingFriends,
   loading,
   error,
+  anchorRef,
   onClose,
   onNotificationClick,
 }: NotificationsPanelProps) {
+  const [panelStyle, setPanelStyle] = useState<{ top: number; left: number } | null>(null);
+
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+
+    if (!anchor) {
+      return;
+    }
+
+    const updatePosition = () => {
+      const rect = anchor.getBoundingClientRect();
+      const panelWidth = 320;
+      const left = Math.max(12, Math.min(rect.right - panelWidth, window.innerWidth - panelWidth - 12));
+
+      setPanelStyle({
+        top: rect.bottom + 8,
+        left,
+      });
+    };
+
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    window.addEventListener('scroll', updatePosition, true);
+
+    return () => {
+      window.removeEventListener('resize', updatePosition);
+      window.removeEventListener('scroll', updatePosition, true);
+    };
+  }, [anchorRef]);
+
   const hubInvites = notifications.filter((item) =>
     item.type.toLowerCase().includes('hub') || item.title.toLowerCase().includes('hub invite'),
   );
 
   const otherNotifications = notifications.filter((item) => !hubInvites.includes(item));
 
-  return (
+  if (!panelStyle) {
+    return null;
+  }
+
+  return createPortal(
     <>
       <button
         type="button"
         aria-label="Close notifications"
-        className="fixed inset-0 z-40 bg-black/20"
+        className="fixed inset-0 z-[200] bg-black/20"
         onClick={onClose}
       />
-      <div className="absolute top-12 right-4 z-50 w-[320px] overflow-hidden rounded-[14px] border border-app-border bg-app-surface shadow-app">
+      <div
+        className="fixed z-[201] w-[320px] overflow-hidden rounded-[14px] border border-app-border bg-app-surface shadow-app"
+        style={{ top: panelStyle.top, left: panelStyle.left }}
+      >
         <div className="border-b border-app-border px-4 py-3">
           <h2 className="text-sm font-semibold text-app-text">Notifications</h2>
         </div>
@@ -98,7 +140,7 @@ export function NotificationsPanel({
                 <PanelItem
                   key={`pending-${item.id}`}
                   title={item.title}
-                  body={item.body}
+                  body={formatNotificationDisplayBody(item.body)}
                   createdAt={item.createdAt}
                 />
               ))}
@@ -107,7 +149,7 @@ export function NotificationsPanel({
                 <PanelItem
                   key={`hub-${item.id}`}
                   title={item.title || 'Hub invite'}
-                  body={item.body}
+                  body={formatNotificationDisplayBody(item.body)}
                   createdAt={item.createdAt}
                   onClick={() => onNotificationClick(item)}
                 />
@@ -117,7 +159,7 @@ export function NotificationsPanel({
                 <PanelItem
                   key={item.id}
                   title={item.title}
-                  body={item.body}
+                  body={formatNotificationDisplayBody(item.body)}
                   createdAt={item.createdAt}
                   onClick={() => onNotificationClick(item)}
                 />
@@ -134,6 +176,7 @@ export function NotificationsPanel({
           ) : null}
         </div>
       </div>
-    </>
+    </>,
+    document.body,
   );
 }

@@ -307,6 +307,13 @@ declare global {
       forgotPassword: (email: string) => Promise<ApiResult<{ message?: string; delivered?: boolean }>>;
       verifyResetCode: (payloadJson: string) => Promise<ApiResult<{ message?: string }>>;
       resetPassword: (payloadJson: string) => Promise<ApiResult<{ message?: string }>>;
+      sendIndividualOtp: (
+        email: string,
+      ) => Promise<ApiResult<{ message?: string; delivered?: boolean }>>;
+      verifyIndividualOtp: (
+        payloadJson: string,
+      ) => Promise<ApiResult<{ message?: string; verificationToken?: string; token?: string }>>;
+      registerIndividualAccount: (payloadJson: string) => Promise<LoginResult>;
       createOrganizationWorkspace: (
         token: string | null,
         payloadJson: string,
@@ -416,6 +423,11 @@ declare global {
         mimeType: string,
         base64Data: string,
       ) => Promise<ApiResult<{ url: string }>>;
+      fetchAuthenticatedMedia: (
+        token: string,
+        url: string,
+      ) => Promise<ApiResult<{ mimeType: string; base64: string }>>;
+      openExternalUrl: (url: string) => Promise<ApiResult<{ ok: true }>>;
       getOrganizationMembersDetailed: (
         token: string,
       ) => Promise<ApiResult<OrganizationMemberItem[]>>;
@@ -480,6 +492,16 @@ declare global {
       respondMeetingJoinRequest: (
         token: string,
         payloadJson: string,
+      ) => Promise<ApiResult<unknown>>;
+      getCallHistory: (token: string, filter?: 'all' | 'missed') => Promise<ApiResult<unknown>>;
+      declineCallMeetingInvite: (
+        token: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<unknown>>;
+      getDeclinedCallMeetingInvites: (
+        token: string,
+        conversationId: string,
+        callId: string,
       ) => Promise<ApiResult<unknown>>;
       showDesktopNotification: (
         title: string,

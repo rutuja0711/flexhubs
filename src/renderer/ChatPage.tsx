@@ -23,6 +23,7 @@ import {
   loadCalendarEvents,
   loadChannels,
   loadChatBootstrap,
+  hydrateThreadReplyRegistry,
   loadConversationBootstrap,
   loadConversationNotificationSettings,
   loadConversations,
@@ -99,7 +100,7 @@ import type {
   TeammateItem,
 } from '../shared/messages';
 import type { GifPickerItem } from '../shared/gifs';
-import { DELETED_MESSAGE_TEXT, applyMessageReadReceipts, applyReactionPatch, buildScheduleMessageBody, enrichMessageReplies, extractPeerLastReadMessageIds, findFirstUnreadMessageId, formatMessagePreview, mergeMessageUpdates, readLastReadMessageId, resolveNotificationAction } from '../shared/messages';
+import { applyMessageReadReceipts, applyReactionPatch, buildScheduleMessageBody, clearThreadReplyRegistry, enrichMessageReplies, extractPeerLastReadMessageIds, filterMainChatMessages, findFirstUnreadMessageId, formatMessagePreview, isAlreadyDeletedForEveryoneError, markMessageDeletedForEveryone, mergeMessageUpdates, readLastReadMessageId, registerThreadReplyMessage, resolveNotificationAction, resolveThreadRootId } from '../shared/messages';
 import type { AiTextResult } from '../shared/extras';
 import { hoursToSnoozePreset, inferFlexIntent } from '../shared/extras';
 import type { ProfileSettings } from '../shared/profile';
@@ -118,6 +119,7 @@ import { enableDesktopPushNotifications, shouldDeliverDesktopNotifications } fro
 import {
   extractConversationIdFromRealtime,
   extractConversationMemberIds,
+  extractMessageDeleteScope,
   extractMessageFromRealtimePayload,
   extractPresenceUpdate,
   extractReactionEvent,
@@ -141,6 +143,7 @@ import { parseMeetingNotificationBody, type MeetingStartedPayload } from '../sha
 import { useCallManager } from './callManager';
 import { isUserCallChannelSubscribed } from './callSignaling';
 import { CallOverlay } from './chat/CallOverlay';
+import { MediaPreviewHost } from './chat/MediaPreviewHost';
 import type { CallPanelLayout } from './call/CallFloatingPanel';
 import { FlexAiPanel } from './chat/FlexAiPanel';
 import {
@@ -236,7 +239,7 @@ function commitMessages(
     owned,
     extractPeerLastReadMessageIds(conversation ?? null, userId),
   );
-  return enrichMessageReplies(withReceipts);
+  return enrichMessageReplies(filterMainChatMessages(withReceipts));
 }
 
 function appendMessage(current: MessageItem[], message: MessageItem, userId: string | null): MessageItem[] {
@@ -273,7 +276,15 @@ function replaceLocalMessage(
   }
 
   return enrichMessageReplies(
-    current.map((message) => (message.id === localId ? { ...delivered, createdAt: message.createdAt } : message)),
+    current.map((message) =>
+      message.id === localId
+        ? {
+            ...delivered,
+            createdAt: message.createdAt,
+            media: delivered.media.length > 0 ? delivered.media : message.media,
+          }
+        : message,
+    ),
   );
 }
 
@@ -299,11 +310,30 @@ function mergeLocalPendingMessages(
   return extras.length > 0 ? [...serverMessages, ...extras] : serverMessages;
 }
 
+function bumpThreadReplyCount(
+  current: MessageItem[],
+  threadRootId: string,
+): MessageItem[] {
+  return current.map((message) =>
+    message.id === threadRootId
+      ? { ...message, threadReplyCount: (message.threadReplyCount ?? 0) + 1 }
+      : message,
+  );
+}
+
 function mergeIncomingMessage(
   current: MessageItem[],
   incoming: MessageItem,
   userId: string | null,
 ): MessageItem[] {
+  const threadRootId = resolveThreadRootId(incoming, userId);
+  if (threadRootId) {
+    return bumpThreadReplyCount(
+      current.filter((message) => message.id !== incoming.id),
+      threadRootId,
+    );
+  }
+
   if (current.some((message) => message.id === incoming.id)) {
     return current;
   }
@@ -555,13 +585,19 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     );
   }, [conversationPlaceholders, conversations, selectedId]);
 
-  const hubConversationIds = useMemo(
-    () =>
+  const hubConversationIds = useMemo(() => {
+    const ids = new Set(
       conversations
         .filter((conversation) => conversation.kind === 'hub')
         .map((conversation) => conversation.id),
-    [conversations],
-  );
+    );
+
+    if (selectedConversation?.kind === 'hub') {
+      ids.add(selectedConversation.id);
+    }
+
+    return Array.from(ids);
+  }, [conversations, selectedConversation?.id, selectedConversation?.kind]);
 
   const typingPreviews = useMemo(() => {
     const previews: Record<string, string> = {};
@@ -784,7 +820,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return false;
     }
 
-    setMessages(cached.messages);
+    setMessages(filterMainChatMessages(cached.messages));
     setActiveHubDetails(cached.activeHubDetails);
     setPinnedMessageIds(cached.pinnedMessageIds);
     setDraft(cached.draft);
@@ -1254,6 +1290,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     setLoading(true);
     setError('');
 
+    try {
     const meResult = await getCurrentUser();
 
     if (!meResult.ok) {
@@ -1351,8 +1388,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     ];
 
     void refreshPresence(presenceUserIds);
-
-    setLoading(false);
+    } finally {
+      setLoading(false);
+    }
   }, [commitConversationList, handleUnauthorized, refreshPresence]);
 
   const loadThread = useCallback(
@@ -1415,6 +1453,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         );
         setPinnedMessageIds(bootstrapResult.data.pinnedMessageIds);
         setMessages(nextMessages);
+        void hydrateThreadReplyRegistry(conversationId, bootstrapResult.data.messages).then(() => {
+          if (conversationId !== selectedIdRef.current) {
+            return;
+          }
+
+          setMessages((current) => filterMainChatMessages(current));
+        });
         void hydrateConversationSnooze(conversationId);
 
         setConversations((current) =>
@@ -1589,6 +1634,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         pinnedMessageIds: result.data.pinnedMessageIds,
         activeHubDetails: silentDetails,
         draft: draftRef.current,
+      });
+
+      void hydrateThreadReplyRegistry(conversationId, result.data.messages).then(() => {
+        if (conversationId !== selectedIdRef.current) {
+          return;
+        }
+
+        setMessages((current) => filterMainChatMessages(current));
       });
     },
     [syncThreadCache, user],
@@ -1970,7 +2023,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }
         }
 
-        touchConversationWithMessage(conversationId, message, incrementUnread);
+        if (!resolveThreadRootId(message, userId)) {
+          touchConversationWithMessage(conversationId, message, incrementUnread);
+        }
 
         if (!conversationsRef.current.some((item) => item.id === conversationId)) {
           scheduleConversationsRefresh();
@@ -2041,12 +2096,21 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             : incomingMessage?.id;
 
         if (messageId) {
+          const deleteScope = extractMessageDeleteScope(event.payload) ?? 'me';
+          const applyDelete = (current: MessageItem[]) => {
+            if (deleteScope === 'everyone') {
+              return current.map((message) =>
+                message.id === messageId ? markMessageDeletedForEveryone(message) : message,
+              );
+            }
+
+            return current.filter((message) => message.id !== messageId);
+          };
+
           if (conversationId === activeConversationId) {
-            setMessages((current) => current.filter((message) => message.id !== messageId));
+            setMessages(applyDelete);
           } else {
-            patchThreadCacheMessages(threadCacheRef.current, conversationId, (current) =>
-              current.filter((message) => message.id !== messageId),
-            );
+            patchThreadCacheMessages(threadCacheRef.current, conversationId, applyDelete);
           }
         }
 
@@ -2496,6 +2560,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   }, [fileFilter, loadCalendarData, loadFilesData, loadSavedData, loadHubsData, mainView]);
 
   useEffect(() => {
+    clearThreadReplyRegistry();
+
     if (!selectedId) {
       setMessages([]);
       setDraft('');
@@ -2928,6 +2994,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     item: GifPickerItem,
     kind: 'gif' | 'sticker',
     replyToId?: string,
+    threadRootId?: string,
   ) => {
     if (!selectedId) {
       return;
@@ -2949,6 +3016,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       status: 'sending',
       reactions: [],
       replyToMessageId: replyToId,
+      threadRootId,
       messageType: kind === 'sticker' ? 'STICKER' : 'GIF',
       media: [
         {
@@ -2964,19 +3032,38 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     setDraftError('');
     stopTyping(conversationId);
-    setMessages((current) => appendMessage(current, optimistic, userId));
-    touchConversationWithMessage(conversationId, optimistic, false);
+    if (threadRootId) {
+      setMessages((current) => bumpThreadReplyCount(current, threadRootId));
+    } else {
+      setMessages((current) => appendMessage(current, optimistic, userId));
+      touchConversationWithMessage(conversationId, optimistic, false);
+    }
 
-    const result = await sendChatMediaMessage(conversationId, item, kind, replyToId);
+    const result = await sendChatMediaMessage(conversationId, item, kind, replyToId, threadRootId);
 
     if (handleUnauthorized(result.status)) {
-      setMessages((current) => current.filter((message) => message.id !== localId));
+      if (!threadRootId) {
+        setMessages((current) => current.filter((message) => message.id !== localId));
+      }
       return;
     }
 
     if (!result.ok) {
       setDraftError(result.error);
-      setMessages((current) => current.filter((message) => message.id !== localId));
+      if (!threadRootId) {
+        setMessages((current) => current.filter((message) => message.id !== localId));
+      }
+      return;
+    }
+
+    if (threadRootId) {
+      registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
+      setMessages((current) =>
+        bumpThreadReplyCount(
+          filterMainChatMessages(current),
+          result.data.threadRootId ?? threadRootId,
+        ),
+      );
       return;
     }
 
@@ -2984,7 +3071,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     touchConversationWithMessage(conversationId, withDeliveredStatus(result.data), false);
   };
 
-  const handleSendFile = async (file: File, replyToId?: string) => {
+  const handleSendFile = async (
+    file: File,
+    caption?: string,
+    replyToId?: string,
+    threadRootId?: string,
+  ) => {
     if (!selectedId) {
       return;
     }
@@ -2995,9 +3087,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     const mimeType = file.type || 'application/octet-stream';
     const previewUrl = URL.createObjectURL(file);
     const isImage = mimeType.startsWith('image/');
+    const messageCaption = caption?.trim() ?? '';
     const optimistic: MessageItem = {
       id: localId,
-      content: '',
+      content: messageCaption,
       senderId: userId,
       senderName: getUserDisplayName(user),
       senderInitials: getUserInitials(user),
@@ -3008,6 +3101,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       status: 'sending',
       reactions: [],
       replyToMessageId: replyToId,
+      threadRootId,
       messageType: isImage ? 'IMAGE' : 'FILE',
       media: [
         {
@@ -3022,36 +3116,84 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     };
 
     setDraftError('');
+    if (!threadRootId) {
+      setDraft('');
+      lastSavedDraftRef.current = '';
+      setDraftPreviewForConversation(conversationId, null);
+      setConversations((current) => applyDraftPreviews(current));
+      void clearChatDraft(conversationId);
+    }
     stopTyping(conversationId);
-    setMessages((current) => appendMessage(current, optimistic, userId));
-    touchConversationWithMessage(conversationId, optimistic, false);
+    if (threadRootId) {
+      setMessages((current) => bumpThreadReplyCount(current, threadRootId));
+    } else {
+      setMessages((current) => appendMessage(current, optimistic, userId));
+      touchConversationWithMessage(conversationId, optimistic, false);
+    }
 
     const uploadResult = await uploadChatFile(file);
 
     if (handleUnauthorized(uploadResult.status) || !uploadResult.ok) {
       URL.revokeObjectURL(previewUrl);
-      setMessages((current) => current.filter((message) => message.id !== localId));
+      if (!threadRootId) {
+        setMessages((current) => current.filter((message) => message.id !== localId));
+      }
       if (!uploadResult.ok && !handleUnauthorized(uploadResult.status)) {
         setDraftError(uploadResult.error);
       }
       return;
     }
 
+    const uploadedUrl = uploadResult.data.url;
+    if (!threadRootId) {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === localId
+            ? {
+                ...message,
+                media: [
+                  {
+                    kind: isImage ? 'image' : 'file',
+                    url: uploadedUrl,
+                    previewUrl: uploadedUrl,
+                    name: file.name,
+                  },
+                ],
+              }
+            : message,
+        ),
+      );
+    }
+    URL.revokeObjectURL(previewUrl);
+
     const result = await sendChatFileMessage(
       conversationId,
-      uploadResult.data.url,
+      uploadedUrl,
       file.name,
       mimeType,
       replyToId,
+      threadRootId,
+      messageCaption || undefined,
     );
 
-    URL.revokeObjectURL(previewUrl);
-
     if (handleUnauthorized(result.status) || !result.ok) {
-      setMessages((current) => current.filter((message) => message.id !== localId));
+      if (!threadRootId) {
+        setMessages((current) => current.filter((message) => message.id !== localId));
+      }
       if (!result.ok && !handleUnauthorized(result.status)) {
         setDraftError(result.error);
       }
+      return;
+    }
+
+    if (threadRootId) {
+      registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
+      setMessages((current) =>
+        bumpThreadReplyCount(
+          filterMainChatMessages(current),
+          result.data.threadRootId ?? threadRootId,
+        ),
+      );
       return;
     }
 
@@ -3212,6 +3354,16 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
 
+      if (scope === 'everyone' && isAlreadyDeletedForEveryoneError(result.error)) {
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === messageId ? markMessageDeletedForEveryone(message) : message,
+          ),
+        );
+        showActionMessage('Message deleted for everyone.');
+        return;
+      }
+
       setThreadError(result.error);
       toast.error(result.error);
       return;
@@ -3220,15 +3372,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     if (result.data.scope === 'everyone') {
       setMessages((current) =>
         current.map((message) =>
-          message.id === messageId
-            ? {
-                ...message,
-                content: DELETED_MESSAGE_TEXT,
-                media: [],
-                messageType: 'TEXT',
-                deletedForEveryone: true,
-              }
-            : message,
+          message.id === messageId ? markMessageDeletedForEveryone(message) : message,
         ),
       );
     } else {
@@ -3594,11 +3738,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           onSend={(replyToMessageId) => {
             void handleSendMessage(replyToMessageId);
           }}
-          onSendMedia={(item, kind, replyToId) => {
-            void handleSendMedia(item, kind, replyToId);
+          onSendMedia={(item, kind, replyToId, threadRootId) => {
+            void handleSendMedia(item, kind, replyToId, threadRootId);
           }}
-          onSendFile={(file, replyToId) => {
-            void handleSendFile(file, replyToId);
+          onSendFile={(file, caption, replyToId, threadRootId) => {
+            void handleSendFile(file, caption, replyToId, threadRootId);
           }}
           onUnauthorized={handleUnauthorized}
           currentUserId={getUserId(user)}
@@ -3653,6 +3797,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           unreadAnchorMessageId={threadUnreadAnchorId}
           onFocusMessageHandled={() => setFocusMessageId(null)}
           onOpenFlexAi={() => setFlexAiOpen((current) => !current)}
+          onThreadReplySent={(threadRootId) => {
+            setMessages((current) => bumpThreadReplyCount(current, threadRootId));
+          }}
+          onThreadMessagesRegistered={() => {
+            setMessages((current) => filterMainChatMessages(current));
+          }}
           callBusy={callManager.busy || callManager.session.phase !== 'idle'}
           onStartVoiceCall={() => {
             if (!selectedConversation) {
@@ -3664,7 +3814,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
               return;
             }
 
-            void callManager.startDirectCall(selectedConversation, false);
+            const peerUserId =
+              selectedConversation.peerUserId ??
+              directChatMetadata[selectedConversation.id]?.peerUserId ??
+              null;
+
+            void callManager.startDirectCall(
+              peerUserId
+                ? { ...selectedConversation, peerUserId, kind: 'direct' as const }
+                : selectedConversation,
+              false,
+            );
           }}
           onStartVideoCall={() => {
             if (!selectedConversation) {
@@ -3676,7 +3836,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
               return;
             }
 
-            void callManager.startDirectCall(selectedConversation, true);
+            const peerUserId =
+              selectedConversation.peerUserId ??
+              directChatMetadata[selectedConversation.id]?.peerUserId ??
+              null;
+
+            void callManager.startDirectCall(
+              peerUserId
+                ? { ...selectedConversation, peerUserId, kind: 'direct' as const }
+                : selectedConversation,
+              true,
+            );
           }}
         />
       );
@@ -3695,11 +3865,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   return (
     <div className={`h-full ${callPipMode ? 'call-pip-mode bg-[#101114]' : 'flex bg-app-chat-bg'}`}>
+      <MediaPreviewHost />
       <CallOverlay
         session={callManager.session}
         busy={callManager.busy}
         room={callManager.room}
         remoteParticipants={callManager.remoteParticipants}
+        mediasoupPeers={callManager.mediasoupPeers}
+        mediasoupLocalVideo={callManager.mediasoupLocalVideo}
         micEnabled={callManager.micEnabled}
         cameraEnabled={callManager.cameraEnabled}
         screenShareEnabled={callManager.screenShareEnabled}
@@ -3714,12 +3887,23 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         onToggleCamera={() => void callManager.toggleCamera()}
         onToggleScreenShare={() => void callManager.toggleScreenShare()}
         onJoinMeeting={() => {
-          if (selectedConversation) {
-            void callManager.joinGroupMeeting(
-              selectedConversation,
-              callManager.session.meetingBanner,
-            );
+          const meeting = callManager.session.meetingBanner;
+
+          if (!meeting) {
+            return;
           }
+
+          const targetConversation =
+            conversations.find((conversation) => conversation.id === meeting.conversationId) ??
+            (selectedConversation?.id === meeting.conversationId ? selectedConversation : null);
+
+          if (!targetConversation) {
+            toast.error('Open the hub for this meeting, then tap Join again.');
+            void handleSelectConversation(meeting.conversationId);
+            return;
+          }
+
+          void callManager.joinGroupMeeting(targetConversation, meeting);
         }}
         onDismissMeetingBanner={callManager.dismissMeetingBanner}
         onApproveJoinRequest={(requestId) =>

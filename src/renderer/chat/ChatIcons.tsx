@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { RemoteImage } from '../RemoteImage';
 
 export function FlexLogo() {
   return (
@@ -266,7 +267,7 @@ export function Avatar({
 
   if (imageUrl && !failed) {
     return (
-      <img
+      <RemoteImage
         src={imageUrl}
         alt=""
         className={`${sizeClass} rounded-full object-cover`}

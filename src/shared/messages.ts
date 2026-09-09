@@ -3,7 +3,7 @@ import {
   isCallLogMessage as isCallLogContent,
   parseCallLogContent,
 } from './calls';
-import { resolveAvatarUrl } from './profile';
+import { normalizeUploadUrl, resolveAvatarUrl } from './profile';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
@@ -62,9 +62,97 @@ export type MessageItem = {
   replyToMessage?: MessageItem;
   messageType: string | null;
   media: MessageMedia[];
-  deletedForEveryone: boolean;
   poll: MessagePoll | null;
+  threadRootId?: string;
+  threadReplyCount?: number;
 };
+
+const threadReplyMessageIds = new Set<string>();
+const threadRootByMessageId = new Map<string, string>();
+
+type PendingThreadSend = {
+  content: string;
+  threadRootId: string;
+  sentAt: number;
+};
+
+const pendingThreadSends: PendingThreadSend[] = [];
+
+export function clearThreadReplyRegistry(): void {
+  threadReplyMessageIds.clear();
+  threadRootByMessageId.clear();
+  pendingThreadSends.length = 0;
+}
+
+export function registerThreadReplyMessage(messageId: string, threadRootId: string): void {
+  threadReplyMessageIds.add(messageId);
+  threadRootByMessageId.set(messageId, threadRootId);
+}
+
+export function registerThreadReplyMessages(messages: MessageItem[], threadRootId: string): void {
+  for (const message of messages) {
+    registerThreadReplyMessage(message.id, message.threadRootId ?? threadRootId);
+  }
+}
+
+export function trackPendingThreadSend(content: string, threadRootId: string): void {
+  const trimmed = content.trim();
+  if (!trimmed) {
+    return;
+  }
+
+  pendingThreadSends.push({ content: trimmed, threadRootId, sentAt: Date.now() });
+
+  const cutoff = Date.now() - 60_000;
+  while (pendingThreadSends.length > 0 && pendingThreadSends[0].sentAt < cutoff) {
+    pendingThreadSends.shift();
+  }
+}
+
+export function resolveThreadRootId(
+  message: Pick<MessageItem, 'id' | 'threadRootId' | 'content' | 'isOwn' | 'senderId'>,
+  userId: string | null,
+): string | null {
+  if (message.threadRootId) {
+    registerThreadReplyMessage(message.id, message.threadRootId);
+    return message.threadRootId;
+  }
+
+  const knownRoot = threadRootByMessageId.get(message.id);
+  if (knownRoot) {
+    return knownRoot;
+  }
+
+  const isOwn = message.isOwn || (userId ? message.senderId === userId : false);
+  if (!isOwn) {
+    return null;
+  }
+
+  const trimmed = message.content.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  const pendingIndex = pendingThreadSends.findIndex(
+    (pending) => pending.content === trimmed && Date.now() - pending.sentAt < 60_000,
+  );
+
+  if (pendingIndex < 0) {
+    return null;
+  }
+
+  const pending = pendingThreadSends.splice(pendingIndex, 1)[0];
+  registerThreadReplyMessage(message.id, pending.threadRootId);
+  return pending.threadRootId;
+}
+
+export function isThreadReply(message: Pick<MessageItem, 'id' | 'threadRootId'>): boolean {
+  return Boolean(message.threadRootId) || threadReplyMessageIds.has(message.id);
+}
+
+export function filterMainChatMessages(messages: MessageItem[]): MessageItem[] {
+  return messages.filter((message) => !isThreadReply(message));
+}
 
 export const DELETED_MESSAGE_TEXT = 'This message was deleted.';
 
@@ -72,6 +160,40 @@ export function isDeletedMessage(
   message: Pick<MessageItem, 'content' | 'deletedForEveryone'>,
 ): boolean {
   return message.deletedForEveryone || message.content.trim() === DELETED_MESSAGE_TEXT;
+}
+
+export function isAlreadyDeletedForEveryoneError(error: string): boolean {
+  return /already deleted/i.test(error);
+}
+
+export function markMessageDeletedForEveryone(message: MessageItem): MessageItem {
+  return {
+    ...message,
+    content: DELETED_MESSAGE_TEXT,
+    media: [],
+    messageType: 'TEXT',
+    deletedForEveryone: true,
+    poll: null,
+  };
+}
+
+function readDeletedForEveryone(record: Record<string, unknown>): boolean {
+  if (readString(record.deletedForEveryoneAt)) {
+    return true;
+  }
+
+  if (record.deletedForEveryone === true || record.isDeletedForEveryone === true) {
+    return true;
+  }
+
+  const content =
+    readString(record.content) ??
+    readString(record.text) ??
+    readString(record.body) ??
+    readString(record.message) ??
+    '';
+
+  return content.trim() === DELETED_MESSAGE_TEXT;
 }
 
 export type ConversationBootstrap = {
@@ -262,6 +384,16 @@ export function applyReactionPatch(
 }
 
 export function mergeMessageUpdates(previous: MessageItem, incoming: MessageItem): MessageItem {
+  if (isDeletedMessage(incoming)) {
+    return markMessageDeletedForEveryone({
+      ...previous,
+      ...incoming,
+      senderName: incoming.senderName !== 'Unknown' ? incoming.senderName : previous.senderName,
+      senderId: incoming.senderId ?? previous.senderId,
+      status: incoming.status ?? previous.status,
+    });
+  }
+
   return {
     ...previous,
     ...incoming,
@@ -317,17 +449,23 @@ function normalizeMediaKind(value: unknown, fallback: MessageMediaKind = 'image'
   return fallback;
 }
 
+function normalizeMediaUrl(url: string): string {
+  return normalizeUploadUrl(url.trim());
+}
+
 function isLikelyMediaUrl(url: string): boolean {
-  if (!/^https?:\/\//i.test(url)) {
+  const normalized = normalizeMediaUrl(url);
+
+  if (!/^https?:\/\//i.test(normalized)) {
     return false;
   }
 
-  if (/\.(gif|webp|png|jpe?g|bmp|svg)(\?|$)/i.test(url)) {
+  if (/\.(gif|webp|png|jpe?g|bmp|svg|avif)(\?|$)/i.test(normalized)) {
     return true;
   }
 
-  return /giphy\.com|tenor\.com|media\.tenor|media\d?\.giphy|klipy\.com|imgur\.com|flexhubs\.in\/api\/files|flexhubs\.in\/uploads|cloudinary|amazonaws\.com/i.test(
-    url,
+  return /giphy\.com|tenor\.com|media\.tenor|media\d?\.giphy|klipy\.com|imgur\.com|flexhubs\.in\/api\/|flexhubs\.in\/uploads|cloudinary|amazonaws\.com|supabase\.co/i.test(
+    normalized,
   );
 }
 
@@ -335,7 +473,7 @@ function readMediaFromObject(
   record: Record<string, unknown>,
   fallbackKind: MessageMediaKind = 'image',
 ): MessageMedia | null {
-  const url =
+  const rawUrl =
     readString(record.url) ??
     readString(record.fileUrl) ??
     readString(record.src) ??
@@ -345,7 +483,13 @@ function readMediaFromObject(
     readString(record.originalUrl) ??
     readString(record.fullUrl);
 
-  if (!url || !isLikelyMediaUrl(url)) {
+  if (!rawUrl) {
+    return null;
+  }
+
+  const url = normalizeMediaUrl(rawUrl);
+
+  if (!isLikelyMediaUrl(url)) {
     return null;
   }
 
@@ -354,15 +498,17 @@ function readMediaFromObject(
     fallbackKind,
   );
 
+  const rawPreview =
+    readString(record.previewUrl) ??
+    readString(record.thumbnailUrl) ??
+    readString(record.thumbUrl) ??
+    readString(record.preview) ??
+    null;
+
   return {
     kind,
     url,
-    previewUrl:
-      readString(record.previewUrl) ??
-      readString(record.thumbnailUrl) ??
-      readString(record.thumbUrl) ??
-      readString(record.preview) ??
-      null,
+    previewUrl: rawPreview ? normalizeMediaUrl(rawPreview) : null,
     name: readString(record.name) ?? readString(record.fileName) ?? readString(record.title),
   };
 }
@@ -425,13 +571,18 @@ function extractMessageMedia(record: Record<string, unknown>, content: string): 
       readString(metadata.mediaUrl) ??
       readString(metadata.imageUrl);
 
-    if (metadataUrl && isLikelyMediaUrl(metadataUrl)) {
-      pushMedia({
-        kind: normalizeMediaKind(metadata.type ?? metadata.kind ?? record.type, 'gif'),
-        url: metadataUrl,
-        previewUrl: readString(metadata.previewUrl) ?? readString(metadata.thumbnailUrl),
-        name: readString(metadata.name),
-      });
+    if (metadataUrl) {
+      const url = normalizeMediaUrl(metadataUrl);
+      if (isLikelyMediaUrl(url)) {
+        const rawPreview =
+          readString(metadata.previewUrl) ?? readString(metadata.thumbnailUrl);
+        pushMedia({
+          kind: normalizeMediaKind(metadata.type ?? metadata.kind ?? record.type, 'gif'),
+          url,
+          previewUrl: rawPreview ? normalizeMediaUrl(rawPreview) : null,
+          name: readString(metadata.name),
+        });
+      }
     }
   }
 
@@ -443,13 +594,18 @@ function extractMessageMedia(record: Record<string, unknown>, content: string): 
     readString(record.attachmentUrl) ??
     readString(record.fileUrl);
 
-  if (topLevelUrl && isLikelyMediaUrl(topLevelUrl)) {
-    pushMedia({
-      kind: normalizeMediaKind(record.type ?? record.messageType ?? record.kind, 'gif'),
-      url: topLevelUrl,
-      previewUrl: readString(record.previewUrl) ?? readString(record.thumbnailUrl),
-      name: readString(record.name) ?? readString(record.fileName),
-    });
+  if (topLevelUrl) {
+    const url = normalizeMediaUrl(topLevelUrl);
+    if (isLikelyMediaUrl(url)) {
+      const rawPreview =
+        readString(record.previewUrl) ?? readString(record.thumbnailUrl);
+      pushMedia({
+        kind: normalizeMediaKind(record.type ?? record.messageType ?? record.kind, 'gif'),
+        url,
+        previewUrl: rawPreview ? normalizeMediaUrl(rawPreview) : null,
+        name: readString(record.name) ?? readString(record.fileName),
+      });
+    }
   }
 
   const trimmedContent = content.trim();
@@ -487,20 +643,25 @@ function extractMessageMedia(record: Record<string, unknown>, content: string): 
   }
 
   const fileUrl = readString(record.fileUrl);
-  if (fileUrl && isLikelyMediaUrl(fileUrl)) {
-    const mimeType = readString(record.mimeType)?.toLowerCase() ?? '';
-    const messageType = String(record.type ?? record.messageType ?? '').toUpperCase();
-    const isStickerMarker = trimmedContent === 'sticker';
-    const isSticker =
-      isStickerMarker ||
-      (messageType === 'GIF' && (mimeType === 'image/png' || mimeType === 'image/webp'));
+  if (fileUrl) {
+    const url = normalizeMediaUrl(fileUrl);
+    if (isLikelyMediaUrl(url)) {
+      const mimeType = readString(record.mimeType)?.toLowerCase() ?? '';
+      const messageType = String(record.type ?? record.messageType ?? '').toUpperCase();
+      const isStickerMarker = trimmedContent === 'sticker';
+      const isSticker =
+        isStickerMarker ||
+        (messageType === 'GIF' && (mimeType === 'image/png' || mimeType === 'image/webp'));
+      const rawPreview =
+        readString(record.previewUrl) ?? readString(record.thumbnailUrl);
 
-    pushMedia({
-      kind: isSticker ? 'sticker' : messageType === 'GIF' || mimeType.includes('gif') ? 'gif' : 'image',
-      url: fileUrl,
-      previewUrl: readString(record.previewUrl) ?? readString(record.thumbnailUrl),
-      name: readString(record.fileName) ?? readString(record.name),
-    });
+      pushMedia({
+        kind: isSticker ? 'sticker' : messageType === 'GIF' || mimeType.includes('gif') ? 'gif' : 'image',
+        url,
+        previewUrl: rawPreview ? normalizeMediaUrl(rawPreview) : null,
+        name: readString(record.fileName) ?? readString(record.name),
+      });
+    }
   }
 
   return media;
@@ -1042,7 +1203,7 @@ export function normalizeMessage(record: Record<string, unknown>, index: number)
     (sender ? readString(sender.name) ?? readString(sender.displayName) ?? readString(sender.username) : null) ??
     'Unknown';
 
-  const deletedForEveryone = Boolean(readString(record.deletedForEveryoneAt));
+  const deletedForEveryone = readDeletedForEveryone(record);
 
   const content = deletedForEveryone
     ? DELETED_MESSAGE_TEXT
@@ -1111,8 +1272,23 @@ export function normalizeMessage(record: Record<string, unknown>, index: number)
     })(),
     messageType,
     media,
-    deletedForEveryone,
     poll: deletedForEveryone ? null : normalizeMessagePoll(record),
+    threadRootId:
+      readString(record.threadRootId) ??
+      readString(record.threadRootMessageId) ??
+      readString(record.threadParentId) ??
+      readString(record.parentThreadId) ??
+      (() => {
+        const threadRoot = asRecord(record.threadRoot);
+        return threadRoot ? readString(threadRoot.id) : null;
+      })() ??
+      threadRootByMessageId.get(readString(record.id) ?? '') ??
+      undefined,
+    threadReplyCount: typeof record.threadReplyCount === 'number' 
+      ? record.threadReplyCount 
+      : typeof record.repliesCount === 'number' 
+        ? record.repliesCount 
+        : Array.isArray(record.replies) ? record.replies.length : 0,
   };
 }
 
@@ -1173,13 +1349,20 @@ export function normalizeBootstrap(payload: unknown): ConversationBootstrap {
   };
 }
 
-export function normalizeMessageThread(payload: unknown): MessageItem[] {
+export function normalizeMessageThread(payload: unknown, rootMessageId?: string): MessageItem[] {
   const items = extractArray(payload, ['messages', 'items', 'data', 'thread']);
   return enrichMessageReplies(
     items
       .map(asRecord)
       .filter((item): item is Record<string, unknown> => item !== null)
-      .map((item) => normalizeMessage(item, 0)),
+      .map((item) => {
+        const message = normalizeMessage(item, 0);
+        if (!rootMessageId || message.threadRootId) {
+          return message;
+        }
+
+        return { ...message, threadRootId: rootMessageId };
+      }),
   );
 }
 

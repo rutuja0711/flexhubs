@@ -12,11 +12,23 @@ function readString(value: unknown): string | null {
 
 export type CallLogOutcome = 'completed' | 'missed' | 'declined' | 'cancelled';
 
+export type CallMediaEngine = 'mediasoup' | 'livekit' | string;
+
+export type CallIceServer = {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+};
+
 export type CallTokenResult = {
+  engine: CallMediaEngine;
   url: string;
   token: string;
   roomName: string;
   video: boolean;
+  canModerateMeeting?: boolean;
+  iceServers?: CallIceServer[];
+  rtpCapabilities?: Record<string, unknown>;
 };
 
 export type FlexhubCallLog = {
@@ -147,6 +159,36 @@ export function parseMeetingNotificationBody(body: string): MeetingStartedPayloa
   } catch {
     return null;
   }
+}
+
+/** Human-readable text for notification bodies like `__meeting__:{...}`. */
+export function formatNotificationDisplayBody(body: string): string {
+  const trimmed = body.trim();
+
+  if (!trimmed.startsWith('__meeting__:')) {
+    return body;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed.slice('__meeting__:'.length)) as unknown;
+    const record = asRecord(parsed);
+    const display = readString(record?.display);
+
+    if (display) {
+      return display;
+    }
+
+    const meeting = parseMeetingNotificationBody(body);
+
+    if (meeting) {
+      const mode = meeting.video ? 'video' : 'audio';
+      return `${meeting.startedBy.username} started a ${mode} meeting in ${meeting.conversationTitle}`;
+    }
+  } catch {
+    // fall through
+  }
+
+  return body;
 }
 
 export type CallAcceptPayload = {
@@ -349,6 +391,50 @@ function extractArray(payload: unknown, keys: string[]): unknown[] {
   return [];
 }
 
+function normalizeIceServers(value: unknown): CallIceServer[] | undefined {
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const servers = value
+    .map((item) => {
+      const record = asRecord(item);
+
+      if (!record) {
+        return null;
+      }
+
+      const urls = record.urls;
+
+      if (typeof urls === 'string' && urls.trim()) {
+        return {
+          urls: urls.trim(),
+          username: readString(record.username) ?? undefined,
+          credential: readString(record.credential) ?? undefined,
+        };
+      }
+
+      if (Array.isArray(urls)) {
+        const normalizedUrls = urls.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim()));
+
+        if (normalizedUrls.length === 0) {
+          return null;
+        }
+
+        return {
+          urls: normalizedUrls,
+          username: readString(record.username) ?? undefined,
+          credential: readString(record.credential) ?? undefined,
+        };
+      }
+
+      return null;
+    })
+    .filter((item): item is CallIceServer => item !== null);
+
+  return servers.length > 0 ? servers : undefined;
+}
+
 export function normalizeCallTokenResult(payload: unknown, requestedVideo: boolean): CallTokenResult | null {
   const record = asRecord(payload);
 
@@ -364,11 +450,18 @@ export function normalizeCallTokenResult(payload: unknown, requestedVideo: boole
     return null;
   }
 
+  const engine = readString(record.engine) ?? 'livekit';
+  const rtpCapabilitiesRecord = asRecord(record.rtpCapabilities);
+
   return {
+    engine,
     url,
     token,
     roomName,
     video: typeof record.video === 'boolean' ? record.video : requestedVideo,
+    canModerateMeeting: record.canModerateMeeting === true,
+    iceServers: normalizeIceServers(record.iceServers),
+    rtpCapabilities: rtpCapabilitiesRecord ?? undefined,
   };
 }
 

@@ -131,15 +131,21 @@ export function buildFileMessagePayload(
   url: string,
   fileName: string,
   mimeType: string,
+  caption?: string,
 ): Record<string, unknown> {
   const isImage = mimeType.startsWith('image/');
-
-  return {
+  const payload: Record<string, unknown> = {
     type: isImage ? 'IMAGE' : 'FILE',
     fileUrl: url,
     fileName,
     mimeType,
   };
+
+  if (caption?.trim()) {
+    payload.content = caption.trim();
+  }
+
+  return payload;
 }
 
 export function buildMediaMessagePayload(

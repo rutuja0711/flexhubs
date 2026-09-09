@@ -356,6 +356,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('auth:verify-reset-code', payloadJson),
   resetPassword: (payloadJson: string): Promise<ApiResult<{ message?: string }>> =>
     ipcRenderer.invoke('auth:reset-password', payloadJson),
+  sendIndividualOtp: (email: string): Promise<ApiResult<{ message?: string; delivered?: boolean }>> =>
+    ipcRenderer.invoke('auth:send-individual-otp', email),
+  verifyIndividualOtp: (
+    payloadJson: string,
+  ): Promise<ApiResult<{ message?: string; verificationToken?: string; token?: string }>> =>
+    ipcRenderer.invoke('auth:verify-individual-otp', payloadJson),
+  registerIndividualAccount: (payloadJson: string): Promise<LoginResult> =>
+    ipcRenderer.invoke('auth:register-individual', payloadJson),
   createOrganizationWorkspace: (
     token: string | null,
     payloadJson: string,
@@ -545,6 +553,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     base64Data: string,
   ): Promise<ApiResult<{ url: string }>> =>
     ipcRenderer.invoke('user:upload-image', token, fileName, mimeType, base64Data),
+  fetchAuthenticatedMedia: (token: string, url: string): Promise<ApiResult<{ mimeType: string; base64: string }>> =>
+    ipcRenderer.invoke('media:fetch-authenticated', token, url),
+  openExternalUrl: (url: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('shell:open-external', url),
   getOrganizationMembersDetailed: (
     token: string,
   ): Promise<ApiResult<import('../shared/profile').OrganizationMemberItem[]>> =>
@@ -645,6 +657,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     payloadJson: string,
   ): Promise<ApiResult<unknown>> =>
     ipcRenderer.invoke('calls:join-request-respond', token, payloadJson),
+  getCallHistory: (token: string, filter?: 'all' | 'missed'): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('calls:history', token, filter),
+  declineCallMeetingInvite: (token: string, payloadJson: string): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('calls:decline-invite', token, payloadJson),
+  getDeclinedCallMeetingInvites: (
+    token: string,
+    conversationId: string,
+    callId: string,
+  ): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('calls:declined-invites', token, conversationId, callId),
   showDesktopNotification: (
     title: string,
     body: string,

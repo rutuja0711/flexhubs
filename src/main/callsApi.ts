@@ -164,3 +164,41 @@ export async function respondMeetingJoinRequest(
     payload,
   );
 }
+
+export async function fetchCallHistory(
+  token: string,
+  filter: 'all' | 'missed' = 'all',
+): Promise<ApiResult<unknown>> {
+  return apiGet<unknown>(
+    `${API_BASE_URL}/calls/history?filter=${encodeURIComponent(filter)}`,
+    token,
+    'Call History API',
+  );
+}
+
+export async function declineMeetingInvite(
+  token: string,
+  payload: {
+    conversationId: string;
+    callId: string;
+  },
+): Promise<ApiResult<unknown>> {
+  return apiPost<unknown>(
+    `${API_BASE_URL}/calls/meetings/decline-invite`,
+    token,
+    'Call Decline Invite API',
+    payload,
+  );
+}
+
+export async function fetchDeclinedMeetingInvites(
+  token: string,
+  conversationId: string,
+  callId: string,
+): Promise<ApiResult<unknown>> {
+  return apiGet<unknown>(
+    `${API_BASE_URL}/calls/meetings/declined-invites?conversationId=${encodeURIComponent(conversationId)}&callId=${encodeURIComponent(callId)}`,
+    token,
+    'Call Declined Invites API',
+  );
+}

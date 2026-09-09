@@ -33,11 +33,12 @@ type MessageInputProps = {
   onChange: (value: string) => void;
   onSend: () => void;
   onSendMedia?: (item: GifPickerItem, kind: 'gif' | 'sticker') => void;
-  onSendFile?: (file: File) => void;
+  onSendFile?: (file: File, caption?: string) => void;
   onPollCreated?: () => void;
   onScheduled?: () => void;
   onUnauthorized?: (status?: number) => boolean;
   onOpenFlexAi?: () => void;
+  compact?: boolean;
 };
 
 type MentionSuggestion = {
@@ -136,6 +137,7 @@ export function MessageInput({
   onScheduled,
   onUnauthorized,
   onOpenFlexAi,
+  compact = false,
 }: MessageInputProps) {
   const toast = useToast();
   const [draftError, setDraftError] = useState('');
@@ -161,8 +163,51 @@ export function MessageInput({
   const [pollOptions, setPollOptions] = useState(['', '']);
   const [pollBusy, setPollBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const imageInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [pendingAttachments, setPendingAttachments] = useState<{
+    file: File;
+    previewUrl: string;
+    isImage: boolean;
+    isVideo: boolean;
+  }[]>([]);
+
+  const removeAttachment = (indexToRemove: number) => {
+    setPendingAttachments((current) => {
+      const next = [...current];
+      const removed = next.splice(indexToRemove, 1)[0];
+      if (removed?.previewUrl.startsWith('blob:')) {
+        URL.revokeObjectURL(removed.previewUrl);
+      }
+      return next;
+    });
+  };
+
+  const clearPendingAttachments = () => {
+    setPendingAttachments((current) => {
+      current.forEach(att => {
+        if (att.previewUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(att.previewUrl);
+        }
+      });
+      return [];
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      pendingAttachments.forEach(att => {
+        if (att.previewUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(att.previewUrl);
+        }
+      });
+    };
+  }, []);
+
+  useEffect(() => {
+    clearPendingAttachments();
+  }, [conversationId]);
 
   const handleChange = (nextValue: string) => {
     const validation = validateMessageDraft(nextValue);
@@ -502,14 +547,37 @@ export function MessageInput({
   };
 
   const handleFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
+    const files = Array.from(event.target.files || []);
     event.target.value = '';
 
-    if (!file || fileDisabled) {
+    if (!files.length || fileDisabled) {
       return;
     }
 
-    onSendFile?.(file);
+    const newAttachments = files.map((file) => {
+      const mimeType = file.type || 'application/octet-stream';
+      const isImage = mimeType.startsWith('image/');
+      const isVideo = mimeType.startsWith('video/');
+      const previewUrl = isImage || isVideo ? URL.createObjectURL(file) : '';
+      return { file, previewUrl, isImage, isVideo };
+    });
+
+    setPendingAttachments((current) => [...current, ...newAttachments]);
+
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const handleSendAction = () => {
+    if (pendingAttachments.length > 0) {
+      pendingAttachments.forEach((attachment, index) => {
+        onSendFile?.(attachment.file, index === 0 ? (value.trim() || undefined) : undefined);
+      });
+      clearPendingAttachments();
+      handleChange('');
+      return;
+    }
+
+    onSend();
   };
 
   const handleAudioSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -523,12 +591,56 @@ export function MessageInput({
     void handleTranscribeFile(file);
   };
 
+  const iconButtonClass = compact
+    ? 'flex h-7 w-7 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text disabled:cursor-not-allowed disabled:opacity-50'
+    : 'flex h-8 w-8 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text disabled:cursor-not-allowed disabled:opacity-50';
+
   return (
-    <div className="border-t border-app-border px-4 py-4">
+    <div className={compact ? '' : 'border-t border-app-border px-4 py-4'}>
       {displayError ? (
         <p className="mb-2 text-xs text-accent-soft" role="alert">
           {displayError}
         </p>
+      ) : null}
+
+      {pendingAttachments.length > 0 ? (
+        <div className="mb-2 flex flex-wrap items-start gap-3">
+          {pendingAttachments.map((attachment, index) => (
+            <div key={index} className="flex items-start gap-3 rounded-xl border border-app-border bg-app-surface-input px-3 py-2 w-full sm:w-auto min-w-[200px]">
+              {attachment.isImage ? (
+                <img
+                  src={attachment.previewUrl}
+                  alt={attachment.file.name}
+                  className="h-20 w-20 shrink-0 rounded-lg border border-app-border object-cover"
+                />
+              ) : attachment.isVideo ? (
+                <video src={attachment.previewUrl} className="h-20 w-20 shrink-0 rounded-lg border border-app-border object-cover bg-app-chat-hover" />
+              ) : (
+                <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-lg border border-app-border bg-app-surface text-xs text-app-muted">
+                  File
+                </div>
+              )}
+              <div className="min-w-0 flex-1 pt-0.5">
+                <p className="truncate text-sm font-medium text-app-text">{attachment.file.name}</p>
+                {index === 0 && (
+                  <p className="mt-0.5 text-xs text-app-muted">
+                    {attachment.isImage || attachment.isVideo
+                      ? 'Add an optional caption, then press Send.'
+                      : 'Add an optional message, then press Send.'}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => removeAttachment(index)}
+                className="shrink-0 rounded-lg p-1 text-app-muted hover:bg-app-chat-hover hover:text-app-text"
+                aria-label="Remove attachment"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
       ) : null}
 
       {replyingToMessage ? (
@@ -553,14 +665,25 @@ export function MessageInput({
       ) : null}
 
       <div
-        className={`relative flex items-end gap-2 rounded-[12px] border border-app-border bg-app-surface-input px-3 py-3 ${
+        className={`relative flex flex-col rounded-[12px] border bg-app-surface-input transition-colors ${
           replyingToMessage ? 'rounded-t-none border-t-0' : ''
+        } ${
+          displayError ? 'border-accent' : 'border-app-border'
         }`}
       >
         <input
           ref={fileInputRef}
           type="file"
           className="hidden"
+          multiple
+          onChange={handleFileSelected}
+        />
+        <input
+          ref={imageInputRef}
+          type="file"
+          accept="image/*,video/*"
+          className="hidden"
+          multiple
           onChange={handleFileSelected}
         />
         <input
@@ -578,295 +701,310 @@ export function MessageInput({
           initialTab={pickerTab}
         />
 
-        <div className="flex shrink-0 items-center gap-1 pb-0.5">
-          <button
-            type="button"
-            disabled={fileDisabled}
-            aria-label="Attach file"
-            title="Attach file"
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text disabled:cursor-not-allowed disabled:opacity-50"
-            onClick={() => fileInputRef.current?.click()}
-          >
-            <FiPaperclip className="h-[18px] w-[18px]" />
-          </button>
-          <button
-            type="button"
-            disabled={mediaDisabled}
-            aria-label="Send a GIF"
-            title="GIF"
-            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-              pickerOpen && pickerTab === 'gif'
-                ? 'bg-accent/15 text-accent-soft'
-                : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
-            } disabled:cursor-not-allowed disabled:opacity-50`}
-            onClick={() => openPicker('gif')}
-          >
-            <FiImage className="h-[18px] w-[18px]" />
-          </button>
-          <button
-            type="button"
-            disabled={mediaDisabled}
-            aria-label="Send a sticker"
-            title="Sticker"
-            className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-              pickerOpen && pickerTab === 'sticker'
-                ? 'bg-accent/15 text-accent-soft'
-                : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
-            } disabled:cursor-not-allowed disabled:opacity-50`}
-            onClick={() => openPicker('sticker')}
-          >
-            <FiSmile className="h-[18px] w-[18px]" />
-          </button>
+        <div className={`flex items-end gap-1 ${compact ? 'px-1 py-1' : 'px-2 py-2'}`}>
+          <div className="flex shrink-0 items-center gap-0.5 self-end overflow-x-auto pb-0.5">
+              <button
+                type="button"
+                disabled={fileDisabled}
+                aria-label="Attach file"
+                title="Attach file"
+                className={iconButtonClass}
+                onClick={() => fileInputRef.current?.click()}
+              >
+                <FiPaperclip className="h-[18px] w-[18px]" />
+              </button>
+              <button
+                type="button"
+                disabled={fileDisabled}
+                aria-label="Attach image"
+                title="Attach image"
+                className={iconButtonClass}
+                onClick={() => imageInputRef.current?.click()}
+              >
+                <FiImage className="h-[18px] w-[18px]" />
+              </button>
+              <button
+                type="button"
+                disabled={mediaDisabled}
+                aria-label="Send a GIF or sticker"
+                title="GIFs & stickers"
+                className={`${iconButtonClass} ${
+                  pickerOpen ? 'bg-accent/15 text-accent-soft' : ''
+                }`}
+                onClick={() => openPicker('gif')}
+              >
+                <FiSmile className="h-[18px] w-[18px]" />
+              </button>
 
-          <div className="relative">
-            <button
-              type="button"
-              disabled={aiDisabled}
-              aria-label="Flex AI"
-              title="Flex AI"
-              aria-expanded={aiMenuOpen}
-              className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                aiMenuOpen
-                  ? 'bg-accent/15 text-accent-soft'
-                  : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
-              } disabled:cursor-not-allowed disabled:opacity-50`}
-              onClick={() => {
-                if (onOpenFlexAi) {
-                  onOpenFlexAi();
+              <div className="relative">
+                <button
+                  type="button"
+                  disabled={aiDisabled}
+                  aria-label="Flex AI"
+                  title="Flex AI"
+                  aria-expanded={aiMenuOpen}
+                  className={`${iconButtonClass} ${
+                    aiMenuOpen
+                      ? 'bg-accent/15 text-accent-soft'
+                      : ''
+                  }`}
+                  onClick={() => {
+                    if (onOpenFlexAi) {
+                      onOpenFlexAi();
+                      return;
+                    }
+
+                    setAiMenuOpen((open) => !open);
+                  }}
+                >
+                  <FiZap className="h-[18px] w-[18px]" />
+                </button>
+
+                {aiMenuOpen ? (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="Close AI menu"
+                      className="fixed inset-0 z-10 cursor-default"
+                      onClick={() => setAiMenuOpen(false)}
+                    />
+                    <div className="absolute bottom-full left-0 z-20 mb-2 w-52 overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-lg">
+                      <button
+                        type="button"
+                        disabled={!value.trim()}
+                        className="block w-full px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => void handleAiEnhance()}
+                      >
+                        Enhance message
+                      </button>
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
+                        onClick={() => void handleAiGenerate()}
+                      >
+                        Generate message
+                      </button>
+                      <button
+                        type="button"
+                        className="block w-full px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
+                        onClick={() => void handleFlexCommand()}
+                      >
+                        Flex command
+                      </button>
+                      <button
+                        type="button"
+                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
+                        onClick={() => {
+                          setAiMenuOpen(false);
+                          audioInputRef.current?.click();
+                        }}
+                      >
+                        <FiMic className="h-4 w-4" />
+                        Transcribe audio
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+
+              <div className="relative">
+                <button
+                  type="button"
+                  disabled={disabled || isSending || !conversationId}
+                  aria-label="More message actions"
+                  title="More actions"
+                  aria-expanded={actionsMenuOpen}
+                  className={`${iconButtonClass} ${
+                    actionsMenuOpen
+                      ? 'bg-accent/15 text-accent-soft'
+                      : ''
+                  }`}
+                  onClick={() => setActionsMenuOpen((open) => !open)}
+                >
+                  <FiPlus className="h-[18px] w-[18px]" />
+                </button>
+
+                {actionsMenuOpen ? (
+                  <>
+                    <button
+                      type="button"
+                      aria-label="Close actions menu"
+                      className="fixed inset-0 z-10 cursor-default"
+                      onClick={() => setActionsMenuOpen(false)}
+                    />
+                    <div className="absolute bottom-full left-0 z-20 mb-2 w-64 overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-lg">
+                      <button
+                        type="button"
+                        disabled={disabled || isSending || !conversationId}
+                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => {
+                          setActionsMenuOpen(false);
+                          fileInputRef.current?.click();
+                        }}
+                      >
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
+                          <FiLink className="h-4 w-4" />
+                        </span>
+                        <span>
+                          <span className="block font-medium">Attach a file</span>
+                          <span className="text-xs text-app-muted">Upload from your computer</span>
+                        </span>
+                      </button>
+                      {!compact ? (
+                        <>
+                      <button
+                        type="button"
+                        disabled={disabled || isSending || !conversationId}
+                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => {
+                          setActionsMenuOpen(false);
+                          setPollOpen(true);
+                        }}
+                      >
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
+                          <FiBarChart2 className="h-4 w-4" />
+                        </span>
+                        <span>
+                          <span className="block font-medium">Poll</span>
+                          <span className="text-xs text-app-muted">Ask a question with options</span>
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        disabled={disabled || isSending || !conversationId}
+                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => {
+                          setActionsMenuOpen(false);
+                          setScheduleOpen(true);
+                        }}
+                      >
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
+                          <FiClock className="h-4 w-4" />
+                        </span>
+                        <span>
+                          <span className="block font-medium">Schedule message</span>
+                          <span className="text-xs text-app-muted">Send later at a set time</span>
+                        </span>
+                      </button>
+                        </>
+                      ) : null}
+                      <button
+                        type="button"
+                        disabled={aiDisabled}
+                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
+                        onClick={() => {
+                          setActionsMenuOpen(false);
+                          audioInputRef.current?.click();
+                        }}
+                      >
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
+                          <FiMic className="h-4 w-4" />
+                        </span>
+                        <span>
+                          <span className="block font-medium">Voice typing</span>
+                          <span className="text-xs text-app-muted">Transcribe audio to text</span>
+                        </span>
+                      </button>
+                    </div>
+                  </>
+                ) : null}
+              </div>
+          </div>
+          <textarea
+            ref={textareaRef}
+            value={value}
+            rows={1}
+            disabled={disabled || isSending || aiBusy}
+            placeholder={
+              aiBusy
+                ? 'AI is working…'
+                : pendingAttachments.length > 0
+                  ? 'Add a caption (optional)'
+                  : 'Type a message'
+            }
+            aria-invalid={Boolean(displayError)}
+            className={`max-h-32 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-snug text-app-text outline-none placeholder:text-app-placeholder disabled:opacity-60 ${
+              compact ? 'min-h-[32px]' : 'min-h-[36px]'
+            }`}
+            onChange={(event) => {
+              handleChange(event.target.value);
+              updateMentionState(event.target.value, event.target.selectionStart ?? event.target.value.length);
+            }}
+            onKeyDown={(event) => {
+              if (mentionQuery !== null && mentionSuggestions.length > 0 && !mentionLoading) {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault();
+                  setMentionHighlightIndex((current) =>
+                    Math.min(current + 1, mentionSuggestions.length - 1),
+                  );
                   return;
                 }
 
-                setAiMenuOpen((open) => !open);
-              }}
-            >
-              <FiZap className="h-[18px] w-[18px]" />
-            </button>
-
-            {aiMenuOpen ? (
-              <>
-                <button
-                  type="button"
-                  aria-label="Close AI menu"
-                  className="fixed inset-0 z-10 cursor-default"
-                  onClick={() => setAiMenuOpen(false)}
-                />
-                <div className="absolute bottom-full left-0 z-20 mb-2 w-52 overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-lg">
-                  <button
-                    type="button"
-                    disabled={!value.trim()}
-                    className="block w-full px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() => void handleAiEnhance()}
-                  >
-                    Enhance message
-                  </button>
-                  <button
-                    type="button"
-                    className="block w-full px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
-                    onClick={() => void handleAiGenerate()}
-                  >
-                    Generate message
-                  </button>
-                  <button
-                    type="button"
-                    className="block w-full px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
-                    onClick={() => void handleFlexCommand()}
-                  >
-                    Flex command
-                  </button>
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
-                    onClick={() => {
-                      setAiMenuOpen(false);
-                      audioInputRef.current?.click();
-                    }}
-                  >
-                    <FiMic className="h-4 w-4" />
-                    Transcribe audio
-                  </button>
-                </div>
-              </>
-            ) : null}
-          </div>
-
-          <div className="relative">
-            <button
-              type="button"
-              disabled={disabled || isSending || !conversationId}
-              aria-label="More message actions"
-              title="More actions"
-              aria-expanded={actionsMenuOpen}
-              className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
-                actionsMenuOpen
-                  ? 'bg-accent/15 text-accent-soft'
-                  : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
-              } disabled:cursor-not-allowed disabled:opacity-50`}
-              onClick={() => setActionsMenuOpen((open) => !open)}
-            >
-              <FiPlus className="h-[18px] w-[18px]" />
-            </button>
-
-            {actionsMenuOpen ? (
-              <>
-                <button
-                  type="button"
-                  aria-label="Close actions menu"
-                  className="fixed inset-0 z-10 cursor-default"
-                  onClick={() => setActionsMenuOpen(false)}
-                />
-                <div className="absolute bottom-full left-0 z-20 mb-2 w-64 overflow-hidden rounded-xl border border-app-border bg-app-surface p-2 shadow-lg">
-                  <button
-                    type="button"
-                    disabled={fileDisabled}
-                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() => {
-                      setActionsMenuOpen(false);
-                      fileInputRef.current?.click();
-                    }}
-                  >
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
-                      <FiLink className="h-4 w-4" />
-                    </span>
-                    <span>
-                      <span className="block font-medium">Attach a file</span>
-                      <span className="text-xs text-app-muted">Upload from your device</span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={disabled || isSending || !conversationId}
-                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() => {
-                      setActionsMenuOpen(false);
-                      setPollOpen(true);
-                    }}
-                  >
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
-                      <FiBarChart2 className="h-4 w-4" />
-                    </span>
-                    <span>
-                      <span className="block font-medium">Poll</span>
-                      <span className="text-xs text-app-muted">Ask a question with options</span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={disabled || isSending || !conversationId}
-                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() => {
-                      setActionsMenuOpen(false);
-                      setScheduleOpen(true);
-                    }}
-                  >
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
-                      <FiClock className="h-4 w-4" />
-                    </span>
-                    <span>
-                      <span className="block font-medium">Schedule message</span>
-                      <span className="text-xs text-app-muted">Send later at a set time</span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    disabled={aiDisabled}
-                    className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
-                    onClick={() => {
-                      setActionsMenuOpen(false);
-                      audioInputRef.current?.click();
-                    }}
-                  >
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
-                      <FiMic className="h-4 w-4" />
-                    </span>
-                    <span>
-                      <span className="block font-medium">Voice typing</span>
-                      <span className="text-xs text-app-muted">Transcribe audio to text</span>
-                    </span>
-                  </button>
-                </div>
-              </>
-            ) : null}
-          </div>
-        </div>
-
-        <div className="relative min-w-0 flex-1">
-        <textarea
-          ref={textareaRef}
-          value={value}
-          rows={1}
-          disabled={disabled || isSending || aiBusy}
-          placeholder={aiBusy ? 'AI is working…' : 'Type a message'}
-          aria-invalid={Boolean(displayError)}
-          className="max-h-32 min-h-[24px] w-full resize-none bg-transparent text-sm text-app-text outline-none placeholder:text-app-placeholder disabled:opacity-60"
-          onChange={(event) => {
-            handleChange(event.target.value);
-            updateMentionState(event.target.value, event.target.selectionStart ?? event.target.value.length);
-          }}
-          onKeyDown={(event) => {
-            if (mentionQuery !== null && mentionSuggestions.length > 0 && !mentionLoading) {
-              if (event.key === 'ArrowDown') {
-                event.preventDefault();
-                setMentionHighlightIndex((current) =>
-                  Math.min(current + 1, mentionSuggestions.length - 1),
-                );
-                return;
-              }
-
-              if (event.key === 'ArrowUp') {
-                event.preventDefault();
-                setMentionHighlightIndex((current) => Math.max(current - 1, 0));
-                return;
-              }
-
-              if (event.key === 'Escape') {
-                event.preventDefault();
-                setMentionQuery(null);
-                mentionAnchorRef.current = null;
-                return;
-              }
-
-              if (event.key === 'Enter' || event.key === 'Tab') {
-                event.preventDefault();
-                const selected =
-                  mentionSuggestions[mentionHighlightIndex] ?? mentionSuggestions[0];
-
-                if (selected) {
-                  insertMention(selected.username);
+                if (event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  setMentionHighlightIndex((current) => Math.max(current - 1, 0));
+                  return;
                 }
 
-                return;
-              }
-            }
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setMentionQuery(null);
+                  mentionAnchorRef.current = null;
+                  return;
+                }
 
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
+                if (event.key === 'Enter' || event.key === 'Tab') {
+                  event.preventDefault();
+                  const selected =
+                    mentionSuggestions[mentionHighlightIndex] ?? mentionSuggestions[0];
 
-              if (!disabled && !isSending && !aiBusy && value.trim()) {
-                onSend();
+                  if (selected) {
+                    insertMention(selected.username);
+                  }
+
+                  return;
+                }
               }
-            }
-          }}
-          onKeyUp={(event) => {
-            updateMentionState(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length);
-          }}
-          onClick={(event) => {
-            const target = event.currentTarget;
-            updateMentionState(target.value, target.selectionStart ?? target.value.length);
-          }}
-        />
+
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+
+                if (!disabled && !isSending && !aiBusy && (value.trim() || pendingAttachments.length > 0)) {
+                  handleSendAction();
+                }
+              }
+            }}
+            onKeyUp={(event) => {
+              updateMentionState(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+            }}
+            onClick={(event) => {
+              const target = event.currentTarget;
+              updateMentionState(target.value, target.selectionStart ?? target.value.length);
+            }}
+          />
+          <button
+            type="button"
+            disabled={disabled || isSending || aiBusy || (!value.trim() && pendingAttachments.length === 0)}
+            aria-label={isSending ? 'Sending message' : aiBusy ? 'Working' : 'Send message'}
+            className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center self-end rounded-lg bg-accent text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={handleSendAction}
+          >
+            <FiSend className="text-base" />
+          </button>
         </div>
+      </div>
 
-        {mentionQuery !== null && mentionMenuStyle
-          ? createPortal(
-              <div
-                className="fixed z-[9999] max-h-56 overflow-y-auto rounded-xl border border-app-border bg-app-surface shadow-xl"
-                style={{
-                  left: mentionMenuStyle.left,
-                  top: mentionMenuStyle.top,
-                  width: mentionMenuStyle.width,
-                  transform: 'translateY(-100%)',
-                }}
-              >
+      {mentionQuery !== null && mentionMenuStyle
+        ? createPortal(
+            <div
+              className="fixed z-[9999] max-h-56 overflow-y-auto rounded-xl border border-app-border bg-app-surface shadow-xl"
+              style={{
+                left: mentionMenuStyle.left,
+                top: mentionMenuStyle.top,
+                width: mentionMenuStyle.width,
+                transform: 'translateY(-100%)',
+              }}
+            >
                 {mentionLoading ? (
                   <p className="px-3 py-2 text-sm text-app-muted">Searching people...</p>
                 ) : mentionSuggestions.length === 0 ? (
@@ -896,16 +1034,6 @@ export function MessageInput({
               document.body,
             )
           : null}
-        <button
-          type="button"
-          disabled={disabled || isSending || aiBusy || !value.trim()}
-          aria-label={isSending ? 'Sending message' : aiBusy ? 'Working' : 'Send message'}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
-          onClick={onSend}
-        >
-          <FiSend className="text-base" />
-        </button>
-      </div>
 
       {pollOpen ? (
         <>

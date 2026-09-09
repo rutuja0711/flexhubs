@@ -77,6 +77,28 @@ export async function loadConversationBootstrap(
   return withToken((token) => window.electronAPI.getConversationBootstrap(token, conversationId));
 }
 
+export async function hydrateThreadReplyRegistry(
+  conversationId: string,
+  messages: import('../shared/messages').MessageItem[],
+): Promise<void> {
+  const { registerThreadReplyMessages } = await import('../shared/messages');
+  const roots = messages.filter((message) => (message.threadReplyCount ?? 0) > 0);
+
+  if (roots.length === 0) {
+    return;
+  }
+
+  const results = await Promise.all(
+    roots.map((root) => loadMessageThread(conversationId, root.id)),
+  );
+
+  results.forEach((result, index) => {
+    if (result.ok) {
+      registerThreadReplyMessages(result.data, roots[index].id);
+    }
+  });
+}
+
 export async function loadMessageThread(
   conversationId: string,
   messageId: string,
@@ -379,8 +401,9 @@ export async function sendChatFileMessage(
   mimeType: string,
   replyToId?: string,
   threadRootId?: string,
+  caption?: string,
 ): Promise<ApiResult<import('../shared/messages').MessageItem>> {
-  const mediaPayload = buildFileMessagePayload(url, fileName, mimeType);
+  const mediaPayload = buildFileMessagePayload(url, fileName, mimeType, caption);
 
   return sendChatMessage(conversationId, '', replyToId, threadRootId, JSON.stringify(mediaPayload));
 }

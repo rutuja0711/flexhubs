@@ -28,12 +28,27 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install WiX Toolset (Windows MSI)
+        if: matrix.os == 'windows-latest'
+        run: choco install wixtoolset --version=3.14.0 -y
+
+      - name: Add WiX to PATH
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: Add-Content -Path $env:GITHUB_PATH -Value 'C:\Program Files (x86)\WiX Toolset v3.14\bin'
+
       - name: Build Mac universal app
         if: matrix.os == 'macos-latest'
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: npm run make:mac
 
       - name: Build Windows x64 installer
         if: matrix.os == 'windows-latest'
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: npm run make:win
 
       - name: Upload Mac zip
@@ -44,10 +59,20 @@ jobs:
           path: out/make/zip/darwin/**/*.zip
           if-no-files-found: error
 
+      - name: Rename Windows MSI for download
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $msi = Get-ChildItem -Path out/make/wix/x64 -Filter *.msi | Select-Object -First 1
+          if (-not $msi) { throw "MSI output not found under out/make/wix/x64" }
+          Copy-Item -Path $msi.FullName -Destination out/FlexHubs-Desktop-Setup.msi -Force
+
       - name: Upload Windows installer
         if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: FlexHubs-Desktop-windows-x64
-          path: out/make/squirrel.windows/**/*
+          path: |
+            out/FlexHubs-Desktop-Setup.msi
+            out/make/wix/x64/*.msi
           if-no-files-found: error

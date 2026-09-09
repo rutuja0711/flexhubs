@@ -3,6 +3,7 @@ import type { NotificationItem, PendingFriendItem } from '../../shared/messages'
 import { isNotificationClickable } from '../../shared/messages';
 import type { ConversationItem } from '../../shared/chat';
 import { validateSearchQuery } from '../../shared/chat';
+import { formatNotificationDisplayBody } from '../../shared/calls';
 import { formatConversationTimestamp } from './format';
 import { SearchIcon } from './ChatIcons';
 
@@ -191,7 +192,7 @@ export function ActivityView({
     const notificationItems: ActivityListItem[] = notifications.map((item) => ({
       id: item.id,
       title: item.title,
-      body: item.body,
+      body: formatNotificationDisplayBody(item.body),
       createdAt: item.createdAt,
       kind: classifyNotification(item),
       notification: item,

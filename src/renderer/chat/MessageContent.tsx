@@ -1,6 +1,8 @@
 import type { ReactNode } from 'react';
 import type { MessageItem } from '../../shared/messages';
 import { DELETED_MESSAGE_TEXT, isCallLogMessage, isDeletedMessage, isPollMessage, parseCallLogContent } from '../../shared/messages';
+import { RemoteImage } from '../RemoteImage';
+import { openMediaPreview } from './MediaPreviewHost';
 import { PollMessage } from './PollMessage';
 import { CallMessage } from './CallMessage';
 
@@ -113,24 +115,59 @@ export function MessageContent({
 
   return (
     <div className="space-y-2">
-      {media.map((item) => (
-        <div key={item.url} className="overflow-hidden rounded-xl">
-          <img
-            src={item.kind === 'gif' ? item.url : item.previewUrl ?? item.url}
-            alt={item.name ?? mediaLabel(item.kind)}
-            loading="lazy"
-            className={`max-h-72 max-w-full bg-transparent object-contain ${
-              item.kind === 'sticker' ? 'max-h-40' : 'rounded-xl'
-            }`}
-            onError={(event) => {
-              const target = event.currentTarget;
-              if (item.previewUrl && target.src !== item.url) {
-                target.src = item.url;
-              }
-            }}
-          />
-        </div>
-      ))}
+      {media.map((item) => {
+        const isVideo =
+          item.kind === 'video' ||
+          item.name?.toLowerCase().endsWith('.mp4') ||
+          item.url?.toLowerCase().endsWith('.mp4');
+        const isPreviewable =
+          isVideo || item.kind === 'image' || item.kind === 'file';
+        const previewUrl = item.previewUrl ?? item.url;
+
+        return (
+          <div key={item.url} className="overflow-hidden rounded-xl">
+            {isPreviewable ? (
+              <button
+                type="button"
+                className="block max-w-full cursor-zoom-in text-left"
+                onClick={() =>
+                  openMediaPreview({
+                    url: item.url,
+                    name: item.name,
+                    kind: isVideo ? 'video' : 'image',
+                  })
+                }
+              >
+                {isVideo ? (
+                  <video
+                    src={previewUrl}
+                    muted
+                    playsInline
+                    preload="metadata"
+                    className="pointer-events-none max-h-72 max-w-full rounded-xl bg-app-chat-hover object-contain"
+                  />
+                ) : (
+                  <RemoteImage
+                    src={item.kind === 'gif' ? item.url : previewUrl}
+                    alt={item.name ?? mediaLabel(item.kind)}
+                    loading="lazy"
+                    className="max-h-72 max-w-full rounded-xl bg-transparent object-contain"
+                  />
+                )}
+              </button>
+            ) : (
+              <RemoteImage
+                src={item.kind === 'gif' ? item.url : previewUrl}
+                alt={item.name ?? mediaLabel(item.kind)}
+                loading="lazy"
+                className={`max-h-72 max-w-full bg-transparent object-contain ${
+                  item.kind === 'sticker' ? 'max-h-40' : 'rounded-xl'
+                }`}
+              />
+            )}
+          </div>
+        );
+      })}
 
       {visibleText ? (
         compact ? (
@@ -181,7 +218,7 @@ export function MessageReplyPreview({
   return (
     <div className={`flex min-w-0 items-center gap-2 ${className}`}>
       {primaryMedia ? (
-        <img
+        <RemoteImage
           src={
             primaryMedia.kind === 'gif'
               ? primaryMedia.url
@@ -190,12 +227,6 @@ export function MessageReplyPreview({
           alt={primaryMedia.name ?? mediaLabel(primaryMedia.kind)}
           loading="lazy"
           className="h-10 w-10 shrink-0 rounded-md bg-app-chat-hover object-contain"
-          onError={(event) => {
-            const target = event.currentTarget;
-            if (primaryMedia.previewUrl && target.src !== primaryMedia.url) {
-              target.src = primaryMedia.url;
-            }
-          }}
         />
       ) : null}
       {visibleText ? (

@@ -4,13 +4,23 @@ import LoginPage from './LoginPage';
 import { clearAuth, getCurrentUser, getStoredToken, performLogout } from './authApi';
 
 import RegisterWorkspacePage from './RegisterWorkspacePage';
+import PersonalRegisterPage from './PersonalRegisterPage';
 import {
   ForgotPasswordPage,
   InviteRegisterPage,
   RegisterPage,
 } from './AuthFlowPages';
 
-type Screen = 'checking' | 'login' | 'chat' | 'register' | 'signup' | 'forgot' | 'reset' | 'invite';
+type Screen =
+  | 'checking'
+  | 'login'
+  | 'chat'
+  | 'register'
+  | 'personal-register'
+  | 'signup'
+  | 'forgot'
+  | 'reset'
+  | 'invite';
 
 function App() {
   const [screen, setScreen] = useState<Screen>('checking');
@@ -55,7 +65,7 @@ function App() {
         return;
       }
 
-      if (!result.ok) {
+      if (!result.ok && result.status === 401) {
         clearAuth();
         setScreen('login');
         return;
@@ -64,15 +74,27 @@ function App() {
       setScreen('chat');
     });
 
+    const timeout = window.setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
+
+      setScreen('chat');
+    }, 20000);
+
     return () => {
       cancelled = true;
+      window.clearTimeout(timeout);
     };
   }, []);
 
   if (screen === 'checking') {
     return (
-      <div className="flex min-h-full items-center justify-center bg-app-bg text-app-muted">
-        Opening your workspace...
+      <div className="flex min-h-full flex-col items-center justify-center gap-3 bg-app-bg px-6 text-center text-app-muted">
+        <p className="text-sm">Opening your workspace...</p>
+        <p className="max-w-sm text-xs text-app-muted/80">
+          First launch can take a moment. If this stays here, check your internet connection and sign in again.
+        </p>
       </div>
     );
   }
@@ -81,6 +103,7 @@ function App() {
     return (
       <LoginPage
         onLoggedIn={() => setScreen('chat')}
+        onCreatePersonalAccount={() => setScreen('personal-register')}
         onCreateWorkspace={() => setScreen('register')}
         onForgotPassword={() => setScreen('forgot')}
       />
@@ -91,6 +114,7 @@ function App() {
     return (
       <RegisterPage
         onBack={() => setScreen('login')}
+        onCreatePersonalAccount={() => setScreen('personal-register')}
         onCreateWorkspace={() => setScreen('register')}
       />
     );
@@ -120,6 +144,15 @@ function App() {
     return (
       <InviteRegisterPage
         inviteToken={inviteToken}
+        onBack={() => setScreen('login')}
+        onRegistered={() => setScreen('chat')}
+      />
+    );
+  }
+
+  if (screen === 'personal-register') {
+    return (
+      <PersonalRegisterPage
         onBack={() => setScreen('login')}
         onRegistered={() => setScreen('chat')}
       />
