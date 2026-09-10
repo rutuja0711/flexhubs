@@ -82,6 +82,7 @@ export async function hydrateThreadReplyRegistry(
   messages: import('../shared/messages').MessageItem[],
 ): Promise<void> {
   const { registerThreadReplyMessages } = await import('../shared/messages');
+  const { mergeThreadReplies } = await import('./threadRepliesStore');
   const roots = messages.filter((message) => (message.threadReplyCount ?? 0) > 0);
 
   if (roots.length === 0) {
@@ -95,6 +96,7 @@ export async function hydrateThreadReplyRegistry(
   results.forEach((result, index) => {
     if (result.ok) {
       registerThreadReplyMessages(result.data, roots[index].id);
+      mergeThreadReplies(conversationId, roots[index].id, result.data);
     }
   });
 }

@@ -19,11 +19,23 @@ export async function fetchCallToken(
   token: string,
   body: CallTokenBody,
 ): Promise<ApiResult<CallTokenResult>> {
+  const requestBody: CallTokenBody = {
+    video: body.video,
+  };
+
+  if (body.conversationId?.trim()) {
+    requestBody.conversationId = body.conversationId.trim();
+  } else if (body.roomName?.trim()) {
+    requestBody.roomName = body.roomName.trim();
+  }
+
+  console.log('[Call Token API] request:', requestBody);
+
   const result = await apiPost<unknown>(
     `${API_BASE_URL}/calls/token`,
     token,
     'Call Token API',
-    body,
+    requestBody,
   );
 
   if (!result.ok) {

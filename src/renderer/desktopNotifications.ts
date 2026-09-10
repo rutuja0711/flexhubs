@@ -263,12 +263,13 @@ export async function showIncomingMessageDesktopNotification(
 export async function showIncomingCallDesktopNotification(
   callerName: string,
   video: boolean,
+  callId: string,
   onClick: () => void,
 ): Promise<void> {
   const title = video ? 'Incoming video call' : 'Incoming voice call';
   const body = `${callerName} is calling you`;
 
-  await openDesktopNotification(title, body, `call-${callerName}-${Date.now()}`, onClick);
+  await openDesktopNotification(title, body, `call-${callId}`, onClick);
 }
 
 export async function showGroupMeetingDesktopNotification(

@@ -81,12 +81,7 @@ export function loadRealtimeConfig(): Promise<ApiResult<RealtimeClientConfig>> {
 
       return {
         ok: false,
-        error:
-          apiResult.ok === false
-            ? apiResult.error
-            : packagedBuild
-              ? 'Calls are not configured in this desktop build. Rebuild the app with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY (GitHub Actions secrets), or use flexhubs.in in the browser for calls.'
-              : 'Calls are not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env, then restart.',
+        error: 'Calls are not available right now. Please try again later.',
       };
     }
 
@@ -108,7 +103,7 @@ export function loadRealtimeConfig(): Promise<ApiResult<RealtimeClientConfig>> {
     if (!envConfig) {
       return {
         ok: false,
-        error: 'Call signaling config is incomplete.',
+        error: 'Calls are not available right now. Please try again later.',
       };
     }
 
@@ -132,17 +127,9 @@ export function ensureCallMediaPermissions(
   return probeCallMediaAccess(requestCamera);
 }
 
-async function readMediaAppName(): Promise<string> {
-  try {
-    return (await window.electronAPI?.getAppName?.()) ?? 'FlexHubs Desktop';
-  } catch {
-    return 'FlexHubs Desktop';
-  }
-}
-
 async function probeCallMediaAccess(requestCamera: boolean): Promise<ApiResult<{ ok: true }>> {
   if (!navigator.mediaDevices?.getUserMedia) {
-    return { ok: false, error: 'This device does not support microphone access for calls.' };
+    return { ok: false, error: 'This device does not support calls.' };
   }
 
   if (window.electronAPI?.ensureCallMediaPermissions) {
@@ -157,7 +144,6 @@ async function probeCallMediaAccess(requestCamera: boolean): Promise<ApiResult<{
     stream.getTracks().forEach((track) => track.stop());
     return { ok: true, data: { ok: true } };
   } catch (error) {
-    const appName = await readMediaAppName();
     const message = error instanceof Error ? error.message : String(error);
     const normalized = message.toLowerCase();
 
@@ -168,13 +154,13 @@ async function probeCallMediaAccess(requestCamera: boolean): Promise<ApiResult<{
     ) {
       return {
         ok: false,
-        error: `Microphone access was denied. Open System Settings → Privacy & Security → Microphone and enable ${appName}, then restart the app and try again.`,
+        error: 'Microphone access was denied. Allow access in Settings and try again.',
       };
     }
 
     return {
       ok: false,
-      error: message || 'Could not access your microphone.',
+      error: 'Could not access your microphone. Please try again.',
     };
   }
 }

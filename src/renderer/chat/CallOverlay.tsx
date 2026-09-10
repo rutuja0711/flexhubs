@@ -20,6 +20,7 @@ import { focusCallWindow, setCallWindowPresentation } from '../callWindowApi';
 type CallOverlayProps = {
   session: CallSession;
   busy: boolean;
+  callNotice?: string;
   room: Room | null;
   remoteParticipants: RemoteParticipant[];
   mediasoupPeers?: MediasoupRemotePeer[];
@@ -54,6 +55,7 @@ function remoteHasVideo(participants: RemoteParticipant[]): boolean {
 export function CallOverlay({
   session,
   busy,
+  callNotice = '',
   room,
   remoteParticipants,
   mediasoupPeers = [],
@@ -220,6 +222,7 @@ export function CallOverlay({
         <CallRingingView
           session={session}
           busy={busy}
+          notice={callNotice}
           onAccept={onAccept}
           onReject={onReject}
           onCancel={onCancel}
@@ -243,22 +246,48 @@ export function CallOverlay({
         onApprove={onApproveJoinRequest}
         onDeny={onDenyJoinRequest}
       />
-      <MeetingRoomView
-        session={session}
-        room={room}
-        remoteParticipants={remoteParticipants}
-        micEnabled={micEnabled}
-        cameraEnabled={cameraEnabled}
-        screenShareEnabled={screenShareEnabled}
-        canModerate={session.isInitiator}
-        embedded
-        onToggleMic={onToggleMic}
-        onToggleCamera={onToggleCamera}
-        onToggleScreenShare={onToggleScreenShare}
-        onMuteParticipant={onMuteParticipant}
-        onRemoveParticipant={onRemoveParticipant}
-        onEnd={onEnd}
-      />
+      {usesMediasoup ? (
+        showVideoLayout ? (
+          <div className="relative flex h-full min-h-[280px] flex-col bg-[#0b0c10]">
+            <div className="border-b border-white/10 px-4 py-3">
+              <p className="truncate text-sm font-semibold text-white">
+                {session.peerLabel || 'Meeting'}
+              </p>
+              <p className="text-xs text-white/55">{statusLabel}</p>
+            </div>
+            <div className="relative min-h-0 flex-1">
+              <MediasoupMediaPlayback
+                localVideoStream={mediasoupLocalVideo}
+                remotePeers={mediasoupPeers}
+              />
+            </div>
+          </div>
+        ) : (
+          <VoiceCallView
+            session={session}
+            durationLabel={durationLabel}
+            micEnabled={micEnabled}
+            statusLabel={statusLabel}
+          />
+        )
+      ) : (
+        <MeetingRoomView
+          session={session}
+          room={room}
+          remoteParticipants={remoteParticipants}
+          micEnabled={micEnabled}
+          cameraEnabled={cameraEnabled}
+          screenShareEnabled={screenShareEnabled}
+          canModerate={session.isInitiator}
+          embedded
+          onToggleMic={onToggleMic}
+          onToggleCamera={onToggleCamera}
+          onToggleScreenShare={onToggleScreenShare}
+          onMuteParticipant={onMuteParticipant}
+          onRemoveParticipant={onRemoveParticipant}
+          onEnd={onEnd}
+        />
+      )}
     </>
   ) : showVideoLayout && usesMediasoup ? (
     <div className="relative flex h-full min-h-[280px] flex-col bg-[#0b0c10]">

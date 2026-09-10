@@ -3,6 +3,12 @@ import { FiX } from 'react-icons/fi';
 import type { MessageItem } from '../../shared/messages';
 import { registerThreadReplyMessages } from '../../shared/messages';
 import { loadMessageThread } from '../chatApi';
+import {
+  appendThreadReply,
+  getThreadReplies,
+  mergeThreadReplies,
+  subscribeThreadReplies,
+} from '../threadRepliesStore';
 import { MessageContent } from './MessageContent';
 import { MessageInput } from './MessageInput';
 import { formatConversationTimestamp } from './format';
@@ -13,7 +19,10 @@ type ThreadSidebarProps = {
   rootMessage: MessageItem;
   currentUserId: string | null;
   onClose: () => void;
-  onSendThreadMessage: (content: string, threadRootId: string) => Promise<string | null>;
+  onSendThreadMessage: (
+    content: string,
+    threadRootId: string,
+  ) => Promise<{ ok: true; message: MessageItem } | { ok: false; error: string }>;
   onSendMedia?: (item: any, kind: 'gif' | 'sticker', replyToId?: string, threadRootId?: string) => void;
   onSendFile?: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
   onUnauthorized?: (status?: number) => boolean;
@@ -42,6 +51,13 @@ export function ThreadSidebar({
   const [isSending, setIsSending] = useState(false);
   const [draftError, setDraftError] = useState('');
 
+  const applyThreadMessages = (fetched: MessageItem[]) => {
+    registerThreadReplyMessages(fetched, rootMessage.id);
+    const merged = mergeThreadReplies(conversationId, rootMessage.id, fetched);
+    setMessages(merged);
+    onThreadMessagesRegistered?.();
+  };
+
   const refreshThread = async () => {
     const response = await loadMessageThread(conversationId, rootMessage.id);
 
@@ -50,14 +66,18 @@ export function ThreadSidebar({
       return false;
     }
 
-    registerThreadReplyMessages(response.data, rootMessage.id);
-    setMessages(response.data);
-    onThreadMessagesRegistered?.();
+    applyThreadMessages(response.data);
     return true;
   };
 
   useEffect(() => {
     let mounted = true;
+    const cached = getThreadReplies(conversationId, rootMessage.id);
+
+    if (cached.length > 0) {
+      setMessages(cached);
+      setLoading(false);
+    }
 
     async function fetchThread() {
       setLoading(true);
@@ -73,15 +93,22 @@ export function ThreadSidebar({
         return;
       }
 
-      registerThreadReplyMessages(response.data, rootMessage.id);
-      setMessages(response.data);
-      onThreadMessagesRegistered?.();
+      applyThreadMessages(response.data);
     }
 
     void fetchThread();
 
+    const unsubscribe = subscribeThreadReplies((key) => {
+      if (key !== `${conversationId}:${rootMessage.id}` || !mounted) {
+        return;
+      }
+
+      setMessages(getThreadReplies(conversationId, rootMessage.id));
+    });
+
     return () => {
       mounted = false;
+      unsubscribe();
     };
   }, [conversationId, rootMessage.id]);
 
@@ -91,10 +118,10 @@ export function ThreadSidebar({
     setIsSending(true);
     setDraftError('');
 
-    const err = await onSendThreadMessage(draft.trim(), rootMessage.id);
+    const result = await onSendThreadMessage(draft.trim(), rootMessage.id);
 
-    if (err) {
-      setDraftError(err);
+    if (!result.ok) {
+      setDraftError(result.error);
       setIsSending(false);
       return;
     }
@@ -102,7 +129,10 @@ export function ThreadSidebar({
     setDraft('');
     setIsSending(false);
     onThreadReplySent?.(rootMessage.id);
-    await refreshThread();
+    setMessages(appendThreadReply(conversationId, rootMessage.id, result.message));
+    window.setTimeout(() => {
+      void refreshThread();
+    }, 400);
   };
 
   const scheduleThreadRefresh = () => {

@@ -116,7 +116,10 @@ type MessageRowProps = {
   onSaveMessage: (messageId: string) => void;
   onUnsaveMessage: (messageId: string) => void;
   savedMessageIds: ReadonlySet<string>;
-  onSendThreadMessage?: (content: string, threadRootId: string) => Promise<string | null>;
+  onSendThreadMessage?: (
+    content: string,
+    threadRootId: string,
+  ) => Promise<{ ok: true; message: import('../../shared/messages').MessageItem } | { ok: false; error: string }>;
   onVotePoll?: (messageId: string, optionId: string) => void;
   threadsEnabled?: boolean;
 };
@@ -434,7 +437,10 @@ type MessageListProps = {
   onUnsaveMessage: (messageId: string) => void;
   savedMessageIds: ReadonlySet<string>;
   expandedThreadMessageId?: string | null;
-  onSendThreadMessage?: (content: string, threadRootId: string) => Promise<string | null>;
+  onSendThreadMessage?: (
+    content: string,
+    threadRootId: string,
+  ) => Promise<{ ok: true; message: import('../../shared/messages').MessageItem } | { ok: false; error: string }>;
   conversationId?: string;
   onVotePoll?: (messageId: string, optionId: string) => void;
   threadsEnabled?: boolean;

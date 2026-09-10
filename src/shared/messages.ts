@@ -1277,6 +1277,7 @@ export function normalizeMessage(record: Record<string, unknown>, index: number)
       readString(record.threadRootId) ??
       readString(record.threadRootMessageId) ??
       readString(record.threadParentId) ??
+      readString(record.parentMessageId) ??
       readString(record.parentThreadId) ??
       (() => {
         const threadRoot = asRecord(record.threadRoot);
@@ -1349,20 +1350,54 @@ export function normalizeBootstrap(payload: unknown): ConversationBootstrap {
   };
 }
 
+function extractThreadMessageItems(payload: unknown): unknown[] {
+  const direct = extractArray(payload, ['messages', 'items', 'replies', 'thread']);
+
+  if (direct.length > 0) {
+    return direct;
+  }
+
+  const record = asRecord(payload);
+
+  if (!record) {
+    return [];
+  }
+
+  const nestedData = asRecord(record.data);
+
+  if (nestedData) {
+    const nested = extractArray(nestedData, ['messages', 'items', 'replies', 'thread']);
+
+    if (nested.length > 0) {
+      return nested;
+    }
+  }
+
+  const nestedThread = asRecord(record.thread);
+
+  if (nestedThread) {
+    return extractArray(nestedThread, ['messages', 'items', 'replies']);
+  }
+
+  return [];
+}
+
 export function normalizeMessageThread(payload: unknown, rootMessageId?: string): MessageItem[] {
-  const items = extractArray(payload, ['messages', 'items', 'data', 'thread']);
+  const items = extractThreadMessageItems(payload);
+
   return enrichMessageReplies(
     items
       .map(asRecord)
       .filter((item): item is Record<string, unknown> => item !== null)
-      .map((item) => {
-        const message = normalizeMessage(item, 0);
+      .map((item, index) => {
+        const message = normalizeMessage(item, index);
         if (!rootMessageId || message.threadRootId) {
           return message;
         }
 
         return { ...message, threadRootId: rootMessageId };
-      }),
+      })
+      .filter((message) => !rootMessageId || message.id !== rootMessageId),
   );
 }
 

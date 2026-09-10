@@ -165,6 +165,7 @@ import {
   writeThreadCacheEntry,
   type ThreadCacheStore,
 } from './threadCache';
+import { appendThreadReply, clearThreadRepliesStore } from './threadRepliesStore';
 
 // Background refresh intervals (not initial load time).
 const UNREAD_POLL_MS = 120_000;
@@ -1988,6 +1989,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
 
         if (conversationId === activeConversationId) {
+          const incomingThreadRootId = resolveThreadRootId(message, userId);
+
+          if (incomingThreadRootId) {
+            appendThreadReply(conversationId, incomingThreadRootId, message);
+          }
+
           setMessages((current) => mergeIncomingMessage(current, message, userId));
 
           if (!message.isOwn && message.senderId !== userId) {
@@ -2561,6 +2568,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   useEffect(() => {
     clearThreadReplyRegistry();
+    clearThreadRepliesStore();
 
     if (!selectedId) {
       setMessages([]);
@@ -3058,6 +3066,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     if (threadRootId) {
       registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
+      appendThreadReply(
+        conversationId,
+        result.data.threadRootId ?? threadRootId,
+        result.data,
+      );
       setMessages((current) =>
         bumpThreadReplyCount(
           filterMainChatMessages(current),
@@ -3188,6 +3201,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     if (threadRootId) {
       registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
+      appendThreadReply(
+        conversationId,
+        result.data.threadRootId ?? threadRootId,
+        result.data,
+      );
       setMessages((current) =>
         bumpThreadReplyCount(
           filterMainChatMessages(current),
@@ -3869,6 +3887,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       <CallOverlay
         session={callManager.session}
         busy={callManager.busy}
+        callNotice={callManager.callNotice}
         room={callManager.room}
         remoteParticipants={callManager.remoteParticipants}
         mediasoupPeers={callManager.mediasoupPeers}

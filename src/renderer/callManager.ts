@@ -120,54 +120,52 @@ function shouldUseMeetingJoinRequest(error: string, status?: number): boolean {
   );
 }
 
-function formatCallApiError(error: string, status?: number): string {
-  const normalized = error.toLowerCase();
-
-  if (status === 502 || status === 503 || status === 504) {
-    return 'flexhubs.in is temporarily unavailable. Wait a few minutes and try again — this is a server outage, not a desktop app issue.';
+function formatCallApiError(_error: string, status?: number): string {
+  if (status === 401 || status === 403) {
+    return 'Could not start this call. Please sign in again and try.';
   }
 
-  if (status === 0 || normalized.includes('unreachable') || normalized.includes('network')) {
-    return 'Could not reach flexhubs.in. Check your internet connection and try again.';
+  if (status === 0) {
+    return 'Could not connect. Check your internet and try again.';
   }
 
-  if (
-    normalized.includes('livekit') ||
-    normalized.includes('mediasoup') ||
-    normalized.includes('media server') ||
-    normalized.includes('not configured')
-  ) {
-    return 'Calls are not enabled on flexhubs.in yet. Your backend team must configure the call media server on production (same as the web app). This is not fixed in the desktop app or .env.';
+  if (status != null && status >= 500) {
+    return 'Calls are temporarily unavailable. Please try again later.';
   }
 
-  if (normalized.includes('failed to subscribe') || normalized.includes('signaling channel unavailable')) {
-    return 'Call signaling could not connect. Confirm VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env match the web app, then fully restart the desktop app.';
-  }
-
-  return error;
+  return 'Could not start this call. Please try again.';
 }
 
 function formatCallMediaError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error ?? 'Unknown error');
+  const message = error instanceof Error ? error.message : String(error ?? '');
   const normalized = message.toLowerCase();
 
   if (
     normalized.includes('notallowed') ||
     normalized.includes('permission denied') ||
-    normalized.includes('permission-denied')
+    normalized.includes('permission-denied') ||
+    normalized.includes('permission')
   ) {
-    return 'Microphone or camera access was denied. Allow FlexHubs in System Settings → Privacy & Security, then try the call again.';
+    return 'Microphone or camera access was denied. Allow access in Settings and try again.';
   }
 
   if (normalized.includes('notfound') || normalized.includes('devicesnotfound')) {
-    return 'No microphone was found. Connect a mic or check your audio input device.';
+    return 'No microphone was found. Connect one and try again.';
   }
 
   if (normalized.includes('notreadable') || normalized.includes('track started')) {
-    return 'Your microphone or camera is in use by another app. Close other apps using it and try again.';
+    return 'Your mic or camera is in use by another app. Close it and try again.';
   }
 
-  return message;
+  return 'Could not connect the call. Please try again.';
+}
+
+function formatCallPermissionError(error: string): string {
+  return formatCallMediaError(new Error(error));
+}
+
+function formatCallSignalingError(): string {
+  return 'Could not connect call notifications. Please try again later.';
 }
 
 export function useCallManager({
@@ -188,6 +186,7 @@ export function useCallManager({
   const [awaitingJoinApproval, setAwaitingJoinApproval] = useState(false);
   const [mediasoupPeers, setMediasoupPeers] = useState<MediasoupRemotePeer[]>([]);
   const [mediasoupLocalVideo, setMediasoupLocalVideo] = useState<MediaStream | null>(null);
+  const [callNotice, setCallNotice] = useState('');
 
   const sessionRef = useRef(session);
   const roomRef = useRef<Room | null>(null);
@@ -348,7 +347,7 @@ export function useCallManager({
       });
 
       if (!result.ok) {
-        reportError(result.error);
+        logCallDebug('[Calls] Call log failed', result.error);
       } else {
         onCallLogged?.();
       }
@@ -370,6 +369,7 @@ export function useCallManager({
     setCameraEnabled(false);
     setScreenShareEnabled(false);
     setBusy(false);
+    setCallNotice('');
     setPendingJoinRequests([]);
     setAwaitingJoinApproval(false);
     pendingJoinConversationRef.current = null;
@@ -377,9 +377,43 @@ export function useCallManager({
     void disconnectRoom();
   }, [clearCallSignalTimers, disconnectRoom]);
 
+  const armIncomingCallTimeout = useCallback(
+    (payload: Pick<CallInvitePayload, 'callId' | 'conversationId' | 'caller'>) => {
+      if (incomingTimeoutRef.current != null) {
+        window.clearTimeout(incomingTimeoutRef.current);
+      }
+
+      incomingTimeoutRef.current = window.setTimeout(() => {
+        const current = sessionRef.current;
+
+        if (current.callId !== payload.callId || current.phase !== 'incoming') {
+          return;
+        }
+
+        void sendSignalWithRetries(getUserCallChannelName(payload.caller.id), 'call:reject', {
+          callId: payload.callId,
+          conversationId: payload.conversationId,
+          reason: 'declined',
+        }).catch(() => undefined);
+
+        seenCallIdsRef.current.add(payload.callId);
+        resetSession();
+        void writeCallLogSnapshot(
+          {
+            session: { ...current },
+            initiatorId: payload.caller.id,
+          },
+          'declined',
+          0,
+        );
+      }, INCOMING_RING_MS);
+    },
+    [resetSession, writeCallLogSnapshot],
+  );
+
   const connectLiveKit = useCallback(
     async (tokenResult: CallTokenResult, video: boolean) => {
-      const permissionResult = await ensureCallMediaPermissions(false);
+      const permissionResult = await ensureCallMediaPermissions(video);
 
       if (!permissionResult.ok) {
         throw new Error(permissionResult.error);
@@ -416,6 +450,7 @@ export function useCallManager({
         mediasoupRef.current = session;
         setMediasoupPeers(session.getRemotePeers());
         setMediasoupLocalVideo(session.getLocalVideoStream());
+        setCameraEnabled(Boolean(session.getLocalVideoStream()));
         return;
       }
 
@@ -618,48 +653,37 @@ export function useCallManager({
 
       void loadCallToken({
         conversationId: payload.conversationId,
-        roomName: payload.roomName,
         video: payload.video,
-      }).catch(() => undefined);
-
-      void showIncomingCallDesktopNotification(payload.caller.username, payload.video, () => {
-        focusCallWindow();
-      });
-
-      focusCallWindow();
-
-      incomingTimeoutRef.current = window.setTimeout(() => {
-        const current = sessionRef.current;
-
-        if (current.callId !== payload.callId || current.phase !== 'incoming') {
+      }).then((tokenResult) => {
+        if (!tokenResult.ok) {
           return;
         }
 
-        void sendSignalWithRetries(getUserCallChannelName(payload.caller.id), 'call:reject', {
-          callId: payload.callId,
-          conversationId: payload.conversationId,
-          reason: 'declined',
-        }).catch(() => undefined);
-
-        seenCallIdsRef.current.add(payload.callId);
-        resetSession();
-        void writeCallLogSnapshot(
-          {
-            session: { ...current },
-            initiatorId: payload.caller.id,
-          },
-          'declined',
-          0,
+        setSession((current) =>
+          current.callId === payload.callId && current.phase === 'incoming'
+            ? { ...current, liveToken: tokenResult.data }
+            : current,
         );
-      }, INCOMING_RING_MS);
+      });
+
+      void showIncomingCallDesktopNotification(
+        payload.caller.username,
+        payload.video,
+        payload.callId,
+        () => {
+          focusCallWindow();
+        },
+      );
+
+      focusCallWindow();
+      armIncomingCallTimeout(payload);
     },
     [
+      armIncomingCallTimeout,
       clearCallSignalTimers,
       currentUserId,
       disconnectRoom,
       isRemoteUserBusy,
-      resetSession,
-      writeCallLogSnapshot,
     ],
   );
 
@@ -694,14 +718,28 @@ export function useCallManager({
 
       clearCallSignalTimers();
 
-      if (!active.liveToken) {
-        reportError('Missing LiveKit token for this call.');
-        await finalizeDirectCall('cancelled');
-        return;
+      let liveToken = active.liveToken;
+
+      if (!liveToken) {
+        const tokenResult = await loadCallToken({
+          conversationId: active.conversationId,
+          video: active.video,
+        });
+
+        if (!tokenResult.ok) {
+          reportError(formatCallApiError(tokenResult.error, tokenResult.status));
+          await finalizeDirectCall('cancelled');
+          return;
+        }
+
+        liveToken = tokenResult.data;
+        setSession((current) =>
+          current.callId === active.callId ? { ...current, liveToken: tokenResult.data } : current,
+        );
       }
 
       try {
-        await connectLiveKit(active.liveToken, active.video);
+        await connectLiveKit(liveToken, active.video);
       } catch (error) {
         reportError(formatCallMediaError(error));
         await finalizeDirectCall('cancelled');
@@ -908,7 +946,7 @@ export function useCallManager({
       try {
         await completeApprovedJoin(conversation, payload.callId, sessionRef.current.video);
       } catch (error) {
-        reportError(error instanceof Error ? error.message : 'Unable to join the meeting.');
+        reportError('Could not join the meeting. Please try again.');
         resetSession();
       } finally {
         setBusy(false);
@@ -1015,7 +1053,7 @@ export function useCallManager({
 
         setPendingJoinRequests((current) => current.filter((item) => item.id !== requestId));
       } catch (error) {
-        reportError(error instanceof Error ? error.message : 'Could not respond to join request.');
+        reportError('Could not respond to the join request. Please try again.');
       } finally {
         setBusy(false);
       }
@@ -1180,9 +1218,7 @@ export function useCallManager({
       );
       if (!signalingErrorShownRef.current) {
         signalingErrorShownRef.current = true;
-        reportErrorRef.current(
-          formatCallApiError(lastError instanceof Error ? lastError.message : 'Call signaling failed.'),
-        );
+        reportErrorRef.current(formatCallSignalingError());
       }
     };
 
@@ -1304,7 +1340,7 @@ export function useCallManager({
 
       return true;
     } catch (error) {
-      reportError(error instanceof Error ? error.message : 'Call signaling is unavailable.');
+      reportError(formatCallSignalingError());
       return false;
     }
   }, [currentUserId, reportError]);
@@ -1348,13 +1384,14 @@ export function useCallManager({
         video,
       });
 
+      const liveToken = tokenResult.ok ? tokenResult.data : null;
+
       if (!tokenResult.ok) {
-        setBusy(false);
         reportError(formatCallApiError(tokenResult.error, tokenResult.status));
-        return;
       }
 
-      const roomName = tokenResult.data.roomName || buildDirectCallRoomName(conversation.id);
+      const roomName =
+        liveToken?.roomName || buildDirectCallRoomName(conversation.id);
 
       setSession({
         phase: 'outgoing',
@@ -1367,7 +1404,7 @@ export function useCallManager({
         peerUserId: conversation.peerUserId,
         peerLabel: conversation.title,
         peerAvatar: conversation.avatarUrl,
-        liveToken: tokenResult.data,
+        liveToken,
         connectedAt: null,
         meetingBanner: null,
       });
@@ -1408,9 +1445,7 @@ export function useCallManager({
               `[Calls] Invite send failed for call:user:${conversation.peerUserId}`,
               message,
             );
-            reportError(
-              'Call signaling failed — the other person may not get a ring. Check VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in .env, then restart the app.',
-            );
+            reportError(formatCallSignalingError());
           });
       };
 
@@ -1471,26 +1506,53 @@ export function useCallManager({
     }
 
     setBusy(true);
+    setCallNotice('');
     clearCallSignalTimers();
 
-    const permissionResult = await ensureCallMediaPermissions(false);
+    const permissionResult = await ensureCallMediaPermissions(active.video);
 
     if (!permissionResult.ok) {
       setBusy(false);
-      reportError(permissionResult.error);
+      setCallNotice(formatCallPermissionError(permissionResult.error));
+      armIncomingCallTimeout({
+        callId: active.callId,
+        conversationId: active.conversationId,
+        caller: {
+          id: active.peerUserId,
+          username: active.peerLabel,
+          avatar: active.peerAvatar,
+        },
+      });
       return;
     }
 
-    const tokenResult = await loadCallToken({
-      conversationId: active.conversationId,
-      roomName: active.roomName,
-      video: active.video,
-    });
+    let liveToken = active.liveToken;
 
-    if (!tokenResult.ok) {
-      setBusy(false);
-      reportError(formatCallApiError(tokenResult.error, tokenResult.status));
-      return;
+    if (!liveToken) {
+      const tokenResult = await loadCallToken({
+        conversationId: active.conversationId,
+        video: active.video,
+      });
+
+      if (!tokenResult.ok) {
+        setBusy(false);
+        setCallNotice(formatCallApiError(tokenResult.error, tokenResult.status));
+        armIncomingCallTimeout({
+          callId: active.callId,
+          conversationId: active.conversationId,
+          caller: {
+            id: active.peerUserId,
+            username: active.peerLabel,
+            avatar: active.peerAvatar,
+          },
+        });
+        return;
+      }
+
+      liveToken = tokenResult.data;
+      setSession((current) =>
+        current.callId === active.callId ? { ...current, liveToken: tokenResult.data } : current,
+      );
     }
 
     const acceptPayload = {
@@ -1522,17 +1584,45 @@ export function useCallManager({
     }, SIGNAL_REPEAT_MS);
 
     try {
-      await connectLiveKit(tokenResult.data, active.video);
+      await connectLiveKit(liveToken, active.video);
       clearCallSignalTimers();
+      setCallNotice('');
     } catch (error) {
       clearCallSignalTimers();
-      reportError(formatCallMediaError(error));
+      const message = formatCallMediaError(error);
+      setCallNotice(message);
+      reportError(message);
       await disconnectRoom();
-      resetSession();
+      setSession((current) =>
+        current.callId === active.callId
+          ? {
+              ...current,
+              phase: 'incoming',
+              liveToken,
+              connectedAt: null,
+            }
+          : current,
+      );
+      armIncomingCallTimeout({
+        callId: active.callId,
+        conversationId: active.conversationId,
+        caller: {
+          id: active.peerUserId,
+          username: active.peerLabel,
+          avatar: active.peerAvatar,
+        },
+      });
     } finally {
       setBusy(false);
     }
-  }, [clearCallSignalTimers, connectLiveKit, currentUserId, disconnectRoom, reportError, resetSession]);
+  }, [
+    armIncomingCallTimeout,
+    clearCallSignalTimers,
+    connectLiveKit,
+    currentUserId,
+    disconnectRoom,
+    reportError,
+  ]);
 
   const rejectIncomingCall = useCallback(async () => {
     const active = sessionRef.current;
@@ -1706,7 +1796,7 @@ export function useCallManager({
 
       if (!notifyResult.ok) {
         setBusy(false);
-        reportError(notifyResult.error);
+        reportError(formatCallApiError(notifyResult.error, notifyResult.status));
         return;
       }
 
@@ -1746,7 +1836,7 @@ export function useCallManager({
       try {
         await connectLiveKit(tokenResult.data, video);
       } catch (error) {
-        reportError(error instanceof Error ? error.message : 'Unable to start the meeting.');
+        reportError('Could not start the meeting. Please try again.');
         await resetSession();
       } finally {
         setBusy(false);
@@ -1823,14 +1913,14 @@ export function useCallManager({
           try {
             await submitMeetingJoinRequest(conversation, callId, video);
             return;
-          } catch (joinError) {
-            reportError(joinError instanceof Error ? joinError.message : message);
+          } catch {
+            reportError('Could not join the meeting. Please try again.');
             await resetSession();
             return;
           }
         }
 
-        reportError(message);
+        reportError('Could not join the meeting. Please try again.');
         await resetSession();
       } finally {
         setBusy(false);
@@ -1868,8 +1958,13 @@ export function useCallManager({
     const mediasoupSession = mediasoupRef.current;
 
     if (mediasoupSession) {
-      await mediasoupSession.setCameraEnabled(next);
-      setCameraEnabled(next);
+      try {
+        await mediasoupSession.setCameraEnabled(next);
+        setCameraEnabled(next);
+        setMediasoupLocalVideo(mediasoupSession.getLocalVideoStream());
+      } catch (error) {
+        reportError(formatCallMediaError(error));
+      }
       return;
     }
 
@@ -1881,7 +1976,7 @@ export function useCallManager({
 
     await room.localParticipant.setCameraEnabled(next);
     setCameraEnabled(next);
-  }, [cameraEnabled]);
+  }, [cameraEnabled, reportError]);
 
   const toggleScreenShare = useCallback(async () => {
     const room = roomRef.current;
@@ -1896,7 +1991,7 @@ export function useCallManager({
       const permissionResult = await ensureScreenCapturePermission();
 
       if (!permissionResult.ok) {
-        reportError(permissionResult.error);
+        reportError('Screen sharing is not allowed. Check Settings and try again.');
         return;
       }
     }
@@ -1909,20 +2004,7 @@ export function useCallManager({
       logCallDebug(next ? '[Calls] Screen sharing started' : '[Calls] Screen sharing stopped');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to share your screen.';
-      const normalized = message.toLowerCase();
-
-      if (
-        normalized.includes('not supported') ||
-        normalized.includes('notallowed') ||
-        normalized.includes('permission')
-      ) {
-        reportError(
-          'Screen sharing was blocked. On macOS, enable Screen & System Audio Recording for the Electron binary shown in the terminal [ScreenShare] execPath line, then fully quit (Cmd+Q) and restart.',
-        );
-      } else {
-        reportError(message);
-      }
-
+      reportError('Could not share your screen. Please try again.');
       logCallDebug('[Calls] Screen sharing failed', message);
     }
   }, [reportError, screenShareEnabled]);
@@ -1932,6 +2014,7 @@ export function useCallManager({
   return {
     session,
     busy,
+    callNotice,
     remoteParticipants,
     micEnabled,
     cameraEnabled,

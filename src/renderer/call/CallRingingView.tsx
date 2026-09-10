@@ -4,6 +4,7 @@ import type { CallSession } from '../callManager';
 type CallRingingViewProps = {
   session: CallSession;
   busy: boolean;
+  notice?: string;
   onAccept: () => void;
   onReject: () => void;
   onCancel: () => void;
@@ -12,6 +13,7 @@ type CallRingingViewProps = {
 export function CallRingingView({
   session,
   busy,
+  notice = '',
   onAccept,
   onReject,
   onCancel,
@@ -66,6 +68,12 @@ export function CallRingingView({
                   : 'Calling...'
                 : 'In call'}
         </p>
+
+        {notice ? (
+          <p className="mt-4 rounded-xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-center text-sm text-amber-100">
+            {notice}
+          </p>
+        ) : null}
 
         <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
           {isIncomingCallee ? (

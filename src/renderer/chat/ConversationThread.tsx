@@ -804,11 +804,11 @@ export function ConversationThread({
           trackPendingThreadSend(content, threadRootId);
           const result = await sendChatMessage(conversation.id, content, undefined, threadRootId);
           if (!result.ok) {
-            return result.error;
+            return { ok: false as const, error: result.error };
           }
           registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
           onThreadMessagesRegistered?.();
-          return null;
+          return { ok: true as const, message: result.data };
         }}
         conversationId={conversation.id}
         onVotePoll={onVotePoll}
@@ -1000,11 +1000,11 @@ export function ConversationThread({
             trackPendingThreadSend(content, threadRootId);
             const result = await sendChatMessage(conversation.id, content, undefined, threadRootId);
             if (!result.ok) {
-              return result.error;
+              return { ok: false as const, error: result.error };
             }
             registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
             onThreadMessagesRegistered?.();
-            return null;
+            return { ok: true as const, message: result.data };
           }}
           onSendMedia={onSendMedia}
           onSendFile={onSendFile}
