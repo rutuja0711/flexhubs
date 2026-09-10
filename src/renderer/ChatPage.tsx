@@ -3897,6 +3897,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const callPipMode =
     callManager.session.phase === 'active' && callPanelLayout === 'minimized';
+  const showMeetingBanner =
+    callManager.session.phase === 'idle' && Boolean(callManager.session.meetingBanner);
 
   return (
     <div
@@ -4070,7 +4072,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }}
       />
 
-      <main className="relative flex min-w-0 flex-1 flex-col">
+      <main
+        className={`relative flex min-w-0 flex-1 flex-col ${showMeetingBanner ? 'pt-[4.25rem] sm:pt-20' : ''}`}
+      >
         {mainView === 'chat' && notificationSettings ? (
           <NotificationStatusBanner
             settings={notificationSettings}

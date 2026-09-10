@@ -42,24 +42,25 @@ Replace the path with where they unzipped the app (often `~/Downloads/FlexHubs D
 
 ---
 
-## Windows — reliable method (MSI wizard)
+## Windows — reliable method (Setup.exe)
 
 ### Before sending the app
 
 1. Download **FlexHubs-Desktop-windows-x64** from GitHub Actions.
-2. Host or send **`FlexHubs-Desktop-Setup.msi`** — a standard Windows installer wizard (Welcome → choose install folder → Install → Finish).
+2. Send **`FlexHubs-Desktop-Setup.exe`** — a one-click Squirrel installer (no MSI “Change / Repair / Remove” wizard).
+3. Optional portable build: **`win32-x64.zip`** in the same artifact (unzip and run `FlexHubs Desktop.exe` — no install).
 
 ### Tester steps
 
-1. Download **`FlexHubs-Desktop-Setup.msi`**.
-2. Double-click the MSI to start the wizard.
-3. Click **Next** through the screens, choose an install location if prompted, then **Install**.
+1. Download **`FlexHubs-Desktop-Setup.exe`**.
+2. Double-click it and wait for install to finish (short splash, then FlexHubs opens).
+3. Re-running the same installer **upgrades** the app in place — you will not see an MSI maintenance screen.
 4. On the blue SmartScreen screen: **More info → Run anyway** (unsigned builds only).
-5. If blocked by antivirus: add an exception for the MSI or the install folder (`C:\Program Files\FlexHubs Desktop` by default).
+5. If blocked by antivirus: add an exception for the installer or `%LocalAppData%\FlexHubsDesktop`.
 
 ### Windows Properties unblock
 
-1. Right-click **`FlexHubs-Desktop-Setup.msi` → Properties**
+1. Right-click **`FlexHubs-Desktop-Setup.exe` → Properties**
 2. On **General**, tick **Unblock** (if shown) → **OK**
 3. Run the installer again.
 
@@ -67,7 +68,8 @@ Replace the path with where they unzipped the app (often `~/Downloads/FlexHubs D
 
 | Mistake | Fix |
 |--------|-----|
-| Opening a portable zip instead of the MSI | Use **`FlexHubs-Desktop-Setup.msi`** from the build artifact |
+| Using an old **`.msi`** from a previous build | Use **`FlexHubs-Desktop-Setup.exe`** from the latest CI artifact |
+| “Change, repair, or remove” MSI screen | That is the old MSI installer — uninstall from Settings → Apps, then use **Setup.exe** |
 | Company PC with strict policy | IT must allow the app, or use web app at flexhubs.in |
 | SmartScreen with no "Run anyway" | Unblock in Properties; run as administrator |
 

@@ -180,9 +180,9 @@ export function CallOverlay({
   if (session.phase === 'idle' && session.meetingBanner) {
     const meeting = session.meetingBanner;
 
-    return (
-      <div className="pointer-events-none absolute inset-x-0 top-0 z-40 flex justify-center p-4">
-        <div className="pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-2xl border border-app-border bg-app-elevated px-4 py-3 shadow-app">
+    return createPortal(
+      <div className="pointer-events-none fixed inset-x-0 top-0 z-[200] flex justify-center px-3 pb-2 pt-[max(0.75rem,env(safe-area-inset-top,0px))] sm:px-4 sm:pb-3 sm:pt-[max(1rem,env(safe-area-inset-top,0px))]">
+        <div className="pointer-events-auto flex w-full max-w-xl items-center gap-2 rounded-2xl border border-app-border bg-app-elevated px-3 py-2.5 shadow-app sm:gap-3 sm:px-4 sm:py-3">
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-semibold text-app-text">
               {meeting.startedBy.username} started a {meeting.video ? 'video' : 'voice'} meeting
@@ -191,7 +191,7 @@ export function CallOverlay({
           </div>
           <button
             type="button"
-            className="rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-white hover:opacity-90"
+            className="shrink-0 rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-white hover:opacity-90"
             onClick={onJoinMeeting}
           >
             Join
@@ -199,13 +199,14 @@ export function CallOverlay({
           <button
             type="button"
             aria-label="Dismiss meeting banner"
-            className="rounded-lg p-2 text-app-muted hover:bg-app-chat-hover hover:text-app-text"
+            className="shrink-0 rounded-lg p-2 text-app-muted hover:bg-app-chat-hover hover:text-app-text"
             onClick={onDismissMeetingBanner}
           >
             <FiX />
           </button>
         </div>
-      </div>
+      </div>,
+      document.body,
     );
   }
 
