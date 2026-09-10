@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build (${{ matrix.os }})
@@ -71,13 +74,35 @@ jobs:
           Copy-Item -Path $setup.FullName -Destination out/FlexHubs-Desktop-Setup.exe -Force
           Write-Host "Staged installer: $($setup.Name) -> out/FlexHubs-Desktop-Setup.exe"
 
-      - name: Upload Windows installer
+      - name: Upload Windows installer (Setup.exe only)
         if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: FlexHubs-Desktop-windows-x64
-          path: |
-            out/FlexHubs-Desktop-Setup.exe
-            out/make/squirrel.windows/x64/FlexHubs-Desktop-Setup.exe
-            out/make/zip/win32/x64/*.zip
+          name: FlexHubs-Desktop-Setup.exe
+          path: out/FlexHubs-Desktop-Setup.exe
           if-no-files-found: error
+
+      - name: Publish Windows installer to GitHub Release
+        if: matrix.os == 'windows-latest' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "desktop-latest"
+          $repo = "${{ github.repository }}"
+          $notes = @"
+          Unsigned CI build from commit ${{ github.sha }}.
+
+          **Download ``FlexHubs-Desktop-Setup.exe`` below** (direct file — avoids Chrome blocking Actions artifact zips).
+
+          SmartScreen may still ask **More info → Run anyway** until the app is code-signed.
+          "@
+
+          gh release view $tag --repo $repo 2>$null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag --repo $repo --title "FlexHubs Desktop (latest build)" --notes $notes --prerelease
+          } else {
+            gh release edit $tag --repo $repo --notes $notes
+          }
+
+          gh release upload $tag out/FlexHubs-Desktop-Setup.exe --repo $repo --clobber

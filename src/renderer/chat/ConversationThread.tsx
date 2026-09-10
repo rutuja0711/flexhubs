@@ -837,6 +837,7 @@ export function ConversationThread({
         isSending={isSending}
         error={draftError}
         conversationId={conversation.id}
+        currentUserId={currentUserId}
         replyingToMessage={replyingToMessage}
         onCancelReply={() => setReplyingToMessage(null)}
         onChange={onDraftChange}

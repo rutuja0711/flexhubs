@@ -39,6 +39,7 @@ type MessageInputProps = {
   onUnauthorized?: (status?: number) => boolean;
   onOpenFlexAi?: () => void;
   compact?: boolean;
+  currentUserId?: string | null;
 };
 
 type MentionSuggestion = {
@@ -138,6 +139,7 @@ export function MessageInput({
   onUnauthorized,
   onOpenFlexAi,
   compact = false,
+  currentUserId = null,
 }: MessageInputProps) {
   const toast = useToast();
   const [draftError, setDraftError] = useState('');
@@ -660,7 +662,7 @@ export function MessageInput({
               </button>
             ) : null}
           </div>
-          <MessageReplyPreview message={replyingToMessage} />
+          <MessageReplyPreview message={replyingToMessage} currentUserId={currentUserId} />
         </div>
       ) : null}
 

@@ -675,7 +675,6 @@ export function useCallManager({
         },
       );
 
-      focusCallWindow();
       armIncomingCallTimeout(payload);
     },
     [

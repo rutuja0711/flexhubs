@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { isAppInBackground, subscribeAppFocus } from '../appFocus';
 import { createPortal } from 'react-dom';
 import { Track } from 'livekit-client';
 import { FiX } from 'react-icons/fi';
@@ -80,6 +81,7 @@ export function CallOverlay({
   onRemoveParticipant,
   onPanelLayoutChange,
 }: CallOverlayProps) {
+  const appInBackground = useSyncExternalStore(subscribeAppFocus, isAppInBackground, () => false);
   const [panelLayout, setPanelLayout] = useState<CallPanelLayout>('floating');
 
   const updatePanelLayout = (layout: CallPanelLayout) => {
@@ -102,6 +104,13 @@ export function CallOverlay({
     session.phase === 'incoming' ||
     session.phase === 'outgoing' ||
     session.phase === 'connecting';
+
+  const suppressIncomingRingUi =
+    appInBackground &&
+    !session.isInitiator &&
+    (session.phase === 'incoming' || session.phase === 'connecting');
+
+  const showRingingUi = showRinging && !suppressIncomingRingUi;
 
   const showActivePanel = session.phase === 'active';
 
@@ -148,13 +157,25 @@ export function CallOverlay({
       return;
     }
 
+    if (suppressIncomingRingUi) {
+      setCallWindowPresentation(false, 'idle');
+      return;
+    }
+
     const mode = showRinging ? 'ringing' : panelLayout;
     setCallWindowPresentation(callWindowActive, callWindowActive ? mode : 'idle');
 
-    if (session.phase === 'incoming' || session.phase === 'outgoing') {
+    if (session.phase === 'outgoing' || (session.phase === 'incoming' && !appInBackground)) {
       focusCallWindow();
     }
-  }, [callWindowActive, panelLayout, session.phase, showRinging]);
+  }, [
+    appInBackground,
+    callWindowActive,
+    panelLayout,
+    session.phase,
+    showRinging,
+    suppressIncomingRingUi,
+  ]);
 
   useEffect(() => {
     return () => {
@@ -214,7 +235,7 @@ export function CallOverlay({
     return null;
   }
 
-  if (showRinging) {
+  if (showRingingUi) {
     return createPortal(
       <>
         {usesMediasoup ? (

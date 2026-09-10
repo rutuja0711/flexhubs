@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react';
 import type { MessageItem } from '../../shared/messages';
-import { DELETED_MESSAGE_TEXT, isCallLogMessage, isDeletedMessage, isPollMessage, parseCallLogContent } from '../../shared/messages';
+import {
+  DELETED_MESSAGE_TEXT,
+  formatMessagePreview,
+  isCallLogMessage,
+  isDeletedMessage,
+  isPollMessage,
+  parseCallLogContent,
+} from '../../shared/messages';
 import { RemoteImage } from '../RemoteImage';
 import { openMediaPreview } from './MediaPreviewHost';
 import { PollMessage } from './PollMessage';
@@ -185,13 +192,23 @@ export function MessageContent({
 export function MessageReplyPreview({
   message,
   className = '',
+  currentUserId = null,
 }: {
   message: Pick<MessageItem, 'content' | 'media' | 'messageType' | 'deletedForEveryone' | 'poll'>;
   className?: string;
+  currentUserId?: string | null;
 }) {
   if (isDeletedMessage(message)) {
     return (
       <span className={`truncate italic text-app-muted ${className}`}>{DELETED_MESSAGE_TEXT}</span>
+    );
+  }
+
+  if (isCallLogMessage(message)) {
+    return (
+      <span className={`truncate text-app-text ${className}`}>
+        {formatMessagePreview(message, currentUserId)}
+      </span>
     );
   }
 

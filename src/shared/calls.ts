@@ -161,9 +161,18 @@ export function parseMeetingNotificationBody(body: string): MeetingStartedPayloa
   }
 }
 
-/** Human-readable text for notification bodies like `__meeting__:{...}`. */
-export function formatNotificationDisplayBody(body: string): string {
+/** Human-readable text for notification bodies like `__meeting__:{...}` or call logs. */
+export function formatNotificationDisplayBody(
+  body: string,
+  currentUserId: string | null = null,
+): string {
   const trimmed = body.trim();
+
+  const callLog = parseCallLogContent(trimmed);
+
+  if (callLog) {
+    return formatCallLogPreview(callLog, currentUserId);
+  }
 
   if (!trimmed.startsWith('__meeting__:')) {
     return body;

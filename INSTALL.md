@@ -46,17 +46,28 @@ Replace the path with where they unzipped the app (often `~/Downloads/FlexHubs D
 
 ### Before sending the app
 
-1. Download **FlexHubs-Desktop-windows-x64** from GitHub Actions.
-2. Send **`FlexHubs-Desktop-Setup.exe`** — a one-click Squirrel installer (no MSI “Change / Repair / Remove” wizard).
-3. Optional portable build: **`win32-x64.zip`** in the same artifact (unzip and run `FlexHubs Desktop.exe` — no install).
+1. Open **GitHub → Releases → `desktop-latest`** (pre-release).
+2. Download **`FlexHubs-Desktop-Setup.exe`** directly from the release assets (**recommended** — avoids Chrome blocking Actions artifact zips).
+3. Fallback: GitHub Actions artifact **`FlexHubs-Desktop-Setup.exe`** (single installer file, not a portable zip).
+
+Do **not** send old **`FlexHubs-Desktop-windows-x64.zip`** portable builds — Chrome often blocks them as “Dangerous download” (unsigned `.exe` inside a zip).
 
 ### Tester steps
 
-1. Download **`FlexHubs-Desktop-Setup.exe`**.
+1. Download **`FlexHubs-Desktop-Setup.exe`** from the **Releases** page (best) or the Actions artifact.
 2. Double-click it and wait for install to finish (short splash, then FlexHubs opens).
-3. Re-running the same installer **upgrades** the app in place — you will not see an MSI maintenance screen.
+3. Re-running the same installer **upgrades** the app in place.
 4. On the blue SmartScreen screen: **More info → Run anyway** (unsigned builds only).
 5. If blocked by antivirus: add an exception for the installer or `%LocalAppData%\FlexHubsDesktop`.
+
+### Chrome says “Dangerous download blocked”
+
+| Fix | How |
+|-----|-----|
+| **Use Releases (recommended)** | Repo → **Releases** → `desktop-latest` → download **FlexHubs-Desktop-Setup.exe** (direct file, not the Actions zip) |
+| Use Edge or Firefox | Often allows the download when Chrome blocks it |
+| Use GitHub CLI | `gh release download desktop-latest -p FlexHubs-Desktop-Setup.exe` |
+| Permanent fix | **Code-sign** the Windows installer (paid cert) — then browsers trust it |
 
 ### Windows Properties unblock
 
@@ -68,8 +79,9 @@ Replace the path with where they unzipped the app (often `~/Downloads/FlexHubs D
 
 | Mistake | Fix |
 |--------|-----|
-| Using an old **`.msi`** from a previous build | Use **`FlexHubs-Desktop-Setup.exe`** from the latest CI artifact |
-| “Change, repair, or remove” MSI screen | That is the old MSI installer — uninstall from Settings → Apps, then use **Setup.exe** |
+| Downloading **`FlexHubs-Desktop-windows-x64.zip`** from old builds | Use **`FlexHubs-Desktop-Setup.exe`** from Releases |
+| Using an old **`.msi`** | Uninstall from Settings → Apps, then use **Setup.exe** |
+| “Change, repair, or remove” MSI screen | Old MSI installer — use **Setup.exe** instead |
 | Company PC with strict policy | IT must allow the app, or use web app at flexhubs.in |
 | SmartScreen with no "Run anyway" | Unblock in Properties; run as administrator |
 

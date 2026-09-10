@@ -251,7 +251,7 @@ const MessageRow = memo(function MessageRow({
                 <span className="mb-0.5 font-medium text-app-text">
                   {replyTarget.senderName || replyTarget.senderId}
                 </span>
-                <MessageReplyPreview message={replyTarget} />
+                <MessageReplyPreview message={replyTarget} currentUserId={currentUserId} />
               </button>
             );
           })()

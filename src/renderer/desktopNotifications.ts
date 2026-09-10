@@ -1,5 +1,8 @@
-import { formatNotificationDisplayBody } from '../shared/calls';
+import { formatCallLogPreview, formatNotificationDisplayBody, parseCallLogContent } from '../shared/calls';
 import type { MessageItem, NotificationItem } from '../shared/messages';
+import { isCallLogMessage } from '../shared/messages';
+import { getUserId } from '../shared/user';
+import { getStoredUser } from './authApi';
 
 let notificationSnapshotReady = false;
 const knownNotificationKeys = new Set<string>();
@@ -182,7 +185,7 @@ export async function showDesktopNotification(
 
   await openDesktopNotification(
     notification.title || 'Flexhubs',
-    formatNotificationDisplayBody(notification.body || ''),
+    formatNotificationDisplayBody(notification.body || '', getUserId(getStoredUser())),
     notification.messageId ? `message-${notification.messageId}` : getNotificationKey(notification),
     onClick,
   );
@@ -220,6 +223,22 @@ export async function alertNewDesktopNotifications(
 }
 
 function messagePreview(message: MessageItem): string {
+  if (isCallLogMessage(message)) {
+    const callLog = parseCallLogContent(message.content);
+    if (callLog) {
+      return formatCallLogPreview(callLog, getUserId(getStoredUser()));
+    }
+  }
+
+  const formattedBody = formatNotificationDisplayBody(
+    message.content,
+    getUserId(getStoredUser()),
+  );
+
+  if (formattedBody !== message.content.trim()) {
+    return formattedBody;
+  }
+
   const trimmed = message.content.trim();
 
   if (trimmed && trimmed !== 'sticker') {
@@ -243,6 +262,10 @@ export async function showIncomingMessageDesktopNotification(
   onClick: () => void,
   conversationId?: string,
 ): Promise<void> {
+  if (isCallLogMessage(message)) {
+    return;
+  }
+
   const body = `${message.senderName}: ${messagePreview(message)}`;
   const fingerprint = conversationId ? messageFingerprint(conversationId, body) : null;
 

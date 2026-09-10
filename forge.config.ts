@@ -43,7 +43,9 @@ const config: ForgeConfig = {
           }),
         ]
       : []),
-    new MakerZIP({}, ['darwin', 'win32']),
+    // Mac only — Windows portable zips trigger Chrome "Dangerous download blocked"
+    // (unsigned .exe inside a zip). Windows testers use FlexHubs-Desktop-Setup.exe.
+    new MakerZIP({}, ['darwin']),
   ],
   plugins: [
     new VitePlugin({
