@@ -165,7 +165,13 @@
 
   .message-row {
     content-visibility: auto;
-    contain-intrinsic-size: auto 88px;
+    contain-intrinsic-size: auto 72px;
+  }
+
+  @supports (overflow-anchor: auto) {
+    .message-list-scroll {
+      overflow-anchor: auto;
+    }
   }
 
   .message-appear {

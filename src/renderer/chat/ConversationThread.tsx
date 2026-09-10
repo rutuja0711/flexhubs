@@ -74,6 +74,7 @@ type ConversationThreadProps = {
   onOpenCalendar?: () => void;
   focusMessageId?: string | null;
   unreadAnchorMessageId?: string | null;
+  scrollRestoreKey?: number;
   onFocusMessageHandled?: () => void;
   onStartVoiceCall?: () => void;
   onStartVideoCall?: () => void;
@@ -118,6 +119,7 @@ export function ConversationThread({
   onOpenCalendar,
   focusMessageId = null,
   unreadAnchorMessageId = null,
+  scrollRestoreKey = 0,
   onFocusMessageHandled,
   onStartVoiceCall,
   onStartVideoCall,
@@ -769,6 +771,7 @@ export function ConversationThread({
         }
         scrollToMessageId={focusMessageId ?? bannerScrollTargetId}
         scrollRequestKey={scrollRequestKey}
+        scrollRestoreKey={scrollRestoreKey}
         unreadAnchorMessageId={focusMessageId ? null : unreadAnchorMessageId}
         onJumpToMessage={jumpToMessage}
         onScrollToMessageComplete={() => {

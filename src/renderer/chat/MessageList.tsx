@@ -422,6 +422,7 @@ type MessageListProps = {
   highlightedMessageIds?: string[];
   scrollToMessageId?: string | null;
   scrollRequestKey?: number;
+  scrollRestoreKey?: number;
   unreadAnchorMessageId?: string | null;
   onScrollToMessageComplete?: () => void;
   currentUserId: string | null;
@@ -454,6 +455,7 @@ export function MessageList({
   highlightedMessageIds = [],
   scrollToMessageId = null,
   scrollRequestKey = 0,
+  scrollRestoreKey = 0,
   unreadAnchorMessageId = null,
   onScrollToMessageComplete,
   currentUserId,
@@ -480,6 +482,7 @@ export function MessageList({
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomAnchorRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
+  const lastContentHeightRef = useRef(0);
   const showInitialLoading = loading && messages.length === 0;
   const showRefreshing = loading && messages.length > 0;
   const listEntries = useMemo(
@@ -524,7 +527,29 @@ export function MessageList({
 
   useEffect(() => {
     stickToBottomRef.current = true;
+    lastContentHeightRef.current = 0;
   }, [conversationId]);
+
+  useEffect(() => {
+    if (!scrollRestoreKey) {
+      return;
+    }
+
+    stickToBottomRef.current = true;
+    lastContentHeightRef.current = 0;
+
+    let innerFrame = 0;
+    const outerFrame = window.requestAnimationFrame(() => {
+      innerFrame = window.requestAnimationFrame(() => {
+        scrollToBottom('auto');
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(outerFrame);
+      window.cancelAnimationFrame(innerFrame);
+    };
+  }, [scrollRestoreKey, scrollToBottom]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -533,6 +558,11 @@ export function MessageList({
     }
 
     const onScroll = () => {
+      if (container.scrollHeight <= container.clientHeight + 1) {
+        stickToBottomRef.current = true;
+        return;
+      }
+
       const distanceFromBottom =
         container.scrollHeight - container.scrollTop - container.clientHeight;
       stickToBottomRef.current = distanceFromBottom < 150;
@@ -548,8 +578,18 @@ export function MessageList({
       return;
     }
 
-    const observer = new ResizeObserver(() => {
-      if (stickToBottomRef.current) {
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      const nextHeight = entry?.contentRect.height ?? 0;
+      const previousHeight = lastContentHeightRef.current;
+      lastContentHeightRef.current = nextHeight;
+
+      const container = scrollContainerRef.current;
+      const contentGrew = previousHeight > 0 && nextHeight > previousHeight + 80;
+      const stuckNearTopAfterGrow =
+        contentGrew && container != null && container.scrollTop < 120 && stickToBottomRef.current;
+
+      if (stuckNearTopAfterGrow || stickToBottomRef.current) {
         scrollToBottom('auto');
       }
     });
@@ -649,7 +689,7 @@ export function MessageList({
 
       <div
         ref={scrollContainerRef}
-        className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 py-4"
+        className="message-list-scroll flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 py-4"
       >
         <div ref={contentRef} className="flex flex-col gap-4">
         {listEntries.map((entry) => {

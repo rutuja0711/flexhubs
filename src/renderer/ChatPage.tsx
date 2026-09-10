@@ -409,6 +409,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const [isSending, setIsSending] = useState(false);
   const [flexAiOpen, setFlexAiOpen] = useState(false);
   const [callPanelLayout, setCallPanelLayout] = useState<CallPanelLayout>('floating');
+  const [messageScrollRestoreKey, setMessageScrollRestoreKey] = useState(0);
+  const callPhaseRef = useRef<'idle' | 'outgoing' | 'incoming' | 'connecting' | 'active' | 'ending'>('idle');
 
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
@@ -1578,11 +1580,25 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       if (conversationId) {
         void loadThread(conversationId);
       }
+
+      setMessageScrollRestoreKey((current) => current + 1);
     },
     onError: (message) => {
       toast.error(message);
     },
   });
+
+  useEffect(() => {
+    const phase = callManager.session.phase;
+    const previousPhase = callPhaseRef.current;
+
+    if (previousPhase !== 'idle' && phase === 'idle') {
+      setCallPanelLayout('floating');
+      setMessageScrollRestoreKey((current) => current + 1);
+    }
+
+    callPhaseRef.current = phase;
+  }, [callManager.session.phase]);
 
   callMeetingActionsRef.current = {
     ingestMeeting: callManager.ingestMeetingNotification,
@@ -3813,6 +3829,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }}
           focusMessageId={focusMessageId}
           unreadAnchorMessageId={threadUnreadAnchorId}
+          scrollRestoreKey={messageScrollRestoreKey}
           onFocusMessageHandled={() => setFocusMessageId(null)}
           onOpenFlexAi={() => setFlexAiOpen((current) => !current)}
           onThreadReplySent={(threadRootId) => {
@@ -3882,7 +3899,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     callManager.session.phase === 'active' && callPanelLayout === 'minimized';
 
   return (
-    <div className={`h-full ${callPipMode ? 'call-pip-mode bg-[#101114]' : 'flex bg-app-chat-bg'}`}>
+    <div
+      className={`flex h-full bg-app-chat-bg ${callPipMode ? 'overflow-hidden bg-[#101114]' : ''}`}
+    >
       <MediaPreviewHost />
       <CallOverlay
         session={callManager.session}
@@ -3936,8 +3955,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           void callManager.removeRemoteParticipant(participantIdentity)
         }
       />
-      {!callPipMode ? (
-        <>
+      <div
+        className={`flex min-h-0 min-w-0 flex-1 ${callPipMode ? 'pointer-events-none invisible' : ''}`}
+        aria-hidden={callPipMode}
+      >
       <FlexAiPanel
         open={flexAiOpen}
         draft={draft}
@@ -4073,8 +4094,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           {renderMainPanel()}
         </div>
       </main>
-        </>
-      ) : null}
+      </div>
     </div>
   );
 }

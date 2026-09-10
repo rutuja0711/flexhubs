@@ -857,7 +857,16 @@ ipcMain.handle('window:move-call-by', (_event, deltaX: number, deltaY: number) =
 });
 
 ipcMain.handle('window:focus-call', () => {
-  setCallWindowPresentation(true);
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { ok: false as const };
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  mainWindow.show();
+  mainWindow.focus();
   return { ok: true as const };
 });
 

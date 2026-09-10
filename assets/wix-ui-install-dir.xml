@@ -1,5 +1,0 @@
-<UI Id="UserInterface">
-  <Property Id="WIXUI_INSTALLDIR" Value="APPLICATIONROOTDIRECTORY" />
-  <UIRef Id="WixUI_InstallDir" />
-</UI>
-<!-- {{WixVariables}} -->

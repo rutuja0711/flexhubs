@@ -43,9 +43,10 @@ const config: ForgeConfig = {
             upgradeCode: FLEXHUBS_MSI_UPGRADE_CODE,
             programFilesFolderName: 'FlexHubs Desktop',
             shortcutName: 'FlexHubs Desktop',
+            // Built-in UI + chooseDirectory. A custom template disables chooseDirectory
+            // and must include the full WixUI dialog set (see electron-wix-msi docs).
             ui: {
               chooseDirectory: true,
-              template: path.join(__dirname, 'assets', 'wix-ui-install-dir.xml'),
             },
           }),
           new MakerSquirrel({

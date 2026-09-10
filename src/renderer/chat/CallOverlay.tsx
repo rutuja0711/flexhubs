@@ -143,6 +143,11 @@ export function CallOverlay({
           : 'In call';
 
   useEffect(() => {
+    if (session.phase === 'idle' || session.phase === 'ending') {
+      setCallWindowPresentation(false, 'idle');
+      return;
+    }
+
     const mode = showRinging ? 'ringing' : panelLayout;
     setCallWindowPresentation(callWindowActive, callWindowActive ? mode : 'idle');
 
