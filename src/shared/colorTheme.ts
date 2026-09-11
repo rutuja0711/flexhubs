@@ -1,10 +1,10 @@
 import { type ThemeMode } from './theme';
 
 export const ACCENT_STORAGE_KEY = 'flexhubs-accent-color';
-export const DEFAULT_ACCENT_COLOR = '#881818';
+export const DEFAULT_ACCENT_COLOR = '#803d4c';
 
 export const ACCENT_PRESETS = [
-  { label: 'Burgundy', value: '#881818' },
+  { label: 'Rose', value: '#803d4c' },
   { label: 'Coral', value: '#e85d4c' },
   { label: 'Orange', value: '#e67e22' },
   { label: 'Amber', value: '#d4a017' },
@@ -172,7 +172,7 @@ function hslToHex(hsl: HSL): string {
 }
 
 export function hexToHsv(hex: string): HSV {
-  const rgb = hexToRgb(hex) ?? { r: 136, g: 24, b: 24 };
+  const rgb = hexToRgb(hex) ?? { r: 128, g: 61, b: 76 };
   const red = rgb.r / 255;
   const green = rgb.g / 255;
   const blue = rgb.b / 255;
@@ -238,14 +238,14 @@ export function hsvToHex(h: number, s: number, v: number): string {
 
 function defaultPalette(mode: ThemeMode): AccentPalette {
   return {
-    accent: '#881818',
-    hover: '#6f1313',
-    active: '#5a0f0f',
-    soft: '#c44a4a',
-    focus: '#9a1f1f',
-    border: '#881818',
-    surface: mode === 'dark' ? '#2a1212' : '#f9eded',
-    messageOut: mode === 'dark' ? '#6f1313' : '#881818',
+    accent: '#803d4c',
+    hover: '#6a3340',
+    active: '#5a2b35',
+    soft: '#a65d6d',
+    focus: '#8b4455',
+    border: '#803d4c',
+    surface: mode === 'dark' ? '#1e1e1e' : '#ffffff',
+    messageOut: '#803d4c',
   };
 }
 
@@ -294,7 +294,7 @@ export function buildAccentPalette(hex: string, mode: ThemeMode): AccentPalette 
 }
 
 function themedSurfaces(hex: string, mode: ThemeMode): Record<(typeof SURFACE_VARS)[number], string> {
-  const rgb = hexToRgb(hex) ?? { r: 136, g: 24, b: 24 };
+  const rgb = hexToRgb(hex) ?? { r: 128, g: 61, b: 76 };
   const { h, s } = rgbToHsl(rgb);
   const sat = clamp(s * 0.22, 0.035, 0.16);
   const tone = (lightness: number, saturation = sat) => hslToHex({ h, s: saturation, l: lightness });

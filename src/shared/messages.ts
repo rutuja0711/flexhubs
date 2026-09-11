@@ -411,6 +411,58 @@ export function parseMessageReactions(value: unknown): MessageReaction[] {
   return normalizeReactions(value);
 }
 
+function reactionDisplayName(reaction: MessageReaction, currentUserId: string | null): string {
+  if (currentUserId && reaction.userId === currentUserId) {
+    return 'You';
+  }
+
+  return reaction.username.trim() || 'Someone';
+}
+
+export function listReactionAuthors(
+  reactions: MessageReaction[],
+  emoji: string,
+  currentUserId: string | null,
+): string[] {
+  const names: string[] = [];
+
+  for (const reaction of reactions) {
+    if (reaction.emoji !== emoji) {
+      continue;
+    }
+
+    const name = reactionDisplayName(reaction, currentUserId);
+
+    if (!names.includes(name)) {
+      names.push(name);
+    }
+  }
+
+  return names;
+}
+
+export function formatReactionAuthors(
+  reactions: MessageReaction[],
+  emoji: string,
+  currentUserId: string | null,
+): string {
+  const names = listReactionAuthors(reactions, emoji, currentUserId);
+
+  if (names.length === 0) {
+    return '';
+  }
+
+  if (names.length === 1) {
+    return names[0];
+  }
+
+  if (names.length === 2) {
+    return `${names[0]} and ${names[1]}`;
+  }
+
+  return `${names.slice(0, -1).join(', ')}, and ${names[names.length - 1]}`;
+}
+
 export function groupMessageReactions(
   reactions: MessageReaction[],
   currentUserId: string | null,
@@ -442,6 +494,14 @@ function normalizeMediaKind(value: unknown, fallback: MessageMediaKind = 'image'
     return 'gif';
   }
 
+  if (
+    normalized.includes('file') ||
+    normalized.includes('document') ||
+    normalized.includes('attachment')
+  ) {
+    return 'file';
+  }
+
   if (normalized.includes('image') || normalized.includes('photo')) {
     return 'image';
   }
@@ -469,6 +529,22 @@ function isLikelyMediaUrl(url: string): boolean {
   );
 }
 
+function isLikelyAttachmentUrl(url: string): boolean {
+  const normalized = normalizeMediaUrl(url);
+
+  if (!/^https?:\/\//i.test(normalized)) {
+    return false;
+  }
+
+  if (isLikelyMediaUrl(normalized)) {
+    return true;
+  }
+
+  return /\.(zip|txt|pdf|doc|docx|xls|xlsx|ppt|pptx|csv|json|xml|md|rar|7z|tar|gz|mp3|wav|mp4|mov|avi)(\?|$)/i.test(
+    normalized,
+  );
+}
+
 function readMediaFromObject(
   record: Record<string, unknown>,
   fallbackKind: MessageMediaKind = 'image',
@@ -489,14 +565,18 @@ function readMediaFromObject(
 
   const url = normalizeMediaUrl(rawUrl);
 
-  if (!isLikelyMediaUrl(url)) {
-    return null;
-  }
-
   const kind = normalizeMediaKind(
     record.type ?? record.kind ?? record.mediaType ?? record.mimeType ?? record.contentType,
     fallbackKind,
   );
+
+  if (!isLikelyAttachmentUrl(url) && kind !== 'file') {
+    return null;
+  }
+
+  if (kind !== 'file' && !isLikelyMediaUrl(url)) {
+    return null;
+  }
 
   const rawPreview =
     readString(record.previewUrl) ??
@@ -645,22 +725,34 @@ function extractMessageMedia(record: Record<string, unknown>, content: string): 
   const fileUrl = readString(record.fileUrl);
   if (fileUrl) {
     const url = normalizeMediaUrl(fileUrl);
-    if (isLikelyMediaUrl(url)) {
-      const mimeType = readString(record.mimeType)?.toLowerCase() ?? '';
-      const messageType = String(record.type ?? record.messageType ?? '').toUpperCase();
-      const isStickerMarker = trimmedContent === 'sticker';
-      const isSticker =
-        isStickerMarker ||
-        (messageType === 'GIF' && (mimeType === 'image/png' || mimeType === 'image/webp'));
-      const rawPreview =
-        readString(record.previewUrl) ?? readString(record.thumbnailUrl);
+    const mimeType = readString(record.mimeType)?.toLowerCase() ?? '';
+    const messageType = String(record.type ?? record.messageType ?? '').toUpperCase();
+    const fileName = readString(record.fileName) ?? readString(record.name);
+    const isFileMessage = messageType === 'FILE' || normalizeMediaKind(messageType, 'file') === 'file';
 
-      pushMedia({
-        kind: isSticker ? 'sticker' : messageType === 'GIF' || mimeType.includes('gif') ? 'gif' : 'image',
-        url,
-        previewUrl: rawPreview ? normalizeMediaUrl(rawPreview) : null,
-        name: readString(record.fileName) ?? readString(record.name),
-      });
+    if (isFileMessage || isLikelyAttachmentUrl(url)) {
+      if (isFileMessage) {
+        pushMedia({
+          kind: 'file',
+          url,
+          previewUrl: null,
+          name: fileName,
+        });
+      } else if (isLikelyMediaUrl(url)) {
+        const isStickerMarker = trimmedContent === 'sticker';
+        const isSticker =
+          isStickerMarker ||
+          (messageType === 'GIF' && (mimeType === 'image/png' || mimeType === 'image/webp'));
+        const rawPreview =
+          readString(record.previewUrl) ?? readString(record.thumbnailUrl);
+
+        pushMedia({
+          kind: isSticker ? 'sticker' : messageType === 'GIF' || mimeType.includes('gif') ? 'gif' : 'image',
+          url,
+          previewUrl: rawPreview ? normalizeMediaUrl(rawPreview) : null,
+          name: fileName,
+        });
+      }
     }
   }
 
@@ -897,47 +989,32 @@ export function findFirstUnreadMessageId(
   return messages.find(isIncoming)?.id ?? null;
 }
 
-const PREVIEW_ICON = {
-  sticker: '🎭',
-  poll: '📊',
-  gif: '🎬',
-  photo: '📷',
-  video: '📹',
-  audio: '📞',
-} as const;
+const PREVIEW_EMOJI_PREFIX = /^(\p{Extended_Pictographic}\uFE0F?\s*)+/u;
+
+function stripLeadingPreviewEmoji(text: string): string {
+  return text.replace(PREVIEW_EMOJI_PREFIX, '').trim();
+}
 
 function decoratePreviewLabel(label: string): string {
-  const trimmed = label.trim();
+  const trimmed = stripLeadingPreviewEmoji(label.trim());
   if (!trimmed) {
     return trimmed;
   }
 
-  if (/^🎞️\s*gif$/i.test(trimmed) || /^gif$/i.test(trimmed)) {
-    return `${PREVIEW_ICON.gif} GIF`;
-  }
-
-  if (/^[🎭📊📹📞🎬📷]\s/.test(trimmed)) {
-    return trimmed;
+  if (/^gif$/i.test(trimmed)) {
+    return 'GIF';
   }
 
   if (/^sticker$/i.test(trimmed)) {
-    return `${PREVIEW_ICON.sticker} Sticker`;
+    return 'Sticker';
   }
 
   if (/^poll$/i.test(trimmed)) {
-    return `${PREVIEW_ICON.poll} Poll`;
+    return 'Poll';
   }
 
   if (/^(photo|image)$/i.test(trimmed)) {
-    return `${PREVIEW_ICON.photo} Photo`;
-  }
-
-  if (/^video call/i.test(trimmed) || /^missed video/i.test(trimmed)) {
-    return `${PREVIEW_ICON.video} ${trimmed}`;
-  }
-
-  if (/^(voice call|audio call|missed voice|missed audio)/i.test(trimmed)) {
-    return `${PREVIEW_ICON.audio} ${trimmed}`;
+    return 'Photo';
   }
 
   return trimmed;
@@ -953,8 +1030,7 @@ export function decoratePreviewText(preview: string): string {
   if (separator > 0 && separator < 48) {
     const sender = trimmed.slice(0, separator);
     const rest = trimmed.slice(separator + 2);
-    const decoratedRest = decoratePreviewLabel(rest);
-    return decoratedRest === rest ? trimmed : `${sender}: ${decoratedRest}`;
+    return `${sender}: ${decoratePreviewLabel(rest)}`;
   }
 
   return decoratePreviewLabel(trimmed);
@@ -971,12 +1047,11 @@ export function formatMessagePreview(
   const callLog = parseCallLogContent(message.content);
 
   if (callLog) {
-    const icon = callLog.mode === 'video' ? PREVIEW_ICON.video : PREVIEW_ICON.audio;
-    return `${icon} ${formatCallLogPreview(callLog, currentUserId)}`;
+    return decoratePreviewText(formatCallLogPreview(callLog, currentUserId));
   }
 
   if (isPollMessage(message)) {
-    return `${PREVIEW_ICON.poll} Poll`;
+    return 'Poll';
   }
 
   const trimmedContent =
@@ -990,18 +1065,21 @@ export function formatMessagePreview(
     const primary = message.media[0];
     const label =
       primary.kind === 'sticker'
-        ? `${PREVIEW_ICON.sticker} Sticker`
+        ? 'Sticker'
         : primary.kind === 'gif'
-          ? `${PREVIEW_ICON.gif} GIF`
-          : `${PREVIEW_ICON.photo} Photo`;
+          ? 'GIF'
+          : primary.kind === 'file'
+            ? primary.name ?? 'File'
+            : 'Photo';
     return trimmedContent ? `${trimmedContent} (${label})` : label;
   }
 
   const type = String(message.messageType ?? '').toLowerCase();
-  if (type.includes('sticker')) return `${PREVIEW_ICON.sticker} Sticker`;
-  if (type.includes('gif')) return `${PREVIEW_ICON.gif} GIF`;
-  if (type.includes('image')) return `${PREVIEW_ICON.photo} Photo`;
-  if (type.includes('poll')) return `${PREVIEW_ICON.poll} Poll`;
+  if (type.includes('sticker')) return 'Sticker';
+  if (type.includes('gif')) return 'GIF';
+  if (type.includes('file')) return 'File';
+  if (type.includes('image')) return 'Photo';
+  if (type.includes('poll')) return 'Poll';
 
   return trimmedContent;
 }
@@ -1561,42 +1639,82 @@ export function isNotificationClickable(
   return resolveNotificationAction(notification, conversations).kind !== 'none';
 }
 
+function resolveConversationIdFromReference(
+  conversations: import('./chat').ConversationItem[],
+  id: string | null | undefined,
+): string | null {
+  if (!id?.trim()) {
+    return null;
+  }
+
+  const normalizedId = id.trim();
+
+  const byPrimaryId = conversations.find((item) => item.id === normalizedId);
+
+  if (byPrimaryId) {
+    return byPrimaryId.id;
+  }
+
+  const byPeerUserId = conversations.find(
+    (item) =>
+      item.kind === 'direct' &&
+      !item.isSelf &&
+      item.peerUserId?.toLowerCase() === normalizedId.toLowerCase(),
+  );
+
+  if (byPeerUserId) {
+    return byPeerUserId.id;
+  }
+
+  const byHubChannelId = conversations.find(
+    (item) => item.kind === 'hub' && item.channelId === normalizedId,
+  );
+
+  if (byHubChannelId) {
+    return byHubChannelId.id;
+  }
+
+  return null;
+}
+
 export function resolveNotificationConversationId(
   notification: NotificationItem,
   conversations: import('./chat').ConversationItem[],
 ): string | null {
   if (notification.conversationId) {
-    const directMatch = conversations.find(
-      (conversation) => conversation.id === notification.conversationId,
+    const resolved = resolveConversationIdFromReference(
+      conversations,
+      notification.conversationId,
     );
 
-    if (directMatch) {
-      return directMatch.id;
+    if (resolved) {
+      return resolved;
     }
   }
 
   if (notification.channelId) {
-    const channelMatch = conversations.find(
-      (conversation) => conversation.id === notification.channelId,
-    );
+    const resolved = resolveConversationIdFromReference(conversations, notification.channelId);
 
-    if (channelMatch) {
-      return channelMatch.id;
+    if (resolved) {
+      return resolved;
     }
   }
 
-  const haystack = `${notification.title} ${notification.body}`.toLowerCase();
+  const title = notification.title.trim();
 
-  const titleMatch = conversations.find((conversation) => {
-    const title = conversation.title.toLowerCase();
-    return title.length > 1 && haystack.includes(title);
-  });
+  if (title) {
+    const exactDirectMatch = conversations.find(
+      (conversation) =>
+        conversation.kind === 'direct' &&
+        conversation.title.trim().toLowerCase() === title.toLowerCase(),
+    );
 
-  if (titleMatch) {
-    return titleMatch.id;
+    if (exactDirectMatch) {
+      return exactDirectMatch.id;
+    }
   }
 
-  return notification.conversationId ?? notification.channelId;
+  return notification.conversationId ?? null;
 }
 
 export function normalizePendingFriends(payload: unknown): PendingFriendItem[] {

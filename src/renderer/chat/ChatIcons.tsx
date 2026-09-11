@@ -1,12 +1,9 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { AppLogoMark } from '../brand/AppLogo';
 import { RemoteImage } from '../RemoteImage';
 
 export function FlexLogo() {
-  return (
-    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-accent text-sm font-bold text-white">
-      F
-    </div>
-  );
+  return <AppLogoMark />;
 }
 
 export function BellIcon() {
@@ -144,8 +141,8 @@ export function NavIconButton({ label, active, badge, onClick, children }: NavIc
       type="button"
       aria-label={badge && badge > 0 ? `${label}, ${badge} unread` : label}
       aria-current={active ? 'page' : undefined}
-      className={`relative flex w-full flex-col items-center gap-1 rounded-xl px-2 py-2.5 text-[0.6875rem] transition-colors ${
-        active ? 'bg-accent/15 text-accent-soft' : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
+      className={`relative z-10 flex h-[60px] w-full flex-col items-center justify-center gap-1 rounded-xl text-[0.6875rem] transition-all duration-200 active:scale-95 ${
+        active ? 'text-accent-soft' : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
       }`}
       onClick={onClick}
     >

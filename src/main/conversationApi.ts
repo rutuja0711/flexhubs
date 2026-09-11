@@ -219,6 +219,10 @@ export async function sendThreadReply(
       // Ignore malformed media payload and send as plain text.
     }
 
+    if (!('content' in payload)) {
+      payload.content = content || '';
+    }
+
     const result = await apiPost<unknown>(
       `${API_BASE_URL}/conversations/${conversationId}/messages`,
       token,
@@ -295,6 +299,10 @@ export async function sendMessage(
       if (media.mimeType) payload.mimeType = media.mimeType;
     } catch {
       // Ignore malformed media payload and send as plain text.
+    }
+
+    if (!('content' in payload)) {
+      payload.content = content || '';
     }
   } else {
     payload.content = content;

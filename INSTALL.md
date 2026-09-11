@@ -2,43 +2,36 @@
 
 Unsigned builds trigger macOS Gatekeeper and Windows SmartScreen. **Right-click → Open** often fails if the file is still quarantined or the wrong file was opened.
 
-Send testers **both** the build **and** the helper script from this repo.
+Official installers: **`FlexHubs-Desktop.dmg`** (Mac) and **`FlexHubs-Desktop-Setup.exe`** (Windows).
 
 ---
 
-## Mac — reliable method
+## Mac — DMG installer
 
-### Before sending the app
+### Download
 
-1. From GitHub Actions, download **FlexHubs-Desktop-mac-universal** (zip).
-2. Unzip on your Mac. Inside you should see **`FlexHubs Desktop.app`** (sometimes inside a folder like `FlexHubs Desktop-darwin-universal/`).
-3. Zip **`FlexHubs Desktop.app`** + **`scripts/macos/open-flexhubs.command`** together and send that zip.
+GitHub → **Releases** → `desktop-latest` → **`FlexHubs-Desktop.dmg`**
 
 ### Tester steps
 
-1. **Unzip completely** — do not double-click the app while it is still inside the download zip.
-2. Double-click **`open-flexhubs.command`** (not the app).
-   - First time: **System Settings → Privacy & Security → Allow** running the helper script if asked.
-3. If the app still will not open:
-   - Open **System Settings → Privacy & Security**
-   - Scroll down — click **Open Anyway** next to FlexHubs Desktop (appears after a blocked attempt).
-4. **Manual fallback** (Terminal):
+1. Open **`FlexHubs-Desktop.dmg`**.
+2. Drag **FlexHubs Desktop** into **Applications**.
+3. Open from **Applications** (first launch may show Gatekeeper).
+4. If blocked: **System Settings → Privacy & Security → Open Anyway**.
+5. **Manual fallback** (Terminal):
 
 ```bash
-xattr -cr "/path/to/FlexHubs Desktop.app"
-open "/path/to/FlexHubs Desktop.app"
+xattr -cr "/Applications/FlexHubs Desktop.app"
+open "/Applications/FlexHubs Desktop.app"
 ```
-
-Replace the path with where they unzipped the app (often `~/Downloads/FlexHubs Desktop.app`).
 
 ### Common Mac mistakes
 
 | Mistake | Fix |
 |--------|-----|
-| Opening the `.zip` instead of unzipping | Unzip first |
-| Right-clicking the zip | Right-click **`FlexHubs Desktop.app`** |
-| App still quarantined | Run `xattr -cr` or use `open-flexhubs.command` |
-| Only "Move to Bin" on dialog | Use helper script or **Open Anyway** in Settings |
+| Running the app from inside the mounted DMG | Drag to **Applications** first |
+| App still quarantined | Run `xattr -cr` on the installed app |
+| Only "Move to Bin" on dialog | Use **Open Anyway** in Settings |
 
 ---
 
@@ -50,7 +43,7 @@ Replace the path with where they unzipped the app (often `~/Downloads/FlexHubs D
 2. Download **`FlexHubs-Desktop-Setup.exe`** directly from the release assets (**recommended** — avoids Chrome blocking Actions artifact zips).
 3. Fallback: GitHub Actions artifact **`FlexHubs-Desktop-Setup.exe`** (single installer file, not a portable zip).
 
-Do **not** send old **`FlexHubs-Desktop-windows-x64.zip`** portable builds — Chrome often blocks them as “Dangerous download” (unsigned `.exe` inside a zip).
+Use **`FlexHubs-Desktop-Setup.exe`** only — no portable zip builds.
 
 ### Tester steps
 
@@ -97,4 +90,4 @@ Do **not** send old **`FlexHubs-Desktop-windows-x64.zip`** portable builds — C
 
 ## Permanent fix (no warnings for all users)
 
-Sign and notarize Mac builds (Apple Developer, $99/yr) and sign Windows `Setup.exe` (code signing cert, ~$200–400/yr). Until then, use the helper scripts above.
+Follow **[SIGNING.md](./SIGNING.md)** to add Apple + Windows code signing secrets to GitHub Actions. CI will then publish signed `FlexHubs-Desktop.dmg` and `FlexHubs-Desktop-Setup.exe` without Gatekeeper/SmartScreen warnings.

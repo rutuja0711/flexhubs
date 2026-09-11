@@ -246,7 +246,7 @@ export function ChatSidebar({
           </button>
           
           {workspaceMenuOpen && (
-            <div className="absolute top-10 left-0 w-56 rounded-xl border border-app-border bg-app-elevated py-2 shadow-lg z-50">
+            <div className="absolute top-10 left-0 w-56 rounded-xl border border-app-border bg-app-elevated py-2 shadow-lg z-50 animate-pop-in origin-top-left">
               <button 
                 className="w-full px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover flex items-center gap-2"
                 onClick={() => {
@@ -273,7 +273,7 @@ export function ChatSidebar({
             type="button"
             aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
             aria-expanded={notificationsOpen}
-            className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-visible rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+            className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-visible rounded-lg text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95"
             onClick={onToggleNotifications}
           >
             <BellIcon />
@@ -292,7 +292,7 @@ export function ChatSidebar({
           <button
             type="button"
             aria-label="New conversation"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-accent text-white transition-colors hover:bg-accent-hover active:bg-accent-active"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-accent text-white transition-all duration-200 hover:bg-accent-hover active:scale-95 hover:shadow-md"
             onClick={() => {
               setComposeMode('direct');
               onNewConversationOpenChange(true);
@@ -313,13 +313,21 @@ export function ChatSidebar({
           <div className="mb-3 flex items-center justify-between">
             <span className="text-sm font-medium text-app-text">Chats</span>
           </div>
-          <div className="flex flex-wrap gap-2">
+          <div className="relative flex p-1 rounded-xl bg-app-chat-panel gap-1 z-0">
+            {/* Sliding Pill */}
+            <div 
+              className="absolute top-1 bottom-1 rounded-lg bg-app-elevated shadow-sm border border-app-border/50 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]"
+              style={{
+                width: activeTab === 'all' ? '46px' : activeTab === 'direct' ? '128px' : '56px',
+                transform: `translateX(${activeTab === 'all' ? '0px' : activeTab === 'direct' ? '50px' : '182px'})`
+              }}
+            />
             <button
               type="button"
-              className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+              className={`relative z-10 rounded-lg px-3 py-1.5 text-sm font-medium transition-all duration-200 active:scale-95 ${
                 activeTab === 'all'
-                  ? 'border border-accent text-accent-soft'
-                  : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
+                  ? 'text-app-text'
+                  : 'text-app-muted hover:text-app-text'
               }`}
               onClick={() => setActiveTab('all')}
             >
@@ -327,10 +335,10 @@ export function ChatSidebar({
             </button>
             <button
               type="button"
-              className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+              className={`relative z-10 rounded-lg px-3 py-1.5 text-sm font-medium transition-all duration-200 active:scale-95 ${
                 activeTab === 'direct'
-                  ? 'border border-accent text-accent-soft'
-                  : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
+                  ? 'text-app-text'
+                  : 'text-app-muted hover:text-app-text'
               }`}
               onClick={() => setActiveTab('direct')}
             >
@@ -338,10 +346,10 @@ export function ChatSidebar({
             </button>
             <button
               type="button"
-              className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+              className={`relative z-10 rounded-lg px-3 py-1.5 text-sm font-medium transition-all duration-200 active:scale-95 ${
                 activeTab === 'hub'
-                  ? 'border border-accent text-accent-soft'
-                  : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
+                  ? 'text-app-text'
+                  : 'text-app-muted hover:text-app-text'
               }`}
               onClick={() => setActiveTab('hub')}
             >

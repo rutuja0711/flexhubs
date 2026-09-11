@@ -570,7 +570,58 @@ export function mergeConversationDraftPreviews(
   });
 }
 
+function readMessageSenderName(record: Record<string, unknown>): string | null {
+  const sender = asRecord(record.sender) ?? asRecord(record.user) ?? asRecord(record.author);
+
+  return (
+    readString(record.senderName) ??
+    (sender
+      ? readString(sender.name) ??
+        readString(sender.displayName) ??
+        readString(sender.username)
+      : null)
+  );
+}
+
+function prefixGroupPreview(senderName: string | null | undefined, preview: string): string {
+  const trimmedPreview = preview.trim();
+  const trimmedSender = senderName?.trim();
+
+  if (!trimmedPreview || !trimmedSender || trimmedSender === 'Unknown') {
+    return trimmedPreview;
+  }
+
+  const separator = trimmedPreview.indexOf(': ');
+  if (separator > 0 && separator < 48) {
+    const existingSender = trimmedPreview.slice(0, separator).trim();
+    if (existingSender.toLowerCase() === trimmedSender.toLowerCase()) {
+      return trimmedPreview;
+    }
+  }
+
+  return `${trimmedSender}: ${trimmedPreview}`;
+}
+
+export function buildConversationListPreview(
+  kind: ConversationKind,
+  preview: string,
+  senderName?: string | null,
+): string {
+  const trimmed = preview.trim();
+
+  if (!trimmed) {
+    return '';
+  }
+
+  if (kind !== 'hub') {
+    return decoratePreviewText(trimmed);
+  }
+
+  return decoratePreviewText(prefixGroupPreview(senderName, trimmed));
+}
+
 function readLastMessagePreview(record: Record<string, unknown>): string {
+  const kind = inferKind(record);
   const lastMessage = asRecord(record.lastMessage) ?? asRecord(record.latestMessage);
 
   if (lastMessage) {
@@ -578,21 +629,18 @@ function readLastMessagePreview(record: Record<string, unknown>): string {
     const preview = formatMessagePreview(normalized);
 
     if (preview) {
-      const sender =
-        readString(asRecord(lastMessage.sender)?.name) ??
-        readString(asRecord(lastMessage.user)?.name) ??
-        readString(lastMessage.senderName);
-
-      return sender ? `${sender}: ${preview}` : preview;
+      const senderName = readMessageSenderName(lastMessage) ?? normalized.senderName;
+      return buildConversationListPreview(kind, preview, senderName);
     }
   }
 
-  return decoratePreviewText(
+  const fallback =
     readString(record.preview) ??
-      readString(record.lastMessagePreview) ??
-      readString(record.subtitle) ??
-      '',
-  );
+    readString(record.lastMessagePreview) ??
+    readString(record.subtitle) ??
+    '';
+
+  return buildConversationListPreview(kind, fallback);
 }
 
 function readMemberPeople(record: Record<string, unknown>): Record<string, unknown>[] {
@@ -961,16 +1009,68 @@ export function readHubChannelId(
   );
 }
 
+export function findConversationByAnyId(
+  conversations: ConversationItem[],
+  id: string | null | undefined,
+): ConversationItem | null {
+  if (!id) {
+    return null;
+  }
+
+  const normalizedId = id.trim();
+
+  if (!normalizedId) {
+    return null;
+  }
+
+  const byPrimaryId = conversations.find((item) => item.id === normalizedId);
+
+  if (byPrimaryId) {
+    return byPrimaryId;
+  }
+
+  const byPeerUserId = findDirectConversationForUser(conversations, normalizedId);
+
+  if (byPeerUserId) {
+    return byPeerUserId;
+  }
+
+  const byHubChannelId = conversations.find(
+    (item) => item.kind === 'hub' && item.channelId === normalizedId,
+  );
+
+  if (byHubChannelId) {
+    return byHubChannelId;
+  }
+
+  return null;
+}
+
 export function resolveTypingConversationId(
   rawConversationId: string,
   conversations: ConversationItem[],
+  senderUserId?: string | null,
 ): string {
-  if (conversations.some((item) => item.id === rawConversationId)) {
-    return rawConversationId;
-  }
+  const matched =
+    findConversationByAnyId(conversations, rawConversationId) ??
+    (senderUserId ? findDirectConversationForUser(conversations, senderUserId) : null);
 
-  const matchedByChannel = conversations.find((item) => item.channelId === rawConversationId);
-  return matchedByChannel?.id ?? rawConversationId;
+  return matched?.id ?? rawConversationId;
+}
+
+export function resolveConversationForMessage(
+  conversations: ConversationItem[],
+  rawConversationId: string,
+  senderUserId?: string | null,
+): { conversationId: string; conversation: ConversationItem | null } {
+  const conversation =
+    findConversationByAnyId(conversations, rawConversationId) ??
+    (senderUserId ? findDirectConversationForUser(conversations, senderUserId) : null);
+
+  return {
+    conversationId: conversation?.id ?? rawConversationId,
+    conversation,
+  };
 }
 
 export function normalizeConversations(

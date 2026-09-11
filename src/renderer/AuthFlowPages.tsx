@@ -7,7 +7,10 @@ import {
   verifyPasswordResetCode,
 } from './authExtrasApi';
 import { storeAuth } from './authApi';
+import { AppLogoHorizontal } from './brand/AppLogo';
 import { readInviteRegistrationEmail } from '../shared/auth';
+import { FiMessageSquare, FiShield, FiUsers, FiMoon, FiSun } from 'react-icons/fi';
+import { useTheme } from './theme/ThemeProvider';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RESEND_SECONDS = 20;
@@ -521,26 +524,96 @@ export function InviteRegisterPage({
   );
 }
 
-function AuthShell({
+export function BrandingPanel() {
+  const features = [
+    {
+      icon: FiMessageSquare,
+      title: 'Real-time messaging',
+      description: 'DMs, groups, and organization hubs in one place.',
+    },
+    {
+      icon: FiUsers,
+      title: 'Built for teams',
+      description: 'Invite teammates and keep conversations organized.',
+    },
+    {
+      icon: FiShield,
+      title: 'Workspace controls',
+      description: 'Roles, invites, and notification preferences.',
+    },
+  ];
+
+  return (
+    <div className="relative hidden min-h-full flex-col justify-between overflow-hidden bg-gradient-to-br from-accent via-accent-hover to-accent-active p-10 text-white lg:flex">
+      <div>
+        <AppLogoHorizontal className="mb-10 h-12 brightness-0 invert" />
+        <h1 className="text-3xl font-bold leading-tight">
+          Connect, chat, and collaborate in real time
+        </h1>
+        <p className="mt-4 max-w-md text-base leading-relaxed text-white/85">
+          Flexhubs brings your team conversations, hubs, and notifications together in a focused
+          workspace.
+        </p>
+      </div>
+      <div className="space-y-5">
+        {features.map((feature) => (
+          <div key={feature.title} className="flex gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/12">
+              <feature.icon size={18} />
+            </div>
+            <div>
+              <p className="font-semibold">{feature.title}</p>
+              <p className="mt-0.5 text-sm text-white/80">{feature.description}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function AuthShell({
   title,
   subtitle,
   onBack,
   children,
+  headerContent,
+  backLabel = '← Back to login',
 }: {
-  title: string;
-  subtitle: string;
-  onBack: () => void;
+  title?: string;
+  subtitle?: string;
+  onBack?: () => void;
   children: ReactNode;
+  headerContent?: ReactNode;
+  backLabel?: string;
 }) {
+  const { theme, toggleTheme } = useTheme();
+
   return (
-    <div className="flex min-h-full items-center justify-center bg-app-bg p-6">
-      <div className="w-full max-w-[420px] rounded-[20px] border border-app-border bg-app-surface p-8 shadow-app">
-        <button type="button" className="mb-4 text-sm text-app-muted hover:text-app-text" onClick={onBack}>
-          ← Back to login
+    <div className="flex min-h-full bg-app-bg">
+      <BrandingPanel />
+      <div className="flex flex-1 items-center justify-center p-6 relative">
+        <button
+          type="button"
+          aria-label="Toggle theme"
+          className="absolute top-6 right-6 flex h-9 w-9 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+          onClick={toggleTheme}
+        >
+          {theme === 'dark' ? <FiSun size={18} /> : <FiMoon size={18} />}
         </button>
-        <h1 className="text-2xl font-bold text-app-text">{title}</h1>
-        <p className="mt-1 mb-6 text-sm text-app-muted">{subtitle}</p>
-        {children}
+
+        <div className="w-full max-w-[440px] rounded-[20px] border border-app-border bg-app-surface p-8 shadow-app">
+          {onBack ? (
+            <button type="button" className="mb-4 text-sm text-app-muted hover:text-app-text" onClick={onBack}>
+              {backLabel}
+            </button>
+          ) : null}
+          <AppLogoHorizontal className="mb-5 h-10 lg:hidden" />
+          {headerContent}
+          {title ? <h1 className="text-2xl font-bold text-app-text">{title}</h1> : null}
+          {subtitle ? <p className="mt-1 mb-6 text-sm text-app-muted">{subtitle}</p> : null}
+          {children}
+        </div>
       </div>
     </div>
   );

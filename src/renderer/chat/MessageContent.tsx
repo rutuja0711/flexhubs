@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { FiFile } from 'react-icons/fi';
 import type { MessageItem } from '../../shared/messages';
 import {
   DELETED_MESSAGE_TEXT,
@@ -64,6 +65,7 @@ function mediaLabel(kind: string): string {
   if (kind === 'sticker') return 'Sticker';
   if (kind === 'gif') return 'GIF';
   if (kind === 'image') return 'Image';
+  if (kind === 'file') return 'File';
   return 'Attachment';
 }
 
@@ -123,12 +125,32 @@ export function MessageContent({
   return (
     <div className="space-y-2">
       {media.map((item) => {
+        if (item.kind === 'file') {
+          return (
+            <a
+              key={item.url}
+              href={item.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              download={item.name ?? undefined}
+              className="flex max-w-sm items-center gap-3 rounded-xl border border-app-border bg-app-surface px-3 py-2.5 text-inherit transition-colors hover:bg-app-chat-hover"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent-soft">
+                <FiFile className="h-5 w-5" />
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-sm font-medium">{item.name ?? 'File'}</span>
+                <span className="text-xs text-app-muted">Tap to download</span>
+              </span>
+            </a>
+          );
+        }
+
         const isVideo =
           item.kind === 'video' ||
           item.name?.toLowerCase().endsWith('.mp4') ||
           item.url?.toLowerCase().endsWith('.mp4');
-        const isPreviewable =
-          isVideo || item.kind === 'image' || item.kind === 'file';
+        const isPreviewable = isVideo || item.kind === 'image';
         const previewUrl = item.previewUrl ?? item.url;
 
         return (
@@ -224,6 +246,7 @@ export function MessageReplyPreview({
   const primaryMedia =
     media.find((item) => item.kind === 'gif' || item.kind === 'sticker') ??
     media.find((item) => item.kind === 'image') ??
+    media.find((item) => item.kind === 'file') ??
     media[0];
   const normalizedContent = message.content.trim() === 'sticker' ? '' : message.content.trim();
   const visibleText = media.some((item) => item.url === normalizedContent) ? '' : normalizedContent;
@@ -234,7 +257,11 @@ export function MessageReplyPreview({
 
   return (
     <div className={`flex min-w-0 items-center gap-2 ${className}`}>
-      {primaryMedia ? (
+      {primaryMedia?.kind === 'file' ? (
+        <span className={`truncate text-app-text ${className}`}>
+          {primaryMedia.name ?? 'File'}
+        </span>
+      ) : primaryMedia ? (
         <RemoteImage
           src={
             primaryMedia.kind === 'gif'
@@ -248,7 +275,7 @@ export function MessageReplyPreview({
       ) : null}
       {visibleText ? (
         <span className="min-w-0 truncate text-app-text">{visibleText}</span>
-      ) : primaryMedia ? (
+      ) : primaryMedia && primaryMedia.kind !== 'file' ? (
         <span className="truncate italic text-app-muted">{mediaLabel(primaryMedia.kind)}</span>
       ) : null}
     </div>

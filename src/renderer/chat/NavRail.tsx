@@ -58,7 +58,23 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
         <FlexLogo />
       </div>
 
-      <nav className="flex w-full flex-1 flex-col gap-1 px-2" aria-label="Main navigation">
+      <nav className="relative flex w-full flex-1 flex-col gap-1 px-2" aria-label="Main navigation">
+        {/* Sliding Active Indicator */}
+        <div 
+          className="absolute left-2 right-2 rounded-xl bg-accent/15 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]"
+          style={{
+            height: '60px',
+            transform: `translateY(${
+              activeView === 'activity' ? '0px' :
+              activeView === 'hubs' ? '64px' :
+              activeView === 'saved' ? '128px' :
+              activeView === 'calendar' ? '192px' :
+              activeView === 'files' ? '256px' : '-100px'
+            })`,
+            opacity: activeView ? 1 : 0
+          }}
+          aria-hidden="true"
+        />
         <NavIconButton
           label="Activity"
           badge={unreadCount}
@@ -102,13 +118,13 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
           <button
             type="button"
             aria-label="Ask Flex"
-            className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-white transition-colors hover:bg-accent-hover"
+            className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-white transition-all duration-200 hover:bg-accent-hover active:scale-95 hover:shadow-md"
             onClick={onOpenFlexAi}
           >
             <SparkleIcon />
           </button>
           <div
-            className="pointer-events-none absolute top-1/2 left-0 z-[80] flex -translate-y-1/2 items-center rounded-full border border-app-border bg-app-surface py-1.5 pr-4 pl-1.5 opacity-0 shadow-app transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+            className="pointer-events-none absolute top-1/2 left-0 z-[80] flex -translate-y-1/2 items-center rounded-full border border-app-border bg-app-surface py-1.5 pr-4 pl-1.5 opacity-0 shadow-app transition-all duration-200 group-hover:translate-x-2 group-hover:opacity-100 group-focus-within:translate-x-2 group-focus-within:opacity-100"
             aria-hidden="true"
           >
             <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent text-white">
@@ -136,7 +152,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
           </button>
           
           {menuOpen && (
-            <div className="absolute bottom-10 left-full ml-4 w-56 rounded-xl border border-app-border bg-app-elevated py-2 shadow-lg z-50">
+            <div className="absolute bottom-10 left-full ml-4 w-56 rounded-xl border border-app-border bg-app-elevated py-2 shadow-lg z-50 animate-pop-in origin-bottom-left">
               <div className="mb-2 border-b border-app-border/40 px-4 py-2">
                 <div className="truncate text-sm font-bold text-app-text">{getUserDisplayName(user)}</div>
                 <div className="text-xs text-app-muted">{apiStatusToUi(presenceStatus)}</div>

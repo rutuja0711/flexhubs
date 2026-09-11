@@ -1,6 +1,5 @@
-import { FiMessageSquare } from 'react-icons/fi';
+import { AppLogoMark } from '../brand/AppLogo';
 import { BuildingIcon, UserPlusIcon } from './ChatIcons';
-
 type ChatWelcomeProps = {
   workspaceName: string;
   onFindPeople: () => void;
@@ -12,8 +11,8 @@ export function ChatWelcome({ workspaceName, onFindPeople }: ChatWelcomeProps) {
   return (
     <div className="flex flex-1 items-center justify-center bg-app-chat-bg p-8">
       <div className="max-w-lg text-center">
-        <div className="mx-auto mb-6 flex h-24 w-24 items-center justify-center rounded-[24px] border border-app-border bg-app-chat-panel text-accent-soft">
-          <FiMessageSquare className="h-10 w-10" aria-hidden="true" />
+        <div className="mx-auto mb-6 flex h-24 w-24 items-center justify-center rounded-[24px] border border-app-border bg-app-chat-panel p-4">
+          <AppLogoMark className="h-full w-full" />
         </div>
 
         <h2 className="mb-3 text-[1.75rem] font-bold text-app-text">Welcome to {shortName}</h2>

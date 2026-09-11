@@ -1,4 +1,5 @@
 import { formatCallLogPreview, formatNotificationDisplayBody, parseCallLogContent } from '../shared/calls';
+import { buildConversationListPreview, type ConversationItem } from '../shared/chat';
 import type { MessageItem, NotificationItem } from '../shared/messages';
 import { isCallLogMessage } from '../shared/messages';
 import { getUserId } from '../shared/user';
@@ -37,7 +38,7 @@ export function isIncomingMessageNotification(notification: NotificationItem): b
 }
 
 function notificationIconUrl(): string {
-  return new URL('./icon.png', window.location.href).href;
+  return new URL('./icon-256.png', window.location.href).href;
 }
 
 function bindNativeNotificationClicks(): void {
@@ -116,12 +117,19 @@ function rememberShownNotification(notification: NotificationItem): void {
 }
 
 export async function ensureNotificationPermission(): Promise<boolean> {
-  if (window.electronAPI?.showDesktopNotification) {
-    return true;
-  }
-
   if (!('Notification' in window)) {
     return false;
+  }
+
+  if (Notification.permission === 'default') {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      return false;
+    }
+  }
+
+  if (window.electronAPI?.showDesktopNotification && Notification.permission !== 'denied') {
+    return true;
   }
 
   if (Notification.permission === 'granted') {
@@ -162,7 +170,8 @@ async function openDesktopNotification(
   const desktopNotification = new Notification(title || 'FlexHubs Desktop', {
     body,
     tag,
-    icon: notificationIconUrl(),
+    // macOS treats icon as a right-side attachment; native notifications use the app icon instead.
+    ...(window.electronAPI ? {} : { icon: notificationIconUrl() }),
   });
 
   desktopNotification.onclick = () => {
@@ -172,9 +181,45 @@ async function openDesktopNotification(
   };
 }
 
+function parseSenderFromNotificationBody(body: string): string | null {
+  const match = body.trim().match(/^([^:\n]{1,48}):\s([\s\S]+)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  return match[1].trim() || null;
+}
+
+export function formatDesktopMessageNotification(
+  preview: string,
+  senderName: string,
+  conversation: Pick<ConversationItem, 'kind' | 'title'> | null,
+): { title: string; body: string } {
+  const trimmedPreview = preview.trim();
+  const trimmedSender = senderName.trim() || 'Someone';
+
+  if (conversation?.kind === 'hub') {
+    return {
+      title: conversation.title.trim() || 'Group message',
+      body: buildConversationListPreview('hub', trimmedPreview, trimmedSender),
+    };
+  }
+
+  const strippedPreview = parseSenderFromNotificationBody(trimmedPreview)
+    ? trimmedPreview.replace(/^([^:\n]{1,48}):\s/, '').trim()
+    : trimmedPreview;
+
+  return {
+    title: conversation?.title.trim() || trimmedSender || 'New message',
+    body: strippedPreview || trimmedPreview || 'New message',
+  };
+}
+
 export async function showDesktopNotification(
   notification: NotificationItem,
   onClick: () => void,
+  conversation: Pick<ConversationItem, 'kind' | 'title'> | null = null,
 ): Promise<void> {
   if (wasAlreadyShown(notification)) {
     rememberShownNotification(notification);
@@ -183,9 +228,37 @@ export async function showDesktopNotification(
 
   rememberShownNotification(notification);
 
+  const formattedBody = formatNotificationDisplayBody(
+    notification.body || '',
+    getUserId(getStoredUser()),
+  );
+
+  let title = notification.title || 'FlexHubs';
+  let body = formattedBody;
+
+  if (isIncomingMessageNotification(notification)) {
+    const senderName =
+      parseSenderFromNotificationBody(formattedBody) ?? notification.title.trim() ?? '';
+    const effectiveConversation =
+      conversation ??
+      (senderName
+        ? ({ kind: 'direct' as const, title: senderName } satisfies Pick<
+            ConversationItem,
+            'kind' | 'title'
+          >)
+        : null);
+    const formatted = formatDesktopMessageNotification(
+      formattedBody,
+      senderName,
+      effectiveConversation,
+    );
+    title = formatted.title;
+    body = formatted.body;
+  }
+
   await openDesktopNotification(
-    notification.title || 'Flexhubs',
-    formatNotificationDisplayBody(notification.body || '', getUserId(getStoredUser())),
+    title,
+    body,
     notification.messageId ? `message-${notification.messageId}` : getNotificationKey(notification),
     onClick,
   );
@@ -205,20 +278,25 @@ export async function alertNewDesktopNotifications(
   notifications: NotificationItem[],
   onClick: (notification: NotificationItem) => void,
   onNewNotification?: (notification: NotificationItem) => void,
+  resolveConversation?: (notification: NotificationItem) => ConversationItem | null,
 ): Promise<void> {
   if (!notificationSnapshotReady) {
     seedNotificationSnapshot(notifications);
     return;
   }
 
-  for (const notification of notifications) {
+  for (const notification of peekNewNotifications(notifications)) {
     if (wasAlreadyShown(notification)) {
       rememberShownNotification(notification);
       continue;
     }
 
     onNewNotification?.(notification);
-    await showDesktopNotification(notification, () => onClick(notification));
+    await showDesktopNotification(
+      notification,
+      () => onClick(notification),
+      resolveConversation?.(notification) ?? null,
+    );
   }
 }
 
@@ -258,7 +336,7 @@ function messagePreview(message: MessageItem): string {
 
 export async function showIncomingMessageDesktopNotification(
   message: MessageItem,
-  conversationTitle: string,
+  conversation: Pick<ConversationItem, 'kind' | 'title'> | null,
   onClick: () => void,
   conversationId?: string,
 ): Promise<void> {
@@ -266,7 +344,21 @@ export async function showIncomingMessageDesktopNotification(
     return;
   }
 
-  const body = `${message.senderName}: ${messagePreview(message)}`;
+  const effectiveConversation =
+    conversation ??
+    (message.senderName.trim()
+      ? ({ kind: 'direct' as const, title: message.senderName.trim() } satisfies Pick<
+          ConversationItem,
+          'kind' | 'title'
+        >)
+      : null);
+
+  const preview = messagePreview(message);
+  const { title, body } = formatDesktopMessageNotification(
+    preview,
+    message.senderName,
+    effectiveConversation,
+  );
   const fingerprint = conversationId ? messageFingerprint(conversationId, body) : null;
 
   if (shownMessageIds.has(message.id) || (fingerprint && shownFingerprints.has(fingerprint))) {
@@ -277,8 +369,6 @@ export async function showIncomingMessageDesktopNotification(
   if (fingerprint) {
     shownFingerprints.add(fingerprint);
   }
-
-  const title = conversationTitle.trim() || message.senderName || 'New message';
 
   await openDesktopNotification(title, body, `message-${message.id}`, onClick);
 }

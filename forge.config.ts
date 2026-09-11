@@ -1,18 +1,30 @@
 import path from 'node:path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
+import { MakerDMG } from '@electron-forge/maker-dmg';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
-import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
+import {
+  getMacOsNotarizeConfig,
+  getMacOsSignConfig,
+  getWindowsSignConfig,
+} from './signing.config';
 
 const isDarwinHost = process.platform === 'darwin';
 const isWindowsHost = process.platform === 'win32';
 
+const osxSign = getMacOsSignConfig();
+const osxNotarize = osxSign ? getMacOsNotarizeConfig() : undefined;
+const windowsSign = getWindowsSignConfig();
+
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
+    appBundleId: 'com.flexodyn.flexhubs',
+    appCategoryType: 'public.app-category.business',
+    extraResource: [path.join(__dirname, 'assets')],
     icon: isWindowsHost
       ? path.join(__dirname, 'assets', 'icon.ico')
-      : path.join(__dirname, 'assets', 'icon.png'),
+      : path.join(__dirname, 'assets', 'icon.icns'),
     ...(isDarwinHost
       ? {
           arch: 'universal' as const,
@@ -28,6 +40,9 @@ const config: ForgeConfig = {
       NSCameraUsageDescription: 'FlexHubs needs camera access for video calls.',
       NSScreenCaptureUsageDescription: 'FlexHubs needs screen recording access to share your screen during calls.',
     },
+    ...(osxSign ? { osxSign } : {}),
+    ...(osxNotarize ? { osxNotarize } : {}),
+    ...(windowsSign ? { windowsSign } : {}),
   },
   rebuildConfig: {},
   makers: [
@@ -36,16 +51,29 @@ const config: ForgeConfig = {
           new MakerSquirrel({
             name: 'FlexHubsDesktop',
             authors: 'Flexodyn Solutions',
-            description: 'FlexHubs Desktop',
+            description: 'FlexHubs Desktop Application',
             setupExe: 'FlexHubs-Desktop-Setup.exe',
             setupIcon: path.join(__dirname, 'assets', 'icon.ico'),
             noMsi: true,
+            ...(windowsSign
+              ? {
+                  certificateFile: windowsSign.certificateFile,
+                  certificatePassword: windowsSign.certificatePassword,
+                  windowsSign,
+                }
+              : {}),
           }),
         ]
       : []),
-    // Mac only — Windows portable zips trigger Chrome "Dangerous download blocked"
-    // (unsigned .exe inside a zip). Windows testers use FlexHubs-Desktop-Setup.exe.
-    new MakerZIP({}, ['darwin']),
+    ...(isDarwinHost
+      ? [
+          new MakerDMG({
+            name: 'FlexHubs-Desktop',
+            icon: path.join(__dirname, 'assets', 'icon.icns'),
+            format: 'ULFO',
+          }),
+        ]
+      : []),
   ],
   plugins: [
     new VitePlugin({

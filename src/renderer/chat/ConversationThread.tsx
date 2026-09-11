@@ -815,6 +815,7 @@ export function ConversationThread({
         }}
         conversationId={conversation.id}
         onVotePoll={onVotePoll}
+        showReactionAuthors={conversation.kind === 'hub'}
       />
 
       {typingLabel ? (

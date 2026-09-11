@@ -1,4 +1,16 @@
-import { app, BrowserWindow, desktopCapturer, ipcMain, Notification, screen, session, shell, systemPreferences } from 'electron';
+import {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  ipcMain,
+  nativeImage,
+  nativeTheme,
+  Notification,
+  screen,
+  session,
+  shell,
+  systemPreferences,
+} from 'electron';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { performLogin } from './main/authLogin';
@@ -159,6 +171,65 @@ let callPresentationActive = false;
 let savedMainBounds: Electron.Rectangle | null = null;
 const DEFAULT_MIN_SIZE = { width: 960, height: 640 };
 const CALL_PIP_SIZE = { width: 360, height: 300 };
+
+function resolveNativeIconPath(): string | undefined {
+  const assetsDir = app.isPackaged
+    ? path.join(process.resourcesPath, 'assets')
+    : path.join(__dirname, '..', '..', 'assets');
+  const iconPath =
+    process.platform === 'win32'
+      ? path.join(assetsDir, 'icon.ico')
+      : path.join(assetsDir, 'icon.png');
+
+  return iconPath;
+}
+
+function resolveNativeIconImage(): Electron.NativeImage | undefined {
+  const iconPath = resolveNativeIconPath();
+
+  if (!iconPath) {
+    return undefined;
+  }
+
+  const icon = nativeImage.createFromPath(iconPath);
+
+  return icon.isEmpty() ? undefined : icon;
+}
+
+function applyApplicationIcon(): void {
+  const icon = resolveNativeIconImage();
+
+  if (!icon) {
+    return;
+  }
+
+  if (process.platform === 'darwin' && app.dock) {
+    app.dock.setIcon(icon);
+  }
+}
+
+function resolveWindowBackgroundColor(): string {
+  return nativeTheme.shouldUseDarkColors ? '#0d0d0d' : '#f3f4f6';
+}
+
+function notificationOptions(title: string, body: string): Electron.NotificationConstructorOptions {
+  const options: Electron.NotificationConstructorOptions = {
+    title,
+    body,
+    silent: false,
+  };
+
+  // In development, the app badge is usually the Electron logo.
+  // Passing the icon explicitly will display it as a right-side attachment on macOS,
+  // which ensures the Flexhubs logo is visible even in dev mode.
+  const iconPath = resolveNativeIconPath();
+
+  if (iconPath) {
+    options.icon = iconPath;
+  }
+
+  return options;
+}
 
 if (started) {
   app.quit();
@@ -973,13 +1044,16 @@ setRealtimeHandlers({
 });
 
 const createWindow = (): void => {
+  const appIcon = resolveNativeIconImage();
+
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 960,
     minHeight: 640,
-    backgroundColor: '#0d0d0d',
+    backgroundColor: resolveWindowBackgroundColor(),
     show: false,
+    ...(appIcon ? { icon: appIcon } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -1235,9 +1309,32 @@ function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
   mainWindow.focus();
 }
 
+if (process.platform === 'win32') {
+  app.setAppUserModelId(app.name);
+}
+
+function setupAutoUpdater(): void {
+  if (app.isPackaged) {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { updateElectronApp } = require('update-electron-app');
+      updateElectronApp({
+        updateInterval: '1 hour',
+        notifyUser: true,
+      });
+      console.log('[FlexHubs] Auto updater initialized successfully.');
+    } catch (error) {
+      console.warn('[FlexHubs] Auto updater could not be initialized:', error);
+    }
+  }
+}
+
 app.whenReady().then(() => {
   console.log('[FlexHubs] API base URL:', API_BASE_URL);
   console.log('[FlexHubs] Call debug: lines starting with [Calls] appear here after login.');
+
+  setupAutoUpdater();
+  applyApplicationIcon();
 
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(isAllowedSessionPermission(permission));
@@ -1252,34 +1349,60 @@ app.whenReady().then(() => {
 
   ipcMain.handle(
     'desktop:notify',
-    (_event, payload: { title?: string; body?: string; tag?: string }) => {
-      if (!Notification.isSupported()) {
-        return { ok: false };
-      }
-
-      const notification = new Notification({
-        title: payload.title?.trim() || 'FlexHubs',
-        body: payload.body ?? '',
-        silent: false,
-      });
-
-      notification.on('click', () => {
-        if (!mainWindow) {
+    (_event, payload: { title?: string; body?: string; tag?: string }) =>
+      new Promise<{ ok: boolean; error?: string }>((resolve) => {
+        if (!Notification.isSupported()) {
+          resolve({ ok: false, error: 'Notifications are not supported on this device.' });
           return;
         }
 
-        if (mainWindow.isMinimized()) {
-          mainWindow.restore();
-        }
+        const notification = new Notification(
+          notificationOptions(payload.title?.trim() || 'FlexHubs', payload.body ?? ''),
+        );
 
-        mainWindow.show();
-        mainWindow.focus();
-        mainWindow.webContents.send('desktop:notify-click', payload.tag ?? '');
-      });
+        let settled = false;
+        const finish = (result: { ok: boolean; error?: string }) => {
+          if (settled) {
+            return;
+          }
 
-      notification.show();
-      return { ok: true };
-    },
+          settled = true;
+          resolve(result);
+        };
+
+        notification.on('show', () => {
+          finish({ ok: true });
+        });
+
+        notification.on('failed', (_event, error) => {
+          console.warn('[FlexHubs] Native notification failed:', error);
+          finish({
+            ok: false,
+            error:
+              'Notification was blocked. Enable FlexHubs in System Settings → Notifications.',
+          });
+        });
+
+        notification.on('click', () => {
+          if (!mainWindow) {
+            return;
+          }
+
+          if (mainWindow.isMinimized()) {
+            mainWindow.restore();
+          }
+
+          mainWindow.show();
+          mainWindow.focus();
+          mainWindow.webContents.send('desktop:notify-click', payload.tag ?? '');
+        });
+
+        notification.show();
+
+        setTimeout(() => {
+          finish({ ok: true });
+        }, 750);
+      }),
   );
 
   createWindow();

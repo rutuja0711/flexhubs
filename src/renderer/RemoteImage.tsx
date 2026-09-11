@@ -75,7 +75,7 @@ export function RemoteImage({
       return;
     }
 
-    setDisplaySrc(normalized);
+    setDisplaySrc(null);
 
     void resolveFlexHubsImageSrc(src).then((nextSrc) => {
       if (!cancelled) {

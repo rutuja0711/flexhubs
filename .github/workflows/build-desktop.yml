@@ -31,11 +31,38 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Import Mac signing certificate
+        if: matrix.os == 'macos-latest'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: bash scripts/ci/import-macos-signing-cert.sh
+
+      - name: Prepare Windows signing certificate
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: ./scripts/ci/prepare-windows-signing.ps1
+
       - name: Build Mac universal app
         if: matrix.os == 'macos-latest'
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MAC_DEVELOPER_IDENTITY: ${{ secrets.MAC_DEVELOPER_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run make:mac
 
       - name: Build Windows x64 installer
@@ -45,12 +72,33 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: npm run make:win
 
-      - name: Upload Mac zip
+      - name: Verify Mac code signing
+        if: matrix.os == 'macos-latest' && secrets.MACOS_CERTIFICATE != ''
+        run: bash scripts/ci/verify-macos-signing.sh
+
+      - name: Verify Windows code signing
+        if: matrix.os == 'windows-latest' && secrets.WINDOWS_CERTIFICATE != ''
+        shell: pwsh
+        run: ./scripts/ci/verify-windows-signing.ps1
+
+      - name: Stage Mac DMG
+        if: matrix.os == 'macos-latest'
+        run: |
+          dmg="$(find out/make -name 'FlexHubs-Desktop.dmg' -print -quit)"
+          if [ -z "$dmg" ]; then
+            echo "FlexHubs-Desktop.dmg not found under out/make"
+            find out/make -name '*.dmg' || true
+            exit 1
+          fi
+          cp "$dmg" out/FlexHubs-Desktop.dmg
+          echo "Staged installer: $dmg -> out/FlexHubs-Desktop.dmg"
+
+      - name: Upload Mac DMG
         if: matrix.os == 'macos-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: FlexHubs-Desktop-mac-universal
-          path: out/make/zip/darwin/**/*.zip
+          name: FlexHubs-Desktop.dmg
+          path: out/FlexHubs-Desktop.dmg
           if-no-files-found: error
 
       - name: Stage Windows Setup.exe
@@ -82,21 +130,63 @@ jobs:
           path: out/FlexHubs-Desktop-Setup.exe
           if-no-files-found: error
 
+      - name: Publish Mac DMG to GitHub Release
+        if: matrix.os == 'macos-latest' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+        run: |
+          tag="desktop-latest"
+          repo="${{ github.repository }}"
+          if [ -n "$MACOS_CERTIFICATE" ]; then
+            notes="$(cat <<EOF
+          Signed and notarized build from commit ${{ github.sha }}.
+
+          **Mac:** \`FlexHubs-Desktop.dmg\`
+          **Windows:** \`FlexHubs-Desktop-Setup.exe\`
+          EOF
+          )"
+          else
+            notes="$(cat <<EOF
+          **Unsigned build** — Gatekeeper/SmartScreen warnings will appear.
+
+          Add signing secrets from SIGNING.md, then rebuild.
+
+          Commit: ${{ github.sha }}
+          EOF
+          )"
+          fi
+
+          gh release view "$tag" --repo "$repo" 2>/dev/null || \
+            gh release create "$tag" --repo "$repo" --title "FlexHubs Desktop (latest build)" --notes "$notes" --prerelease
+          gh release edit "$tag" --repo "$repo" --notes "$notes"
+          gh release upload "$tag" out/FlexHubs-Desktop.dmg --repo "$repo" --clobber
+
       - name: Publish Windows installer to GitHub Release
         if: matrix.os == 'windows-latest' && github.ref == 'refs/heads/main'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
         run: |
           $tag = "desktop-latest"
           $repo = "${{ github.repository }}"
-          $notes = @"
-          Unsigned CI build from commit ${{ github.sha }}.
+          if ($env:WINDOWS_CERTIFICATE) {
+            $notes = @"
+          Signed build from commit ${{ github.sha }}.
 
-          **Download ``FlexHubs-Desktop-Setup.exe`` below** (direct file — avoids Chrome blocking Actions artifact zips).
-
-          SmartScreen may still ask **More info → Run anyway** until the app is code-signed.
+          **Mac:** ``FlexHubs-Desktop.dmg``
+          **Windows:** ``FlexHubs-Desktop-Setup.exe``
           "@
+          } else {
+            $notes = @"
+          **Unsigned build** — Gatekeeper/SmartScreen warnings will appear.
+
+          Add signing secrets from SIGNING.md, then rebuild.
+
+          Commit: ${{ github.sha }}
+          "@
+          }
 
           gh release view $tag --repo $repo 2>$null
           if ($LASTEXITCODE -ne 0) {

@@ -136,14 +136,11 @@ export function buildFileMessagePayload(
   const isImage = mimeType.startsWith('image/');
   const payload: Record<string, unknown> = {
     type: isImage ? 'IMAGE' : 'FILE',
+    content: caption?.trim() ?? '',
     fileUrl: url,
     fileName,
     mimeType,
   };
-
-  if (caption?.trim()) {
-    payload.content = caption.trim();
-  }
 
   return payload;
 }
@@ -177,10 +174,12 @@ export function createUploadedStickerItem(
   fileName: string,
   mimeType: string,
 ): GifPickerItem {
+  const normalizedUrl = url.trim();
+
   return {
-    id: `custom-sticker-${url}`,
-    url,
-    previewUrl: url,
+    id: `custom-sticker-${normalizedUrl}`,
+    url: normalizedUrl,
+    previewUrl: normalizedUrl,
     title: fileName,
     width: null,
     height: null,

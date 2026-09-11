@@ -21,12 +21,13 @@ export const ConversationRow = memo(function ConversationRow({
   onPrefetch,
   onTogglePin,
   pinBusy = false,
-}: ConversationRowProps) {
+  index = 0,
+}: ConversationRowProps & { index?: number }) {
   const displayTitle = conversation.isSelf ? `${conversation.title} (Yourself)` : conversation.title;
 
   return (
     <div
-      className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 transition-[background-color] duration-150 ${
+      className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 transition-all duration-200 animate-slide-in stagger-${(index % 5) + 1} opacity-0 ${
         selected ? 'bg-app-chat-hover hover:bg-app-chat-active' : 'hover:bg-app-chat-hover'
       }`}
       onMouseEnter={() => onPrefetch?.(conversation.id)}
@@ -148,9 +149,10 @@ export function ConversationList({
 
   return (
     <div className="flex flex-col gap-0.5 px-2 pb-4">
-      {conversations.map((conversation) => (
+      {conversations.map((conversation, index) => (
         <ConversationRow
           key={conversation.id}
+          index={index}
           conversation={conversation}
           typingPreview={typingPreviews[conversation.id]}
           selected={selectedId === conversation.id}

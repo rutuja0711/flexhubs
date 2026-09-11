@@ -14,6 +14,7 @@ import {
 } from '../shared/payments';
 import { storeAuth } from './authApi';
 import { createWorkspaceOrder, loadPaymentPlans, loadSignupPlanCompliance, verifyWorkspaceSubscription } from './organizationApi';
+import { AppLogoHorizontal } from './brand/AppLogo';
 import { useTheme } from './theme/ThemeProvider';
 import { useToast } from './ui/Toast';
 
@@ -433,18 +434,19 @@ export default function RegisterWorkspacePage({
 
   return (
     <div className="flex h-screen w-full flex-col bg-app-bg text-app-text">
-      <header className="flex items-center justify-between px-8 py-4">
+      <header className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-8 py-4">
         <button
           type="button"
           onClick={step === 1 ? onBackToLogin : () => setStep(1)}
-          className="text-sm text-app-muted transition-colors hover:text-app-text"
+          className="justify-self-start text-sm text-app-muted transition-colors hover:text-app-text"
         >
           ← {step === 1 ? 'Back to sign in' : 'Back to plans'}
         </button>
+        <AppLogoHorizontal className="h-9 justify-self-center" />
         <button
           type="button"
           aria-label="Toggle theme"
-          className="flex h-9 w-9 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+          className="flex h-9 w-9 items-center justify-center justify-self-end rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
           onClick={toggleTheme}
         >
           {theme === 'dark' ? <FiSun size={18} /> : <FiMoon size={18} />}

@@ -1,5 +1,6 @@
 import { FormEvent, useState } from 'react';
 import { login, storeAuth } from './authApi';
+import { AuthShell } from './AuthFlowPages';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -77,29 +78,25 @@ function classifyLoginError(
   const mentionsPassword = message.includes('password');
 
   if (mentionsEmail && !mentionsPassword) {
-    return { email: 'Invalid email.' };
+    return { email: error || 'No account found with this email.' };
   }
 
   if (mentionsPassword && !mentionsEmail) {
-    return { password: 'Invalid password.' };
+    return { password: error || 'Invalid password.' };
   }
 
   if (status === 404) {
-    return { email: 'Invalid email.' };
+    return { email: error || 'No account found with this email.' };
   }
 
   if (status === 401 || message.includes('credential') || message.includes('unauthorized')) {
-    return { password: 'Invalid password.' };
+    return { password: error || 'Invalid email or password.' };
   }
 
   return { form: error };
 }
 
-const pageClassName =
-  'relative flex min-h-full items-center justify-center bg-app-bg p-6';
 
-const cardClassName =
-  'w-full max-w-[520px] rounded-[20px] border border-app-border bg-app-surface p-8 shadow-app';
 
 const inputClassName =
   'w-full rounded-[10px] border border-app-border bg-app-surface-input px-3.5 py-3 text-app-text outline-none transition-colors placeholder:text-app-placeholder focus:border-app-border-strong';
@@ -164,14 +161,10 @@ export default function LoginPage({
   };
 
   return (
-    <div className={pageClassName}>
-      <div className={cardClassName}>
-        <header className="mb-7">
-          <h1 className="mb-2 text-[1.75rem] font-bold text-app-text">Sign in</h1>
-          <p className="text-[0.9375rem] leading-normal text-app-muted">
-            Welcome back. Enter your credentials to open your workspace.
-          </p>
-        </header>
+    <AuthShell
+      title="Sign in"
+      subtitle="Welcome back. Enter your credentials to open your workspace."
+    >
 
         <form className="flex flex-col gap-5" onSubmit={handleSubmit} noValidate>
           {formError ? (
@@ -294,7 +287,6 @@ export default function LoginPage({
             ) : null}
           </footer>
         ) : null}
-      </div>
-    </div>
+    </AuthShell>
   );
 }

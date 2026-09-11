@@ -114,7 +114,7 @@ export function NotificationsPanel({
         onClick={onClose}
       />
       <div
-        className="fixed z-[201] w-[320px] overflow-hidden rounded-[14px] border border-app-border bg-app-surface shadow-app"
+        className="fixed z-[201] w-[320px] overflow-hidden rounded-[14px] border border-app-border bg-app-surface shadow-app animate-pop-in origin-top-right"
         style={{ top: panelStyle.top, left: panelStyle.left }}
       >
         <div className="border-b border-app-border px-4 py-3">

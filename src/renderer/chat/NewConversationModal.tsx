@@ -355,10 +355,11 @@ export function NewConversationModal({
       <button
         type="button"
         aria-label="Close new conversation"
-        className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm"
+        className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm animate-fade-in"
         onClick={onClose}
       />
-      <div className="fixed top-1/2 left-1/2 z-50 flex max-h-[90vh] w-full max-w-[560px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[20px] border border-app-border bg-app-elevated shadow-app">
+      <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none p-4 sm:p-6">
+        <div className="pointer-events-auto flex max-h-[90vh] w-full max-w-[560px] flex-col overflow-hidden rounded-[20px] border border-app-border bg-app-elevated shadow-app animate-pop-in origin-center">
         <div className="border-b border-app-border/40 px-5 py-4">
           <div className="flex items-start justify-between gap-3">
             <div className="flex items-start gap-3">
@@ -469,7 +470,7 @@ export function NewConversationModal({
                   <div className="flex flex-wrap gap-2">
                     <button
                       type="button"
-                      className="rounded-[10px] bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      className="rounded-[10px] bg-accent px-4 py-2 text-sm font-semibold text-white transition-all duration-200 active:scale-95 disabled:opacity-50"
                       disabled={actionPending || relationshipLoading || !canMessage}
                       onClick={() => onMessageUser(result.id)}
                     >
@@ -670,7 +671,7 @@ export function NewConversationModal({
           <div className="border-t border-app-border/40 p-5">
             <button
               type="button"
-              className="w-full rounded-xl bg-accent py-3.5 text-sm font-semibold text-white transition-opacity disabled:opacity-50"
+              className="w-full rounded-xl bg-accent py-3.5 text-sm font-semibold text-white transition-all duration-200 active:scale-95 disabled:opacity-50 hover:bg-accent-hover hover:shadow-md"
               disabled={!canCreateGroup}
               onClick={() => {
                 void handleCreateGroup();
@@ -680,6 +681,7 @@ export function NewConversationModal({
             </button>
           </div>
         ) : null}
+      </div>
       </div>
     </>
   );

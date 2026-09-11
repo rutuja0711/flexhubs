@@ -1,4 +1,5 @@
 import type { GifPickerItem } from '../shared/gifs';
+import { normalizeUploadUrl } from '../shared/profile';
 
 const STORAGE_KEY = 'flexhubs:customStickers';
 const MAX_CUSTOM_STICKERS = 48;
@@ -26,7 +27,13 @@ export function readCustomStickers(): GifPickerItem[] {
       return [];
     }
 
-    return parsed.filter(isGifPickerItem);
+    return parsed.filter(isGifPickerItem).map((item) => ({
+      ...item,
+      url: normalizeUploadUrl(item.url),
+      previewUrl: item.previewUrl.startsWith('data:')
+        ? item.previewUrl
+        : normalizeUploadUrl(item.previewUrl),
+    }));
   } catch {
     return [];
   }

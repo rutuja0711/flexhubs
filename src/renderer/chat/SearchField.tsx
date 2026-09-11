@@ -35,7 +35,7 @@ export function SearchField({
         value={value}
         placeholder={placeholder}
         aria-invalid={Boolean(error)}
-        className={`w-full text-sm text-app-text outline-none transition-colors placeholder:text-app-placeholder ${
+        className={`w-full text-sm text-app-text outline-none transition-all duration-200 placeholder:text-app-placeholder ${
           isInline
             ? `rounded-[12px] border bg-app-surface-input py-3 pr-28 pl-12 ${
                 error ? 'border-accent' : 'border-accent/80 focus:border-accent'

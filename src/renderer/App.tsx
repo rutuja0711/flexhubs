@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import ChatPage from './ChatPage';
 import LoginPage from './LoginPage';
 import { clearAuth, getCurrentUser, getStoredToken, performLogout } from './authApi';
+import { AppLogoMark } from './brand/AppLogo';
+import { FiRefreshCw, FiAlertCircle } from 'react-icons/fi';
 
 import RegisterWorkspacePage from './RegisterWorkspacePage';
 import PersonalRegisterPage from './PersonalRegisterPage';
@@ -27,6 +29,42 @@ function App() {
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotStep, setForgotStep] = useState<'email' | 'code' | 'password'>('email');
   const [inviteToken, setInviteToken] = useState('');
+  const [isCheckingOffline, setIsCheckingOffline] = useState(false);
+  const [isRetrying, setIsRetrying] = useState(false);
+
+  const checkUserSession = useCallback(async () => {
+    setIsCheckingOffline(false);
+    setIsRetrying(true);
+
+    const token = getStoredToken();
+
+    if (!token) {
+      setIsRetrying(false);
+      setScreen('login');
+      return;
+    }
+
+    try {
+      const result = await getCurrentUser();
+
+      if (!result.ok) {
+        if (result.status === 401) {
+          clearAuth();
+          setScreen('login');
+        } else {
+          // Non-401 error (network, server offline, etc.)
+          setIsCheckingOffline(true);
+        }
+        return;
+      }
+
+      setScreen('chat');
+    } catch {
+      setIsCheckingOffline(true);
+    } finally {
+      setIsRetrying(false);
+    }
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -51,50 +89,60 @@ function App() {
       return;
     }
 
-    const token = getStoredToken();
-
-    if (!token) {
-      setScreen('login');
-      return;
-    }
-
-    let cancelled = false;
-
-    getCurrentUser().then((result) => {
-      if (cancelled) {
-        return;
-      }
-
-      if (!result.ok && result.status === 401) {
-        clearAuth();
-        setScreen('login');
-        return;
-      }
-
-      setScreen('chat');
-    });
-
-    const timeout = window.setTimeout(() => {
-      if (cancelled) {
-        return;
-      }
-
-      setScreen('chat');
-    }, 20000);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(timeout);
-    };
-  }, []);
+    void checkUserSession();
+  }, [checkUserSession]);
 
   if (screen === 'checking') {
     return (
-      <div className="flex min-h-full flex-col items-center justify-center gap-3 bg-app-bg px-6 text-center text-app-muted">
-        <p className="text-sm">Opening your workspace...</p>
-        <p className="max-w-sm text-xs text-app-muted/80">
-          First launch can take a moment. If this stays here, check your internet connection and sign in again.
-        </p>
+      <div className="flex min-h-screen flex-col items-center justify-center bg-[#0e0e11] px-6 text-center text-white select-none">
+        <div className="relative mb-6 flex items-center justify-center">
+          <div className="absolute h-24 w-24 rounded-full bg-[#6366f1]/20 blur-xl animate-pulse" />
+          <div className="relative flex h-16 w-16 items-center justify-center rounded-2xl bg-[#18181c] p-3 shadow-2xl border border-white/10">
+            <AppLogoMark className="h-10 w-10" />
+          </div>
+        </div>
+
+        <h1 className="mb-1 text-lg font-semibold tracking-tight text-white">FlexHubs</h1>
+
+        {isCheckingOffline ? (
+          <div className="mt-4 flex max-w-sm flex-col items-center gap-4 rounded-xl bg-white/5 p-4 border border-white/10">
+            <div className="flex items-center gap-2 text-xs font-medium text-amber-400">
+              <FiAlertCircle className="h-4 w-4 shrink-0" />
+              <span>Unable to connect to FlexHubs servers</span>
+            </div>
+            <p className="text-xs text-zinc-400">
+              Please check your internet connection or try again.
+            </p>
+            <div className="flex items-center gap-3 w-full pt-1">
+              <button
+                type="button"
+                onClick={() => void checkUserSession()}
+                disabled={isRetrying}
+                className="flex flex-1 items-center justify-center gap-2 rounded-lg bg-[#6366f1] py-2 text-xs font-semibold text-white hover:bg-[#5558e6] transition-colors disabled:opacity-50"
+              >
+                <FiRefreshCw className={`h-3.5 w-3.5 ${isRetrying ? 'animate-spin' : ''}`} />
+                <span>Retry Connection</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  clearAuth();
+                  setScreen('login');
+                }}
+                className="rounded-lg bg-white/10 px-3 py-2 text-xs font-medium text-zinc-300 hover:bg-white/20 transition-colors"
+              >
+                Sign In Again
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="mt-3 flex flex-col items-center gap-2">
+            <div className="flex items-center gap-2 text-xs text-zinc-400">
+              <div className="h-3 w-3 rounded-full border-2 border-indigo-500 border-t-transparent animate-spin" />
+              <span>Opening your workspace...</span>
+            </div>
+          </div>
+        )}
       </div>
     );
   }

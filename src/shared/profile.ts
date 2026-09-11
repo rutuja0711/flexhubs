@@ -514,6 +514,15 @@ export function normalizeUploadUrl(url: string): string {
     return `https://flexhubs.in${trimmed}`;
   }
 
+  if (trimmed.startsWith('data:') || trimmed.startsWith('blob:')) {
+    return trimmed;
+  }
+
+  // API upload responses sometimes return paths like "uploads/abc.png".
+  if (!trimmed.includes('://')) {
+    return `https://flexhubs.in/${trimmed.replace(/^\/+/, '')}`;
+  }
+
   return trimmed;
 }
 

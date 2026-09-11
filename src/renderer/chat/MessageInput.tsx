@@ -19,7 +19,7 @@ import {
 } from '../chatApi';
 import { useToast } from '../ui/Toast';
 import { MessageReplyPreview } from './MessageContent';
-import { MediaPicker } from './MediaPicker';
+import { MediaPicker, type MediaPickerTab } from './MediaPicker';
 import { ScheduleMessageModal } from './ScheduleMessageModal';
 
 type MessageInputProps = {
@@ -144,7 +144,7 @@ export function MessageInput({
   const toast = useToast();
   const [draftError, setDraftError] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [pickerTab, setPickerTab] = useState<'gif' | 'sticker'>('gif');
+  const [pickerTab, setPickerTab] = useState<MediaPickerTab>('emoji');
   const [aiMenuOpen, setAiMenuOpen] = useState(false);
   const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
   const [scheduleOpen, setScheduleOpen] = useState(false);
@@ -294,6 +294,26 @@ export function MessageInput({
     });
   }, [mentionQuery, mentionSuggestions.length, value]);
 
+  const insertAtCursor = (text: string) => {
+    const textarea = textareaRef.current;
+    const cursor = textarea?.selectionStart ?? value.length;
+    const before = value.slice(0, cursor);
+    const after = value.slice(cursor);
+    const nextValue = `${before}${text}${after}`;
+    const nextCursor = cursor + text.length;
+
+    handleChange(nextValue);
+
+    requestAnimationFrame(() => {
+      if (!textarea) {
+        return;
+      }
+
+      textarea.focus();
+      textarea.setSelectionRange(nextCursor, nextCursor);
+    });
+  };
+
   const insertMention = (username: string) => {
     const textarea = textareaRef.current;
     const cursor = textarea?.selectionStart ?? value.length;
@@ -414,8 +434,12 @@ export function MessageInput({
   const fileDisabled = disabled || isSending || !onSendFile;
   const aiDisabled = disabled || isSending || aiBusy;
 
-  const openPicker = (tab: 'gif' | 'sticker') => {
-    if (mediaDisabled) {
+  const openPicker = (tab: MediaPickerTab = 'emoji') => {
+    if (mediaDisabled && tab !== 'emoji') {
+      return;
+    }
+
+    if (disabled || isSending || aiBusy) {
       return;
     }
 
@@ -426,6 +450,11 @@ export function MessageInput({
   const handleMediaSelect = (item: GifPickerItem, kind: 'gif' | 'sticker') => {
     setPickerOpen(false);
     onSendMedia?.(item, kind);
+  };
+
+  const handleEmojiSelect = (emoji: string) => {
+    insertAtCursor(emoji);
+    requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const handleAiEnhance = async () => {
@@ -699,11 +728,84 @@ export function MessageInput({
         <MediaPicker
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
-          onSelect={handleMediaSelect}
+          onSelectMedia={handleMediaSelect}
+          onSelectEmoji={handleEmojiSelect}
           initialTab={pickerTab}
         />
 
         <div className={`flex items-end gap-1 ${compact ? 'px-1 py-1' : 'px-2 py-2'}`}>
+          <textarea
+            ref={textareaRef}
+            value={value}
+            rows={1}
+            disabled={disabled || isSending || aiBusy}
+            placeholder={
+              aiBusy
+                ? 'AI is working…'
+                : pendingAttachments.length > 0
+                  ? 'Add a caption (optional)'
+                  : 'Type a message'
+            }
+            aria-invalid={Boolean(displayError)}
+            className={`max-h-32 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-snug text-app-text outline-none placeholder:text-app-placeholder disabled:opacity-60 ${
+              compact ? 'min-h-[32px]' : 'min-h-[36px]'
+            }`}
+            onChange={(event) => {
+              handleChange(event.target.value);
+              updateMentionState(event.target.value, event.target.selectionStart ?? event.target.value.length);
+            }}
+            onKeyDown={(event) => {
+              if (mentionQuery !== null && mentionSuggestions.length > 0 && !mentionLoading) {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault();
+                  setMentionHighlightIndex((current) =>
+                    Math.min(current + 1, mentionSuggestions.length - 1),
+                  );
+                  return;
+                }
+
+                if (event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  setMentionHighlightIndex((current) => Math.max(current - 1, 0));
+                  return;
+                }
+
+                if (event.key === 'Escape') {
+                  event.preventDefault();
+                  setMentionQuery(null);
+                  mentionAnchorRef.current = null;
+                  return;
+                }
+
+                if (event.key === 'Enter' || event.key === 'Tab') {
+                  event.preventDefault();
+                  const selected =
+                    mentionSuggestions[mentionHighlightIndex] ?? mentionSuggestions[0];
+
+                  if (selected) {
+                    insertMention(selected.username);
+                  }
+
+                  return;
+                }
+              }
+
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+
+                if (!disabled && !isSending && !aiBusy && (value.trim() || pendingAttachments.length > 0)) {
+                  handleSendAction();
+                }
+              }
+            }}
+            onKeyUp={(event) => {
+              updateMentionState(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+            }}
+            onClick={(event) => {
+              const target = event.currentTarget;
+              updateMentionState(target.value, target.selectionStart ?? target.value.length);
+            }}
+          />
           <div className="flex shrink-0 items-center gap-0.5 self-end overflow-x-auto pb-0.5">
               <button
                 type="button"
@@ -727,13 +829,14 @@ export function MessageInput({
               </button>
               <button
                 type="button"
-                disabled={mediaDisabled}
-                aria-label="Send a GIF or sticker"
-                title="GIFs & stickers"
+                disabled={disabled || isSending || aiBusy}
+                aria-label="Insert emoji, GIF, or sticker"
+                title="Emoji, GIFs & stickers"
+                aria-expanded={pickerOpen}
                 className={`${iconButtonClass} ${
                   pickerOpen ? 'bg-accent/15 text-accent-soft' : ''
                 }`}
-                onClick={() => openPicker('gif')}
+                onClick={() => openPicker('emoji')}
               >
                 <FiSmile className="h-[18px] w-[18px]" />
               </button>
@@ -770,7 +873,7 @@ export function MessageInput({
                       className="fixed inset-0 z-10 cursor-default"
                       onClick={() => setAiMenuOpen(false)}
                     />
-                    <div className="absolute bottom-full left-0 z-20 mb-2 w-52 overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-lg">
+                    <div className="absolute bottom-full right-0 z-20 mb-2 w-52 overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-lg">
                       <button
                         type="button"
                         disabled={!value.trim()}
@@ -834,7 +937,7 @@ export function MessageInput({
                       className="fixed inset-0 z-10 cursor-default"
                       onClick={() => setActionsMenuOpen(false)}
                     />
-                    <div className="absolute bottom-full left-0 z-20 mb-2 w-64 overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-lg">
+                    <div className="absolute bottom-full right-0 z-20 mb-2 w-64 overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-lg">
                       <button
                         type="button"
                         disabled={disabled || isSending || !conversationId}
@@ -912,78 +1015,6 @@ export function MessageInput({
                 ) : null}
               </div>
           </div>
-          <textarea
-            ref={textareaRef}
-            value={value}
-            rows={1}
-            disabled={disabled || isSending || aiBusy}
-            placeholder={
-              aiBusy
-                ? 'AI is working…'
-                : pendingAttachments.length > 0
-                  ? 'Add a caption (optional)'
-                  : 'Type a message'
-            }
-            aria-invalid={Boolean(displayError)}
-            className={`max-h-32 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-snug text-app-text outline-none placeholder:text-app-placeholder disabled:opacity-60 ${
-              compact ? 'min-h-[32px]' : 'min-h-[36px]'
-            }`}
-            onChange={(event) => {
-              handleChange(event.target.value);
-              updateMentionState(event.target.value, event.target.selectionStart ?? event.target.value.length);
-            }}
-            onKeyDown={(event) => {
-              if (mentionQuery !== null && mentionSuggestions.length > 0 && !mentionLoading) {
-                if (event.key === 'ArrowDown') {
-                  event.preventDefault();
-                  setMentionHighlightIndex((current) =>
-                    Math.min(current + 1, mentionSuggestions.length - 1),
-                  );
-                  return;
-                }
-
-                if (event.key === 'ArrowUp') {
-                  event.preventDefault();
-                  setMentionHighlightIndex((current) => Math.max(current - 1, 0));
-                  return;
-                }
-
-                if (event.key === 'Escape') {
-                  event.preventDefault();
-                  setMentionQuery(null);
-                  mentionAnchorRef.current = null;
-                  return;
-                }
-
-                if (event.key === 'Enter' || event.key === 'Tab') {
-                  event.preventDefault();
-                  const selected =
-                    mentionSuggestions[mentionHighlightIndex] ?? mentionSuggestions[0];
-
-                  if (selected) {
-                    insertMention(selected.username);
-                  }
-
-                  return;
-                }
-              }
-
-              if (event.key === 'Enter' && !event.shiftKey) {
-                event.preventDefault();
-
-                if (!disabled && !isSending && !aiBusy && (value.trim() || pendingAttachments.length > 0)) {
-                  handleSendAction();
-                }
-              }
-            }}
-            onKeyUp={(event) => {
-              updateMentionState(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length);
-            }}
-            onClick={(event) => {
-              const target = event.currentTarget;
-              updateMentionState(target.value, target.selectionStart ?? target.value.length);
-            }}
-          />
           <button
             type="button"
             disabled={disabled || isSending || aiBusy || (!value.trim() && pendingAttachments.length === 0)}

@@ -1,12 +1,33 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FiCheck, FiThumbsUp, FiMessageSquare, FiChevronUp } from 'react-icons/fi';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { FiCheck, FiMessageSquare, FiChevronUp } from 'react-icons/fi';
 import type { MessageItem } from '../../shared/messages';
-import { groupMessageReactions, isCallLogMessage, isMediaOnlyMessage, isPollMessage, resolveReplyTarget } from '../../shared/messages';
+import {
+  groupMessageReactions,
+  isCallLogMessage,
+  isMediaOnlyMessage,
+  isPollMessage,
+  resolveReplyTarget,
+} from '../../shared/messages';
 import { formatConversationTimestamp, formatMessageDayDivider, messageDayKey } from './format';
 import { Avatar } from './ChatIcons';
 import { MessageMenu } from './MessageMenu';
-
+import { ReactionChip } from './ReactionChip';
+import { ReactionPicker } from './ReactionPicker';
 import { MessageContent, MessageReplyPreview } from './MessageContent';
+
+function MessageListSurface({
+  children,
+  className = '',
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={`flex min-h-0 flex-1 flex-col ${className}`.trim()}>
+      {children}
+    </div>
+  );
+}
 
 function DateDivider({ label }: { label: string }) {
   return (
@@ -70,7 +91,8 @@ function buildMessageListEntries(
 
 function MessageListSkeleton() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-hidden px-6 py-4" aria-hidden="true">
+    <MessageListSurface className="overflow-hidden">
+    <div className="flex min-h-0 flex-1 flex-col gap-4 px-6 py-4" aria-hidden="true">
       {[false, true, false, true, false, true].map((isOwn, index) => (
         <div
           key={index}
@@ -88,6 +110,7 @@ function MessageListSkeleton() {
         </div>
       ))}
     </div>
+    </MessageListSurface>
   );
 }
 
@@ -122,6 +145,8 @@ type MessageRowProps = {
   ) => Promise<{ ok: true; message: import('../../shared/messages').MessageItem } | { ok: false; error: string }>;
   onVotePoll?: (messageId: string, optionId: string) => void;
   threadsEnabled?: boolean;
+  showReactionAuthors?: boolean;
+  allowMessageAppear?: boolean;
 };
 
 function DoubleCheckIcon() {
@@ -198,6 +223,8 @@ const MessageRow = memo(function MessageRow({
   onSendThreadMessage,
   onVotePoll,
   threadsEnabled = false,
+  showReactionAuthors = false,
+  allowMessageAppear = false,
 }: MessageRowProps) {
   const reactionGroups = groupMessageReactions(message.reactions, currentUserId);
   const isPinned = Boolean(message.pinnedAt);
@@ -218,7 +245,7 @@ const MessageRow = memo(function MessageRow({
     <div
       data-message-id={message.id}
       className={`message-row group flex gap-3 ${message.isOwn ? 'flex-row-reverse' : 'flex-row'} ${
-        isAppearingMessage(message)
+        allowMessageAppear && isAppearingMessage(message)
           ? message.isOwn
             ? 'message-appear message-appear-own'
             : 'message-appear'
@@ -342,37 +369,30 @@ const MessageRow = memo(function MessageRow({
                   className={`mt-1 flex flex-wrap gap-1 ${message.isOwn ? 'justify-end' : 'justify-start'}`}
                 >
                   {reactionGroups.map((group) => (
-                    <button
+                    <ReactionChip
                       key={`${message.id}-${group.emoji}`}
-                      type="button"
-                      aria-label={`React with ${group.emoji}`}
-                      className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${
-                        group.reactedByMe
-                          ? 'border-accent bg-accent/15 text-app-text'
-                          : 'border-app-border bg-app-surface text-app-muted hover:border-app-border-strong'
-                      }`}
+                      emoji={group.emoji}
+                      count={group.count}
+                      reactedByMe={group.reactedByMe}
+                      reactions={message.reactions}
+                      currentUserId={currentUserId}
+                      showAuthors={showReactionAuthors}
                       onClick={() => onAddReaction(message.id, group.emoji)}
-                    >
-                      {group.emoji} {group.count}
-                    </button>
+                    />
                   ))}
                 </div>
               ) : null}
             </div>
 
             <div
-              className={`mb-1 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 ${
+              className={`mb-1 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 translate-y-2 scale-95 group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100 ${
                 message.isOwn ? 'flex-row-reverse' : 'flex-row'
               }`}
             >
-              <button
-                type="button"
-                aria-label="Add thumbs up reaction"
-                className="flex h-6 w-6 items-center justify-center rounded text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
-                onClick={() => onAddReaction(message.id, '👍')}
-              >
-                <FiThumbsUp className="text-sm" />
-              </button>
+              <ReactionPicker
+                align={message.isOwn ? 'right' : 'left'}
+                onSelect={(emoji) => onAddReaction(message.id, emoji)}
+              />
               <MessageMenu
                 isOwn={message.isOwn}
                 isPinned={isPinned}
@@ -445,6 +465,7 @@ type MessageListProps = {
   conversationId?: string;
   onVotePoll?: (messageId: string, optionId: string) => void;
   threadsEnabled?: boolean;
+  showReactionAuthors?: boolean;
 };
 
 export function MessageList({
@@ -475,9 +496,11 @@ export function MessageList({
   conversationId,
   onVotePoll,
   threadsEnabled = false,
+  showReactionAuthors = false,
 }: MessageListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
+  const [allowMessageAppear, setAllowMessageAppear] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomAnchorRef = useRef<HTMLDivElement>(null);
@@ -485,6 +508,22 @@ export function MessageList({
   const lastContentHeightRef = useRef(0);
   const showInitialLoading = loading && messages.length === 0;
   const showRefreshing = loading && messages.length > 0;
+
+  useEffect(() => {
+    setAllowMessageAppear(false);
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (showInitialLoading) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setAllowMessageAppear(true);
+    }, 400);
+
+    return () => window.clearTimeout(timer);
+  }, [conversationId, showInitialLoading]);
   const listEntries = useMemo(
     () => buildMessageListEntries(messages, unreadAnchorMessageId),
     [messages, unreadAnchorMessageId],
@@ -662,22 +701,26 @@ export function MessageList({
 
   if (error && messages.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-accent-soft" role="alert">
-        {error}
-      </div>
+      <MessageListSurface>
+        <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-accent-soft" role="alert">
+          {error}
+        </div>
+      </MessageListSurface>
     );
   }
 
   if (messages.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-app-muted" role="status">
-        No messages yet. Say hello.
-      </div>
+      <MessageListSurface>
+        <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-app-muted" role="status">
+          No messages yet. Say hello.
+        </div>
+      </MessageListSurface>
     );
   }
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    <MessageListSurface>
       {showRefreshing ? (
         <div
           className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden bg-app-border"
@@ -733,12 +776,14 @@ export function MessageList({
               onSendThreadMessage={onSendThreadMessage}
               onVotePoll={onVotePoll}
               threadsEnabled={threadsEnabled}
+              showReactionAuthors={showReactionAuthors}
+              allowMessageAppear={allowMessageAppear}
             />
           );
         })}
         <div ref={bottomAnchorRef} aria-hidden="true" className="h-px shrink-0" />
         </div>
       </div>
-    </div>
+    </MessageListSurface>
   );
 }

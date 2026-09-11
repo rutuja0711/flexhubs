@@ -71,16 +71,17 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
           <button
             type="button"
             aria-label="Close confirmation dialog"
-            className="fixed inset-0 z-[200] bg-black/55 backdrop-blur-sm"
+            className="fixed inset-0 z-[200] bg-black/55 backdrop-blur-sm animate-fade-in"
             onClick={() => close(false)}
           />
-          <div
-            role="alertdialog"
-            aria-modal="true"
-            aria-labelledby="confirm-dialog-title"
-            aria-describedby="confirm-dialog-message"
-            className="fixed top-1/2 left-1/2 z-[201] w-full max-w-[440px] -translate-x-1/2 -translate-y-1/2 rounded-[20px] border border-app-border bg-app-elevated p-6 shadow-app"
-          >
+          <div className="fixed inset-0 z-[201] flex items-center justify-center pointer-events-none p-4">
+            <div
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="confirm-dialog-title"
+              aria-describedby="confirm-dialog-message"
+              className="pointer-events-auto w-full max-w-[440px] rounded-[20px] border border-app-border bg-app-elevated p-6 shadow-app animate-pop-in origin-center"
+            >
             <div className="mb-4 flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-center gap-3">
                 <div
@@ -111,7 +112,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
             <div className="flex justify-end gap-3">
               <button
                 type="button"
-                className="rounded-xl border border-app-border bg-app-inset px-4 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-inset-active"
+                className="rounded-xl border border-app-border bg-app-inset px-4 py-2.5 text-sm font-medium text-app-text transition-all duration-200 active:scale-95 hover:bg-app-inset-active"
                 onClick={() => close(false)}
               >
                 {cancelLabel}
@@ -119,7 +120,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 autoFocus
-                className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-opacity hover:opacity-90 ${
+                className={`rounded-xl px-4 py-2.5 text-sm font-semibold transition-all duration-200 active:scale-95 hover:opacity-90 hover:shadow-md ${
                   isDanger ? 'bg-accent text-white' : 'bg-app-inset-active text-app-text'
                 }`}
                 onClick={() => close(true)}
@@ -127,6 +128,7 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
                 {confirmLabel}
               </button>
             </div>
+          </div>
           </div>
         </>
       ) : null}

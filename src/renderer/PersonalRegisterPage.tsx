@@ -1,11 +1,11 @@
 import { FormEvent, useEffect, useState, type ReactNode } from 'react';
-import { FiMessageSquare, FiShield, FiUsers } from 'react-icons/fi';
 import {
   registerIndividualAccount,
   sendIndividualRegistrationOtp,
   verifyIndividualRegistrationOtp,
 } from './authExtrasApi';
 import { storeAuth } from './authApi';
+import { AuthShell } from './AuthFlowPages';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RESEND_SECONDS = 60;
@@ -87,93 +87,7 @@ function StepIndicator({ step }: { step: Step }) {
   );
 }
 
-function BrandingPanel() {
-  const features = [
-    {
-      icon: FiMessageSquare,
-      title: 'Real-time messaging',
-      description: 'DMs, groups, and organization hubs in one place.',
-    },
-    {
-      icon: FiUsers,
-      title: 'Built for teams',
-      description: 'Invite teammates and keep conversations organized.',
-    },
-    {
-      icon: FiShield,
-      title: 'Workspace controls',
-      description: 'Roles, invites, and notification preferences.',
-    },
-  ];
 
-  return (
-    <div className="relative hidden min-h-full flex-col justify-between overflow-hidden bg-gradient-to-br from-accent via-accent-hover to-accent-active p-10 text-white lg:flex">
-      <div>
-        <div className="mb-10 flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/15 text-xl font-bold">
-            F
-          </div>
-          <span className="text-2xl font-bold">Flexhubs</span>
-        </div>
-        <h1 className="text-3xl font-bold leading-tight">
-          Connect, chat, and collaborate in real time
-        </h1>
-        <p className="mt-4 max-w-md text-base leading-relaxed text-white/85">
-          Flexhubs brings your team conversations, hubs, and notifications together in a focused
-          workspace.
-        </p>
-      </div>
-      <div className="space-y-5">
-        {features.map((feature) => (
-          <div key={feature.title} className="flex gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/12">
-              <feature.icon size={18} />
-            </div>
-            <div>
-              <p className="font-semibold">{feature.title}</p>
-              <p className="mt-0.5 text-sm text-white/80">{feature.description}</p>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function RegisterShell({
-  step,
-  title,
-  subtitle,
-  onBack,
-  children,
-}: {
-  step: Step;
-  title: string;
-  subtitle: string;
-  onBack: () => void;
-  children: ReactNode;
-}) {
-  return (
-    <div className="flex min-h-full bg-app-bg">
-      <BrandingPanel />
-      <div className="flex flex-1 items-center justify-center p-6">
-        <div className="w-full max-w-[440px] rounded-[20px] border border-app-border bg-app-surface p-8 shadow-app">
-          <button
-            type="button"
-            className="mb-4 text-sm text-app-muted hover:text-app-text"
-            onClick={onBack}
-          >
-            ← Back to login
-          </button>
-          <StepIndicator step={step} />
-          <h1 className="text-2xl font-bold text-app-text">{title}</h1>
-          <p className="mt-1 mb-6 text-sm text-app-muted">{subtitle}</p>
-          {children}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 export default function PersonalRegisterPage({
   onBack,
@@ -370,8 +284,8 @@ export default function PersonalRegisterPage({
 
   if (step === 'email') {
     return (
-      <RegisterShell
-        step="email"
+      <AuthShell
+        headerContent={<StepIndicator step="email" />}
         title="Create your personal account"
         subtitle="Enter your email and we'll send a 6-digit verification code."
         onBack={onBack}
@@ -394,14 +308,14 @@ export default function PersonalRegisterPage({
             {loading ? 'Sending...' : 'Send verification code'}
           </button>
         </form>
-      </RegisterShell>
+      </AuthShell>
     );
   }
 
   if (step === 'verify') {
     return (
-      <RegisterShell
-        step="verify"
+      <AuthShell
+        headerContent={<StepIndicator step="verify" />}
         title="Verify your email"
         subtitle={`Enter the 6-digit code we sent to ${email.trim()}. Codes expire after 10 minutes.`}
         onBack={onBack}
@@ -452,13 +366,13 @@ export default function PersonalRegisterPage({
             </button>
           </div>
         </form>
-      </RegisterShell>
+      </AuthShell>
     );
   }
 
   return (
-    <RegisterShell
-      step="account"
+    <AuthShell
+      headerContent={<StepIndicator step="account" />}
       title="Finish your account"
       subtitle="Choose a username and password. You can add friends by username and start chatting right away."
       onBack={onBack}
@@ -537,6 +451,6 @@ export default function PersonalRegisterPage({
           Back to email verification
         </button>
       </form>
-    </RegisterShell>
+    </AuthShell>
   );
 }
