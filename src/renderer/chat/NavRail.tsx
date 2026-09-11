@@ -52,26 +52,30 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
     }
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [menuOpen]);
+  const navItemKeys: MainView[] = ['activity', 'hubs', 'saved', 'calendar', 'files'];
+  const activeNavIndex = navItemKeys.indexOf(activeView);
+  const isRailViewActive = activeNavIndex !== -1;
+
   return (
     <aside className="relative z-[80] flex w-[72px] shrink-0 flex-col items-center overflow-visible border-r border-app-border bg-app-chat-rail py-4">
-      <div className="mb-6">
+      <button
+        type="button"
+        onClick={() => onNavigate('chat')}
+        className="mb-6 flex items-center justify-center rounded-xl p-1.5 transition-transform hover:scale-105 active:scale-95 focus:outline-none"
+        aria-label="FlexHubs Home"
+      >
         <FlexLogo />
-      </div>
+      </button>
 
       <nav className="relative flex w-full flex-1 flex-col gap-1 px-2" aria-label="Main navigation">
         {/* Sliding Active Indicator */}
         <div 
-          className="absolute left-2 right-2 rounded-xl bg-accent/15 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]"
+          className="pointer-events-none absolute left-2 right-2 rounded-xl bg-accent/15 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]"
           style={{
             height: '60px',
-            transform: `translateY(${
-              activeView === 'activity' ? '0px' :
-              activeView === 'hubs' ? '64px' :
-              activeView === 'saved' ? '128px' :
-              activeView === 'calendar' ? '192px' :
-              activeView === 'files' ? '256px' : '-100px'
-            })`,
-            opacity: activeView ? 1 : 0
+            transform: `translateY(${isRailViewActive ? `${activeNavIndex * 64}px` : '0px'})`,
+            opacity: isRailViewActive ? 1 : 0,
+            visibility: isRailViewActive ? 'visible' : 'hidden',
           }}
           aria-hidden="true"
         />
