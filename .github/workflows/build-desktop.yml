@@ -73,13 +73,27 @@ jobs:
         run: npm run make:win
 
       - name: Verify Mac code signing
-        if: matrix.os == 'macos-latest' && secrets.MACOS_CERTIFICATE != ''
-        run: bash scripts/ci/verify-macos-signing.sh
+        if: matrix.os == 'macos-latest'
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+        run: |
+          if [ -z "${MACOS_CERTIFICATE}" ]; then
+            echo "No MACOS_CERTIFICATE secret configured — skipping signing verification."
+            exit 0
+          fi
+          bash scripts/ci/verify-macos-signing.sh
 
       - name: Verify Windows code signing
-        if: matrix.os == 'windows-latest' && secrets.WINDOWS_CERTIFICATE != ''
+        if: matrix.os == 'windows-latest'
         shell: pwsh
-        run: ./scripts/ci/verify-windows-signing.ps1
+        env:
+          WINDOWS_CERTIFICATE: ${{ secrets.WINDOWS_CERTIFICATE }}
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE) {
+            Write-Host "No WINDOWS_CERTIFICATE secret configured — skipping signing verification."
+            exit 0
+          }
+          ./scripts/ci/verify-windows-signing.ps1
 
       - name: Stage Mac DMG
         if: matrix.os == 'macos-latest'
