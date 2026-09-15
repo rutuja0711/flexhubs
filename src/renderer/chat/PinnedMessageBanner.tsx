@@ -29,7 +29,7 @@ export function PinnedMessageBanner({
   const positionLabel = `${pinnedIndex + 1} of ${pinnedCount} pinned`;
 
   return (
-    <div className="flex shrink-0 items-center gap-2 border-b border-app-border/40 bg-app-chat-panel/60 backdrop-blur-sm px-4 py-2">
+    <div className="flex shrink-0 items-center gap-2 border-b border-app-border bg-app-chat-panel/60 backdrop-blur-sm px-4 py-2">
       {hasMultiple ? (
         <button
           type="button"

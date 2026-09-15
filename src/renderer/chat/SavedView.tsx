@@ -46,7 +46,7 @@ function formatSavedMessageMeta(item: SavedMessageItem): string {
 export function SavedView({ items, loading, error, onRetry, onSelect }: SavedViewProps) {
   return (
     <div className="flex h-full flex-col bg-app-chat-bg">
-      <header className="border-b border-app-border/50 px-8 py-6 bg-app-surface/50 backdrop-blur-sm">
+      <header className="border-b border-app-border px-8 py-6 bg-app-surface/50 backdrop-blur-sm">
         <h1 className="text-2xl font-bold text-app-text tracking-tight">Saved Messages</h1>
         <p className="mt-1 text-xs text-app-muted">Bookmarks and messages you saved for quick access.</p>
       </header>
@@ -54,7 +54,7 @@ export function SavedView({ items, loading, error, onRetry, onSelect }: SavedVie
       <div className="min-h-0 flex-1 overflow-y-auto px-8 py-5">
         {loading ? <p className="text-sm text-app-muted">Loading saved messages...</p> : null}
         {!loading && error ? (
-          <div role="alert" className="rounded-2xl border border-app-border/70 bg-app-card/60 p-6 text-center max-w-xl mx-auto">
+          <div role="alert" className="rounded-2xl border border-app-border bg-app-card/60 p-6 text-center max-w-xl mx-auto">
             <p className="mb-3 text-sm text-accent-soft">{error}</p>
             <button type="button" className="rounded-xl border border-app-border bg-app-surface px-4 py-2 text-xs font-semibold text-app-text hover:bg-app-chat-hover transition-colors" onClick={onRetry}>
               Try again
@@ -72,7 +72,7 @@ export function SavedView({ items, loading, error, onRetry, onSelect }: SavedVie
                   key={item.id}
                   type="button"
                   disabled={!item.conversationId}
-                  className="w-full rounded-2xl border border-app-border/60 bg-app-card/60 p-4 text-left transition-all duration-150 hover:bg-app-card hover:border-app-border hover:shadow-xs disabled:cursor-default"
+                  className="w-full rounded-2xl border border-app-border bg-app-card/60 p-4 text-left transition-all duration-150 hover:bg-app-card hover:shadow-xs disabled:cursor-default"
                   onClick={() => onSelect(item)}
                 >
                   <div className="flex items-start justify-between gap-4">

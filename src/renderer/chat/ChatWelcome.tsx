@@ -13,8 +13,8 @@ export function ChatWelcome({ workspaceName, onFindPeople }: ChatWelcomeProps) {
       {/* Ambient background glow */}
       <div className="pointer-events-none absolute h-96 w-96 rounded-full bg-accent/10 blur-3xl" />
       
-      <div className="relative max-w-md text-center rounded-3xl border border-app-border/60 bg-app-surface/60 backdrop-blur-xl p-8 shadow-2xl">
-        <div className="relative mx-auto mb-6 flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl border border-app-border/80 bg-[#160c12] p-3 shadow-lg shadow-accent/20">
+      <div className="relative max-w-md text-center rounded-3xl border border-app-border bg-app-surface/60 backdrop-blur-xl p-8 shadow-2xl">
+        <div className="relative mx-auto mb-6 flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl bg-[#160c12] p-3 shadow-lg shadow-accent/20">
           <AppLogoMark className="h-full w-full" />
         </div>
 
@@ -23,7 +23,7 @@ export function ChatWelcome({ workspaceName, onFindPeople }: ChatWelcomeProps) {
           Tap a teammate in the sidebar to start messaging. Friend requests are optional.
         </p>
 
-        <div className="mb-6 inline-flex items-center gap-2 rounded-2xl border border-app-border/50 bg-app-chat-panel/80 px-4 py-2 text-xs text-app-muted">
+        <div className="mb-6 inline-flex items-center gap-2 rounded-2xl bg-app-chat-panel/80 px-4 py-2 text-xs text-app-muted">
           <span className="text-accent-soft">
             <BuildingIcon />
           </span>

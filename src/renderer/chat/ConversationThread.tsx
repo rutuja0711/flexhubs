@@ -543,7 +543,7 @@ export function ConversationThread({
   return (
     <div className="flex h-full w-full flex-row overflow-hidden">
       <div className="flex h-full flex-1 min-h-0 min-w-0 flex-col bg-app-chat-bg relative">
-        <header className="flex items-center justify-between border-b border-app-border/40 bg-app-chat-bg/90 backdrop-blur-md px-6 py-3 z-20">
+        <header className="flex items-center justify-between border-b border-app-border bg-app-chat-bg/90 backdrop-blur-md px-6 py-3.5 z-20">
         <div
           className="group min-w-0 cursor-pointer text-left transition-opacity hover:opacity-90"
           onClick={openInfoPanel}
@@ -558,10 +558,10 @@ export function ConversationThread({
             type="button"
             aria-label="Search in conversation"
             aria-pressed={searchOpen}
-            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border transition-all duration-200 active:scale-95 ${
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all duration-200 active:scale-95 ${
               searchOpen
-                ? 'border-accent/40 bg-accent/20 text-accent-soft ring-1 ring-accent/30'
-                : 'border-transparent text-app-muted hover:bg-app-chat-hover hover:text-app-text'
+                ? 'bg-accent/20 text-accent-soft ring-1 ring-accent/30'
+                : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
             }`}
             onClick={() => {
               if (searchOpen) {
@@ -580,7 +580,7 @@ export function ConversationThread({
                 type="button"
                 aria-label={canCallHub ? 'Start voice meeting' : 'Start voice call'}
                 disabled={callBusy}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-transparent text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95 disabled:opacity-40"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95 disabled:opacity-40"
                 onClick={() => onStartVoiceCall?.()}
               >
                 <FiPhone className="text-base" />
@@ -589,7 +589,7 @@ export function ConversationThread({
                 type="button"
                 aria-label={canCallHub ? 'Start video meeting' : 'Start video call'}
                 disabled={callBusy}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-transparent text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95 disabled:opacity-40"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95 disabled:opacity-40"
                 onClick={() => onStartVideoCall?.()}
               >
                 <FiVideo className="text-base" />
@@ -600,17 +600,17 @@ export function ConversationThread({
             <button
               type="button"
               aria-label="Conversation options"
-              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border transition-all duration-200 active:scale-95 ${
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all duration-200 active:scale-95 ${
                 menuOpen
-                  ? 'border-accent/40 bg-accent/15 text-accent dark:text-accent-soft'
-                  : 'border-transparent text-app-muted hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-app-text'
+                  ? 'bg-accent/15 text-accent dark:text-accent-soft'
+                  : 'text-app-muted hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-app-text'
               }`}
               onClick={() => setMenuOpen(!menuOpen)}
             >
               <FiMoreVertical className="text-base" />
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-full z-50 mt-2 w-60 rounded-2xl border border-app-border/80 bg-app-surface/98 dark:bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl animate-pop-in origin-top-right">
+              <div className="absolute right-0 top-full z-50 mt-2 w-60 rounded-2xl border border-app-border bg-app-surface/98 dark:bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl animate-pop-in origin-top-right">
                 <button
                   type="button"
                   disabled={menuBusy}
@@ -833,7 +833,7 @@ export function ConversationThread({
 
       {typingLabel ? (
         <div
-          className="flex items-center gap-2 border-t border-app-border/60 px-6 py-2 text-sm text-app-text"
+          className="flex items-center gap-2 border-t border-app-border px-6 py-2 text-sm text-app-text"
           role="status"
         >
           <span className="flex items-end gap-0.5" aria-hidden="true">
@@ -920,7 +920,7 @@ export function ConversationThread({
       </div>
       {pinnedPanelOpen ? (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-6">
-          <div className="w-full max-w-md rounded-2xl border border-app-border bg-app-surface p-5 shadow-xl">
+          <div className="w-full max-w-md rounded-2xl border border-app-border bg-app-surface p-5 shadow-2xl">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-base font-semibold text-app-text">Pinned messages</h3>
               <button
@@ -938,7 +938,7 @@ export function ConversationThread({
                 {pinnedMessages.map((message) => (
                   <div
                     key={message.id}
-                    className="flex w-full items-start gap-3 rounded-xl border border-app-border bg-app-chat-panel px-3 py-2.5"
+                    className="flex w-full items-start gap-3 rounded-xl bg-app-chat-panel px-3 py-2.5 shadow-sm"
                   >
                     <button
                       type="button"

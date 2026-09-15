@@ -671,6 +671,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     callId: string,
   ): Promise<ApiResult<unknown>> =>
     ipcRenderer.invoke('calls:declined-invites', token, conversationId, callId),
+  setNativeTheme: (mode: 'light' | 'dark'): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('app:set-theme', mode),
   showDesktopNotification: (
     title: string,
     body: string,

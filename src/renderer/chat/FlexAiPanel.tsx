@@ -271,8 +271,8 @@ export function FlexAiPanel({
 
   return (
     <div className="pointer-events-none fixed bottom-5 left-[90px] z-[70] flex flex-col items-start">
-      <div className="pointer-events-auto flex h-[460px] w-[380px] flex-col overflow-hidden rounded-[24px] border border-app-border/80 bg-app-surface/95 backdrop-blur-xl shadow-2xl animate-pop-in">
-          <div className="flex items-center justify-between border-b border-app-border/40 bg-app-chat-panel/80 px-4 py-3">
+      <div className="pointer-events-auto flex h-[460px] w-[380px] flex-col overflow-hidden rounded-[24px] border border-app-border bg-app-surface/95 backdrop-blur-xl shadow-2xl animate-pop-in">
+          <div className="flex items-center justify-between border-b border-app-border bg-app-chat-panel/80 px-4 py-3">
             <div className="flex items-center gap-3">
               <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-accent to-[#5c2431] text-white shadow-md shadow-accent/30">
                 <FlexRobotIcon />
@@ -302,7 +302,7 @@ export function FlexAiPanel({
                   className={`max-w-[90%] rounded-[18px] px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap shadow-sm ${
                     message.role === 'user'
                       ? 'bg-gradient-to-br from-accent via-accent to-[#632a38] text-white shadow-accent/20'
-                      : 'bg-app-inset/90 border border-app-border/50 text-app-text'
+                      : 'border border-app-border bg-app-inset/90 text-app-text'
                   }`}
                 >
                   {message.text}
@@ -317,14 +317,14 @@ export function FlexAiPanel({
             ) : null}
           </div>
 
-          <div className="border-t border-app-border/40 bg-app-chat-panel/50 px-3.5 py-3">
+          <div className="border-t border-app-border bg-app-chat-panel/50 px-3.5 py-3">
             <div className="flex items-center gap-1.5">
               <input
                 ref={inputRef}
                 value={input}
                 placeholder="Ask Flex or dictate a message..."
                 disabled={busy}
-                className="h-9 min-w-0 flex-1 rounded-xl border border-app-border/60 bg-app-surface-input px-3 text-xs text-app-text outline-none transition-all placeholder:text-app-placeholder/70 focus:border-accent focus:ring-1 focus:ring-accent/30 disabled:opacity-50"
+                className="h-9 min-w-0 flex-1 rounded-xl border border-app-border bg-app-surface-input px-3 text-xs text-app-text outline-none transition-all placeholder:text-app-placeholder/70 focus:border-accent focus:ring-1 focus:ring-accent/30 disabled:opacity-50"
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {

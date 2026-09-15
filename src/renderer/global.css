@@ -14,44 +14,49 @@
 
   :root,
   .light {
+    color-scheme: light;
     --app-bg: #f6f7fa;
     --app-bg-login: #f1f3f7;
     --app-surface: #ffffff;
+    --app-card: #ffffff;
     --app-surface-input: #f2f4f8;
-    --app-border: rgba(0, 0, 0, 0.05);
-    --app-border-subtle: rgba(0, 0, 0, 0.025);
-    --app-border-strong: rgba(0, 0, 0, 0.08);
+    --app-border: rgba(15, 23, 42, 0.1);
+    --app-border-subtle: rgba(15, 23, 42, 0.06);
+    --app-border-strong: rgba(15, 23, 42, 0.16);
     --app-text: #0f172a;
     --app-text-muted: #64748b;
-    --app-chat-bg: #f6f7fa;
+    --app-chat-bg: #f4f6fa;
     --app-chat-rail: #ffffff;
-    --app-chat-sidebar: #fbfcfd;
-    --app-chat-panel: #f1f3f8;
-    --app-chat-hover: #eef1f6;
-    --app-chat-active: #e3e7f0;
+    --app-chat-sidebar: #f8fafc;
+    --app-chat-panel: #eef1f6;
+    --app-chat-hover: #e8edf5;
+    --app-chat-active: #dfe5f0;
     --app-elevated: #ffffff;
-    --app-inset: #f1f3f8;
+    --app-inset: #eef1f6;
     --app-inset-active: #e2e6f0;
     --app-avatar-fallback: #e2e8f0;
     --app-message-in: #ffffff;
     --app-message-out: #803d4c;
     --app-message-out-text: #ffffff;
     --app-placeholder: #94a3b8;
-    --app-glass-bg: rgba(255, 255, 255, 0.88);
-    --app-shadow: rgba(15, 23, 42, 0.08);
+    --app-glass-bg: rgba(255, 255, 255, 0.92);
+    --app-shadow: rgba(15, 23, 42, 0.1);
+    --app-composer-shadow: 0 8px 24px -8px rgba(15, 23, 42, 0.14), 0 0 0 1px var(--app-border);
     --scrollbar-track: transparent;
     --scrollbar-thumb: #cbd5e1;
     --scrollbar-thumb-hover: #94a3b8;
   }
 
   .dark {
+    color-scheme: dark;
     --app-bg: #0b0c10;
     --app-bg-login: #08090d;
     --app-surface: #181922;
+    --app-card: #1a1b25;
     --app-surface-input: #12131a;
-    --app-border: rgba(255, 255, 255, 0.05);
-    --app-border-subtle: rgba(255, 255, 255, 0.025);
-    --app-border-strong: rgba(255, 255, 255, 0.08);
+    --app-border: #3a3e4d;
+    --app-border-subtle: #2f3340;
+    --app-border-strong: #4a4f61;
     --app-text: #f8fafc;
     --app-text-muted: #8e93a6;
     --app-chat-bg: #0b0c10;
@@ -70,6 +75,7 @@
     --app-placeholder: #5d6175;
     --app-glass-bg: rgba(19, 20, 27, 0.8);
     --app-shadow: rgba(0, 0, 0, 0.55);
+    --app-composer-shadow: 0 12px 36px -4px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--app-border);
     --scrollbar-track: transparent;
     --scrollbar-thumb: #282a3a;
     --scrollbar-thumb-hover: #3d4158;
@@ -274,13 +280,17 @@
   .glass-card {
     background: var(--app-surface);
     border: 1px solid var(--app-border-subtle);
-    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 4px 20px -2px var(--app-shadow);
   }
 
   .glass-elevated {
     background: var(--app-elevated);
     border: 1px solid var(--app-border-subtle);
-    box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 8px 32px -4px var(--app-shadow);
+  }
+
+  .light .bg-app-message-in {
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05), 0 0 0 1px rgba(15, 23, 42, 0.06);
   }
 
   /* Micro-interactions */

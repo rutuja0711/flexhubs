@@ -507,6 +507,7 @@ declare global {
         conversationId: string,
         callId: string,
       ) => Promise<ApiResult<unknown>>;
+      setNativeTheme: (mode: 'light' | 'dark') => Promise<{ ok: boolean }>;
       showDesktopNotification: (
         title: string,
         body: string,

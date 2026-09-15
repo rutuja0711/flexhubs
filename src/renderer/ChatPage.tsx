@@ -102,7 +102,7 @@ import type {
   TeammateItem,
 } from '../shared/messages';
 import type { GifPickerItem } from '../shared/gifs';
-import { applyMessageReadReceipts, applyReactionPatch, buildScheduleMessageBody, clearThreadReplyRegistry, enrichMessageReplies, extractPeerLastReadMessageIds, filterMainChatMessages, findFirstUnreadMessageId, formatMessagePreview, isAlreadyDeletedForEveryoneError, markMessageDeletedForEveryone, mergeMessageUpdates, readLastReadMessageId, registerThreadReplyMessage, resolveMessageReadBy, resolveNotificationAction, resolveNotificationConversationId, resolveThreadRootId } from '../shared/messages';
+import { applyMessageReadReceipts, applyReactionPatch, buildScheduleMessageBody, clearThreadReplyRegistry, enrichMessageReplies, extractPeerLastReadMessageIds, filterMainChatMessages, findFirstUnreadMessageId, formatMessagePreview, isAlreadyDeletedForEveryoneError, markMessageDeletedForEveryone, mergeMessageUpdates, mergeServerMessagesWithLocal, readLastReadMessageId, registerThreadReplyMessage, resolveMessageReadBy, resolveNotificationAction, resolveNotificationConversationId, resolveThreadRootId } from '../shared/messages';
 import type { AiTextResult } from '../shared/extras';
 import { hoursToSnoozePreset, inferFlexIntent } from '../shared/extras';
 import type { ProfileSettings } from '../shared/profile';
@@ -520,6 +520,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const bootstrapStartedRef = useRef(false);
   const isTypingActiveRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
+  const messagesRef = useRef<MessageItem[]>([]);
   const mainViewRef = useRef<MainView>('chat');
   const userIdRef = useRef<string | null>(null);
   const notificationSettingsRef = useRef<ProfileSettings | null>(null);
@@ -619,6 +620,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const isOrgAdmin = useMemo(() => userCanManageOrganization(user), [user]);
 
   selectedIdRef.current = selectedId;
+  messagesRef.current = messages;
   mainViewRef.current = mainView;
   realtimeStatusRef.current = realtimeStatus;
   userIdRef.current = getUserId(user);
@@ -1575,10 +1577,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           return;
         }
 
-        const nextMessages = commitMessages(
-          bootstrapResult.data.messages,
-          getUserId(user),
-          bootstrapResult.data.conversation,
+        const nextMessages = mergeServerMessagesWithLocal(
+          commitMessages(
+            bootstrapResult.data.messages,
+            getUserId(user),
+            bootstrapResult.data.conversation,
+          ),
+          cached?.messages ?? [],
         );
         let nextDraft = cached?.draft ?? '';
         const conversationUnread =
@@ -1758,28 +1763,32 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
 
-      const nextMessages = commitMessages(
+      const serverMessages = commitMessages(
         result.data.messages,
         getUserId(user),
         result.data.conversation,
       );
+      const nextMessages = mergeLocalPendingMessages(
+        mergeServerMessagesWithLocal(serverMessages, messagesRef.current),
+        messagesRef.current,
+      );
 
       setMessages((current) => {
-        const merged = mergeLocalPendingMessages(nextMessages, current);
         const unchanged =
-          current.length === merged.length &&
+          current.length === nextMessages.length &&
           current.every((message, index) => {
-            const next = merged[index];
+            const next = nextMessages[index];
             return (
               next &&
               message.id === next.id &&
               message.status === next.status &&
               message.content === next.content &&
-              message.editedAt === next.editedAt
+              message.editedAt === next.editedAt &&
+              message.reactions.length === next.reactions.length
             );
           });
 
-        return unchanged ? current : merged;
+        return unchanged ? current : nextMessages;
       });
 
       const silentSnooze =

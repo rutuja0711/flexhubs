@@ -11,6 +11,7 @@ import { ToastProvider } from './ui/Toast';
 const initialTheme = resolveInitialTheme();
 applyTheme(initialTheme);
 applyAccentColor(resolveInitialAccentColor(), initialTheme);
+void window.electronAPI?.setNativeTheme?.(initialTheme);
 
 const rootElement = document.getElementById('root');
 

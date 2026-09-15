@@ -637,7 +637,7 @@ export function OrganizationView({
     return (
       <div className="flex h-full flex-col bg-app-chat-bg text-app-text overflow-hidden">
         {/* Top Header Bar */}
-        <div className="flex h-14 shrink-0 items-center border-b border-app-border/60 bg-white dark:bg-app-surface px-8">
+        <div className="flex h-14 shrink-0 items-center border-b border-app-border bg-white dark:bg-app-surface px-8">
           <h1 className="text-lg font-bold text-app-text tracking-tight">Organization</h1>
         </div>
 
@@ -645,13 +645,13 @@ export function OrganizationView({
         <div className="flex-1 overflow-y-auto px-6 py-8">
           <div className="mx-auto w-full max-w-[620px] space-y-5">
             {loadError ? (
-              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+              <div className="rounded-xl bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-100">
                 {loadError}
               </div>
             ) : null}
 
             {/* Top Card: You're in the team */}
-            <div className="rounded-2xl border border-app-border/70 bg-white dark:bg-app-surface p-7 shadow-sm flex flex-col items-center text-center">
+            <div className="rounded-2xl border border-app-border bg-white dark:bg-app-surface p-7 shadow-sm flex flex-col items-center text-center">
               <div className="mb-3.5 flex h-12 w-12 items-center justify-center rounded-2xl bg-app-inset dark:bg-app-surface-input text-app-muted">
                 <BuildingIcon size={20} />
               </div>
@@ -662,8 +662,8 @@ export function OrganizationView({
             </div>
 
             {/* Bottom Card: Team members */}
-            <div className="rounded-2xl border border-app-border/70 bg-white dark:bg-app-surface shadow-sm overflow-hidden">
-              <div className="flex items-center gap-3.5 p-5 border-b border-app-border/50">
+            <div className="rounded-2xl border border-app-border bg-white dark:bg-app-surface shadow-sm overflow-hidden">
+              <div className="flex items-center gap-3.5 p-5 bg-black/[0.02] dark:bg-white/[0.02]">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
                   <FiUsers size={18} />
                 </div>
@@ -679,14 +679,14 @@ export function OrganizationView({
                 {members.map((member) => (
                   <div
                     key={member.id}
-                    className="flex items-center gap-3.5 rounded-2xl border border-app-border/70 bg-white dark:bg-app-surface-input p-3.5 transition-colors"
+                    className="flex items-center gap-3.5 rounded-2xl bg-white dark:bg-app-surface-input p-3.5 shadow-xs transition-colors"
                   >
                     <Avatar imageUrl={member.avatarUrl} initials={member.initials} size="sm" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2">
                         <span className="truncate text-sm font-medium text-app-text">{member.name}</span>
                         {member.isAdmin || member.isOwner ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent border border-accent/20">
+                          <span className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent">
                             <FiShield className="text-[10px]" />
                             Admin
                           </span>
@@ -729,7 +729,7 @@ export function OrganizationView({
     <div className="h-full overflow-y-auto bg-app-chat-bg px-8 py-8 text-app-text">
       <div className="mx-auto w-full max-w-6xl space-y-8">
         {loadError ? (
-          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-100">
             {loadError}
           </div>
         ) : null}
@@ -751,11 +751,11 @@ export function OrganizationView({
         )}
 
         {isOwner && subscription ? (
-          <section className="rounded-2xl border border-app-border/70 bg-gradient-to-br from-accent/10 via-app-card/70 to-app-card/50 p-6 shadow-sm">
+          <section className="rounded-2xl bg-gradient-to-br from-accent/10 via-app-card/70 to-app-card/50 p-6 shadow-md">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-accent-soft">Active plan</p>
             <div className="mt-2 flex flex-wrap items-center gap-2.5">
               <h2 className="text-xl font-bold capitalize text-app-text tracking-tight">{subscription.planName}</h2>
-              <span className="rounded-full bg-[#3ecf8e]/15 px-3 py-0.5 text-xs font-medium text-[#3ecf8e] capitalize border border-[#3ecf8e]/20">
+              <span className="rounded-full bg-[#3ecf8e]/15 px-3 py-0.5 text-xs font-medium text-[#3ecf8e] capitalize">
                 {subscription.status}
               </span>
             </div>
@@ -781,7 +781,7 @@ export function OrganizationView({
             </div>
           </section>
         ) : isOwner ? (
-          <section className="rounded-2xl border border-dashed border-app-border/80 bg-app-card/40 p-6">
+          <section className="rounded-2xl border border-dashed border-app-border bg-app-card/40 p-6">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-accent-soft">Active plan</p>
             <h2 className="mt-2 text-lg font-semibold text-app-text">No subscription on file</h2>
             <p className="mt-1 text-xs text-app-muted">
@@ -793,14 +793,14 @@ export function OrganizationView({
         {isOwner ? (
         <>
             <div className="flex justify-center">
-              <div className="inline-flex rounded-2xl bg-app-inset/80 p-1 border border-app-border/40 backdrop-blur-sm">
+              <div className="inline-flex rounded-2xl bg-app-inset/80 p-1 backdrop-blur-sm shadow-inner shadow-black/5">
                 {(['monthly', '6months', 'annual'] as WorkspaceBillingPeriod[]).map((period) => (
                   <button
                     key={period}
                     type="button"
                     onClick={() => setBillingPeriod(period)}
                     className={`rounded-xl px-5 py-2 text-xs font-medium transition-all duration-150 ${
-                      billingPeriod === period ? 'bg-app-card text-app-text font-semibold shadow-sm border border-app-border/60' : 'text-app-muted hover:text-app-text hover:bg-app-inset/60'
+                      billingPeriod === period ? 'bg-app-card text-app-text font-semibold shadow-sm' : 'text-app-muted hover:text-app-text hover:bg-app-inset/60'
                     }`}
                   >
                     {billingPeriodLabel(period)}
@@ -827,7 +827,7 @@ export function OrganizationView({
                     className={`relative rounded-2xl border p-5 text-left transition-all duration-200 ${
                       isSelected
                         ? 'border-accent/80 bg-accent/10 ring-2 ring-accent/30 shadow-md shadow-accent/10'
-                        : 'border-app-border/70 bg-app-card/60 hover:bg-app-card hover:border-app-border hover:shadow-xs'
+                        : 'border-app-border bg-app-card/60 hover:bg-app-card hover:shadow-xs'
                     }`}
                   >
                     {isCurrent ? (

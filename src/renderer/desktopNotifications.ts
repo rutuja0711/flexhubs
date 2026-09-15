@@ -10,10 +10,102 @@ import { playMessageNotificationSound } from './messageSound';
 let notificationSnapshotReady = false;
 const knownNotificationKeys = new Set<string>();
 const shownMessageIds = new Set<string>();
+const shownContentFingerprints = new Set<string>();
+const inFlightAlertKeys = new Set<string>();
+const recentConversationAlerts = new Map<string, number>();
+const CONVERSATION_ALERT_COOLDOWN_MS = 10_000;
 const pendingClicks = new Map<string, () => void>();
 let clickListenerBound = false;
 let shouldPlayMessageSound: (() => boolean) | null = null;
 const playedSoundMessageIds = new Set<string>();
+
+function normalizeFingerprintPart(value: string | null | undefined): string {
+  return (value ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function contentFingerprint(...parts: Array<string | null | undefined>): string {
+  return `fp:${parts.map(normalizeFingerprintPart).join('|')}`;
+}
+
+function rememberAlertKey(key: string | null | undefined): void {
+  if (!key) {
+    return;
+  }
+
+  shownContentFingerprints.add(key);
+}
+
+function isAlertKeyKnown(key: string | null | undefined): boolean {
+  if (!key) {
+    return false;
+  }
+
+  return (
+    knownNotificationKeys.has(key) ||
+    shownMessageIds.has(key) ||
+    shownContentFingerprints.has(key) ||
+    inFlightAlertKeys.has(key)
+  );
+}
+
+function collectNotificationAlertKeys(
+  notification: NotificationItem,
+  title?: string,
+  body?: string,
+): string[] {
+  const keys = [getNotificationKey(notification)];
+
+  if (notification.messageId) {
+    keys.push(notification.messageId);
+  }
+
+  if (notification.conversationId) {
+    keys.push(contentFingerprint(notification.conversationId, title ?? notification.title, body ?? notification.body));
+  }
+
+  keys.push(contentFingerprint(title ?? notification.title, body ?? notification.body));
+
+  return [...new Set(keys.filter(Boolean))];
+}
+
+function claimAlertKeys(keys: string[]): boolean {
+  const unique = [...new Set(keys.filter(Boolean))];
+
+  if (unique.some((key) => isAlertKeyKnown(key))) {
+    unique.forEach(rememberAlertKey);
+    return false;
+  }
+
+  unique.forEach((key) => inFlightAlertKeys.add(key));
+  return true;
+}
+
+function finalizeAlertKeys(keys: string[], delivered: boolean): void {
+  const unique = [...new Set(keys.filter(Boolean))];
+
+  unique.forEach((key) => inFlightAlertKeys.delete(key));
+
+  if (delivered) {
+    unique.forEach(rememberAlertKey);
+  }
+}
+
+function rememberConversationAlert(conversationId?: string | null): void {
+  if (!conversationId) {
+    return;
+  }
+
+  recentConversationAlerts.set(conversationId, Date.now());
+}
+
+function wasConversationRecentlyAlerted(conversationId?: string | null): boolean {
+  if (!conversationId) {
+    return false;
+  }
+
+  const alertedAt = recentConversationAlerts.get(conversationId);
+  return Boolean(alertedAt && Date.now() - alertedAt < CONVERSATION_ALERT_COOLDOWN_MS);
+}
 
 export function bindMessageNotificationSound(enabled: () => boolean): void {
   shouldPlayMessageSound = enabled;
@@ -106,13 +198,14 @@ export function markMessageNotificationShown(messageId: string): void {
 }
 
 function wasAlreadyShown(notification: NotificationItem): boolean {
-  const key = getNotificationKey(notification);
-
-  if (knownNotificationKeys.has(key)) {
+  if (collectNotificationAlertKeys(notification).some((key) => isAlertKeyKnown(key))) {
     return true;
   }
 
-  return Boolean(notification.messageId && shownMessageIds.has(notification.messageId));
+  return (
+    isIncomingMessageNotification(notification) &&
+    wasConversationRecentlyAlerted(notification.conversationId)
+  );
 }
 
 function rememberShownNotification(notification: NotificationItem): void {
@@ -121,6 +214,8 @@ function rememberShownNotification(notification: NotificationItem): void {
   if (notification.messageId) {
     shownMessageIds.add(notification.messageId);
   }
+
+  collectNotificationAlertKeys(notification).forEach(rememberAlertKey);
 }
 
 export async function ensureNotificationPermission(): Promise<boolean> {
@@ -248,6 +343,7 @@ export async function showDesktopNotification(
   conversation: Pick<ConversationItem, 'kind' | 'title'> | null = null,
 ): Promise<boolean> {
   if (wasAlreadyShown(notification)) {
+    rememberShownNotification(notification);
     return false;
   }
 
@@ -280,8 +376,15 @@ export async function showDesktopNotification(
   }
 
   const notificationKey = getNotificationKey(notification);
+  const alertKeys = collectNotificationAlertKeys(notification, title, body);
+
+  if (!claimAlertKeys(alertKeys)) {
+    rememberShownNotification(notification);
+    return false;
+  }
 
   rememberShownNotification(notification);
+  rememberConversationAlert(notification.conversationId);
 
   if (isIncomingMessageNotification(notification)) {
     maybePlayAlertSound(notification.messageId ?? undefined);
@@ -293,6 +396,8 @@ export async function showDesktopNotification(
     notification.messageId ? `message-${notification.messageId}` : notificationKey,
     onClick,
   );
+
+  finalizeAlertKeys(alertKeys, delivered);
 
   if (!delivered) {
     knownNotificationKeys.delete(notificationKey);
@@ -310,9 +415,7 @@ export function peekNewNotifications(notifications: NotificationItem[]): Notific
     return [];
   }
 
-  return notifications.filter(
-    (notification) => !knownNotificationKeys.has(getNotificationKey(notification)),
-  );
+  return notifications.filter((notification) => !wasAlreadyShown(notification));
 }
 
 export async function alertNewDesktopNotifications(
@@ -410,14 +513,28 @@ export async function showIncomingMessageDesktopNotification(
     message.senderName,
     effectiveConversation,
   );
-  if (shownMessageIds.has(message.id)) {
+  const alertKeys = [
+    message.id,
+    contentFingerprint(conversationId, title, body),
+    contentFingerprint(title, body),
+    contentFingerprint(message.senderName, preview),
+    contentFingerprint(effectiveConversation?.title, preview),
+  ];
+
+  if (shownMessageIds.has(message.id) || !claimAlertKeys(alertKeys)) {
+    shownMessageIds.add(message.id);
+    alertKeys.forEach(rememberAlertKey);
     return false;
   }
 
   shownMessageIds.add(message.id);
+  alertKeys.forEach(rememberAlertKey);
+  rememberConversationAlert(conversationId);
   maybePlayAlertSound(message.id);
 
   const delivered = await openDesktopNotification(title, body, `message-${message.id}`, onClick);
+
+  finalizeAlertKeys(alertKeys, delivered);
 
   if (!delivered) {
     shownMessageIds.delete(message.id);

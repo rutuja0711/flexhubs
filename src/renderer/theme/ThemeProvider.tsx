@@ -35,6 +35,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     storeTheme(theme);
     applyAccentColor(accentColor, theme);
     storeAccentColor(accentColor);
+    void window.electronAPI?.setNativeTheme?.(theme);
   }, [accentColor, theme]);
 
   useEffect(() => {

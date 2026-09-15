@@ -288,6 +288,14 @@ function resolveWindowBackgroundColor(): string {
   return nativeTheme.shouldUseDarkColors ? '#0d0d0d' : '#f3f4f6';
 }
 
+function applyNativeTheme(mode: 'light' | 'dark'): void {
+  nativeTheme.themeSource = mode;
+
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setBackgroundColor(resolveWindowBackgroundColor());
+  }
+}
+
 function notificationOptions(title: string, body: string): Electron.NotificationConstructorOptions {
   const options: Electron.NotificationConstructorOptions = {
     title,
@@ -1473,6 +1481,15 @@ app.whenReady().then(() => {
   setupDisplayMediaHandler();
   logScreenCaptureStartupHint();
   logNotificationStartupHint();
+
+  ipcMain.handle('app:set-theme', (_event, mode: 'light' | 'dark') => {
+    if (mode !== 'light' && mode !== 'dark') {
+      return { ok: false };
+    }
+
+    applyNativeTheme(mode);
+    return { ok: true };
+  });
 
   ipcMain.handle(
     'desktop:notify',

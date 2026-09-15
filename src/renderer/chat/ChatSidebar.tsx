@@ -263,8 +263,8 @@ export function ChatSidebar({
           : 'No hubs yet.';
 
   return (
-    <aside className="relative z-[40] flex h-full w-[330px] shrink-0 flex-col border-r border-app-border/50 bg-app-chat-sidebar transition-colors">
-      <div className="border-b border-app-border/50 px-4 py-3.5">
+    <aside className="relative z-[40] flex h-full w-[330px] shrink-0 flex-col border-r border-app-border bg-app-chat-sidebar transition-colors">
+      <div className="border-b border-app-border px-4 py-3.5">
         <div className="mb-3.5 flex items-start justify-between gap-3 relative">
           <button
             type="button"
@@ -326,14 +326,14 @@ export function ChatSidebar({
       </div>
 
       {!isGlobalSearch ? (
-        <div className="border-b border-app-border/40 px-4 py-2.5">
+        <div className="border-b border-app-border px-4 py-2">
           <div
             ref={tabContainerRef}
-            className="relative flex p-1 rounded-xl bg-app-surface-input/80 dark:bg-app-inset border border-app-border/60 gap-1 z-0"
+            className="relative flex p-1 rounded-xl border border-app-border bg-app-surface-input/80 dark:bg-app-inset gap-1 z-0 shadow-inner shadow-black/5"
           >
             {/* Smooth Dynamic Sliding Pill */}
             <div 
-              className="pointer-events-none absolute top-1 bottom-1 rounded-lg bg-white dark:bg-app-elevated shadow-sm border border-black/[0.04] dark:border-transparent transition-all duration-250 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+              className="pointer-events-none absolute top-1 bottom-1 rounded-lg bg-white dark:bg-app-elevated shadow-sm transition-all duration-250 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
               style={{
                 transform: `translateX(${tabIndicator.left}px)`,
                 width: `${tabIndicator.width}px`,

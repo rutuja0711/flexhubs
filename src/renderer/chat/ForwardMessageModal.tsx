@@ -36,7 +36,7 @@ export function ForwardMessageModal({
         role="dialog"
         aria-labelledby="forward-title"
       >
-        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
+        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-app-border-strong to-transparent pointer-events-none" />
 
         <div className="border-b border-app-border/50 px-6 py-5">
           <div className="flex items-center justify-between gap-3">

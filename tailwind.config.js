@@ -15,6 +15,7 @@ module.exports = {
           bg: 'var(--app-bg)',
           'bg-login': 'var(--app-bg-login)',
           surface: 'var(--app-surface)',
+          card: 'var(--app-card)',
           'surface-input': 'var(--app-surface-input)',
           border: 'var(--app-border)',
           'border-subtle': 'var(--app-border-subtle)',
@@ -42,8 +43,8 @@ module.exports = {
           input: '#121318',
         },
         border: {
-          DEFAULT: '#272a38',
-          input: '#222430',
+          DEFAULT: 'var(--app-border)',
+          input: 'var(--app-border)',
         },
         muted: '#9a9a9a',
         chat: {
@@ -55,12 +56,15 @@ module.exports = {
           active: 'var(--app-chat-active)',
         },
       },
+      borderColor: {
+        DEFAULT: 'var(--app-border)',
+      },
       boxShadow: {
         app: '0 24px 48px var(--app-shadow)',
-        glass: '0 8px 32px 0 rgba(0, 0, 0, 0.36)',
+        glass: '0 8px 32px 0 var(--app-shadow)',
         'accent-glow': '0 0 20px -3px rgba(var(--accent-rgb) / 0.35)',
-        composer: '0 12px 36px -4px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--app-border-subtle)',
-        'composer-focus': '0 16px 40px -4px rgba(0, 0, 0, 0.45), 0 0 0 1.5px rgba(var(--accent-rgb) / 0.5), 0 0 24px -2px rgba(var(--accent-rgb) / 0.25)',
+        composer: 'var(--app-composer-shadow)',
+        'composer-focus': '0 16px 40px -4px var(--app-shadow), 0 0 0 1.5px rgba(var(--accent-rgb) / 0.5), 0 0 24px -2px rgba(var(--accent-rgb) / 0.25)',
       },
     },
   },

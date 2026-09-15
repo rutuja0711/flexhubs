@@ -372,6 +372,9 @@ function normalizeGroupedReactionRecord(
     ...(Array.isArray(record.users) ? record.users : []),
     ...(Array.isArray(record.userIds) ? record.userIds : []),
     ...(Array.isArray(record.user_ids) ? record.user_ids : []),
+    ...(Array.isArray(record.reactors) ? record.reactors : []),
+    ...(Array.isArray(record.reactorIds) ? record.reactorIds : []),
+    ...(Array.isArray(record.reactor_ids) ? record.reactor_ids : []),
   ];
 
   appendReactionUsers(reactions, emoji, nestedUsers);
@@ -491,6 +494,27 @@ export function applyReactionPatch(
   }
 
   return message;
+}
+
+export function mergeServerMessagesWithLocal(
+  serverMessages: MessageItem[],
+  localMessages: MessageItem[],
+): MessageItem[] {
+  if (localMessages.length === 0) {
+    return serverMessages;
+  }
+
+  const localById = new Map(localMessages.map((message) => [message.id, message]));
+
+  return serverMessages.map((serverMessage) => {
+    const localMessage = localById.get(serverMessage.id);
+
+    if (!localMessage) {
+      return serverMessage;
+    }
+
+    return mergeMessageUpdates(serverMessage, localMessage);
+  });
 }
 
 export function mergeMessageUpdates(
@@ -1783,7 +1807,9 @@ export function normalizeMessage(record: Record<string, unknown>, index: number)
       record.reactions ??
         record.reactionsSummary ??
         record.messageReactions ??
-        record.reactionSummary,
+        record.reactionSummary ??
+        record.reactionList ??
+        asRecord(record.metadata)?.reactions,
     ),
     replyToMessageId: readString(record.replyToId) ?? readString(record.replyToMessageId) ?? undefined,
     replyToMessage: (() => {

@@ -141,7 +141,7 @@ function statusDotClass(statusUi: string): string {
 
 function SectionCard({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`rounded-2xl border border-app-border/70 bg-app-card/60 shadow-xs backdrop-blur-sm ${className}`}>{children}</div>
+    <div className={`rounded-2xl border border-app-border bg-app-card/60 shadow-xs backdrop-blur-sm ${className}`}>{children}</div>
   );
 }
 
@@ -811,12 +811,14 @@ export function ProfileSettingsView({
   const displayName = profile.name || profile.username || 'Your account';
   const initials = getUserInitials(profile);
   const previewAvatarUrl = (() => {
-    if (avatarTab === 'initials') {
+    const savedMode = profile.avatarMode;
+
+    if (savedMode === 'initials') {
       return null;
     }
 
-    if (avatarTab === 'upload') {
-      return avatarUrl;
+    if (savedMode === 'upload') {
+      return avatarUrl ?? profile.avatarUrl;
     }
 
     return buildGeneratedAvatarUrl(selectedStyle, avatarSeed);

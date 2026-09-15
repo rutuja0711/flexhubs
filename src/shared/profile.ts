@@ -292,14 +292,41 @@ export function normalizeUserProfile(user: unknown, settings?: ProfileSettings):
     avatarStyle:
       readString(record.avatarStyle) ?? readString(record.avatarStyleId) ?? readString(record.style),
     avatarSeed: readString(record.avatarSeed) ?? readString(record.seed),
-    avatarMode:
-      record.useInitials === true || readString(record.avatarType) === 'initials'
-        ? 'initials'
-        : readString(record.avatarStyle)
-          ? 'avatar'
-          : readString(record.avatarUrl)
-            ? 'upload'
-            : 'initials',
+    avatarMode: (() => {
+      if (record.useInitials === true) {
+        return 'initials' as const;
+      }
+
+      const explicitMode =
+        readString(record.avatarMode) ??
+        readString(record.avatarType);
+
+      if (explicitMode === 'initials') {
+        return 'initials' as const;
+      }
+
+      if (explicitMode === 'upload') {
+        return 'upload' as const;
+      }
+
+      if (explicitMode === 'avatar') {
+        return 'avatar' as const;
+      }
+
+      if (readString(record.avatarStyle) ?? readString(record.avatarStyleId)) {
+        return 'avatar' as const;
+      }
+
+      if (
+        readString(record.avatarUrl) ??
+        readString(record.avatar) ??
+        readString(record.imageUrl)
+      ) {
+        return 'upload' as const;
+      }
+
+      return 'initials' as const;
+    })(),
     status:
       normalizedStatus === 'ONLINE' ||
       normalizedStatus === 'AWAY' ||

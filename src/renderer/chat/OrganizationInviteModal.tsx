@@ -76,8 +76,8 @@ export function OrganizationInviteModal({ onUnauthorized, onInviteResolved }: Or
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 sm:p-6 backdrop-blur-md animate-fade-in">
-      <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-app-border/80 bg-app-surface/95 backdrop-blur-2xl p-6 shadow-2xl animate-pop-in origin-center">
-        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
+      <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-app-border bg-app-surface/95 backdrop-blur-2xl p-6 shadow-2xl animate-pop-in origin-center">
+        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-app-border-strong to-transparent pointer-events-none" />
 
         <h2 className="mb-1 text-base font-semibold text-app-text tracking-tight">Workspace invitation</h2>
         <p className="mb-5 text-xs text-app-muted">
@@ -85,7 +85,7 @@ export function OrganizationInviteModal({ onUnauthorized, onInviteResolved }: Or
         </p>
         <div className="space-y-3">
           {invites.map((invite) => (
-            <div key={invite.id} className="rounded-2xl border border-app-border/60 bg-app-card/60 p-4 shadow-xs">
+            <div key={invite.id} className="rounded-2xl border border-app-border bg-app-card/60 p-4">
               <p className="text-sm font-semibold text-app-text">{invite.email}</p>
               <p className="text-xs text-app-muted mt-0.5">
                 Role: <span className="text-app-text font-medium">{invite.role || 'Member'}</span>
@@ -97,7 +97,7 @@ export function OrganizationInviteModal({ onUnauthorized, onInviteResolved }: Or
                   onClick={() => {
                     void handleDecline(invite);
                   }}
-                  className="flex-1 rounded-xl border border-app-border bg-app-card py-2 text-xs font-semibold text-app-muted hover:text-app-text hover:bg-app-inset disabled:opacity-50 transition-colors"
+                  className="flex-1 rounded-xl bg-app-card py-2 text-xs font-semibold text-app-muted hover:text-app-text hover:bg-app-inset disabled:opacity-50 transition-colors shadow-xs"
                 >
                   Decline
                 </button>

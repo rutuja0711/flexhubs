@@ -57,7 +57,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
   const isRailViewActive = activeNavIndex !== -1;
 
   return (
-    <aside className="relative z-[80] flex w-[76px] shrink-0 flex-col items-center overflow-visible border-r border-app-border/50 bg-app-chat-rail py-4 transition-colors">
+    <aside className="relative z-[80] flex w-[76px] shrink-0 flex-col items-center overflow-visible border-r border-app-border bg-app-chat-rail py-4 transition-colors">
       <button
         type="button"
         onClick={() => onNavigate('chat')}
@@ -70,7 +70,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
       <nav className="relative flex w-full flex-1 flex-col gap-1.5 px-2" aria-label="Main navigation">
         {/* Sliding Active Indicator */}
         <div 
-          className="pointer-events-none absolute left-2 right-2 rounded-2xl bg-accent/10 dark:bg-accent/25 border border-accent/25 dark:border-accent/40 shadow-sm shadow-accent/15 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]"
+          className="pointer-events-none absolute left-2 right-2 rounded-2xl bg-accent/15 dark:bg-accent/25 shadow-sm shadow-accent/15 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]"
           style={{
             height: '58px',
             transform: `translateY(${isRailViewActive ? `${activeNavIndex * 64}px` : '0px'})`,
@@ -163,8 +163,8 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
           </button>
           
           {menuOpen && (
-            <div className="absolute bottom-10 left-full ml-4 w-60 rounded-2xl border border-app-border/80 bg-app-surface/98 dark:bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl z-50 animate-pop-in origin-bottom-left">
-              <div className="mb-1.5 border-b border-app-border/40 px-3.5 py-2.5">
+            <div className="absolute bottom-10 left-full ml-4 w-60 rounded-2xl border border-app-border bg-app-surface/98 dark:bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl z-50 animate-pop-in origin-bottom-left">
+              <div className="mb-1.5 px-3.5 py-2.5 bg-black/[0.03] dark:bg-white/[0.03] rounded-xl">
                 <div className="truncate text-sm font-bold text-app-text">{getUserDisplayName(user)}</div>
                 <div className="text-[11px] font-medium text-app-muted">{apiStatusToUi(presenceStatus)}</div>
               </div>
@@ -201,7 +201,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
                 <FiSun className="shrink-0 text-sm text-app-muted" />
                 <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
               </button>
-              <div className="my-1 border-t border-app-border/40" />
+              <div className="my-1 h-px bg-app-border" />
               <button
                 type="button"
                 className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium text-rose-600 dark:text-rose-400 transition-colors hover:bg-rose-50 dark:hover:bg-rose-950/30"

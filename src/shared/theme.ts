@@ -33,4 +33,5 @@ export function resolveInitialTheme(): ThemeMode {
 export function applyTheme(mode: ThemeMode): void {
   document.documentElement.classList.remove('dark', 'light');
   document.documentElement.classList.add(mode);
+  document.documentElement.style.colorScheme = mode;
 }

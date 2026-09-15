@@ -39,19 +39,19 @@ export function SearchField({
           isInline
             ? `rounded-2xl border bg-app-surface-input/90 backdrop-blur-sm py-3 pr-28 pl-12 shadow-sm ${
                 error
-                  ? 'border-accent focus:border-accent focus:ring-2 focus:ring-accent/20'
-                  : 'border-app-border/60 hover:border-app-border-strong focus:border-accent/80 focus:ring-2 focus:ring-accent/20 focus:bg-app-surface-input'
+                  ? 'border-accent ring-2 ring-accent'
+                  : 'border-app-border focus:border-accent/80 focus:ring-2 focus:ring-accent/20 focus:bg-app-surface-input'
               }`
             : isModal
-              ? `rounded-xl border bg-app-surface-input/90 py-2.5 pr-3.5 pl-10 shadow-sm ${
+              ? `rounded-xl border bg-app-inset py-2.5 pr-3.5 pl-10 ${
                   error
-                    ? 'border-accent focus:border-accent focus:ring-2 focus:ring-accent/20'
-                    : 'border-app-border/60 hover:border-app-border-strong focus:border-accent/80 focus:ring-2 focus:ring-accent/20'
+                    ? 'border-accent ring-2 ring-accent'
+                    : 'border-app-border focus:border-accent focus:ring-2 focus:ring-accent/20 focus:bg-app-surface'
                 }`
               : `rounded-xl border bg-app-surface-input/80 py-2 pr-3 pl-9 text-xs shadow-inner shadow-black/5 ${
                   error
-                    ? 'border-accent focus:border-accent focus:ring-2 focus:ring-accent/20'
-                    : 'border-app-border/50 hover:border-app-border-strong/60 focus:border-accent/70 focus:ring-2 focus:ring-accent/20 focus:bg-app-surface-input'
+                    ? 'border-accent ring-2 ring-accent'
+                    : 'border-app-border focus:border-accent/70 focus:ring-1 focus:ring-accent/20 focus:bg-app-surface-input'
                 }`
         }`}
         onChange={(event) => onChange(event.target.value)}

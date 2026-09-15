@@ -53,7 +53,7 @@ export function ScheduleMessageModal({
       />
       <div className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
         <div className="pointer-events-auto relative w-full max-w-md overflow-hidden rounded-3xl border border-app-border/80 bg-app-surface/95 backdrop-blur-2xl p-6 shadow-2xl animate-pop-in origin-center">
-          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
+          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-app-border-strong to-transparent pointer-events-none" />
 
           <h3 className="text-base font-semibold text-app-text tracking-tight">Schedule message</h3>
           <p className="mt-0.5 text-xs text-app-muted">Send this message automatically at a specified time.</p>

@@ -170,20 +170,20 @@ function MediaPreviewModal({
   }, [onClose]);
 
   return createPortal(
-    <div className="fixed inset-0 z-[300] flex flex-col bg-[#0b0b0c]/95 text-app-text">
-      <header className="flex shrink-0 items-center justify-between gap-4 border-b border-white/10 px-5 py-3">
+    <div className="fixed inset-0 z-[300] flex flex-col bg-[#0b0b0c] text-white">
+      <header className="flex shrink-0 items-center justify-between gap-4 border-b border-white/10 bg-[#0b0b0c] px-5 py-3">
         <div className="flex min-w-0 items-center gap-3">
           <button
             type="button"
             aria-label="Close preview"
-            className="flex h-9 w-9 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-white/10 hover:text-app-text"
+            className="flex h-9 w-9 items-center justify-center rounded-lg text-white/60 transition-colors hover:bg-white/10 hover:text-white"
             onClick={onClose}
           >
             <FiX className="text-lg" />
           </button>
           <div className="min-w-0">
-            <p className="truncate text-sm font-medium text-app-text">{fileName}</p>
-            <p className="text-xs text-app-muted">{label}</p>
+            <p className="truncate text-sm font-medium text-white">{fileName}</p>
+            <p className="text-xs text-white/55">{label}</p>
           </div>
         </div>
 
@@ -193,18 +193,18 @@ function MediaPreviewModal({
               <button
                 type="button"
                 aria-label="Zoom out"
-                className="flex h-9 w-9 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-white/10 hover:text-app-text"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-white/60 transition-colors hover:bg-white/10 hover:text-white"
                 onClick={() => setZoom((current) => Math.max(current - 0.25, 0.25))}
               >
                 <FiZoomOut className="text-base" />
               </button>
-              <span className="min-w-[3rem] text-center text-sm text-app-muted">
+              <span className="min-w-[3rem] text-center text-sm text-white/60">
                 {Math.round(zoom * 100)}%
               </span>
               <button
                 type="button"
                 aria-label="Zoom in"
-                className="flex h-9 w-9 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-white/10 hover:text-app-text"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-white/60 transition-colors hover:bg-white/10 hover:text-white"
                 onClick={() => setZoom((current) => Math.min(current + 0.25, 4))}
               >
                 <FiZoomIn className="text-base" />
@@ -212,7 +212,7 @@ function MediaPreviewModal({
               <button
                 type="button"
                 aria-label="Rotate"
-                className="flex h-9 w-9 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-white/10 hover:text-app-text"
+                className="flex h-9 w-9 items-center justify-center rounded-lg text-white/60 transition-colors hover:bg-white/10 hover:text-white"
                 onClick={() => setRotation((current) => (current + 90) % 360)}
               >
                 <FiRotateCw className="text-base" />
@@ -222,7 +222,7 @@ function MediaPreviewModal({
           <button
             type="button"
             disabled={busy}
-            className="flex items-center gap-2 rounded-lg border border-white/10 px-3 py-2 text-sm text-app-text transition-colors hover:bg-white/10 disabled:opacity-50"
+            className="flex items-center gap-2 rounded-lg border border-white/15 px-3 py-2 text-sm text-white transition-colors hover:bg-white/10 disabled:opacity-50"
             onClick={() => void handleOpen()}
           >
             <FiExternalLink className="text-base" />
@@ -240,7 +240,7 @@ function MediaPreviewModal({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-auto px-6 py-6">
+      <div className="min-h-0 flex-1 overflow-auto bg-[#0b0b0c] px-6 py-6">
         <div className="flex min-h-full min-w-full items-center justify-center">
           {item.kind === 'video' ? (
             resolvedVideoUrl ? (
@@ -251,7 +251,7 @@ function MediaPreviewModal({
                 className="max-h-full max-w-full rounded-xl bg-black shadow-2xl"
               />
             ) : (
-              <p className="text-sm text-app-muted">Loading video...</p>
+              <p className="text-sm text-white/55">Loading video...</p>
             )
           ) : (
             <div
@@ -262,14 +262,14 @@ function MediaPreviewModal({
                 src={item.url}
                 alt={fileName}
                 loading="eager"
-                className="max-h-[85vh] max-w-[90vw] object-contain"
+                className="max-h-[85vh] max-w-[90vw] bg-transparent object-contain"
               />
             </div>
           )}
         </div>
       </div>
 
-      <footer className="shrink-0 border-t border-white/10 px-5 py-2 text-center text-xs text-app-muted">
+      <footer className="shrink-0 border-t border-white/10 bg-[#0b0b0c] px-5 py-2 text-center text-xs text-white/50">
         Esc to close{item.kind === 'image' ? ' · Scroll to pan · + / - to zoom' : ''}
         {error ? <span className="ml-3 text-accent-soft">{error}</span> : null}
       </footer>

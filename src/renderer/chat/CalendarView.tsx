@@ -173,14 +173,14 @@ function EventCard({
       className={`rounded-2xl border p-5 transition-all duration-200 ${
         highlighted
           ? 'border-accent/80 bg-accent/10 ring-2 ring-accent/30 shadow-md shadow-accent/10'
-          : 'border-app-border/70 bg-app-card/60 hover:bg-app-card hover:border-app-border hover:shadow-xs'
+          : 'border-app-border bg-app-card/60 hover:bg-app-card hover:shadow-xs'
       }`}
     >
       <div className="mb-3 flex items-start justify-between gap-4">
         <h3 className="min-w-0 flex-1 text-base font-semibold text-app-text tracking-tight">{event.title}</h3>
         <div className="flex shrink-0 items-center gap-2">
           {event.startsAt ? (
-            <span className="rounded-lg bg-app-inset/80 px-2.5 py-1 text-xs font-medium whitespace-nowrap text-app-muted border border-app-border/50">
+            <span className="rounded-lg bg-app-inset/80 px-2.5 py-1 text-xs font-medium whitespace-nowrap text-app-muted">
               {formatEventDateTime(event.startsAt)}
             </span>
           ) : null}
@@ -201,7 +201,7 @@ function EventCard({
       {mentionLine ? <p className="mb-2 text-xs font-medium text-accent-soft">{mentionLine}</p> : null}
 
       {invitees.length > 0 ? (
-        <div className="mb-3 flex flex-col gap-1.5 rounded-xl border border-app-border/50 bg-app-inset/40 p-3">
+        <div className="mb-3 flex flex-col gap-1.5 rounded-xl bg-app-inset/40 p-3">
           {invitees.map((invitee) => (
             <div
               key={`${event.id}-${invitee.userId ?? invitee.username ?? invitee.name}`}
@@ -425,7 +425,7 @@ export function CalendarView({
 
   return (
     <div className="flex h-full flex-col bg-app-chat-bg">
-      <header className="flex items-center justify-between border-b border-app-border/50 px-8 py-6 bg-app-surface/50 backdrop-blur-sm">
+      <header className="flex items-center justify-between border-b border-app-border px-8 py-6 bg-app-surface/50 backdrop-blur-sm">
         <div>
           <h1 className="text-2xl font-bold text-app-text tracking-tight">Calendar</h1>
           {tab === 'scheduled' ? (

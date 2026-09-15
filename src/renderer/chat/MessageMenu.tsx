@@ -120,7 +120,7 @@ export function MessageMenu({
   const menu = open ? (
     <div
       ref={menuRef}
-      className="fixed z-[9999] overflow-hidden rounded-2xl border border-app-border/80 bg-app-surface/98 dark:bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl animate-pop-in"
+      className="fixed z-[9999] overflow-hidden rounded-2xl border border-app-border bg-app-surface/98 dark:bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl animate-pop-in"
       style={{ top: menuPosition.top, left: menuPosition.left, width: MENU_WIDTH }}
       role="menu"
     >
@@ -129,7 +129,7 @@ export function MessageMenu({
 
         return (
           <div key={item.label}>
-            {showDivider ? <div className="my-1 border-t border-app-border/40" /> : null}
+            {showDivider ? <div className="my-1 h-px bg-app-border" /> : null}
             <button
               type="button"
               role="menuitem"

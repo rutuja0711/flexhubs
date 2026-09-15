@@ -637,17 +637,17 @@ export function MessageInput({
       {pendingAttachments.length > 0 ? (
         <div className="mb-2 flex flex-wrap items-start gap-3">
           {pendingAttachments.map((attachment, index) => (
-            <div key={index} className="flex items-start gap-3 rounded-2xl border border-app-border/70 bg-app-surface/90 backdrop-blur-md p-2.5 shadow-sm w-full sm:w-auto min-w-[200px]">
+            <div key={index} className="flex items-start gap-3 rounded-2xl border border-app-border bg-app-surface/90 backdrop-blur-md p-2.5 shadow-sm w-full sm:w-auto min-w-[200px]">
               {attachment.isImage ? (
                 <img
                   src={attachment.previewUrl}
                   alt={attachment.file.name}
-                  className="h-16 w-16 shrink-0 rounded-xl border border-app-border/60 object-cover"
+                  className="h-16 w-16 shrink-0 rounded-xl object-cover"
                 />
               ) : attachment.isVideo ? (
-                <video src={attachment.previewUrl} className="h-16 w-16 shrink-0 rounded-xl border border-app-border/60 object-cover bg-app-chat-hover" />
+                <video src={attachment.previewUrl} className="h-16 w-16 shrink-0 rounded-xl object-cover bg-app-chat-hover" />
               ) : (
-                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl border border-app-border/60 bg-app-surface text-xs text-app-muted">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-app-surface text-xs text-app-muted">
                   File
                 </div>
               )}
@@ -675,7 +675,7 @@ export function MessageInput({
       ) : null}
 
       {replyingToMessage ? (
-        <div className="flex flex-col rounded-t-2xl border border-b-0 border-app-border/60 bg-app-surface/95 backdrop-blur-md px-4 py-2 text-xs text-app-muted border-l-4 border-l-accent shadow-sm">
+        <div className="flex flex-col rounded-t-2xl bg-app-surface/95 backdrop-blur-md px-4 py-2 text-xs text-app-muted border-l-4 border-l-accent shadow-sm">
           <div className="mb-1 flex items-center justify-between">
             <span className="font-semibold text-accent-soft">
               Replying to {replyingToMessage.senderName || replyingToMessage.senderId}
@@ -699,7 +699,7 @@ export function MessageInput({
         className={`relative flex flex-col rounded-2xl border bg-app-surface-input/90 backdrop-blur-md transition-all duration-200 shadow-composer focus-within:shadow-composer-focus ${
           replyingToMessage ? 'rounded-t-none border-t-0' : ''
         } ${
-          displayError ? 'border-accent' : 'border-app-border/60 focus-within:border-accent/60'
+          displayError ? 'border-accent ring-2 ring-accent' : 'border-app-border focus-within:border-accent/60'
         }`}
       >
         <input
@@ -873,7 +873,7 @@ export function MessageInput({
                       className="fixed inset-0 z-10 cursor-default"
                       onClick={() => setAiMenuOpen(false)}
                     />
-                    <div className="absolute bottom-full right-0 z-20 mb-2 w-56 overflow-hidden rounded-2xl border border-app-border/80 bg-app-elevated/95 backdrop-blur-xl p-1 shadow-2xl animate-pop-in">
+                    <div className="absolute bottom-full right-0 z-20 mb-2 w-56 overflow-hidden rounded-2xl border border-app-border bg-app-elevated/95 backdrop-blur-xl p-1 shadow-2xl animate-pop-in">
                       <button
                         type="button"
                         disabled={!value.trim()}
@@ -937,7 +937,7 @@ export function MessageInput({
                       className="fixed inset-0 z-10 cursor-default"
                       onClick={() => setActionsMenuOpen(false)}
                     />
-                    <div className="absolute bottom-full right-0 z-20 mb-2 w-64 overflow-hidden rounded-2xl border border-app-border/80 bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl animate-pop-in">
+                    <div className="absolute bottom-full right-0 z-20 mb-2 w-64 overflow-hidden rounded-2xl border border-app-border bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl animate-pop-in">
                       <button
                         type="button"
                         disabled={disabled || isSending || !conversationId}
@@ -1030,7 +1030,7 @@ export function MessageInput({
       {mentionQuery !== null && mentionMenuStyle
         ? createPortal(
             <div
-              className="fixed z-[9999] max-h-56 overflow-y-auto rounded-xl border border-app-border bg-app-surface shadow-xl"
+              className="fixed z-[9999] max-h-56 overflow-y-auto rounded-xl border border-app-border bg-app-surface shadow-2xl p-1"
               style={{
                 left: mentionMenuStyle.left,
                 top: mentionMenuStyle.top,
@@ -1047,7 +1047,7 @@ export function MessageInput({
                     <button
                       key={user.id}
                       type="button"
-                      className={`block w-full px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover ${
+                      className={`block w-full px-3 py-2 text-left text-sm text-app-text rounded-lg hover:bg-app-chat-hover ${
                         index === mentionHighlightIndex ? 'bg-app-chat-hover' : ''
                       }`}
                       onMouseDown={(event) => {
@@ -1077,14 +1077,14 @@ export function MessageInput({
             onClick={() => !pollBusy && setPollOpen(false)}
           />
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-            <div className="w-full max-w-md rounded-2xl border border-app-border bg-app-surface p-5 shadow-xl">
+            <div className="w-full max-w-md rounded-2xl border border-app-border bg-app-surface p-5 shadow-2xl">
               <h3 className="text-lg font-semibold text-app-text">Create poll</h3>
               <label className="mb-1 mt-4 block text-sm text-app-muted">Question</label>
               <input
                 type="text"
                 value={pollQuestion}
                 disabled={pollBusy}
-                className="mb-4 w-full rounded-xl border border-app-border bg-app-surface-input px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent"
+                className="mb-4 w-full rounded-xl border border-app-border bg-app-surface-input px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-1 focus:ring-accent"
                 onChange={(event) => setPollQuestion(event.target.value)}
               />
               <p className="mb-2 text-sm text-app-muted">Options</p>
@@ -1096,7 +1096,7 @@ export function MessageInput({
                     value={option}
                     disabled={pollBusy}
                     placeholder={`Option ${index + 1}`}
-                    className="w-full rounded-xl border border-app-border bg-app-surface-input px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent"
+                    className="w-full rounded-xl border border-app-border bg-app-surface-input px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-1 focus:ring-accent"
                     onChange={(event) => {
                       const next = [...pollOptions];
                       next[index] = event.target.value;
@@ -1119,7 +1119,7 @@ export function MessageInput({
                 <button
                   type="button"
                   disabled={pollBusy}
-                  className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                  className="rounded-xl px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover disabled:opacity-50 transition-colors"
                   onClick={() => setPollOpen(false)}
                 >
                   Cancel

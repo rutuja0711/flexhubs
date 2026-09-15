@@ -41,14 +41,14 @@ function PanelItem({
 
   if (!onClick) {
     return (
-      <div className="border-b border-app-border/40 px-3.5 py-2.5 last:border-b-0">{content}</div>
+      <div className="border-b border-app-border px-3.5 py-2.5 last:border-b-0">{content}</div>
     );
   }
 
   return (
     <button
       type="button"
-      className="block w-full border-b border-app-border/40 px-3.5 py-2.5 text-left transition-colors last:border-b-0 hover:bg-app-chat-hover/80"
+      className="block w-full border-b border-app-border px-3.5 py-2.5 text-left transition-colors hover:bg-app-chat-hover/80 last:border-b-0"
       onClick={onClick}
     >
       {content}
@@ -110,14 +110,14 @@ export function NotificationsPanel({
       <button
         type="button"
         aria-label="Close notifications"
-        className="fixed inset-0 z-[200] bg-black/30 backdrop-blur-xs"
+        className="fixed inset-0 z-[200] bg-black/5 dark:bg-black/45"
         onClick={onClose}
       />
       <div
-        className="fixed z-[201] w-[330px] overflow-hidden rounded-2xl border border-app-border/80 bg-app-elevated/95 backdrop-blur-xl shadow-2xl animate-pop-in origin-top-right"
+        className="fixed z-[201] w-[330px] overflow-hidden rounded-2xl border border-app-border bg-app-elevated shadow-2xl animate-pop-in origin-top-right dark:bg-app-elevated/95 dark:backdrop-blur-xl"
         style={{ top: panelStyle.top, left: panelStyle.left }}
       >
-        <div className="border-b border-app-border/40 px-4 py-3">
+        <div className="border-b border-app-border bg-app-inset px-4 py-3 dark:bg-white/[0.03]">
           <h2 className="text-xs font-bold uppercase tracking-wider text-app-text">Notifications</h2>
         </div>
 

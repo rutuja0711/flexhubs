@@ -154,7 +154,7 @@ export function MessageContent({
         const previewUrl = item.previewUrl ?? item.url;
 
         return (
-          <div key={item.url} className="overflow-hidden rounded-2xl ring-1 ring-white/10 shadow-sm">
+          <div key={item.url} className="overflow-hidden rounded-2xl ring-1 ring-black/10 dark:ring-white/10 shadow-sm">
             {isPreviewable ? (
               <button
                 type="button"

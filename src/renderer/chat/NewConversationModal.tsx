@@ -359,11 +359,8 @@ export function NewConversationModal({
         onClick={onClose}
       />
       <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none p-4 sm:p-6">
-        <div className="pointer-events-auto flex max-h-[90vh] w-full max-w-[560px] flex-col overflow-hidden rounded-3xl border border-app-border/80 bg-app-surface/95 backdrop-blur-2xl shadow-2xl animate-pop-in origin-center">
-          {/* Ambient top highlight */}
-          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
-
-          <div className="border-b border-app-border/50 px-6 py-5">
+        <div className="pointer-events-auto relative flex max-h-[90vh] w-full max-w-[560px] flex-col overflow-hidden rounded-3xl border border-app-border bg-app-surface shadow-2xl animate-pop-in origin-center">
+          <div className="border-b border-app-border px-6 py-5">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-3.5">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-accent to-accent-hover text-white shadow-md shadow-accent/20">
@@ -386,13 +383,13 @@ export function NewConversationModal({
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
-            <div className="mb-5 flex rounded-2xl bg-app-inset/80 p-1 border border-app-border/40 backdrop-blur-sm">
+            <div className="mb-5 flex rounded-2xl bg-app-inset p-1">
               <button
                 type="button"
                 className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-medium transition-all duration-150 ${
                   mode === 'direct'
-                    ? 'bg-app-card text-app-text shadow-sm border border-app-border/60 font-semibold'
-                    : 'text-app-muted hover:text-app-text hover:bg-app-inset/60'
+                    ? 'bg-app-surface text-app-text shadow-sm font-semibold'
+                    : 'text-app-muted hover:text-app-text hover:bg-app-chat-hover'
                 }`}
                 onClick={() => setMode('direct')}
               >
@@ -403,8 +400,8 @@ export function NewConversationModal({
                 type="button"
                 className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-medium transition-all duration-150 ${
                   mode === 'hub'
-                    ? 'bg-app-card text-app-text shadow-sm border border-app-border/60 font-semibold'
-                    : 'text-app-muted hover:text-app-text hover:bg-app-inset/60'
+                    ? 'bg-app-surface text-app-text shadow-sm font-semibold'
+                    : 'text-app-muted hover:text-app-text hover:bg-app-chat-hover'
                 }`}
                 onClick={() => setMode('hub')}
               >
@@ -415,8 +412,8 @@ export function NewConversationModal({
                 type="button"
                 className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-medium transition-all duration-150 ${
                   mode === 'group'
-                    ? 'bg-app-card text-app-text shadow-sm border border-app-border/60 font-semibold'
-                    : 'text-app-muted hover:text-app-text hover:bg-app-inset/60'
+                    ? 'bg-app-surface text-app-text shadow-sm font-semibold'
+                    : 'text-app-muted hover:text-app-text hover:bg-app-chat-hover'
                 }`}
                 onClick={() => setMode('group')}
               >
@@ -429,7 +426,7 @@ export function NewConversationModal({
               <>
                 <button
                   type="button"
-                  className="mb-5 flex w-full items-center gap-3.5 rounded-2xl border border-app-border/60 bg-app-card/60 p-3.5 text-left transition-all duration-200 hover:bg-app-card hover:border-accent/40 hover:shadow-sm group"
+                  className="mb-5 flex w-full items-center gap-3.5 rounded-2xl border border-app-border bg-app-inset p-3.5 text-left transition-all duration-200 hover:bg-app-chat-hover hover:border-app-border-strong group"
                   onClick={onMessageSelf}
                 >
                   <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent/15 text-accent-soft group-hover:scale-105 transition-transform">
@@ -458,7 +455,7 @@ export function NewConversationModal({
                 {loading ? <p className="mt-4 text-xs text-app-muted">Searching...</p> : null}
 
                 {result ? (
-                  <div className="mt-4 rounded-2xl border border-app-border/70 bg-app-card/80 backdrop-blur-md p-4 shadow-sm">
+                  <div className="mt-4 rounded-2xl border border-app-border bg-app-inset p-4">
                     <div className="mb-3.5 flex items-center gap-3">
                       <Avatar imageUrl={result.avatarUrl} initials={result.initials} />
                       <div>
@@ -586,22 +583,22 @@ export function NewConversationModal({
                   type="text"
                   value={groupName}
                   placeholder={createKind === 'hub' ? 'e.g. Training' : 'e.g. Project team'}
-                  className="w-full rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none placeholder:text-app-placeholder focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+                  className="w-full rounded-xl border border-app-border bg-app-inset px-3.5 py-2.5 text-sm text-app-text outline-none placeholder:text-app-placeholder focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
                   onChange={(event) => setGroupName(event.target.value)}
                 />
 
                 <p className="mt-5 mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
                   Selected ({selectedCount} including you)
                 </p>
-                <div className="min-h-[72px] rounded-2xl border border-dashed border-app-border/70 bg-app-card/40 p-3">
+                <div className="min-h-[72px] rounded-2xl border border-dashed border-app-border bg-app-inset p-3">
                   <div className="mb-2 flex flex-wrap gap-2">
-                    <span className="inline-flex items-center rounded-xl bg-app-card border border-app-border/60 px-3 py-1 text-xs text-app-text font-medium shadow-xs">
+                    <span className="inline-flex items-center rounded-xl bg-app-surface border border-app-border px-3 py-1 text-xs text-app-text font-medium">
                       {selfLabel} (you)
                     </span>
                     {selectedMembers.map((member) => (
                       <span
                         key={member.id}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-app-card border border-app-border/60 px-3 py-1 text-xs text-app-text font-medium shadow-xs"
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-app-surface border border-app-border px-3 py-1 text-xs text-app-text font-medium"
                       >
                         {member.name}
                         <button
@@ -646,7 +643,7 @@ export function NewConversationModal({
                           className={`flex w-full items-center gap-3 rounded-2xl border px-3.5 py-2.5 text-left transition-all duration-150 ${
                             isSelected
                               ? 'border-accent/40 bg-accent/10 shadow-xs'
-                              : 'border-app-border/60 bg-app-card/50 hover:bg-app-card hover:border-app-border'
+                              : 'border-app-border bg-app-inset hover:bg-app-chat-hover'
                           }`}
                           onClick={() => addMember(person)}
                         >
@@ -686,7 +683,7 @@ export function NewConversationModal({
           </div>
 
           {mode === 'group' || mode === 'hub' ? (
-            <div className="border-t border-app-border/50 bg-app-surface/50 backdrop-blur-md p-5">
+            <div className="border-t border-app-border bg-app-inset p-5">
               <button
                 type="button"
                 className="w-full rounded-xl bg-gradient-to-r from-accent to-[#632a38] py-3 text-sm font-semibold text-white shadow-lg shadow-accent/20 transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
