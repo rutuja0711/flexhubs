@@ -30,24 +30,27 @@ export function ForwardMessageModal({
   );
 
   return (
-    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/55 p-4 backdrop-blur-[1px]">
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/60 p-4 backdrop-blur-md animate-fade-in">
       <div
-        className="flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-app-border bg-app-surface shadow-2xl"
+        className="relative flex max-h-[70vh] w-full max-w-md flex-col overflow-hidden rounded-3xl border border-app-border/80 bg-app-surface/95 backdrop-blur-2xl shadow-2xl animate-pop-in origin-center"
         role="dialog"
         aria-labelledby="forward-title"
       >
-        <div className="border-b border-app-border px-5 py-4">
-          <div className="flex items-start justify-between gap-3">
+        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
+
+        <div className="border-b border-app-border/50 px-6 py-5">
+          <div className="flex items-center justify-between gap-3">
             <div>
-              <h3 id="forward-title" className="text-base font-semibold text-app-text">
+              <h3 id="forward-title" className="text-base font-semibold text-app-text tracking-tight">
                 Forward message
               </h3>
-              <p className="mt-1 text-sm text-app-muted">Choose a conversation</p>
+              <p className="mt-0.5 text-xs text-app-muted">Choose a conversation to forward to</p>
             </div>
             <button
               type="button"
-              className="rounded-lg px-2 py-1 text-sm text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+              className="flex h-8 w-8 items-center justify-center rounded-xl text-app-muted transition-colors hover:bg-app-inset hover:text-app-text"
               onClick={onClose}
+              aria-label="Close"
             >
               ✕
             </button>
@@ -55,32 +58,32 @@ export function ForwardMessageModal({
         </div>
 
         {error ? (
-          <p className="border-b border-app-border px-5 py-3 text-sm text-accent-soft" role="alert">
+          <p className="border-b border-app-border/50 px-6 py-3 text-xs text-accent-soft font-medium" role="alert">
             {error}
           </p>
         ) : null}
 
-        <div className="overflow-y-auto p-2">
+        <div className="overflow-y-auto p-3 space-y-1">
           {targets.length === 0 ? (
-            <p className="px-3 py-6 text-center text-sm text-app-muted">No other conversations available.</p>
+            <p className="px-4 py-8 text-center text-xs text-app-muted">No other conversations available.</p>
           ) : (
             targets.map((conversation) => (
               <button
                 key={conversation.id}
                 type="button"
                 disabled={loading}
-                className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-left transition-colors hover:bg-app-chat-hover disabled:opacity-60"
+                className="flex w-full items-center gap-3 rounded-2xl p-3 text-left transition-all duration-150 border border-transparent hover:border-app-border/60 hover:bg-app-card/60 hover:shadow-xs disabled:opacity-60 group"
                 onClick={() => onForward(conversation.id)}
               >
-                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-app-chat-hover text-xs font-semibold text-app-text">
+                <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-accent/20 to-accent/5 border border-accent/20 text-xs font-bold text-accent-soft group-hover:scale-105 transition-transform">
                   {conversation.avatarInitials}
                 </span>
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-medium text-app-text">
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-semibold text-app-text tracking-tight group-hover:text-accent-soft transition-colors">
                     {conversation.title}
                   </span>
                   {conversation.subtitle ? (
-                    <span className="block truncate text-xs text-app-muted">
+                    <span className="block truncate text-xs text-app-muted mt-0.5">
                       {conversation.subtitle}
                     </span>
                   ) : null}

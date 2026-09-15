@@ -1,6 +1,14 @@
 import { FormEvent, useState } from 'react';
 import { login, storeAuth } from './authApi';
-import { AuthShell } from './AuthFlowPages';
+import {
+  AuthShell,
+  authSecondaryButtonClassName,
+  formAlertClassName,
+  formErrorClassName,
+  inputClassName,
+  submitClassName,
+} from './AuthFlowPages';
+import { FiMail, FiLock, FiAlertCircle, FiUserPlus, FiGrid, FiArrowRight } from 'react-icons/fi';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -96,14 +104,6 @@ function classifyLoginError(
   return { form: error };
 }
 
-
-
-const inputClassName =
-  'w-full rounded-[10px] border border-app-border bg-app-surface-input px-3.5 py-3 text-app-text outline-none transition-colors placeholder:text-app-placeholder focus:border-app-border-strong';
-
-const submitClassName =
-  'mt-1 w-full rounded-[10px] border-none bg-accent px-4 py-3.5 text-[0.9375rem] font-semibold text-white transition-colors hover:bg-accent-hover active:bg-accent-active disabled:cursor-not-allowed disabled:opacity-70';
-
 export default function LoginPage({
   onLoggedIn,
   onCreatePersonalAccount,
@@ -162,28 +162,32 @@ export default function LoginPage({
 
   return (
     <AuthShell
-      title="Sign in"
-      subtitle="Welcome back. Enter your credentials to open your workspace."
+      title="Welcome back"
+      subtitle="Sign in to your Flexhubs account to access your workspaces and chats."
     >
+      <form className="flex flex-col gap-4" onSubmit={handleSubmit} noValidate>
+        {formError ? (
+          <div className={formAlertClassName} role="alert">
+            <FiAlertCircle size={16} className="mt-0.5 shrink-0 text-red-500 dark:text-accent" />
+            <span>{formError}</span>
+          </div>
+        ) : null}
 
-        <form className="flex flex-col gap-5" onSubmit={handleSubmit} noValidate>
-          {formError ? (
-            <div
-              className="rounded-[10px] border border-accent/35 bg-accent/10 px-3.5 py-3 text-sm leading-snug text-accent-soft"
-              role="alert"
-            >
-              {formError}
-            </div>
-          ) : null}
-
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-app-text" htmlFor="email">
-              Email
-            </label>
+        {/* Email Field */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-medium text-app-text" htmlFor="email">
+            Email address
+          </label>
+          <div className="relative flex items-center">
+            <span className="pointer-events-none absolute left-3.5 text-app-muted">
+              <FiMail size={16} />
+            </span>
             <input
               id="email"
-              className={`${inputClassName}${fieldErrors.email ? ' border-accent focus:border-accent' : ''}`}
-              type="text"
+              className={`${inputClassName} pl-10 ${
+                fieldErrors.email ? 'border-accent focus:border-accent ring-2 ring-accent/20' : ''
+              }`}
+              type="email"
               placeholder="you@company.com"
               autoComplete="email"
               value={email}
@@ -199,94 +203,123 @@ export default function LoginPage({
                 }
               }}
             />
-            {fieldErrors.email ? (
-              <p id="email-error" className="text-[0.8125rem] leading-snug text-accent-soft" role="alert">
-                {fieldErrors.email}
-              </p>
-            ) : null}
           </div>
+          {fieldErrors.email ? (
+            <p id="email-error" className={formErrorClassName} role="alert">
+              {fieldErrors.email}
+            </p>
+          ) : null}
+        </div>
 
-          <div className="flex flex-col gap-2">
-            <label className="text-sm font-medium text-app-text" htmlFor="password">
+        {/* Password Field */}
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-medium text-app-text" htmlFor="password">
               Password
             </label>
-            <div className="relative">
-              <input
-                id="password"
-                className={`${inputClassName} pr-11${fieldErrors.password ? ' border-accent focus:border-accent' : ''}`}
-                type={showPassword ? 'text' : 'password'}
-                placeholder="Enter your password"
-                autoComplete="current-password"
-                value={password}
-                aria-invalid={Boolean(fieldErrors.password)}
-                aria-describedby={fieldErrors.password ? 'password-error' : undefined}
-                onChange={(event) => {
-                  setPassword(event.target.value);
-                  if (fieldErrors.password) {
-                    setFieldErrors((current) => ({ ...current, password: undefined }));
-                  }
-                  if (formError) {
-                    setFormError('');
-                  }
-                }}
-              />
+            {onForgotPassword ? (
               <button
                 type="button"
-                className="absolute top-1/2 right-3 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border-none bg-transparent text-app-muted transition-colors hover:text-app-text"
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-                onClick={() => setShowPassword((current) => !current)}
+                className="text-xs font-medium text-accent transition-opacity hover:opacity-85"
+                onClick={onForgotPassword}
               >
-                <EyeIcon hidden={!showPassword} />
+                Forgot password?
               </button>
-            </div>
-            {fieldErrors.password ? (
-              <p id="password-error" className="text-[0.8125rem] leading-snug text-accent-soft" role="alert">
-                {fieldErrors.password}
-              </p>
             ) : null}
           </div>
+          <div className="relative flex items-center">
+            <span className="pointer-events-none absolute left-3.5 text-app-muted">
+              <FiLock size={16} />
+            </span>
+            <input
+              id="password"
+              className={`${inputClassName} pl-10 pr-11 ${
+                fieldErrors.password ? 'border-accent focus:border-accent ring-2 ring-accent/20' : ''
+              }`}
+              type={showPassword ? 'text' : 'password'}
+              placeholder="Enter your password"
+              autoComplete="current-password"
+              value={password}
+              aria-invalid={Boolean(fieldErrors.password)}
+              aria-describedby={fieldErrors.password ? 'password-error' : undefined}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                if (fieldErrors.password) {
+                  setFieldErrors((current) => ({ ...current, password: undefined }));
+                }
+                if (formError) {
+                  setFormError('');
+                }
+              }}
+            />
+            <button
+              type="button"
+              className="absolute right-3 flex h-7 w-7 items-center justify-center rounded-md text-app-muted transition-colors hover:text-app-text"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              onClick={() => setShowPassword((current) => !current)}
+            >
+              <EyeIcon hidden={!showPassword} />
+            </button>
+          </div>
+          {fieldErrors.password ? (
+            <p id="password-error" className={formErrorClassName} role="alert">
+              {fieldErrors.password}
+            </p>
+          ) : null}
+        </div>
 
-          <button
-            type="button"
-            className="-mt-2 self-end text-sm font-medium text-accent transition-opacity hover:opacity-85"
-            onClick={() => onForgotPassword?.()}
-          >
-            Forgot password?
-          </button>
+        {/* Submit Action */}
+        <button
+          type="submit"
+          className={`${submitClassName} mt-2 flex items-center justify-center gap-2`}
+          disabled={isSubmitting}
+        >
+          {isSubmitting ? (
+            <>
+              <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              <span>Signing in...</span>
+            </>
+          ) : (
+            <>
+              <span>Sign in</span>
+              <FiArrowRight size={16} />
+            </>
+          )}
+        </button>
+      </form>
 
-          <button type="submit" className={submitClassName} disabled={isSubmitting}>
-            {isSubmitting ? 'Signing in...' : 'Sign in'}
-          </button>
-        </form>
+      {/* Account Options Section */}
+      {onCreatePersonalAccount || onCreateWorkspace ? (
+        <div className="mt-6 pt-5 border-t border-app-border space-y-3">
+          <p className="text-center text-[11px] font-semibold uppercase tracking-wider text-app-muted">
+            Don't have an account?
+          </p>
 
-        {onCreatePersonalAccount || onCreateWorkspace ? (
-          <footer className="mt-7 space-y-3 border-t border-app-border pt-6 text-center text-sm text-app-muted">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {onCreatePersonalAccount ? (
-              <p>
-                New here?{' '}
-                <button
-                  type="button"
-                  className="font-medium text-accent underline transition-opacity hover:opacity-85"
-                  onClick={onCreatePersonalAccount}
-                >
-                  Create a personal account
-                </button>
-              </p>
+              <button
+                type="button"
+                className={authSecondaryButtonClassName}
+                onClick={onCreatePersonalAccount}
+              >
+                <FiUserPlus size={14} className="text-accent" />
+                <span>Create account</span>
+              </button>
             ) : null}
+
             {onCreateWorkspace ? (
-              <p>
-                Starting a company workspace?{' '}
-                <button
-                  type="button"
-                  className="font-medium text-accent underline transition-opacity hover:opacity-85"
-                  onClick={onCreateWorkspace}
-                >
-                  Create a workspace
-                </button>
-              </p>
+              <button
+                type="button"
+                className={authSecondaryButtonClassName}
+                onClick={onCreateWorkspace}
+              >
+                <FiGrid size={14} className="text-accent" />
+                <span>New workspace</span>
+              </button>
             ) : null}
-          </footer>
-        ) : null}
+          </div>
+        </div>
+      ) : null}
     </AuthShell>
   );
 }

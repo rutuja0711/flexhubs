@@ -24,7 +24,7 @@ const config: ForgeConfig = {
     extraResource: [path.join(__dirname, 'assets')],
     icon: isWindowsHost
       ? path.join(__dirname, 'assets', 'icon.ico')
-      : path.join(__dirname, 'assets', 'icon.icns'),
+      : path.join(__dirname, 'assets', 'logo-symbol.icns'),
     ...(isDarwinHost
       ? {
           arch: 'universal' as const,
@@ -69,7 +69,7 @@ const config: ForgeConfig = {
       ? [
           new MakerDMG({
             name: 'FlexHubs-Desktop',
-            icon: path.join(__dirname, 'assets', 'icon.icns'),
+            icon: path.join(__dirname, 'assets', 'logo-symbol.icns'),
             format: 'ULFO',
           }),
         ]

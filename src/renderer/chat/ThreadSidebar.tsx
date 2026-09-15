@@ -143,36 +143,34 @@ export function ThreadSidebar({
   };
 
   return (
-    <div className="relative z-40 flex w-80 shrink-0 flex-col border-l border-app-border bg-app-surface-input shadow-[-4px_0_15px_-3px_rgba(0,0,0,0.1)]">
-      <header className="flex h-16 shrink-0 items-center justify-between border-b border-app-border px-4">
+    <div className="relative z-40 flex w-[340px] shrink-0 flex-col border-l border-app-border/70 bg-app-surface/95 backdrop-blur-xl shadow-2xl">
+      <header className="flex h-16 shrink-0 items-center justify-between border-b border-app-border/50 px-5">
         <div>
-          <h2 className="text-base font-semibold text-app-text">Thread</h2>
-          <p className="text-xs text-app-muted">{messages.length} {messages.length === 1 ? 'reply' : 'replies'}</p>
+          <h2 className="text-sm font-semibold text-app-text tracking-tight">Thread Replies</h2>
+          <p className="text-[11px] text-app-muted">{messages.length} {messages.length === 1 ? 'reply' : 'replies'}</p>
         </div>
         <button
           type="button"
           aria-label="Close thread panel"
-          className="flex h-8 w-8 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-app-muted transition-colors hover:bg-app-inset hover:text-app-text"
           onClick={onClose}
         >
-          <FiX className="text-lg" />
+          <FiX className="text-base" />
         </button>
       </header>
 
       <div className="flex-1 overflow-y-auto p-4 flex flex-col gap-4">
-        {/* Root message */}
-        <div className="flex gap-3">
-          {!rootMessage.isOwn ? (
+        {/* Root message card */}
+        <div className="rounded-2xl border border-app-border/70 bg-app-card/70 p-3.5 shadow-sm">
+          <div className="flex items-center gap-2.5 mb-2">
             <Avatar imageUrl={null} initials={rootMessage.senderInitials} size="sm" />
-          ) : null}
-          <div className="flex min-w-0 flex-col items-start max-w-full">
-            <p className="mb-1 text-xs font-medium text-app-muted">{rootMessage.senderName}</p>
-            <div className="inline-block w-fit max-w-full rounded-2xl bg-app-message-out text-app-message-out-text px-2.5 py-1.5 text-sm leading-snug">
-              <MessageContent message={rootMessage} currentUserId={currentUserId} />
-              <div className="mt-1 flex justify-end">
-                <span className="text-[10px] text-app-message-out-text/75">{formatConversationTimestamp(rootMessage.createdAt)}</span>
-              </div>
+            <div>
+              <p className="text-xs font-semibold text-app-text">{rootMessage.senderName}</p>
+              <p className="text-[10px] text-app-muted">{formatConversationTimestamp(rootMessage.createdAt)}</p>
             </div>
+          </div>
+          <div className="text-sm text-app-text leading-relaxed">
+            <MessageContent message={rootMessage} currentUserId={currentUserId} />
           </div>
         </div>
 
@@ -180,29 +178,29 @@ export function ThreadSidebar({
           <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] text-app-muted">
             {messages.length} {messages.length === 1 ? 'REPLY' : 'REPLIES'}
           </span>
-          <div className="h-px flex-1 bg-app-border" />
+          <div className="h-px flex-1 bg-app-border/60" />
         </div>
 
         {loading && <p className="text-xs text-app-muted py-2 text-center">Loading replies...</p>}
         {error && <p className="text-xs text-accent-soft py-2 text-center">{error}</p>}
 
         {messages.map((msg) => (
-          <div key={msg.id} className={`flex gap-3 ${msg.isOwn ? 'flex-row-reverse' : 'flex-row'}`}>
+          <div key={msg.id} className={`flex gap-2.5 ${msg.isOwn ? 'flex-row-reverse' : 'flex-row'}`}>
             {!msg.isOwn ? (
               <Avatar imageUrl={null} initials={msg.senderInitials} size="sm" />
             ) : null}
-            <div className={`flex min-w-0 flex-col max-w-full ${msg.isOwn ? 'items-end' : 'items-start'}`}>
+            <div className={`flex min-w-0 flex-col max-w-[85%] ${msg.isOwn ? 'items-end' : 'items-start'}`}>
               {!msg.isOwn ? (
-                <p className="mb-1 text-xs font-medium text-app-muted">{msg.senderName}</p>
+                <p className="mb-1 text-[11px] font-medium text-app-muted">{msg.senderName}</p>
               ) : null}
-              <div className={`inline-block w-fit max-w-full rounded-2xl px-2.5 py-1.5 text-sm leading-snug ${
+              <div className={`inline-block w-fit max-w-full rounded-2xl px-3 py-2 text-sm leading-relaxed shadow-sm ${
                 msg.isOwn
-                  ? 'bg-app-message-out text-app-message-out-text'
-                  : 'bg-app-message-in text-app-text'
+                  ? 'bg-gradient-to-r from-accent to-[#632a38] text-white'
+                  : 'border border-app-border/70 bg-app-card/85 text-app-text'
               }`}>
                 <MessageContent message={msg} currentUserId={currentUserId} />
                 <div className="mt-1 flex justify-end">
-                  <span className={`text-[10px] ${msg.isOwn ? 'text-app-message-out-text/75' : 'text-app-muted'}`}>
+                  <span className={`text-[10px] ${msg.isOwn ? 'text-white/70' : 'text-app-muted'}`}>
                     {formatConversationTimestamp(msg.createdAt)}
                   </span>
                 </div>
@@ -212,9 +210,10 @@ export function ThreadSidebar({
         ))}
       </div>
 
-      <div className="p-4 border-t border-app-border bg-app-surface-input">
-        <div className="mb-2 text-xs text-app-muted">
-          Replying to {rootMessage.senderName}
+      <div className="p-3.5 border-t border-app-border/50 bg-app-surface/60 backdrop-blur-md">
+        <div className="mb-2 px-1 text-[11px] text-app-muted flex items-center gap-1.5">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent" />
+          <span>Replying to <span className="text-app-text font-medium">{rootMessage.senderName}</span></span>
         </div>
         <MessageInput
           compact

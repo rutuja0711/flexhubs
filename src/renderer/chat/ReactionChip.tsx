@@ -59,10 +59,10 @@ export function ReactionChip({
         ref={buttonRef}
         type="button"
         aria-label={authorLabel ? `${emoji} reacted by ${authorLabel}` : `React with ${emoji}`}
-        className={`rounded-full border px-2 py-0.5 text-xs transition-colors ${
+        className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-all duration-150 active:scale-95 shadow-sm ${
           reactedByMe
-            ? 'border-accent bg-accent/15 text-app-text'
-            : 'border-app-border bg-app-surface text-app-muted hover:border-app-border-strong'
+            ? 'border-accent/60 bg-accent/20 text-accent-soft font-semibold shadow-accent/20'
+            : 'border-app-border/60 bg-app-surface/80 text-app-text/90 hover:border-app-border-strong hover:bg-app-chat-hover'
         }`}
         onClick={onClick}
         onMouseEnter={openTooltip}
@@ -70,7 +70,7 @@ export function ReactionChip({
         onFocus={openTooltip}
         onBlur={closeTooltip}
       >
-        {emoji} {count}
+        {emoji} <span className="ml-1 text-[11px]">{count}</span>
       </button>
 
       {tooltipPosition && authors.length > 0
@@ -80,7 +80,7 @@ export function ReactionChip({
               className="pointer-events-none fixed z-[9999] min-w-[7rem] max-w-[12rem] -translate-x-1/2 -translate-y-full animate-[reaction-tooltip-in_90ms_ease-out]"
               style={{ left: tooltipPosition.x, top: tooltipPosition.y }}
             >
-              <div className="rounded-xl border border-app-border bg-app-elevated px-3 py-2 text-left shadow-[0_10px_28px_var(--app-shadow)]">
+              <div className="rounded-2xl border border-app-border/80 bg-app-elevated/95 backdrop-blur-xl px-3 py-2 text-left shadow-2xl">
                 <span className="mb-1.5 block text-base leading-none" aria-hidden="true">
                   {emoji}
                 </span>

@@ -1,5 +1,6 @@
 import type { ApiResult } from '../shared/api';
-import type { CallLogOutcome, CallTokenResult } from '../shared/calls';
+import type { CallHistoryItem, CallLogOutcome, CallTokenResult } from '../shared/calls';
+import { normalizeCallHistoryList } from '../shared/calls';
 import type { RealtimeClientConfig } from '../shared/realtime';
 import { readSupabasePublicConfig } from '../shared/supabaseEnv';
 import { getStoredToken } from './authApi';
@@ -248,8 +249,19 @@ export function respondMeetingJoinRequestCall(payload: {
 
 export function loadCallHistory(
   filter: 'all' | 'missed' = 'all',
-): Promise<ApiResult<unknown>> {
-  return withToken((token) => window.electronAPI.getCallHistory(token, filter));
+): Promise<ApiResult<CallHistoryItem[]>> {
+  return withToken(async (token) => {
+    const result = await window.electronAPI.getCallHistory(token, filter);
+
+    if (!result.ok) {
+      return result;
+    }
+
+    return {
+      ok: true,
+      data: normalizeCallHistoryList(result.data),
+    };
+  });
 }
 
 export function declineCallMeetingInvite(payload: {

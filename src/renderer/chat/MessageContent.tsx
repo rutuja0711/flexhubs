@@ -133,14 +133,14 @@ export function MessageContent({
               target="_blank"
               rel="noopener noreferrer"
               download={item.name ?? undefined}
-              className="flex max-w-sm items-center gap-3 rounded-xl border border-app-border bg-app-surface px-3 py-2.5 text-inherit transition-colors hover:bg-app-chat-hover"
+              className="flex max-w-sm items-center gap-3 rounded-2xl border border-app-border/60 bg-app-surface/90 backdrop-blur-sm px-3.5 py-2.5 text-inherit shadow-sm transition-all hover:bg-app-chat-hover hover:border-app-border-strong/60"
             >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent-soft">
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
                 <FiFile className="h-5 w-5" />
               </span>
               <span className="min-w-0">
-                <span className="block truncate text-sm font-medium">{item.name ?? 'File'}</span>
-                <span className="text-xs text-app-muted">Tap to download</span>
+                <span className="block truncate text-sm font-semibold tracking-tight">{item.name ?? 'File'}</span>
+                <span className="text-[11px] font-medium text-app-muted">Tap to download</span>
               </span>
             </a>
           );
@@ -154,11 +154,11 @@ export function MessageContent({
         const previewUrl = item.previewUrl ?? item.url;
 
         return (
-          <div key={item.url} className="overflow-hidden rounded-xl">
+          <div key={item.url} className="overflow-hidden rounded-2xl ring-1 ring-white/10 shadow-sm">
             {isPreviewable ? (
               <button
                 type="button"
-                className="block max-w-full cursor-zoom-in text-left"
+                className="block max-w-full cursor-zoom-in text-left transition-transform hover:scale-[1.01]"
                 onClick={() =>
                   openMediaPreview({
                     url: item.url,
@@ -173,14 +173,14 @@ export function MessageContent({
                     muted
                     playsInline
                     preload="metadata"
-                    className="pointer-events-none max-h-72 max-w-full rounded-xl bg-app-chat-hover object-contain"
+                    className="pointer-events-none max-h-72 max-w-full rounded-2xl bg-app-chat-hover object-contain"
                   />
                 ) : (
                   <RemoteImage
                     src={item.kind === 'gif' ? item.url : previewUrl}
                     alt={item.name ?? mediaLabel(item.kind)}
                     loading="lazy"
-                    className="max-h-72 max-w-full rounded-xl bg-transparent object-contain"
+                    className="max-h-72 max-w-full rounded-2xl bg-transparent object-contain"
                   />
                 )}
               </button>
@@ -190,7 +190,7 @@ export function MessageContent({
                 alt={item.name ?? mediaLabel(item.kind)}
                 loading="lazy"
                 className={`max-h-72 max-w-full bg-transparent object-contain ${
-                  item.kind === 'sticker' ? 'max-h-40' : 'rounded-xl'
+                  item.kind === 'sticker' ? 'max-h-40' : 'rounded-2xl'
                 }`}
               />
             )}

@@ -35,6 +35,7 @@ import { InConversationSearchBar } from './InConversationSearchBar';
 import { MessageInput } from './MessageInput';
 import { MessageList } from './MessageList';
 import { PinnedMessageBanner } from './PinnedMessageBanner';
+import { ContactInfoPanel } from './ContactInfoPanel';
 import { GroupSidebar } from './GroupSidebar';
 import { GroupMembersPanel } from './GroupMembersPanel';
 import { ThreadSidebar } from './ThreadSidebar';
@@ -524,31 +525,43 @@ export function ConversationThread({
   const canCallDirect =
     conversation.kind === 'direct' && !conversation.isSelf && Boolean(conversation.peerUserId);
   const canCallHub = conversation.kind === 'hub';
+  const isDirectContact =
+    conversation.kind === 'direct' && !conversation.isSelf && Boolean(conversation.peerUserId);
+  const isHubPanel = conversation.kind === 'hub' || Boolean(hubDetails);
+  const isGroupPanel = !isHubPanel && !isDirectContact;
+
+  const openInfoPanel = () => {
+    if (conversation.isSelf) {
+      return;
+    }
+
+    if (isDirectContact || isHubPanel || isGroupPanel) {
+      setSettingsOpen(true);
+    }
+  };
 
   return (
     <div className="flex h-full w-full flex-row overflow-hidden">
       <div className="flex h-full flex-1 min-h-0 min-w-0 flex-col bg-app-chat-bg relative">
-        <header className="flex items-center justify-between border-b border-app-border px-6 py-4">
-        <div 
-          className="min-w-0 cursor-pointer hover:opacity-80 transition-opacity"
-          onClick={() => {
-            if (conversation.kind === 'hub' || hubDetails) {
-              setSettingsOpen(true);
-            }
-          }}
+        <header className="flex items-center justify-between border-b border-app-border/40 bg-app-chat-bg/90 backdrop-blur-md px-6 py-3 z-20">
+        <div
+          className="group min-w-0 cursor-pointer text-left transition-opacity hover:opacity-90"
+          onClick={openInfoPanel}
         >
-          <h2 className="truncate text-lg font-semibold text-app-text">{title}</h2>
-          <p className="truncate text-sm text-app-muted">{subtitle}</p>
+          <div className="flex items-center gap-2">
+            <h2 className="truncate text-base font-bold tracking-tight text-app-text group-hover:text-accent-soft transition-colors">{title}</h2>
+          </div>
+          <p className="truncate text-xs font-medium text-app-muted mt-0.5">{subtitle}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
             aria-label="Search in conversation"
             aria-pressed={searchOpen}
-            className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors ${
+            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border transition-all duration-200 active:scale-95 ${
               searchOpen
-                ? 'bg-accent/15 text-accent-soft'
-                : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
+                ? 'border-accent/40 bg-accent/20 text-accent-soft ring-1 ring-accent/30'
+                : 'border-transparent text-app-muted hover:bg-app-chat-hover hover:text-app-text'
             }`}
             onClick={() => {
               if (searchOpen) {
@@ -559,7 +572,7 @@ export function ConversationThread({
               setSearchOpen(true);
             }}
           >
-            <SearchIcon className="h-[18px] w-[18px]" />
+            <SearchIcon className="h-4 w-4" />
           </button>
           {canCallDirect || canCallHub ? (
             <>
@@ -567,19 +580,19 @@ export function ConversationThread({
                 type="button"
                 aria-label={canCallHub ? 'Start voice meeting' : 'Start voice call'}
                 disabled={callBusy}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text disabled:opacity-50"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-transparent text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95 disabled:opacity-40"
                 onClick={() => onStartVoiceCall?.()}
               >
-                <FiPhone className="text-lg" />
+                <FiPhone className="text-base" />
               </button>
               <button
                 type="button"
                 aria-label={canCallHub ? 'Start video meeting' : 'Start video call'}
                 disabled={callBusy}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text disabled:opacity-50"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border border-transparent text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95 disabled:opacity-40"
                 onClick={() => onStartVideoCall?.()}
               >
-                <FiVideo className="text-lg" />
+                <FiVideo className="text-base" />
               </button>
             </>
           ) : null}
@@ -587,24 +600,24 @@ export function ConversationThread({
             <button
               type="button"
               aria-label="Conversation options"
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg transition-colors ${
+              className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl border transition-all duration-200 active:scale-95 ${
                 menuOpen
-                  ? 'bg-app-chat-hover text-app-text'
-                  : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
+                  ? 'border-accent/40 bg-accent/15 text-accent dark:text-accent-soft'
+                  : 'border-transparent text-app-muted hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-app-text'
               }`}
               onClick={() => setMenuOpen(!menuOpen)}
             >
-              <FiMoreVertical className="text-lg" />
+              <FiMoreVertical className="text-base" />
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-full z-50 mt-2 w-56 rounded-xl border border-app-border bg-app-elevated py-2 shadow-lg">
+              <div className="absolute right-0 top-full z-50 mt-2 w-60 rounded-2xl border border-app-border/80 bg-app-surface/98 dark:bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl animate-pop-in origin-top-right">
                 <button
                   type="button"
                   disabled={menuBusy}
                   onClick={() => {
                     void handleToggleFavorite();
                   }}
-                  className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                  className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                 >
                   <span className="flex items-center gap-2">
                     <FiMapPin />
@@ -618,7 +631,7 @@ export function ConversationThread({
                     setMenuOpen(false);
                     setPinnedPanelOpen(true);
                   }}
-                  className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                  className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                 >
                   <span className="flex items-center gap-2">
                     <FiMapPin />
@@ -633,7 +646,7 @@ export function ConversationThread({
                     onClick={() => {
                       void handleSnooze('off');
                     }}
-                    className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                    className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                   >
                     <span className="flex items-center gap-2">
                       <FiBell />
@@ -646,7 +659,7 @@ export function ConversationThread({
                       type="button"
                       disabled={menuBusy}
                       onClick={() => setSnoozeMenuOpen((open) => !open)}
-                      className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                      className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                     >
                       <span className="flex items-center gap-2">
                         <FiBell />
@@ -663,7 +676,7 @@ export function ConversationThread({
                             onClick={() => {
                               void handleSnooze(option.value);
                             }}
-                            className="flex w-full px-8 py-1.5 text-left text-xs text-app-muted hover:bg-app-chat-hover hover:text-app-text disabled:opacity-50"
+                            className="flex w-full rounded-lg px-7 py-1.5 text-left text-xs text-app-muted hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-app-text transition-colors disabled:opacity-50"
                           >
                             {option.label}
                           </button>
@@ -677,7 +690,7 @@ export function ConversationThread({
                   onClick={() => {
                     void handleMarkUnread();
                   }}
-                  className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                  className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                 >
                   Mark as unread
                 </button>
@@ -687,7 +700,7 @@ export function ConversationThread({
                   onClick={() => {
                     void handleClearHistory();
                   }}
-                  className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                  className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                 >
                   Clear history
                 </button>
@@ -698,7 +711,7 @@ export function ConversationThread({
                     onClick={() => {
                       void handleDeleteConversation();
                     }}
-                    className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-accent-soft hover:bg-app-chat-hover disabled:opacity-50"
+                    className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors disabled:opacity-50"
                   >
                     Delete conversation
                   </button>
@@ -707,7 +720,7 @@ export function ConversationThread({
                   type="button"
                   disabled={menuBusy}
                   onClick={handleScheduleEvent}
-                  className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                  className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                 >
                   <span className="flex items-center gap-2">
                     <FiCalendar />
@@ -718,9 +731,7 @@ export function ConversationThread({
                   type="button"
                   onClick={() => {
                     setMenuOpen(false);
-                    if (conversation.kind === 'hub' || hubDetails) {
-                      setSettingsOpen(true);
-                    }
+                    openInfoPanel();
                   }}
                   className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
                 >
@@ -814,6 +825,8 @@ export function ConversationThread({
           return { ok: true as const, message: result.data };
         }}
         conversationId={conversation.id}
+        conversationDetails={conversationDetails ?? hubDetails ?? null}
+        conversationKind={conversation.kind}
         onVotePoll={onVotePoll}
         showReactionAuthors={conversation.kind === 'hub'}
       />
@@ -968,7 +981,36 @@ export function ConversationThread({
           </div>
         </div>
       ) : null}
-      {settingsOpen && (conversation.kind === 'hub' || hubDetails) ? (
+      {settingsOpen && isDirectContact && conversation.peerUserId ? (
+        <ContactInfoPanel
+          conversation={conversation}
+          peerUserId={conversation.peerUserId}
+          pinnedCount={pinnedMessages.length}
+          notificationsSnoozed={notificationsSnoozed}
+          canCall={canCallDirect}
+          callBusy={callBusy}
+          onClose={() => setSettingsOpen(false)}
+          onStartVoiceCall={onStartVoiceCall}
+          onStartVideoCall={onStartVideoCall}
+          onOpenSearch={() => setSearchOpen(true)}
+          onOpenPinned={() => setPinnedPanelOpen(true)}
+          onTogglePinChat={() => {
+            void handleToggleFavorite();
+          }}
+          onMarkUnread={() => {
+            void handleMarkUnread();
+          }}
+          onClearHistory={() => {
+            void handleClearHistory();
+          }}
+          onScheduleEvent={handleScheduleEvent}
+          onSnooze={(duration) => {
+            void handleSnooze(duration);
+          }}
+          snoozeOptions={CONVERSATION_SNOOZE_OPTIONS}
+        />
+      ) : null}
+      {settingsOpen && isHubPanel ? (
         <GroupSidebar
           conversation={conversation}
           hubDetails={hubDetails}
@@ -983,7 +1025,7 @@ export function ConversationThread({
           }}
         />
       ) : null}
-      {settingsOpen && conversation.kind !== 'hub' && !hubDetails ? (
+      {settingsOpen && isGroupPanel ? (
         <GroupMembersPanel
           conversation={conversation}
           conversationDetails={conversationDetails}

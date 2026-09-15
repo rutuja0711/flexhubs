@@ -12,12 +12,11 @@ import { NewConversationModal } from './NewConversationModal';
 import { NotificationsPanel } from './NotificationsPanel';
 import { SearchField } from './SearchField';
 import { TeammatesSection } from './TeammatesSection';
-import { FiSettings, FiBox } from 'react-icons/fi';
-
 type ChatTab = 'all' | ConversationKind;
 
 type ChatSidebarProps = {
   workspaceName: string;
+  organizationNavEnabled?: boolean;
   selfLabel: string;
   conversations: ConversationItem[];
   typingPreviews?: Record<string, string>;
@@ -54,6 +53,7 @@ type ChatSidebarProps = {
 
 export function ChatSidebar({
   workspaceName,
+  organizationNavEnabled = true,
   selfLabel,
   conversations,
   typingPreviews = {},
@@ -89,13 +89,42 @@ export function ChatSidebar({
 }: ChatSidebarProps) {
   const [activeTab, setActiveTab] = useState<ChatTab>('all');
   const [composeMode, setComposeMode] = useState<'direct' | 'hub' | 'group'>('direct');
-  const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchError, setSearchError] = useState('');
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
   const [globalSearchError, setGlobalSearchError] = useState('');
   const [globalResults, setGlobalResults] = useState<GlobalSearchResult | null>(null);
   const notificationsButtonRef = useRef<HTMLButtonElement>(null);
+  const tabContainerRef = useRef<HTMLDivElement>(null);
+  const tabRefs = useRef<Record<ChatTab, HTMLButtonElement | null>>({
+    all: null,
+    direct: null,
+    hub: null,
+  });
+  const [tabIndicator, setTabIndicator] = useState<{ left: number; width: number; ready: boolean }>({
+    left: 0,
+    width: 0,
+    ready: false,
+  });
+
+  useEffect(() => {
+    const updateIndicator = () => {
+      const activeEl = tabRefs.current[activeTab];
+      const container = tabContainerRef.current;
+      if (activeEl && container) {
+        const containerRect = container.getBoundingClientRect();
+        const tabRect = activeEl.getBoundingClientRect();
+        setTabIndicator({
+          left: tabRect.left - containerRect.left,
+          width: tabRect.width,
+          ready: true,
+        });
+      }
+    };
+    updateIndicator();
+    window.addEventListener('resize', updateIndicator);
+    return () => window.removeEventListener('resize', updateIndicator);
+  }, [activeTab]);
 
   const isGlobalSearch = useMemo(() => {
     const validation = validateSearchInput(searchQuery);
@@ -234,46 +263,34 @@ export function ChatSidebar({
           : 'No hubs yet.';
 
   return (
-    <aside className="relative z-[40] flex h-full w-[320px] shrink-0 flex-col border-r border-app-border bg-app-chat-sidebar">
-      <div className="border-b border-app-border px-4 py-4">
-        <div className="mb-4 flex items-start justify-between gap-3 relative">
-          <button 
-            className="min-w-0 text-left hover:bg-app-chat-hover p-1 -m-1 rounded-lg transition-colors flex-1"
-            onClick={() => setWorkspaceMenuOpen(!workspaceMenuOpen)}
+    <aside className="relative z-[40] flex h-full w-[330px] shrink-0 flex-col border-r border-app-border/50 bg-app-chat-sidebar transition-colors">
+      <div className="border-b border-app-border/50 px-4 py-3.5">
+        <div className="mb-3.5 flex items-start justify-between gap-3 relative">
+          <button
+            type="button"
+            className={`group min-w-0 flex-1 rounded-xl p-1.5 -m-1.5 text-left transition-colors ${
+              organizationNavEnabled ? 'hover:bg-app-chat-hover/80' : 'cursor-default'
+            }`}
+            disabled={!organizationNavEnabled}
+            onClick={() => {
+              if (organizationNavEnabled) {
+                onNavigate?.('organization');
+              }
+            }}
           >
-            <h1 className="truncate text-[0.9375rem] font-semibold text-app-text">{workspaceName}</h1>
-            <p className="mt-1 text-xs text-app-muted">Workspace</p>
-          </button>
-          
-          {workspaceMenuOpen && (
-            <div className="absolute top-10 left-0 w-56 rounded-xl border border-app-border bg-app-elevated py-2 shadow-lg z-50 animate-pop-in origin-top-left">
-              <button 
-                className="w-full px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover flex items-center gap-2"
-                onClick={() => {
-                  setWorkspaceMenuOpen(false);
-                  if (onNavigate) onNavigate('profile');
-                }}
-              >
-                <FiSettings /> Profile & settings
-              </button>
-              <button 
-                className="w-full px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover flex items-center gap-2"
-                onClick={() => {
-                  setWorkspaceMenuOpen(false);
-                  if (onNavigate) onNavigate('organization');
-                }}
-              >
-                <FiBox /> Organization
-              </button>
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-accent/80 ring-2 ring-accent/20" />
+              <h1 className="truncate text-sm font-semibold tracking-tight text-app-text">{workspaceName}</h1>
             </div>
-          )}
-          
+            <p className="mt-0.5 pl-4 text-[11px] font-medium text-app-muted/80">Workspace</p>
+          </button>
+
           <button
             ref={notificationsButtonRef}
             type="button"
             aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
             aria-expanded={notificationsOpen}
-            className="relative flex h-9 w-9 shrink-0 items-center justify-center overflow-visible rounded-lg text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95"
+            className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-visible rounded-xl text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95"
             onClick={onToggleNotifications}
           >
             <BellIcon />
@@ -292,7 +309,7 @@ export function ChatSidebar({
           <button
             type="button"
             aria-label="New conversation"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[10px] bg-accent text-white transition-all duration-200 hover:bg-accent-hover active:scale-95 hover:shadow-md"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-white shadow-sm shadow-accent/30 transition-all duration-200 hover:shadow-accent-glow hover:scale-105 active:scale-95"
             onClick={() => {
               setComposeMode('direct');
               onNewConversationOpenChange(true);
@@ -309,22 +326,27 @@ export function ChatSidebar({
       </div>
 
       {!isGlobalSearch ? (
-        <div className="border-b border-app-border px-4 py-3">
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-sm font-medium text-app-text">Chats</span>
-          </div>
-          <div className="relative flex p-1 rounded-xl bg-app-chat-panel gap-1 z-0">
-            {/* Sliding Pill */}
+        <div className="border-b border-app-border/40 px-4 py-2.5">
+          <div
+            ref={tabContainerRef}
+            className="relative flex p-1 rounded-xl bg-app-surface-input/80 dark:bg-app-inset border border-app-border/60 gap-1 z-0"
+          >
+            {/* Smooth Dynamic Sliding Pill */}
             <div 
-              className="absolute top-1 bottom-1 rounded-lg bg-app-elevated shadow-sm border border-app-border/50 transition-all duration-300 ease-[cubic-bezier(0.23,1,0.32,1)]"
+              className="pointer-events-none absolute top-1 bottom-1 rounded-lg bg-white dark:bg-app-elevated shadow-sm border border-black/[0.04] dark:border-transparent transition-all duration-250 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
               style={{
-                width: activeTab === 'all' ? '46px' : activeTab === 'direct' ? '128px' : '56px',
-                transform: `translateX(${activeTab === 'all' ? '0px' : activeTab === 'direct' ? '50px' : '182px'})`
+                transform: `translateX(${tabIndicator.left}px)`,
+                width: `${tabIndicator.width}px`,
+                opacity: tabIndicator.ready ? 1 : 0,
               }}
+              aria-hidden="true"
             />
             <button
+              ref={(el) => {
+                tabRefs.current.all = el;
+              }}
               type="button"
-              className={`relative z-10 rounded-lg px-3 py-1.5 text-sm font-medium transition-all duration-200 active:scale-95 ${
+              className={`relative z-10 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ${
                 activeTab === 'all'
                   ? 'text-app-text'
                   : 'text-app-muted hover:text-app-text'
@@ -334,8 +356,11 @@ export function ChatSidebar({
               All
             </button>
             <button
+              ref={(el) => {
+                tabRefs.current.direct = el;
+              }}
               type="button"
-              className={`relative z-10 rounded-lg px-3 py-1.5 text-sm font-medium transition-all duration-200 active:scale-95 ${
+              className={`relative z-10 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ${
                 activeTab === 'direct'
                   ? 'text-app-text'
                   : 'text-app-muted hover:text-app-text'
@@ -345,8 +370,11 @@ export function ChatSidebar({
               Direct messages
             </button>
             <button
+              ref={(el) => {
+                tabRefs.current.hub = el;
+              }}
               type="button"
-              className={`relative z-10 rounded-lg px-3 py-1.5 text-sm font-medium transition-all duration-200 active:scale-95 ${
+              className={`relative z-10 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ${
                 activeTab === 'hub'
                   ? 'text-app-text'
                   : 'text-app-muted hover:text-app-text'

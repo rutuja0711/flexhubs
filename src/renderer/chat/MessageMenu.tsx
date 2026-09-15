@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { FiMoreHorizontal } from 'react-icons/fi';
 
 type MessageMenuProps = {
   isOwn: boolean;
@@ -119,7 +120,7 @@ export function MessageMenu({
   const menu = open ? (
     <div
       ref={menuRef}
-      className="fixed z-[9999] overflow-hidden rounded-xl border border-app-border bg-app-surface py-1.5 shadow-2xl"
+      className="fixed z-[9999] overflow-hidden rounded-2xl border border-app-border/80 bg-app-surface/98 dark:bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl animate-pop-in"
       style={{ top: menuPosition.top, left: menuPosition.left, width: MENU_WIDTH }}
       role="menu"
     >
@@ -128,14 +129,14 @@ export function MessageMenu({
 
         return (
           <div key={item.label}>
-            {showDivider ? <div className="my-1 border-t border-app-border" /> : null}
+            {showDivider ? <div className="my-1 border-t border-app-border/40" /> : null}
             <button
               type="button"
               role="menuitem"
-              className={`block w-full px-3.5 py-2 text-left text-sm transition-colors ${
+              className={`flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-medium transition-colors duration-150 ${
                 item.tone === 'danger'
-                  ? 'text-accent-soft hover:bg-accent/10'
-                  : 'text-app-text hover:bg-app-chat-hover'
+                  ? 'text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 hover:text-rose-700 dark:hover:text-rose-300'
+                  : 'text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft'
               }`}
               onClick={item.onClick}
             >
@@ -155,12 +156,14 @@ export function MessageMenu({
         aria-label="Message actions"
         aria-expanded={open}
         aria-haspopup="menu"
-        className={`flex h-6 w-6 items-center justify-center rounded text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text ${
-          open ? 'bg-app-chat-hover text-app-text' : ''
+        className={`flex h-7 w-7 items-center justify-center rounded-lg transition-all duration-150 ${
+          open
+            ? 'bg-accent/15 text-accent dark:text-accent-soft shadow-sm'
+            : 'text-app-muted hover:text-app-text hover:bg-black/[0.06] dark:hover:bg-white/[0.1] active:scale-95'
         }`}
         onClick={() => setOpen((current) => !current)}
       >
-        ⋮
+        <FiMoreHorizontal className="text-sm" />
       </button>
       {menu ? createPortal(menu, document.body) : null}
     </>

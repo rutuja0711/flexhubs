@@ -75,39 +75,41 @@ export function OrganizationInviteModal({ onUnauthorized, onInviteResolved }: Or
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6">
-      <div className="w-full max-w-md rounded-2xl border border-app-border bg-app-inset p-6 shadow-xl">
-        <h2 className="mb-2 text-lg font-bold text-app-text">Workspace invitation</h2>
-        <p className="mb-5 text-sm text-app-muted">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 sm:p-6 backdrop-blur-md animate-fade-in">
+      <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-app-border/80 bg-app-surface/95 backdrop-blur-2xl p-6 shadow-2xl animate-pop-in origin-center">
+        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
+
+        <h2 className="mb-1 text-base font-semibold text-app-text tracking-tight">Workspace invitation</h2>
+        <p className="mb-5 text-xs text-app-muted">
           You have pending invitations. Accept to join a team workspace.
         </p>
         <div className="space-y-3">
           {invites.map((invite) => (
-            <div key={invite.id} className="rounded-xl border border-app-border p-4">
-              <p className="text-sm font-medium text-app-text">{invite.email}</p>
-              <p className="text-xs text-app-muted">
-                Role: {invite.role || 'Member'}
+            <div key={invite.id} className="rounded-2xl border border-app-border/60 bg-app-card/60 p-4 shadow-xs">
+              <p className="text-sm font-semibold text-app-text">{invite.email}</p>
+              <p className="text-xs text-app-muted mt-0.5">
+                Role: <span className="text-app-text font-medium">{invite.role || 'Member'}</span>
               </p>
               <div className="mt-3 flex gap-2">
                 <button
                   type="button"
                   disabled={actingOn === invite.id}
                   onClick={() => {
-                    void handleAccept(invite);
+                    void handleDecline(invite);
                   }}
-                  className="flex-1 rounded-lg bg-accent py-2 text-sm font-semibold text-white disabled:opacity-50"
+                  className="flex-1 rounded-xl border border-app-border bg-app-card py-2 text-xs font-semibold text-app-muted hover:text-app-text hover:bg-app-inset disabled:opacity-50 transition-colors"
                 >
-                  Accept
+                  Decline
                 </button>
                 <button
                   type="button"
                   disabled={actingOn === invite.id}
                   onClick={() => {
-                    void handleDecline(invite);
+                    void handleAccept(invite);
                   }}
-                  className="flex-1 rounded-lg border border-app-border py-2 text-sm font-semibold text-app-muted hover:text-app-text disabled:opacity-50"
+                  className="flex-1 rounded-xl bg-gradient-to-r from-accent to-[#632a38] py-2 text-xs font-semibold text-white shadow-md shadow-accent/20 hover:brightness-110 active:scale-[0.98] disabled:opacity-50 transition-all"
                 >
-                  Decline
+                  Accept
                 </button>
               </div>
             </div>

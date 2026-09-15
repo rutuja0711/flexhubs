@@ -5,6 +5,7 @@ import { Track } from 'livekit-client';
 import { FiX } from 'react-icons/fi';
 import type { RemoteParticipant, Room } from 'livekit-client';
 import type { CallSession } from '../callManager';
+import { isMeetingModerator } from '../../shared/calls';
 import { CallFloatingPanel, type CallPanelLayout } from '../call/CallFloatingPanel';
 import { MediasoupMediaPlayback } from '../call/MediasoupMediaPlayback';
 import type { MediasoupRemotePeer } from '../call/mediasoupAdapter';
@@ -263,12 +264,14 @@ export function CallOverlay({
     return null;
   }
 
+  const canModerate = isMeetingModerator(session);
+
   const panelContent = session.isGroup ? (
     <>
       <MeetingJoinRequestsBar
         requests={pendingJoinRequests}
         awaitingApproval={awaitingJoinApproval}
-        canModerate={session.isInitiator}
+        canModerate={canModerate}
         busy={busy}
         onApprove={onApproveJoinRequest}
         onDeny={onDenyJoinRequest}
@@ -282,6 +285,34 @@ export function CallOverlay({
               </p>
               <p className="text-xs text-white/55">{statusLabel}</p>
             </div>
+            {canModerate && mediasoupPeers.length > 0 ? (
+              <div className="border-b border-white/10 px-4 py-2">
+                <div className="flex flex-wrap gap-2">
+                  {mediasoupPeers.map((peer) => (
+                    <div
+                      key={peer.id}
+                      className="flex items-center gap-2 rounded-lg bg-white/5 px-2 py-1 text-xs text-white"
+                    >
+                      <span className="max-w-[120px] truncate">{peer.label || peer.id}</span>
+                      <button
+                        type="button"
+                        className="rounded bg-white/10 px-2 py-0.5 hover:bg-white/20"
+                        onClick={() => onMuteParticipant(peer.id, true)}
+                      >
+                        Mute
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded bg-red-500/90 px-2 py-0.5 hover:bg-red-500"
+                        onClick={() => onRemoveParticipant(peer.id)}
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
             <div className="relative min-h-0 flex-1">
               <MediasoupMediaPlayback
                 localVideoStream={mediasoupLocalVideo}
@@ -305,8 +336,9 @@ export function CallOverlay({
           micEnabled={micEnabled}
           cameraEnabled={cameraEnabled}
           screenShareEnabled={screenShareEnabled}
-          canModerate={session.isInitiator}
+          canModerate={canModerate}
           embedded
+          endMeetingForAll={canModerate}
           onToggleMic={onToggleMic}
           onToggleCamera={onToggleCamera}
           onToggleScreenShare={onToggleScreenShare}

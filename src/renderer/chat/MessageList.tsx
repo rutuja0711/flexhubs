@@ -1,13 +1,19 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { FiCheck, FiMessageSquare, FiChevronUp } from 'react-icons/fi';
-import type { MessageItem } from '../../shared/messages';
+import type { MessageItem, MessageReadReceipt } from '../../shared/messages';
 import {
+  buildConversationMemberNameIndex,
+  enrichMessageReadReceipts,
+  formatMessageSeenByDetail,
+  formatMessageSeenByLabel,
   groupMessageReactions,
   isCallLogMessage,
   isMediaOnlyMessage,
   isPollMessage,
+  resolveMessageReadBy,
   resolveReplyTarget,
 } from '../../shared/messages';
+import { loadMessageById } from '../chatApi';
 import { formatConversationTimestamp, formatMessageDayDivider, messageDayKey } from './format';
 import { Avatar } from './ChatIcons';
 import { MessageMenu } from './MessageMenu';
@@ -31,24 +37,24 @@ function MessageListSurface({
 
 function DateDivider({ label }: { label: string }) {
   return (
-    <div className="flex items-center gap-3 py-1" role="separator" aria-label={label}>
-      <div className="h-px flex-1 bg-app-border" />
-      <span className="shrink-0 rounded-full border border-app-border bg-app-surface px-3 py-1 text-xs font-medium text-app-muted">
+    <div className="flex items-center gap-3 py-2.5 my-1" role="separator" aria-label={label}>
+      <div className="h-px flex-1 bg-app-border/40" />
+      <span className="shrink-0 rounded-full border border-app-border/60 bg-app-surface/90 backdrop-blur-sm px-3.5 py-0.5 text-[11px] font-medium text-app-muted shadow-sm">
         {label}
       </span>
-      <div className="h-px flex-1 bg-app-border" />
+      <div className="h-px flex-1 bg-app-border/40" />
     </div>
   );
 }
 
 function UnreadDivider() {
   return (
-    <div className="flex items-center gap-3 py-1" role="separator" aria-label="New messages">
-      <div className="h-px flex-1 bg-accent/50" />
-      <span className="shrink-0 text-[0.6875rem] font-semibold uppercase tracking-[0.08em] text-accent-soft">
+    <div className="flex items-center gap-3 py-2 my-1" role="separator" aria-label="New messages">
+      <div className="h-px flex-1 bg-gradient-to-r from-transparent via-accent/40 to-transparent" />
+      <span className="shrink-0 rounded-full border border-accent/30 bg-accent/15 px-3 py-0.5 text-[0.625rem] font-bold uppercase tracking-wider text-accent-soft shadow-sm shadow-accent/20">
         New messages
       </span>
-      <div className="h-px flex-1 bg-accent/50" />
+      <div className="h-px flex-1 bg-gradient-to-r from-transparent via-accent/40 to-transparent" />
     </div>
   );
 }
@@ -147,6 +153,8 @@ type MessageRowProps = {
   threadsEnabled?: boolean;
   showReactionAuthors?: boolean;
   allowMessageAppear?: boolean;
+  conversationDetails?: Record<string, unknown> | null;
+  conversationKind?: string;
 };
 
 function DoubleCheckIcon() {
@@ -167,16 +175,108 @@ function isAppearingMessage(message: MessageItem): boolean {
   return Number.isFinite(created) && Date.now() - created < 2500;
 }
 
+function MessageSeenBy({
+  message,
+  messages,
+  conversationId,
+  conversationDetails,
+  currentUserId,
+  conversationKind,
+}: {
+  message: MessageItem;
+  messages: MessageItem[];
+  conversationId?: string;
+  conversationDetails?: Record<string, unknown> | null;
+  currentUserId: string | null;
+  conversationKind?: string;
+}) {
+  const isDirect = conversationKind === 'direct' || conversationDetails?.kind === 'direct';
+  const [fetchedReadBy, setFetchedReadBy] = useState<MessageReadReceipt[] | null>(null);
+  const memberNameIndex = useMemo(
+    () => buildConversationMemberNameIndex(conversationDetails ?? null),
+    [conversationDetails],
+  );
+
+  const readers = useMemo(() => {
+    if (isDirect) {
+      return [];
+    }
+    const baseReaders =
+      fetchedReadBy && fetchedReadBy.length > 0
+        ? fetchedReadBy
+        : resolveMessageReadBy(message, conversationDetails ?? null, messages, currentUserId);
+
+    return enrichMessageReadReceipts(baseReaders, memberNameIndex);
+  }, [conversationDetails, currentUserId, fetchedReadBy, isDirect, memberNameIndex, message, messages]);
+
+  useEffect(() => {
+    setFetchedReadBy(null);
+  }, [message.id, conversationId]);
+
+  useEffect(() => {
+    if (isDirect || !message.isOwn || message.status !== 'seen' || !conversationId || isLocalMessageId(message.id)) {
+      return;
+    }
+
+    let cancelled = false;
+
+    void loadMessageById(conversationId, message.id).then((result) => {
+      if (cancelled || !result.ok || result.data.readBy.length === 0) {
+        return;
+      }
+
+      setFetchedReadBy(
+        enrichMessageReadReceipts(result.data.readBy, memberNameIndex),
+      );
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, isDirect, memberNameIndex, message.id, message.isOwn, message.status]);
+
+  if (isDirect || !message.isOwn || message.status !== 'seen' || readers.length === 0) {
+    return null;
+  }
+
+  const detail = formatMessageSeenByDetail(readers);
+
+  return (
+    <span
+      className="max-w-[12rem] truncate text-[0.6875rem] leading-none text-app-message-out-text/70"
+      title={detail}
+    >
+      {formatMessageSeenByLabel(readers)}
+    </span>
+  );
+}
+
+function isLocalMessageId(id: string): boolean {
+  return id.startsWith('local-');
+}
+
 function MessageTimeInline({
   message,
+  messages,
+  conversationId,
+  conversationDetails,
+  currentUserId,
+  conversationKind,
   className = '',
 }: {
   message: MessageItem;
+  messages: MessageItem[];
+  conversationId?: string;
+  conversationDetails?: Record<string, unknown> | null;
+  currentUserId: string | null;
+  conversationKind?: string;
   className?: string;
 }) {
   if (!message.createdAt && !message.editedAt && !message.isOwn) {
     return null;
   }
+
+  const isDirect = conversationKind === 'direct' || conversationDetails?.kind === 'direct';
 
   return (
     <span
@@ -191,6 +291,16 @@ function MessageTimeInline({
       {message.isOwn && message.status === 'seen' ? <DoubleCheckIcon /> : null}
       {message.isOwn && message.status === 'delivered' ? (
         <FiCheck className="text-[11px]" strokeWidth={2.5} aria-hidden="true" />
+      ) : null}
+      {!isDirect ? (
+        <MessageSeenBy
+          message={message}
+          messages={messages}
+          conversationId={conversationId}
+          conversationDetails={conversationDetails}
+          currentUserId={currentUserId}
+          conversationKind={conversationKind}
+        />
       ) : null}
     </span>
   );
@@ -225,8 +335,18 @@ const MessageRow = memo(function MessageRow({
   threadsEnabled = false,
   showReactionAuthors = false,
   allowMessageAppear = false,
+  conversationDetails = null,
+  conversationKind,
 }: MessageRowProps) {
   const reactionGroups = groupMessageReactions(message.reactions, currentUserId);
+  const timeInlineProps = {
+    message,
+    messages,
+    conversationId,
+    conversationDetails,
+    currentUserId,
+    conversationKind,
+  };
   const isPinned = Boolean(message.pinnedAt);
   const isEditing = editingId === message.id;
   const isPoll = isPollMessage(message);
@@ -235,10 +355,10 @@ const MessageRow = memo(function MessageRow({
   const hasMedia = (message.media?.length ?? 0) > 0;
   const isTextOnly = !isPoll && !isCallLog && !isMediaOnly && !hasMedia;
 
-  const bubbleClassName = `inline-block w-fit max-w-full rounded-2xl px-2.5 py-1.5 text-sm leading-snug ${
+  const bubbleClassName = `inline-block w-fit max-w-full rounded-[18px] px-3.5 py-2 text-sm leading-relaxed ${
     message.isOwn
-      ? 'self-end bg-app-message-out text-app-message-out-text'
-      : 'self-start bg-app-message-in text-app-text'
+      ? 'self-end bg-gradient-to-br from-accent via-accent to-[#632a38] text-white shadow-sm shadow-accent/25'
+      : 'self-start bg-app-message-in text-app-text shadow-sm'
   }`;
 
   return (
@@ -250,14 +370,14 @@ const MessageRow = memo(function MessageRow({
             ? 'message-appear message-appear-own'
             : 'message-appear'
           : ''
-      } ${isHighlighted ? 'message-target-highlight rounded-xl p-2' : ''}`}
+      } ${isHighlighted ? 'message-target-highlight rounded-2xl p-2' : ''}`}
     >
       {!message.isOwn ? (
         <Avatar imageUrl={null} initials={message.senderInitials} size="sm" />
       ) : null}
       <div className={`flex max-w-[70%] flex-col ${message.isOwn ? 'items-end' : 'items-start'}`}>
         {!message.isOwn ? (
-          <p className="mb-1 text-xs font-medium text-app-muted">{message.senderName}</p>
+          <p className="mb-1 text-xs font-semibold text-app-muted">{message.senderName}</p>
         ) : null}
         {message.replyToMessage || message.replyToMessageId ? (
           (() => {
@@ -270,8 +390,8 @@ const MessageRow = memo(function MessageRow({
             return (
               <button
                 type="button"
-                className={`mb-1 flex max-w-full cursor-pointer flex-col rounded-[8px] border-l-2 bg-app-surface px-3 py-1.5 text-left text-xs text-app-muted transition-colors hover:bg-app-chat-hover ${
-                  message.isOwn ? 'mr-1 border-l-accent' : 'ml-1 border-l-app-border'
+                className={`mb-1.5 flex max-w-full cursor-pointer flex-col rounded-xl border-l-2 bg-app-surface/90 backdrop-blur-sm px-3 py-1.5 text-left text-xs transition-colors hover:bg-app-chat-hover ${
+                  message.isOwn ? 'mr-1 border-l-white/60 text-white/90' : 'ml-1 border-l-accent text-app-muted'
                 }`}
                 onClick={() => onJumpToMessage?.(replyTarget.id)}
               >
@@ -326,26 +446,42 @@ const MessageRow = memo(function MessageRow({
                     }
                   />
                   <div className="mt-0.5 flex justify-end">
-                    <MessageTimeInline message={message} className="!text-app-muted" />
+                    <MessageTimeInline {...timeInlineProps} className="!text-app-muted" />
                   </div>
                 </div>
               ) : (
                 <div className={bubbleClassName}>
                   {isTextOnly ? (
-                    <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-1.5">
-                      <span className="min-w-0 whitespace-pre-wrap break-words text-left">
+                    message.isOwn ? (
+                      <>
                         <MessageContent
                           message={message}
                           highlightTerm={highlightTerm}
-                          compact
                           currentUserId={currentUserId}
                           onVotePoll={
                             onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
                           }
                         />
-                      </span>
-                      <MessageTimeInline message={message} className="pb-[1px]" />
-                    </div>
+                        <div className="mt-1.5 flex justify-end">
+                          <MessageTimeInline {...timeInlineProps} />
+                        </div>
+                      </>
+                    ) : (
+                      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-1.5">
+                        <span className="min-w-0 whitespace-pre-wrap break-words text-left">
+                          <MessageContent
+                            message={message}
+                            highlightTerm={highlightTerm}
+                            compact
+                            currentUserId={currentUserId}
+                            onVotePoll={
+                              onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
+                            }
+                          />
+                        </span>
+                        <MessageTimeInline {...timeInlineProps} className="pb-[1px]" />
+                      </div>
+                    )
                   ) : (
                     <>
                       <MessageContent
@@ -357,7 +493,7 @@ const MessageRow = memo(function MessageRow({
                         }
                       />
                       <div className="mt-1.5 flex justify-end">
-                        <MessageTimeInline message={message} />
+                        <MessageTimeInline {...timeInlineProps} />
                       </div>
                     </>
                   )}
@@ -385,7 +521,7 @@ const MessageRow = memo(function MessageRow({
             </div>
 
             <div
-              className={`mb-1 flex shrink-0 items-center gap-0.5 opacity-0 transition-all duration-200 translate-y-2 scale-95 group-hover:opacity-100 group-hover:translate-y-0 group-hover:scale-100 ${
+              className={`mb-1 flex shrink-0 items-center gap-0.5 rounded-xl border border-app-border/80 bg-app-surface/98 dark:bg-app-elevated/95 backdrop-blur-md px-1 py-0.5 shadow-md opacity-0 transition-all duration-200 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 ${
                 message.isOwn ? 'flex-row-reverse' : 'flex-row'
               }`}
             >
@@ -466,6 +602,8 @@ type MessageListProps = {
   onVotePoll?: (messageId: string, optionId: string) => void;
   threadsEnabled?: boolean;
   showReactionAuthors?: boolean;
+  conversationDetails?: Record<string, unknown> | null;
+  conversationKind?: string;
 };
 
 export function MessageList({
@@ -497,6 +635,8 @@ export function MessageList({
   onVotePoll,
   threadsEnabled = false,
   showReactionAuthors = false,
+  conversationDetails = null,
+  conversationKind,
 }: MessageListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
@@ -778,6 +918,8 @@ export function MessageList({
               threadsEnabled={threadsEnabled}
               showReactionAuthors={showReactionAuthors}
               allowMessageAppear={allowMessageAppear}
+              conversationDetails={conversationDetails}
+              conversationKind={conversationKind}
             />
           );
         })}

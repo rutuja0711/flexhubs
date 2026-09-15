@@ -406,8 +406,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('search:messages', token, conversationId, query),
   getSavedMessages: (token: string): Promise<ApiResult<SavedMessageItem[]>> =>
     ipcRenderer.invoke('features:saved-messages', token),
-  getFiles: (token: string, filter: string): Promise<ApiResult<FileItem[]>> =>
-    ipcRenderer.invoke('features:files', token, filter),
+  getFiles: (
+    token: string,
+    filter: string,
+    conversationId?: string,
+  ): Promise<ApiResult<FileItem[]>> =>
+    ipcRenderer.invoke('features:files', token, filter, conversationId),
   getCalendarEvents: (token: string): Promise<ApiResult<CalendarEventItem[]>> =>
     ipcRenderer.invoke('features:calendar', token),
   getCalendarMentionableUsers: (

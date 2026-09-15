@@ -355,333 +355,351 @@ export function NewConversationModal({
       <button
         type="button"
         aria-label="Close new conversation"
-        className="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm animate-fade-in"
+        className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md animate-fade-in transition-opacity"
         onClick={onClose}
       />
       <div className="fixed inset-0 z-50 flex items-center justify-center pointer-events-none p-4 sm:p-6">
-        <div className="pointer-events-auto flex max-h-[90vh] w-full max-w-[560px] flex-col overflow-hidden rounded-[20px] border border-app-border bg-app-elevated shadow-app animate-pop-in origin-center">
-        <div className="border-b border-app-border/40 px-5 py-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-start gap-3">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent text-white">
-                <FiMessageSquare className="text-lg" />
-              </div>
-              <div>
-                <h2 className="text-base font-semibold text-app-text">New conversation</h2>
-                <p className="text-sm text-app-muted">Start a chat, hub, or group</p>
-              </div>
-            </div>
-            <button type="button" className="text-app-muted hover:text-app-text" onClick={onClose} aria-label="Close">
-              <FiX className="text-xl" />
-            </button>
-          </div>
-        </div>
+        <div className="pointer-events-auto flex max-h-[90vh] w-full max-w-[560px] flex-col overflow-hidden rounded-3xl border border-app-border/80 bg-app-surface/95 backdrop-blur-2xl shadow-2xl animate-pop-in origin-center">
+          {/* Ambient top highlight */}
+          <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <div className="mb-4 flex rounded-xl bg-app-inset p-1">
-            <button
-              type="button"
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2.5 text-sm font-medium transition-colors ${
-                mode === 'direct' ? 'bg-app-inset-active text-app-text' : 'text-app-muted hover:text-app-text'
-              }`}
-              onClick={() => setMode('direct')}
-            >
-              <FiUser />
-              Direct
-            </button>
-            <button
-              type="button"
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2.5 text-sm font-medium transition-colors ${
-                mode === 'hub' ? 'bg-app-inset-active text-app-text' : 'text-app-muted hover:text-app-text'
-              }`}
-              onClick={() => setMode('hub')}
-            >
-              <FiUsers />
-              Hub
-            </button>
-            <button
-              type="button"
-              className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg px-2 py-2.5 text-sm font-medium transition-colors ${
-                mode === 'group' ? 'bg-app-inset-active text-app-text' : 'text-app-muted hover:text-app-text'
-              }`}
-              onClick={() => setMode('group')}
-            >
-              <FiUsers />
-              Group
-            </button>
-          </div>
-
-          {mode === 'direct' ? (
-            <>
+          <div className="border-b border-app-border/50 px-6 py-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3.5">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-accent to-accent-hover text-white shadow-md shadow-accent/20">
+                  <FiMessageSquare className="text-xl" />
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-app-text tracking-tight">New conversation</h2>
+                  <p className="text-xs text-app-muted">Start a direct chat, hub, or project group</p>
+                </div>
+              </div>
               <button
                 type="button"
-                className="mb-4 flex w-full items-center gap-3 rounded-xl border border-app-border bg-app-inset px-4 py-3 text-left"
-                onClick={onMessageSelf}
+                className="flex h-9 w-9 items-center justify-center rounded-xl text-app-muted hover:text-app-text hover:bg-app-inset transition-colors"
+                onClick={onClose}
+                aria-label="Close"
               >
-                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
-                <FiStar />
-              </span>
-                <span>
-                  <span className="block text-sm font-medium text-app-text">{selfLabel}</span>
-                  <span className="text-xs text-app-muted">Message yourself</span>
-                </span>
+                <FiX className="text-lg" />
               </button>
+            </div>
+          </div>
 
-              <p className="mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
-                Username
-              </p>
-              <SearchField
-                value={username}
-                placeholder="Enter username..."
-                error={searchError}
-                variant="modal"
-                onChange={setUsername}
-              />
-              <p className="mt-2 text-xs text-app-muted">
-                Users are not listed. Enter an exact username to start a conversation.
-              </p>
+          <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+            <div className="mb-5 flex rounded-2xl bg-app-inset/80 p-1 border border-app-border/40 backdrop-blur-sm">
+              <button
+                type="button"
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-medium transition-all duration-150 ${
+                  mode === 'direct'
+                    ? 'bg-app-card text-app-text shadow-sm border border-app-border/60 font-semibold'
+                    : 'text-app-muted hover:text-app-text hover:bg-app-inset/60'
+                }`}
+                onClick={() => setMode('direct')}
+              >
+                <FiUser className="text-sm" />
+                Direct
+              </button>
+              <button
+                type="button"
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-medium transition-all duration-150 ${
+                  mode === 'hub'
+                    ? 'bg-app-card text-app-text shadow-sm border border-app-border/60 font-semibold'
+                    : 'text-app-muted hover:text-app-text hover:bg-app-inset/60'
+                }`}
+                onClick={() => setMode('hub')}
+              >
+                <FiUsers className="text-sm" />
+                Hub
+              </button>
+              <button
+                type="button"
+                className={`flex flex-1 items-center justify-center gap-1.5 rounded-xl px-2 py-2 text-xs font-medium transition-all duration-150 ${
+                  mode === 'group'
+                    ? 'bg-app-card text-app-text shadow-sm border border-app-border/60 font-semibold'
+                    : 'text-app-muted hover:text-app-text hover:bg-app-inset/60'
+                }`}
+                onClick={() => setMode('group')}
+              >
+                <FiUsers className="text-sm" />
+                Group
+              </button>
+            </div>
 
-              {loading ? <p className="mt-4 text-sm text-app-muted">Searching...</p> : null}
-
-              {result ? (
-                <div className="mt-4 rounded-xl border border-app-border bg-app-inset p-4">
-                  <div className="mb-3 flex items-center gap-3">
-                    <Avatar imageUrl={result.avatarUrl} initials={result.initials} />
-                    <div>
-                      <p className="font-medium text-app-text">{result.name}</p>
-                      <p className="text-sm text-app-muted">@{result.username}</p>
-                    </div>
+            {mode === 'direct' ? (
+              <>
+                <button
+                  type="button"
+                  className="mb-5 flex w-full items-center gap-3.5 rounded-2xl border border-app-border/60 bg-app-card/60 p-3.5 text-left transition-all duration-200 hover:bg-app-card hover:border-accent/40 hover:shadow-sm group"
+                  onClick={onMessageSelf}
+                >
+                  <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent/15 text-accent-soft group-hover:scale-105 transition-transform">
+                    <FiStar className="text-base" />
+                  </span>
+                  <div>
+                    <span className="block text-sm font-medium text-app-text">{selfLabel}</span>
+                    <span className="text-xs text-app-muted">Note to self • Message yourself</span>
                   </div>
+                </button>
 
-                  {relationshipLoading ? (
-                    <p className="mb-3 text-xs text-app-muted">Loading relationship...</p>
-                  ) : null}
+                <p className="mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
+                  Username
+                </p>
+                <SearchField
+                  value={username}
+                  placeholder="Enter username..."
+                  error={searchError}
+                  variant="modal"
+                  onChange={setUsername}
+                />
+                <p className="mt-2 text-xs text-app-muted">
+                  Users are not listed publicly. Enter an exact username to start a conversation.
+                </p>
 
-                  {!relationshipLoading && relationship?.isBlocked ? (
-                    <p className="mb-3 text-xs text-accent-soft">This user is blocked. Unblock to message or add as friend.</p>
-                  ) : null}
+                {loading ? <p className="mt-4 text-xs text-app-muted">Searching...</p> : null}
 
-                  {!relationshipLoading && relationshipError ? (
-                    <p className="mb-3 text-xs text-accent-soft" role="alert">
-                      {relationshipError}
-                    </p>
-                  ) : null}
+                {result ? (
+                  <div className="mt-4 rounded-2xl border border-app-border/70 bg-app-card/80 backdrop-blur-md p-4 shadow-sm">
+                    <div className="mb-3.5 flex items-center gap-3">
+                      <Avatar imageUrl={result.avatarUrl} initials={result.initials} />
+                      <div>
+                        <p className="font-medium text-app-text text-sm">{result.name}</p>
+                        <p className="text-xs text-app-muted">@{result.username}</p>
+                      </div>
+                    </div>
 
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="rounded-[10px] bg-accent px-4 py-2 text-sm font-semibold text-white transition-all duration-200 active:scale-95 disabled:opacity-50"
-                      disabled={actionPending || relationshipLoading || !canMessage}
-                      onClick={() => onMessageUser(result.id)}
-                    >
-                      Message
-                    </button>
-
-                    {!relationshipLoading && relationship?.requestReceived ? (
-                      <>
-                        <button
-                          type="button"
-                          className="rounded-[10px] bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-                          disabled={actionPending}
-                          onClick={() => {
-                            void runAction(
-                              () => respondFriendRequest(result.id, 'ACCEPTED'),
-                              'Friend request accepted.',
-                            );
-                          }}
-                        >
-                          Accept request
-                        </button>
-                        <button
-                          type="button"
-                          className="rounded-[10px] border border-app-border px-4 py-2 text-sm text-app-muted disabled:opacity-50"
-                          disabled={actionPending}
-                          onClick={() => {
-                            void runAction(
-                              () => respondFriendRequest(result.id, 'DECLINED'),
-                              'Friend request declined.',
-                            );
-                          }}
-                        >
-                          Decline
-                        </button>
-                      </>
-                    ) : null}
-
-                    {!relationshipLoading &&
-                    relationship &&
-                    !relationship.isFriend &&
-                    !relationship.requestSent &&
-                    !relationship.requestReceived ? (
-                      <button
-                        type="button"
-                        className="rounded-[10px] border border-app-border px-4 py-2 text-sm text-accent-soft disabled:opacity-50"
-                        disabled={actionPending || relationship.isBlocked}
-                        onClick={() => {
-                          void runAction(
-                            () => sendFriendRequest(result.id),
-                            'Friend request sent.',
-                          );
-                        }}
-                      >
-                        Add friend
-                      </button>
-                    ) : null}
-
-                    {!relationshipLoading && relationship?.isFriend ? (
-                      <span className="self-center text-xs text-app-muted">Already friends</span>
-                    ) : null}
-
-                    {!relationshipLoading && relationship?.requestSent ? (
-                      <span className="self-center text-xs text-app-muted">Request sent</span>
+                    {relationshipLoading ? (
+                      <p className="mb-3 text-xs text-app-muted">Loading relationship...</p>
                     ) : null}
 
                     {!relationshipLoading && relationship?.isBlocked ? (
-                      <button
-                        type="button"
-                        className="rounded-[10px] border border-app-border px-4 py-2 text-sm text-app-text disabled:opacity-50"
-                        disabled={actionPending}
-                        onClick={() => {
-                          void runAction(() => unblockUser(result.id), 'User unblocked.');
-                        }}
-                      >
-                        Unblock
-                      </button>
-                    ) : !relationshipLoading ? (
-                      <button
-                        type="button"
-                        className="rounded-[10px] border border-accent-soft/40 px-4 py-2 text-sm text-accent-soft disabled:opacity-50"
-                        disabled={actionPending || relationshipLoading}
-                        onClick={() => {
-                          void runAction(() => blockUser(result.id), 'User blocked.');
-                        }}
-                      >
-                        Block
-                      </button>
+                      <p className="mb-3 text-xs text-accent-soft">This user is blocked. Unblock to message or add as friend.</p>
                     ) : null}
+
+                    {!relationshipLoading && relationshipError ? (
+                      <p className="mb-3 text-xs text-accent-soft" role="alert">
+                        {relationshipError}
+                      </p>
+                    ) : null}
+
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        type="button"
+                        className="rounded-xl bg-gradient-to-r from-accent to-accent-hover px-4 py-2 text-xs font-semibold text-white shadow-sm shadow-accent/20 transition-all duration-200 active:scale-95 disabled:opacity-50"
+                        disabled={actionPending || relationshipLoading || !canMessage}
+                        onClick={() => onMessageUser(result.id)}
+                      >
+                        Message
+                      </button>
+
+                      {!relationshipLoading && relationship?.requestReceived ? (
+                        <>
+                          <button
+                            type="button"
+                            className="rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-white shadow-sm disabled:opacity-50"
+                            disabled={actionPending}
+                            onClick={() => {
+                              void runAction(
+                                () => respondFriendRequest(result.id, 'ACCEPTED'),
+                                'Friend request accepted.',
+                              );
+                            }}
+                          >
+                            Accept request
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-xl border border-app-border px-4 py-2 text-xs text-app-muted hover:text-app-text transition-colors disabled:opacity-50"
+                            disabled={actionPending}
+                            onClick={() => {
+                              void runAction(
+                                () => respondFriendRequest(result.id, 'DECLINED'),
+                                'Friend request declined.',
+                              );
+                            }}
+                          >
+                            Decline
+                          </button>
+                        </>
+                      ) : null}
+
+                      {!relationshipLoading &&
+                      relationship &&
+                      !relationship.isFriend &&
+                      !relationship.requestSent &&
+                      !relationship.requestReceived ? (
+                        <button
+                          type="button"
+                          className="rounded-xl border border-app-border/80 bg-app-inset/60 px-4 py-2 text-xs text-accent-soft hover:bg-app-inset transition-colors disabled:opacity-50"
+                          disabled={actionPending || relationship.isBlocked}
+                          onClick={() => {
+                            void runAction(
+                              () => sendFriendRequest(result.id),
+                              'Friend request sent.',
+                            );
+                          }}
+                        >
+                          Add friend
+                        </button>
+                      ) : null}
+
+                      {!relationshipLoading && relationship?.isFriend ? (
+                        <span className="self-center text-xs text-app-muted px-2">Already friends</span>
+                      ) : null}
+
+                      {!relationshipLoading && relationship?.requestSent ? (
+                        <span className="self-center text-xs text-app-muted px-2">Request sent</span>
+                      ) : null}
+
+                      {!relationshipLoading && relationship?.isBlocked ? (
+                        <button
+                          type="button"
+                          className="rounded-xl border border-app-border px-4 py-2 text-xs text-app-text hover:bg-app-inset transition-colors disabled:opacity-50"
+                          disabled={actionPending}
+                          onClick={() => {
+                            void runAction(() => unblockUser(result.id), 'User unblocked.');
+                          }}
+                        >
+                          Unblock
+                        </button>
+                      ) : !relationshipLoading ? (
+                        <button
+                          type="button"
+                          className="rounded-xl border border-accent-soft/40 px-4 py-2 text-xs text-accent-soft hover:bg-accent/10 transition-colors disabled:opacity-50"
+                          disabled={actionPending || relationshipLoading}
+                          onClick={() => {
+                            void runAction(() => blockUser(result.id), 'User blocked.');
+                          }}
+                        >
+                          Block
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
-                </div>
-              ) : null}
-            </>
-          ) : (
-            <>
-              <p className="mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
-                {createKind === 'hub' ? 'Hub name' : 'Group name'}
-              </p>
-              <input
-                type="text"
-                value={groupName}
-                placeholder={createKind === 'hub' ? 'e.g. Training' : 'e.g. Project team'}
-                className="w-full rounded-[10px] border border-app-border bg-app-surface-input px-3 py-3 text-sm text-app-text outline-none placeholder:text-app-placeholder focus:border-accent"
-                onChange={(event) => setGroupName(event.target.value)}
-              />
-
-              <p className="mt-4 mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
-                Selected ({selectedCount} including you)
-              </p>
-              <div className="min-h-[72px] rounded-xl border border-dashed border-app-border bg-app-inset p-3">
-                <div className="mb-2 flex flex-wrap gap-2">
-                  <span className="inline-flex items-center rounded-lg bg-app-inset-active px-2.5 py-1 text-xs text-app-text">
-                    {selfLabel} (you)
-                  </span>
-                  {selectedMembers.map((member) => (
-                    <span
-                      key={member.id}
-                      className="inline-flex items-center gap-1 rounded-lg bg-app-inset-active px-2.5 py-1 text-xs text-app-text"
-                    >
-                      {member.name}
-                      <button
-                        type="button"
-                        className="text-app-muted hover:text-app-text"
-                        aria-label={`Remove ${member.name}`}
-                        onClick={() => removeMember(member.id)}
-                      >
-                        <FiX />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-                {otherMemberCount === 0 ? (
-                  <p className="text-sm text-app-muted">Add at least 1 other person from search results</p>
                 ) : null}
-              </div>
+              </>
+            ) : (
+              <>
+                <p className="mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
+                  {createKind === 'hub' ? 'Hub name' : 'Group name'}
+                </p>
+                <input
+                  type="text"
+                  value={groupName}
+                  placeholder={createKind === 'hub' ? 'e.g. Training' : 'e.g. Project team'}
+                  className="w-full rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none placeholder:text-app-placeholder focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+                  onChange={(event) => setGroupName(event.target.value)}
+                />
 
-              <p className="mt-5 mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
-                Search teammates
-              </p>
-              <SearchField
-                value={teammateQuery}
-                placeholder="Teammate username..."
-                error={teammateSearchError}
-                variant="modal"
-                onChange={setTeammateQuery}
-              />
-              <p className="mt-2 text-xs text-app-muted">
-                Type a name or username to find teammates in your organization.
-              </p>
-
-              {teammateResults.length > 0 ? (
-                <div className="mt-4 space-y-2">
-                  {teammateResults.map((person) => {
-                    const isSelected = selectedMembers.some((member) => member.id === person.id);
-
-                    return (
-                      <button
-                        key={person.id}
-                        type="button"
-                        className={`flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors ${
-                          isSelected
-                            ? 'border-accent/40 bg-accent/10'
-                            : 'border-app-border bg-app-inset hover:bg-app-inset-active'
-                        }`}
-                        onClick={() => addMember(person)}
+                <p className="mt-5 mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
+                  Selected ({selectedCount} including you)
+                </p>
+                <div className="min-h-[72px] rounded-2xl border border-dashed border-app-border/70 bg-app-card/40 p-3">
+                  <div className="mb-2 flex flex-wrap gap-2">
+                    <span className="inline-flex items-center rounded-xl bg-app-card border border-app-border/60 px-3 py-1 text-xs text-app-text font-medium shadow-xs">
+                      {selfLabel} (you)
+                    </span>
+                    {selectedMembers.map((member) => (
+                      <span
+                        key={member.id}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-app-card border border-app-border/60 px-3 py-1 text-xs text-app-text font-medium shadow-xs"
                       >
-                        <Avatar imageUrl={person.avatarUrl} initials={person.initials} size="sm" />
-                        <div className="min-w-0 flex-1">
-                          <p className="truncate text-sm font-medium text-app-text">{person.name}</p>
-                          <p className="truncate text-xs text-app-muted">@{person.username}</p>
-                        </div>
-                        <span className="text-xs text-app-muted">{isSelected ? 'Added' : 'Add'}</span>
-                      </button>
-                    );
-                  })}
+                        {member.name}
+                        <button
+                          type="button"
+                          className="text-app-muted hover:text-accent-soft transition-colors"
+                          aria-label={`Remove ${member.name}`}
+                          onClick={() => removeMember(member.id)}
+                        >
+                          <FiX className="text-xs" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                  {otherMemberCount === 0 ? (
+                    <p className="text-xs text-app-muted">Add at least 1 other person from search results</p>
+                  ) : null}
                 </div>
-              ) : teammateLoading ? (
-                <p className="mt-4 text-sm text-app-muted">Searching...</p>
-              ) : normalizeTeammateQuery(teammateQuery).length >= 2 ? (
-                <p className="mt-4 text-sm text-app-muted">No teammates match that search.</p>
-              ) : null}
-            </>
-          )}
 
-          {actionMessage ? (
-            <p className="mt-3 text-sm text-[#3ecf8e]" role="status">
-              {actionMessage}
-            </p>
-          ) : null}
+                <p className="mt-5 mb-2 text-[0.6875rem] font-semibold tracking-[0.08em] text-app-muted uppercase">
+                  Search teammates
+                </p>
+                <SearchField
+                  value={teammateQuery}
+                  placeholder="Teammate username..."
+                  error={teammateSearchError}
+                  variant="modal"
+                  onChange={setTeammateQuery}
+                />
+                <p className="mt-2 text-xs text-app-muted">
+                  Type a name or username to find teammates in your organization.
+                </p>
 
-          {actionError ? (
-            <p className="mt-3 text-sm text-accent-soft" role="alert">
-              {actionError}
-            </p>
+                {teammateResults.length > 0 ? (
+                  <div className="mt-4 space-y-2">
+                    {teammateResults.map((person) => {
+                      const isSelected = selectedMembers.some((member) => member.id === person.id);
+
+                      return (
+                        <button
+                          key={person.id}
+                          type="button"
+                          className={`flex w-full items-center gap-3 rounded-2xl border px-3.5 py-2.5 text-left transition-all duration-150 ${
+                            isSelected
+                              ? 'border-accent/40 bg-accent/10 shadow-xs'
+                              : 'border-app-border/60 bg-app-card/50 hover:bg-app-card hover:border-app-border'
+                          }`}
+                          onClick={() => addMember(person)}
+                        >
+                          <Avatar imageUrl={person.avatarUrl} initials={person.initials} size="sm" />
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-app-text">{person.name}</p>
+                            <p className="truncate text-xs text-app-muted">@{person.username}</p>
+                          </div>
+                          <span className={`text-xs font-medium px-2 py-0.5 rounded-lg ${
+                            isSelected ? 'text-accent-soft bg-accent/15' : 'text-app-muted'
+                          }`}>
+                            {isSelected ? 'Added' : '+ Add'}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : teammateLoading ? (
+                  <p className="mt-4 text-xs text-app-muted">Searching...</p>
+                ) : normalizeTeammateQuery(teammateQuery).length >= 2 ? (
+                  <p className="mt-4 text-xs text-app-muted">No teammates match that search.</p>
+                ) : null}
+              </>
+            )}
+
+            {actionMessage ? (
+              <p className="mt-4 text-xs text-[#3ecf8e] font-medium" role="status">
+                {actionMessage}
+              </p>
+            ) : null}
+
+            {actionError ? (
+              <p className="mt-4 text-xs text-accent-soft font-medium" role="alert">
+                {actionError}
+              </p>
+            ) : null}
+          </div>
+
+          {mode === 'group' || mode === 'hub' ? (
+            <div className="border-t border-app-border/50 bg-app-surface/50 backdrop-blur-md p-5">
+              <button
+                type="button"
+                className="w-full rounded-xl bg-gradient-to-r from-accent to-[#632a38] py-3 text-sm font-semibold text-white shadow-lg shadow-accent/20 transition-all duration-200 hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+                disabled={!canCreateGroup}
+                onClick={() => {
+                  void handleCreateGroup();
+                }}
+              >
+                {createButtonLabel}
+              </button>
+            </div>
           ) : null}
         </div>
-
-        {mode === 'group' || mode === 'hub' ? (
-          <div className="border-t border-app-border/40 p-5">
-            <button
-              type="button"
-              className="w-full rounded-xl bg-accent py-3.5 text-sm font-semibold text-white transition-all duration-200 active:scale-95 disabled:opacity-50 hover:bg-accent-hover hover:shadow-md"
-              disabled={!canCreateGroup}
-              onClick={() => {
-                void handleCreateGroup();
-              }}
-            >
-              {createButtonLabel}
-            </button>
-          </div>
-        ) : null}
-      </div>
       </div>
     </>
   );

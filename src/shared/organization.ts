@@ -105,65 +105,85 @@ export type OrgInvoiceItem = {
   url?: string;
 };
 
+function mapOrganizationRoleRecord(record: Record<string, unknown>, index: number): OrganizationRoleItem {
+  return {
+    id: readString(record.id) ?? `role-${index}`,
+    name: readString(record.name) ?? readString(record.title) ?? 'Role',
+    memberCount:
+      readNumber(record.memberCount) ??
+      readNumber(record.membersCount) ??
+      readNumber(record.count) ??
+      0,
+  };
+}
+
 export function normalizeOrganizationRoles(payload: unknown): OrganizationRoleItem[] {
-  const record = asRecord(payload);
-
-  if (record && !Array.isArray(payload)) {
-    const single = asRecord(record.role) ?? record;
-    if (readString(single.name) ?? readString(single.title)) {
-      return [
-        {
-          id: readString(single.id) ?? 'role-0',
-          name: readString(single.name) ?? readString(single.title) ?? 'Role',
-          memberCount:
-            readNumber(single.memberCount) ??
-            readNumber(single.membersCount) ??
-            readNumber(single.count) ??
-            0,
-        },
-      ];
-    }
-  }
-
-  return extractArray(payload, ['roles', 'items', 'data'])
+  const fromList = extractArray(payload, ['roles', 'items', 'data'])
     .map(asRecord)
     .filter((item): item is Record<string, unknown> => item !== null)
-    .map((record, index) => ({
-      id: readString(record.id) ?? `role-${index}`,
-      name: readString(record.name) ?? readString(record.title) ?? 'Role',
-      memberCount:
-        readNumber(record.memberCount) ??
-        readNumber(record.membersCount) ??
-        readNumber(record.count) ??
-        0,
-    }));
+    .map(mapOrganizationRoleRecord);
+
+  if (fromList.length > 0) {
+    return fromList;
+  }
+
+  const record = asRecord(payload);
+
+  if (!record) {
+    return [];
+  }
+
+  const single =
+    asRecord(record.role) ??
+    asRecord(record.createdRole) ??
+    asRecord(record.organizationRole) ??
+    record;
+  const name = readString(single.name) ?? readString(single.title);
+
+  if (!name) {
+    return [];
+  }
+
+  return [mapOrganizationRoleRecord(single, 0)];
+}
+
+function mapOrganizationInviteRecord(record: Record<string, unknown>, index: number): OrganizationInviteItem {
+  const role = asRecord(record.role);
+
+  return {
+    id: readString(record.id) ?? `invite-${index}`,
+    email: readString(record.email) ?? readString(record.inviteEmail) ?? '',
+    role: readString(role?.name) ?? readString(record.roleName) ?? 'Member',
+    roleId: readString(record.roleId) ?? readString(role?.id),
+    createdAt: readString(record.createdAt) ?? '',
+    registerUrl: readString(record.registerUrl) ?? undefined,
+  };
 }
 
 export function normalizeOrganizationInvites(payload: unknown): OrganizationInviteItem[] {
-  const record = asRecord(payload);
-
-  if (record) {
-    const singleInvite = asRecord(record.invite);
-    if (singleInvite) {
-      return normalizeOrganizationInvites([singleInvite]);
-    }
-  }
-
-  return extractArray(payload, ['invites', 'items', 'data'])
+  const fromList = extractArray(payload, ['invites', 'items', 'data'])
     .map(asRecord)
     .filter((item): item is Record<string, unknown> => item !== null)
-    .map((record, index) => {
-      const role = asRecord(record.role);
+    .map(mapOrganizationInviteRecord);
 
-      return {
-        id: readString(record.id) ?? `invite-${index}`,
-        email: readString(record.email) ?? readString(record.inviteEmail) ?? '',
-        role: readString(role?.name) ?? readString(record.roleName) ?? 'Member',
-        roleId: readString(record.roleId) ?? readString(role?.id),
-        createdAt: readString(record.createdAt) ?? '',
-        registerUrl: readString(record.registerUrl) ?? undefined,
-      };
-    });
+  if (fromList.length > 0) {
+    return fromList;
+  }
+
+  const record = asRecord(payload);
+
+  if (!record) {
+    return [];
+  }
+
+  const singleInvite = asRecord(record.invite) ?? record;
+  const email = readString(singleInvite.email) ?? readString(record.email);
+
+  if (!email) {
+    return [];
+  }
+
+  return [mapOrganizationInviteRecord(singleInvite, 0)];
 }
 
 export function normalizeOrganizationSeats(payload: unknown): OrganizationSeatsInfo {

@@ -70,9 +70,17 @@ export async function fetchSavedMessages(token: string): Promise<ApiResult<Saved
 export async function fetchFiles(
   token: string,
   filter: string,
+  conversationId?: string,
 ): Promise<ApiResult<FileItem[]>> {
+  const params = new URLSearchParams({ filter });
+  const trimmedConversationId = conversationId?.trim();
+
+  if (trimmedConversationId) {
+    params.set('conversationId', trimmedConversationId);
+  }
+
   const result = await apiGet<unknown>(
-    `${API_BASE_URL}/files?filter=${encodeURIComponent(filter)}`,
+    `${API_BASE_URL}/files?${params.toString()}`,
     token,
     'Files API',
   );

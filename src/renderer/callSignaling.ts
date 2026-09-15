@@ -13,7 +13,9 @@ import type {
 import {
   buildHubCallChannel,
   buildUserCallChannel,
+  normalizeCallCancelPayload,
   normalizeCallInvitePayload,
+  normalizeCallRejectPayload,
   normalizeMeetingJoinRequestPayload,
   normalizeMeetingJoinResponsePayload,
 } from '../shared/calls';
@@ -48,6 +50,7 @@ const CALL_EVENTS = {
   invite: 'call:invite',
   accept: 'call:accept',
   reject: 'call:reject',
+  declined: 'call:declined',
   cancel: 'call:cancel',
   end: 'call:end',
 } as const;
@@ -147,12 +150,34 @@ function attachDirectHandlers(channel: RealtimeChannel, channelName: string): vo
       if (parsed) readDirectHandlers(channelName)?.onAccept?.(parsed);
     })
     .on('broadcast', { event: CALL_EVENTS.reject }, ({ payload }) => {
-      const parsed = asPayload<CallRejectPayload>(payload);
-      if (parsed) readDirectHandlers(channelName)?.onReject?.(parsed);
+      const parsed = normalizeCallRejectPayload(payload);
+
+      if (parsed) {
+        logCallDebug('[Calls] Received reject', parsed.callId);
+        readDirectHandlers(channelName)?.onReject?.(parsed);
+        return;
+      }
+
+      logCallDebug('[Calls] Ignored reject payload', payload);
+    })
+    .on('broadcast', { event: CALL_EVENTS.declined }, ({ payload }) => {
+      const parsed = normalizeCallRejectPayload(payload);
+
+      if (parsed) {
+        logCallDebug('[Calls] Received declined', parsed.callId);
+        readDirectHandlers(channelName)?.onReject?.(parsed);
+      }
     })
     .on('broadcast', { event: CALL_EVENTS.cancel }, ({ payload }) => {
-      const parsed = asPayload<CallCancelPayload>(payload);
-      if (parsed) readDirectHandlers(channelName)?.onCancel?.(parsed);
+      const parsed = normalizeCallCancelPayload(payload);
+
+      if (parsed) {
+        logCallDebug('[Calls] Received cancel', parsed.callId);
+        readDirectHandlers(channelName)?.onCancel?.(parsed);
+        return;
+      }
+
+      logCallDebug('[Calls] Ignored cancel payload', payload);
     })
     .on('broadcast', { event: CALL_EVENTS.end }, ({ payload }) => {
       const parsed = asPayload<CallEndPayload>(payload);
@@ -248,7 +273,9 @@ async function getCallChannel(
   const existing = channels.get(channelName);
 
   if (existing) {
-    existing.handlers = handlers;
+    if (Object.keys(handlers).length > 0) {
+      existing.handlers = handlers;
+    }
 
     if (attachHandlers && !existing.listening) {
       attachHandlers(existing.channel);
@@ -265,7 +292,9 @@ async function getCallChannel(
     const entry = channels.get(channelName);
 
     if (entry) {
-      entry.handlers = handlers;
+      if (Object.keys(handlers).length > 0) {
+        entry.handlers = handlers;
+      }
 
       if (attachHandlers && !entry.listening) {
         attachHandlers(entry.channel);
@@ -317,6 +346,43 @@ export async function initCallSignaling(nextConfig: RealtimeClientConfig): Promi
 
 export async function refreshCallSignalingAuth(nextConfig: RealtimeClientConfig): Promise<void> {
   await ensureClient(nextConfig);
+}
+
+export async function ensureDirectCallPeerChannel(
+  ownUserId: string,
+  peerUserId: string,
+  handlers: DirectCallHandlers,
+): Promise<void> {
+  if (!client || !config) {
+    throw new Error('Call signaling is not initialized.');
+  }
+
+  const normalizedPeerUserId = peerUserId.trim();
+  const normalizedOwnUserId = ownUserId.trim();
+
+  if (!normalizedPeerUserId || normalizedPeerUserId === normalizedOwnUserId) {
+    return;
+  }
+
+  const channelName = buildUserCallChannel(normalizedPeerUserId);
+
+  await getCallChannel(
+    client,
+    channelName,
+    (channel) => attachDirectHandlers(channel, channelName),
+    'direct',
+    handlers,
+  );
+}
+
+export function releaseDirectCallPeerChannel(ownUserId: string, peerUserId: string | null | undefined): void {
+  const normalizedPeerUserId = peerUserId?.trim();
+
+  if (!normalizedPeerUserId || normalizedPeerUserId === ownUserId.trim()) {
+    return;
+  }
+
+  removeChannelEntry(buildUserCallChannel(normalizedPeerUserId));
 }
 
 export async function subscribeUserCallChannel(
@@ -425,6 +491,7 @@ export async function sendSignalWithRetries(
         throw new Error('Call signal broadcast failed');
       }
 
+      logCallDebug(`[Calls] Sent ${event} on ${channelName}`);
       return;
     } catch (error) {
       lastError = error;
@@ -437,6 +504,41 @@ export async function sendSignalWithRetries(
   }
 
   throw lastError instanceof Error ? lastError : new Error('Could not deliver call signal');
+}
+
+export async function broadcastDirectCallSignalBurst(
+  channelNames: string[],
+  event: string,
+  payload: unknown,
+  bursts = 4,
+): Promise<void> {
+  const uniqueChannels = [...new Set(channelNames.map((name) => name.trim()).filter(Boolean))];
+
+  if (uniqueChannels.length === 0) {
+    throw new Error('No call channels available for signaling.');
+  }
+
+  let successCount = 0;
+  let lastError: unknown = null;
+
+  for (let burst = 0; burst < bursts; burst += 1) {
+    for (const channelName of uniqueChannels) {
+      try {
+        await sendSignalWithRetries(channelName, event, payload, 1);
+        successCount += 1;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+
+    if (burst < bursts - 1) {
+      await sleep(300);
+    }
+  }
+
+  if (successCount === 0 && lastError) {
+    throw lastError instanceof Error ? lastError : new Error('Could not deliver call signal');
+  }
 }
 
 export async function broadcastCallEvent(

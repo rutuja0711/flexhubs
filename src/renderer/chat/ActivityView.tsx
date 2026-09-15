@@ -137,15 +137,20 @@ function ActivityKindIcon({ kind }: { kind: ActivityKind }) {
 function ActivityRowContent({ item }: { item: ActivityListItem }) {
   return (
     <>
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-accent/25 bg-accent/[0.08]">
+      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-accent/25 bg-accent/[0.08] shadow-xs">
         <ActivityKindIcon kind={item.kind} />
       </span>
       <div className="min-w-0 flex-1">
-        <p className="font-semibold text-app-text">{item.title}</p>
-        {item.body ? <p className="mt-0.5 text-sm text-app-muted">{item.body}</p> : null}
+        <div className="flex items-center gap-2">
+          <p className="font-semibold text-app-text text-sm tracking-tight">{item.title}</p>
+          {item.isUnread ? (
+            <span className="h-2 w-2 rounded-full bg-accent shadow-xs" aria-label="Unread" />
+          ) : null}
+        </div>
+        {item.body ? <p className="mt-1 text-xs text-app-muted leading-relaxed">{item.body}</p> : null}
       </div>
       {item.createdAt ? (
-        <span className="shrink-0 pt-0.5 text-xs text-app-muted">
+        <span className="shrink-0 pt-0.5 text-[11px] text-app-muted">
           {formatConversationTimestamp(item.createdAt)}
         </span>
       ) : null}
@@ -237,10 +242,10 @@ export function ActivityView({
 
   return (
     <div className="flex h-full flex-col bg-app-chat-bg">
-      <header className="border-b border-app-border px-8 py-6">
-        <h1 className="mb-4 text-[1.75rem] font-bold text-app-text">Activity</h1>
+      <header className="border-b border-app-border/50 px-8 py-6 bg-app-surface/50 backdrop-blur-sm">
+        <h1 className="mb-4 text-2xl font-bold text-app-text tracking-tight">Activity</h1>
         <div className="relative max-w-3xl">
-          <span className="pointer-events-none absolute top-1/2 left-4 -translate-y-1/2 text-app-placeholder">
+          <span className="pointer-events-none absolute top-1/2 left-4 -translate-y-1/2 text-app-muted">
             <SearchIcon />
           </span>
           <input
@@ -248,8 +253,8 @@ export function ActivityView({
             value={searchQuery}
             placeholder="Search people, chats, messages..."
             aria-invalid={Boolean(searchError)}
-            className={`w-full rounded-[12px] border bg-app-surface-input py-3 pr-4 pl-11 text-sm text-app-text outline-none placeholder:text-app-placeholder ${
-              searchError ? 'border-accent' : 'border-app-border'
+            className={`w-full rounded-2xl border bg-app-surface-input/80 backdrop-blur-sm py-3 pr-4 pl-11 text-sm text-app-text outline-none placeholder:text-app-placeholder transition-all focus:border-accent focus:ring-2 focus:ring-accent/20 ${
+              searchError ? 'border-accent' : 'border-app-border/70 hover:border-app-border'
             }`}
             onChange={(event) => handleSearchChange(event.target.value)}
           />
@@ -261,15 +266,15 @@ export function ActivityView({
         ) : null}
       </header>
 
-      <div className="flex flex-wrap gap-2 border-b border-app-border px-8 py-4">
+      <div className="flex flex-wrap gap-2 border-b border-app-border/50 px-8 py-3.5 bg-app-surface/30">
         {FILTERS.map((filter) => (
           <button
             key={filter}
             type="button"
-            className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+            className={`rounded-xl border px-3.5 py-1.5 text-xs font-medium transition-all duration-150 ${
               activeFilter === filter
-                ? 'border-accent text-accent-soft'
-                : 'border-app-border text-app-muted hover:border-app-border-strong hover:text-app-text'
+                ? 'border-accent/40 bg-accent/15 text-accent-soft shadow-xs font-semibold'
+                : 'border-app-border/60 bg-app-card/40 text-app-muted hover:border-app-border hover:text-app-text hover:bg-app-card'
             }`}
             onClick={() => setActiveFilter(filter)}
           >
@@ -278,7 +283,7 @@ export function ActivityView({
         ))}
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-8 py-4">
+      <div className="min-h-0 flex-1 overflow-y-auto px-8 py-5">
         {loading ? (
           <p className="text-sm text-app-muted" role="status">
             Loading activity...
@@ -286,11 +291,11 @@ export function ActivityView({
         ) : null}
 
         {!loading && error ? (
-          <div role="alert">
+          <div role="alert" className="rounded-2xl border border-app-border/70 bg-app-card/60 p-6 text-center">
             <p className="mb-3 text-sm text-accent-soft">{error}</p>
             <button
               type="button"
-              className="rounded-[10px] border border-app-border bg-app-surface px-3 py-2 text-sm text-app-text"
+              className="rounded-xl border border-app-border bg-app-surface px-4 py-2 text-xs font-semibold text-app-text hover:bg-app-chat-hover transition-colors"
               onClick={onRetry}
             >
               Try again
@@ -299,7 +304,7 @@ export function ActivityView({
         ) : null}
 
         {!loading && !error ? (
-          <div className="flex flex-col">
+          <div className="flex flex-col gap-2 max-w-4xl">
             {filteredItems.map((item) => {
               const isClickable =
                 Boolean(item.notification) &&
@@ -310,7 +315,7 @@ export function ActivityView({
                   <button
                     key={item.id}
                     type="button"
-                    className="flex w-full items-start gap-3 border-b border-app-border/40 px-1 py-4 text-left transition-colors hover:bg-app-chat-hover"
+                    className="flex w-full items-start gap-3.5 rounded-2xl border border-app-border/60 bg-app-card/50 p-4 text-left transition-all duration-150 hover:bg-app-card hover:border-app-border hover:shadow-xs group"
                     onClick={() => onNotificationClick(item.notification!)}
                   >
                     <ActivityRowContent item={item} />
@@ -319,22 +324,22 @@ export function ActivityView({
               }
 
               return (
-                <div key={item.id} className="border-b border-app-border/40 px-1 py-4">
-                  <div className="flex items-start gap-3">
+                <div key={item.id} className="rounded-2xl border border-app-border/60 bg-app-card/50 p-4 transition-all duration-150 hover:bg-app-card hover:border-app-border hover:shadow-xs">
+                  <div className="flex items-start gap-3.5">
                     <ActivityRowContent item={item} />
                   </div>
                   {item.kind === 'request' && onRespondFriend ? (
                     <div className="mt-3 flex gap-2 pl-[52px]">
                       <button
                         type="button"
-                        className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-accent-hover"
+                        className="rounded-xl bg-accent px-3.5 py-1.5 text-xs font-semibold text-white shadow-xs transition-colors hover:bg-accent-hover"
                         onClick={() => onRespondFriend(item.id.replace('pending-', ''), 'ACCEPTED')}
                       >
                         Accept
                       </button>
                       <button
                         type="button"
-                        className="rounded-lg border border-app-border bg-app-surface px-3 py-1.5 text-xs font-semibold text-app-text transition-colors hover:bg-app-chat-hover"
+                        className="rounded-xl border border-app-border bg-app-card/80 px-3.5 py-1.5 text-xs font-semibold text-app-text transition-colors hover:bg-app-inset"
                         onClick={() => onRespondFriend(item.id.replace('pending-', ''), 'DECLINED')}
                       >
                         Decline
@@ -346,7 +351,7 @@ export function ActivityView({
             })}
 
             {filteredItems.length === 0 ? (
-              <p className="py-8 text-sm text-app-muted" role="status">
+              <p className="py-12 text-center text-sm text-app-muted" role="status">
                 No activity matches this filter.
               </p>
             ) : null}

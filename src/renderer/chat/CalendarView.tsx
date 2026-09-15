@@ -170,15 +170,17 @@ function EventCard({
   return (
     <article
       ref={cardRef}
-      className={`rounded-[14px] border bg-app-surface px-5 py-4 ${
-        highlighted ? 'border-accent ring-2 ring-accent/20' : 'border-app-border'
+      className={`rounded-2xl border p-5 transition-all duration-200 ${
+        highlighted
+          ? 'border-accent/80 bg-accent/10 ring-2 ring-accent/30 shadow-md shadow-accent/10'
+          : 'border-app-border/70 bg-app-card/60 hover:bg-app-card hover:border-app-border hover:shadow-xs'
       }`}
     >
       <div className="mb-3 flex items-start justify-between gap-4">
-        <h3 className="min-w-0 flex-1 text-base font-semibold text-app-text">{event.title}</h3>
+        <h3 className="min-w-0 flex-1 text-base font-semibold text-app-text tracking-tight">{event.title}</h3>
         <div className="flex shrink-0 items-center gap-2">
           {event.startsAt ? (
-            <span className="text-xs whitespace-nowrap text-app-muted">
+            <span className="rounded-lg bg-app-inset/80 px-2.5 py-1 text-xs font-medium whitespace-nowrap text-app-muted border border-app-border/50">
               {formatEventDateTime(event.startsAt)}
             </span>
           ) : null}
@@ -187,27 +189,27 @@ function EventCard({
               type="button"
               disabled={actingOn === event.id}
               aria-label="Delete event"
-              className="rounded-md p-1 text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+              className="flex h-7 w-7 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-inset hover:text-accent-soft"
               onClick={() => void onDelete(event)}
             >
-              <FiX size={16} />
+              <FiX size={15} />
             </button>
           ) : null}
         </div>
       </div>
 
-      {mentionLine ? <p className="mb-2 text-sm text-app-muted">{mentionLine}</p> : null}
+      {mentionLine ? <p className="mb-2 text-xs font-medium text-accent-soft">{mentionLine}</p> : null}
 
       {invitees.length > 0 ? (
-        <div className="mb-2 flex flex-col gap-1">
+        <div className="mb-3 flex flex-col gap-1.5 rounded-xl border border-app-border/50 bg-app-inset/40 p-3">
           {invitees.map((invitee) => (
             <div
               key={`${event.id}-${invitee.userId ?? invitee.username ?? invitee.name}`}
-              className="flex items-center justify-between gap-3 text-sm"
+              className="flex items-center justify-between gap-3 text-xs"
             >
-              <span className="truncate text-app-text">{invitee.name || invitee.username}</span>
+              <span className="truncate text-app-text font-medium">{invitee.name || invitee.username}</span>
               <span
-                className={`shrink-0 text-xs font-semibold uppercase ${inviteeStatusClass(invitee.status)}`}
+                className={`shrink-0 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-app-card ${inviteeStatusClass(invitee.status)}`}
               >
                 {invitee.status}
               </span>
@@ -217,25 +219,25 @@ function EventCard({
       ) : null}
 
       {event.sharedBy ? (
-        <p className="mb-3 text-sm text-app-muted">Shared by {event.sharedBy}</p>
+        <p className="mb-2 text-xs text-app-muted">Shared by <span className="text-app-text font-medium">{event.sharedBy}</span></p>
       ) : null}
 
       {(event.notes || event.description) ? (
-        <p className="mb-3 text-sm text-app-muted">{event.notes || event.description}</p>
+        <p className="mb-3 text-xs text-app-muted leading-relaxed">{event.notes || event.description}</p>
       ) : null}
 
       {myResponse && !canRespond ? (
-        <p className={`mb-3 text-sm font-medium ${inviteeStatusClass(myResponse)}`}>
-          Your response {myResponse}
+        <p className={`mb-2 text-xs font-medium ${inviteeStatusClass(myResponse)}`}>
+          Your response: {myResponse}
         </p>
       ) : null}
 
       {canRespond ? (
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 pt-1">
           <button
             type="button"
             disabled={actingOn === event.id}
-            className="inline-flex items-center gap-1.5 rounded-[10px] bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-4 py-1.5 text-xs font-semibold text-white shadow-xs transition-all hover:bg-accent-hover active:scale-[0.98] disabled:opacity-60"
             onClick={() => void onRespond(event, true)}
           >
             <span aria-hidden="true">✓</span>
@@ -244,7 +246,7 @@ function EventCard({
           <button
             type="button"
             disabled={actingOn === event.id}
-            className="inline-flex items-center gap-1.5 rounded-[10px] border border-app-border bg-transparent px-4 py-2 text-sm font-semibold text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text disabled:opacity-60"
+            className="inline-flex items-center gap-1.5 rounded-xl border border-app-border bg-app-card/80 px-4 py-1.5 text-xs font-semibold text-app-muted transition-all hover:bg-app-inset hover:text-app-text active:scale-[0.98] disabled:opacity-60"
             onClick={() => void onRespond(event, false)}
           >
             <span aria-hidden="true">✕</span>
@@ -423,13 +425,13 @@ export function CalendarView({
 
   return (
     <div className="flex h-full flex-col bg-app-chat-bg">
-      <header className="flex items-center justify-between border-b border-app-border px-8 py-6">
+      <header className="flex items-center justify-between border-b border-app-border/50 px-8 py-6 bg-app-surface/50 backdrop-blur-sm">
         <div>
-          <h1 className="text-[1.75rem] font-bold text-app-text">Calendar</h1>
+          <h1 className="text-2xl font-bold text-app-text tracking-tight">Calendar</h1>
           {tab === 'scheduled' ? (
             <button
               type="button"
-              className="mt-2 text-sm text-app-muted transition-colors hover:text-app-text"
+              className="mt-1 text-xs font-medium text-accent-soft transition-colors hover:text-accent"
               onClick={() => setTab('events')}
             >
               ← Back to events
@@ -437,10 +439,10 @@ export function CalendarView({
           ) : (
             <button
               type="button"
-              className="mt-2 text-sm text-app-muted transition-colors hover:text-app-text"
+              className="mt-1 text-xs font-medium text-app-muted transition-colors hover:text-app-text"
               onClick={() => setTab('scheduled')}
             >
-              Scheduled messages
+              View scheduled messages →
             </button>
           )}
         </div>
@@ -448,7 +450,7 @@ export function CalendarView({
           <button
             type="button"
             onClick={() => setModalOpen(true)}
-            className="rounded-[10px] bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
+            className="rounded-xl bg-gradient-to-r from-accent to-[#632a38] px-4 py-2 text-xs font-semibold text-white shadow-md shadow-accent/20 transition-all hover:brightness-110 active:scale-[0.98]"
           >
             + New event
           </button>

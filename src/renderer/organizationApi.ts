@@ -10,7 +10,7 @@ import type {
   PaymentPlanItem,
   PlanComplianceInfo,
 } from '../shared/payments';
-import type { OrganizationMemberItem } from '../shared/profile';
+import { normalizeOrganizationMembers, type OrganizationMemberItem } from '../shared/profile';
 import type {
   CreateOrgOrderInput,
   OrgOrderResult,
@@ -166,6 +166,38 @@ export async function verifyUpgradeSubscription(input: {
 
 export async function loadOrganizationMembersAdmin(): Promise<ApiResult<OrganizationMemberItem[]>> {
   return withToken((token) => window.electronAPI.getOrganizationMembersAdmin(token));
+}
+
+export async function loadOrganizationMembersList(canManage: boolean): Promise<{
+  members: OrganizationMemberItem[];
+  status?: number;
+}> {
+  if (canManage) {
+    const adminResult = await loadOrganizationMembersAdmin();
+
+    return {
+      members: adminResult.ok ? adminResult.data : [],
+      status: adminResult.status,
+    };
+  }
+
+  if (!window.electronAPI?.getOrganizationMembers) {
+    return { members: [], status: undefined };
+  }
+
+  const sidebarResult = await withToken((token) => window.electronAPI.getOrganizationMembers(token));
+
+  if (!sidebarResult.ok) {
+    return {
+      members: [],
+      status: sidebarResult.status,
+    };
+  }
+
+  return {
+    members: normalizeOrganizationMembers(sidebarResult.data),
+    status: sidebarResult.status,
+  };
 }
 
 export async function removeOrganizationMember(userId: string): Promise<ApiResult<{ ok: true }>> {

@@ -28,27 +28,27 @@ function PanelItem({
   const content = (
     <>
       <div className="mb-1 flex items-start justify-between gap-3">
-        <p className="text-sm font-semibold text-app-text">{title}</p>
+        <p className="text-xs font-semibold text-app-text">{title}</p>
         {createdAt ? (
-          <span className="shrink-0 text-xs text-app-muted">
+          <span className="shrink-0 text-[10px] font-medium text-app-muted">
             {formatConversationTimestamp(createdAt)}
           </span>
         ) : null}
       </div>
-      {body ? <p className="text-sm leading-snug text-app-muted">{body}</p> : null}
+      {body ? <p className="text-xs leading-relaxed text-app-muted/90">{body}</p> : null}
     </>
   );
 
   if (!onClick) {
     return (
-      <div className="border-b border-app-border px-4 py-3 last:border-b-0">{content}</div>
+      <div className="border-b border-app-border/40 px-3.5 py-2.5 last:border-b-0">{content}</div>
     );
   }
 
   return (
     <button
       type="button"
-      className="block w-full border-b border-app-border px-4 py-3 text-left transition-colors last:border-b-0 hover:bg-app-chat-hover"
+      className="block w-full border-b border-app-border/40 px-3.5 py-2.5 text-left transition-colors last:border-b-0 hover:bg-app-chat-hover/80"
       onClick={onClick}
     >
       {content}
@@ -76,7 +76,7 @@ export function NotificationsPanel({
 
     const updatePosition = () => {
       const rect = anchor.getBoundingClientRect();
-      const panelWidth = 320;
+      const panelWidth = 330;
       const left = Math.max(12, Math.min(rect.right - panelWidth, window.innerWidth - panelWidth - 12));
 
       setPanelStyle({
@@ -110,15 +110,15 @@ export function NotificationsPanel({
       <button
         type="button"
         aria-label="Close notifications"
-        className="fixed inset-0 z-[200] bg-black/20"
+        className="fixed inset-0 z-[200] bg-black/30 backdrop-blur-xs"
         onClick={onClose}
       />
       <div
-        className="fixed z-[201] w-[320px] overflow-hidden rounded-[14px] border border-app-border bg-app-surface shadow-app animate-pop-in origin-top-right"
+        className="fixed z-[201] w-[330px] overflow-hidden rounded-2xl border border-app-border/80 bg-app-elevated/95 backdrop-blur-xl shadow-2xl animate-pop-in origin-top-right"
         style={{ top: panelStyle.top, left: panelStyle.left }}
       >
-        <div className="border-b border-app-border px-4 py-3">
-          <h2 className="text-sm font-semibold text-app-text">Notifications</h2>
+        <div className="border-b border-app-border/40 px-4 py-3">
+          <h2 className="text-xs font-bold uppercase tracking-wider text-app-text">Notifications</h2>
         </div>
 
         <div className="max-h-[420px] overflow-y-auto">

@@ -9,32 +9,37 @@ export function ChatWelcome({ workspaceName, onFindPeople }: ChatWelcomeProps) {
   const shortName = workspaceName.replace(/ Workspace$/, '');
 
   return (
-    <div className="flex flex-1 items-center justify-center bg-app-chat-bg p-8">
-      <div className="max-w-lg text-center">
-        <div className="mx-auto mb-6 flex h-24 w-24 items-center justify-center rounded-[24px] border border-app-border bg-app-chat-panel p-4">
+    <div className="relative flex flex-1 items-center justify-center bg-app-chat-bg p-8 overflow-hidden">
+      {/* Ambient background glow */}
+      <div className="pointer-events-none absolute h-96 w-96 rounded-full bg-accent/10 blur-3xl" />
+      
+      <div className="relative max-w-md text-center rounded-3xl border border-app-border/60 bg-app-surface/60 backdrop-blur-xl p-8 shadow-2xl">
+        <div className="relative mx-auto mb-6 flex h-20 w-20 items-center justify-center overflow-hidden rounded-2xl border border-app-border/80 bg-[#160c12] p-3 shadow-lg shadow-accent/20">
           <AppLogoMark className="h-full w-full" />
         </div>
 
-        <h2 className="mb-3 text-[1.75rem] font-bold text-app-text">Welcome to {shortName}</h2>
-        <p className="mb-6 text-[0.9375rem] leading-normal text-app-muted">
+        <h2 className="mb-2 text-2xl font-bold tracking-tight text-app-text">Welcome to {shortName}</h2>
+        <p className="mb-6 text-xs leading-relaxed text-app-muted">
           Tap a teammate in the sidebar to start messaging. Friend requests are optional.
         </p>
 
-        <div className="mb-8 inline-flex items-center gap-2 rounded-full border border-app-border bg-app-chat-panel px-4 py-2 text-sm text-app-muted">
+        <div className="mb-6 inline-flex items-center gap-2 rounded-2xl border border-app-border/50 bg-app-chat-panel/80 px-4 py-2 text-xs text-app-muted">
           <span className="text-accent-soft">
             <BuildingIcon />
           </span>
-          <span>{shortName} teammates appear below your chats in the sidebar.</span>
+          <span>{shortName} teammates appear in your sidebar.</span>
         </div>
 
-        <button
-          type="button"
-          className="inline-flex items-center gap-2 rounded-[12px] bg-accent px-5 py-3 text-[0.9375rem] font-semibold text-white transition-colors hover:bg-accent-hover active:bg-accent-active"
-          onClick={onFindPeople}
-        >
-          <UserPlusIcon />
-          Find people
-        </button>
+        <div>
+          <button
+            type="button"
+            className="inline-flex items-center gap-2 rounded-xl bg-gradient-to-br from-accent to-[#5c2431] px-5 py-2.5 text-xs font-semibold text-white shadow-md shadow-accent/25 transition-all hover:shadow-accent-glow hover:scale-105 active:scale-95"
+            onClick={onFindPeople}
+          >
+            <UserPlusIcon />
+            <span>Find people</span>
+          </button>
+        </div>
       </div>
     </div>
   );

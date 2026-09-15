@@ -206,17 +206,51 @@ export function normalizeOrgSubscription(payload: unknown): OrgSubscriptionInfo 
     root;
 
   const plan = asRecord(record.plan) ?? record;
-  const planId = normalizePlanId(plan.id ?? record.planId ?? record.planTier);
+  const planId = normalizePlanId(
+    plan.id ?? plan.tier ?? record.planId ?? record.planTier ?? root.planTier,
+  );
+  const planName =
+    readString(plan.name) ??
+    readString(plan.label) ??
+    readString(record.planName) ??
+    planId;
 
   return {
     planId,
-    planName: readString(plan.name) ?? readString(record.planName) ?? planId,
-    teamSize: readNumber(record.teamSize) ?? readNumber(record.seats) ?? readNumber(record.memberLimit) ?? 0,
-    usedSeats: readNumber(record.usedSeats) ?? readNumber(record.membersInUse) ?? readNumber(record.used) ?? 0,
-    billingPeriod: normalizeBillingPeriod(record.billingPeriod ?? record.interval),
-    status: readString(record.status) ?? 'active',
-    activatedAt: readString(record.activatedAt) ?? readString(record.startedAt) ?? '',
-    renewsAt: readString(record.renewsAt) ?? readString(record.renewalDate) ?? readString(record.endsAt) ?? '',
+    planName,
+    teamSize:
+      readNumber(record.teamSize) ??
+      readNumber(record.seats) ??
+      readNumber(record.memberLimit) ??
+      readNumber(record.maxMembers) ??
+      readNumber(root.memberLimit) ??
+      0,
+    usedSeats:
+      readNumber(record.usedSeats) ??
+      readNumber(record.membersInUse) ??
+      readNumber(record.used) ??
+      readNumber(record.seatsInUse) ??
+      readNumber(root.usedSeats) ??
+      0,
+    billingPeriod: normalizeBillingPeriod(
+      record.billingPeriod ?? record.interval ?? record.billingPeriodId ?? root.billingPeriod,
+    ),
+    status:
+      readString(record.status) ??
+      readString(record.subscriptionStatus) ??
+      readString(root.subscriptionStatus) ??
+      'active',
+    activatedAt:
+      readString(record.activatedAt) ??
+      readString(record.startedAt) ??
+      readString(record.createdAt) ??
+      '',
+    renewsAt:
+      readString(record.renewsAt) ??
+      readString(record.renewalDate) ??
+      readString(record.endsAt) ??
+      readString(record.nextBillingDate) ??
+      '',
   };
 }
 

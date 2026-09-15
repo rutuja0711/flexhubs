@@ -1,6 +1,7 @@
 const PUSH_ENDPOINT_KEY = 'flexhubs.push.endpoint';
 const DESKTOP_NOTIFICATIONS_KEY = 'flexhubs.desktop.notifications.enabled';
 const DESKTOP_NOTIFICATIONS_DISABLED_KEY = 'flexhubs.desktop.notifications.disabled';
+const DESKTOP_NOTIFICATIONS_USER_OPT_OUT_KEY = 'flexhubs.desktop.notifications.userOptOut';
 
 function urlBase64ToUint8Array(base64String: string): Uint8Array {
   const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
@@ -59,8 +60,23 @@ export function isDesktopNotificationsEnabled(): boolean {
   return Boolean(getStoredPushEndpoint());
 }
 
+export function isDesktopNotificationsExplicitlyDisabled(): boolean {
+  return (
+    localStorage.getItem(DESKTOP_NOTIFICATIONS_USER_OPT_OUT_KEY) === 'true' ||
+    localStorage.getItem(DESKTOP_NOTIFICATIONS_DISABLED_KEY) === 'true'
+  );
+}
+
+function setDesktopNotificationsUserOptOut(optOut: boolean): void {
+  if (optOut) {
+    localStorage.setItem(DESKTOP_NOTIFICATIONS_USER_OPT_OUT_KEY, 'true');
+  } else {
+    localStorage.removeItem(DESKTOP_NOTIFICATIONS_USER_OPT_OUT_KEY);
+  }
+}
+
 export function shouldDeliverDesktopNotifications(): boolean {
-  if (localStorage.getItem(DESKTOP_NOTIFICATIONS_DISABLED_KEY) === 'true') {
+  if (isDesktopNotificationsExplicitlyDisabled()) {
     return false;
   }
 
@@ -83,13 +99,53 @@ function setDesktopNotificationsEnabled(enabled: boolean): void {
   if (enabled) {
     localStorage.setItem(DESKTOP_NOTIFICATIONS_KEY, 'true');
     localStorage.removeItem(DESKTOP_NOTIFICATIONS_DISABLED_KEY);
+    setDesktopNotificationsUserOptOut(false);
   } else {
     localStorage.removeItem(DESKTOP_NOTIFICATIONS_KEY);
     localStorage.setItem(DESKTOP_NOTIFICATIONS_DISABLED_KEY, 'true');
+    setDesktopNotificationsUserOptOut(true);
+  }
+}
+
+export async function ensureDesktopNotificationsReady(): Promise<void> {
+  if (!isElectronShell()) {
+    return;
+  }
+
+  if (localStorage.getItem(DESKTOP_NOTIFICATIONS_USER_OPT_OUT_KEY) === 'true') {
+    return;
+  }
+
+  // Older builds disabled desktop alerts on logout; restore them on startup.
+  localStorage.removeItem(DESKTOP_NOTIFICATIONS_DISABLED_KEY);
+  setDesktopNotificationsEnabled(true);
+
+  if (!('Notification' in window) || Notification.permission !== 'default') {
+    return;
+  }
+
+  try {
+    await Notification.requestPermission();
+  } catch {
+    // Native Electron notifications can still work via the main process.
   }
 }
 
 export async function enableDesktopPushNotifications(): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (isElectronShell()) {
+    setDesktopNotificationsEnabled(true);
+
+    if ('Notification' in window && Notification.permission === 'default') {
+      try {
+        await Notification.requestPermission();
+      } catch {
+        // Native notifications may still work without renderer permission.
+      }
+    }
+
+    return { ok: true };
+  }
+
   if (!('Notification' in window)) {
     return { ok: false, error: 'Notifications are not supported on this device.' };
   }
@@ -97,11 +153,6 @@ export async function enableDesktopPushNotifications(): Promise<{ ok: true } | {
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') {
     return { ok: false, error: 'Notification permission was denied.' };
-  }
-
-  if (isElectronShell()) {
-    setDesktopNotificationsEnabled(true);
-    return { ok: true };
   }
 
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -154,6 +205,24 @@ export async function enableDesktopPushNotifications(): Promise<{ ok: true } | {
 
     return { ok: false, error: message };
   }
+}
+
+export async function clearPushSubscriptionOnLogout(): Promise<void> {
+  const endpoint = getStoredPushEndpoint();
+
+  if (!endpoint) {
+    return;
+  }
+
+  try {
+    const { unsubscribePushEndpoint, deletePushSubscriptions } = await import('./extrasApi');
+    await unsubscribePushEndpoint(endpoint);
+    await deletePushSubscriptions();
+  } catch {
+    // Best-effort cleanup during logout.
+  }
+
+  clearStoredPushEndpoint();
 }
 
 export async function disableDesktopPushNotifications(): Promise<{ ok: true } | { ok: false; error: string }> {

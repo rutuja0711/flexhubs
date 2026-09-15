@@ -21,6 +21,7 @@ type MeetingRoomViewProps = {
   cameraEnabled: boolean;
   screenShareEnabled: boolean;
   canModerate?: boolean;
+  endMeetingForAll?: boolean;
   embedded?: boolean;
   onToggleMic: () => void;
   onToggleCamera: () => void;
@@ -70,6 +71,7 @@ export function MeetingRoomView({
   cameraEnabled,
   screenShareEnabled,
   canModerate = false,
+  endMeetingForAll = false,
   embedded = false,
   onToggleMic,
   onToggleCamera,
@@ -246,7 +248,7 @@ export function MeetingRoomView({
           className="inline-flex items-center gap-2 rounded-full bg-red-500 px-5 py-3 text-sm font-semibold text-white hover:opacity-90"
           onClick={onEnd}
         >
-          <FiPhoneOff /> Leave
+          <FiPhoneOff /> {endMeetingForAll ? 'End meeting' : 'Leave'}
         </button>
       </div>
       ) : null}

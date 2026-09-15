@@ -58,8 +58,8 @@ export async function performLogout(): Promise<void> {
     }
 
     try {
-      const { disableDesktopPushNotifications } = await import('./pushNotifications');
-      await disableDesktopPushNotifications();
+      const { clearPushSubscriptionOnLogout } = await import('./pushNotifications');
+      await clearPushSubscriptionOnLogout();
     } catch {
       // Push may be unavailable in the desktop shell.
     }

@@ -18,9 +18,14 @@ import type {
   MeetingJoinResponsePayload,
   MeetingStartedPayload,
 } from '../shared/calls';
-import { buildDirectCallRoomName, normalizeMeetingJoinRequestPayload } from '../shared/calls';
+import {
+  buildDirectCallRoomName,
+  isMeetingModerator,
+  normalizeMeetingJoinRequestPayload,
+} from '../shared/calls';
 import { MediasoupCallSession, type MediasoupRemotePeer } from './call/mediasoupAdapter';
 import {
+  declineCallMeetingInvite,
   endCallMeeting,
   ensureCallMediaPermissions,
   ensureScreenCapturePermission,
@@ -39,14 +44,17 @@ import { logCallDebug } from './callDebug';
 import { showGroupMeetingDesktopNotification, showIncomingCallDesktopNotification } from './desktopNotifications';
 import {
   broadcastCallEvent,
+  broadcastDirectCallSignalBurst,
   disconnectCallSignaling,
   disconnectUserCallChannel,
+  ensureDirectCallPeerChannel,
   getHubCallChannelName,
   getUserCallChannelName,
   initCallSignaling,
   isCallSignalingReady,
   isUserCallChannelSubscribed,
   refreshCallSignalingAuth,
+  releaseDirectCallPeerChannel,
   sendSignalWithRetries,
   syncHubCallChannels,
   subscribeUserCallChannel,
@@ -63,6 +71,7 @@ export type CallSession = {
   video: boolean;
   isGroup: boolean;
   isInitiator: boolean;
+  canModerateMeeting: boolean;
   peerUserId: string | null;
   peerLabel: string;
   peerAvatar: string | null;
@@ -79,6 +88,7 @@ const INITIAL_SESSION: CallSession = {
   video: false,
   isGroup: false,
   isInitiator: false,
+  canModerateMeeting: false,
   peerUserId: null,
   peerLabel: '',
   peerAvatar: null,
@@ -98,7 +108,7 @@ type UseCallManagerOptions = {
 
 const CALL_SIGNALING_REFRESH_MS = 50 * 60 * 1000;
 const CALL_SIGNALING_HEALTH_MS = 30 * 1000;
-const MEETING_JOIN_POLL_MS = 15 * 1000;
+const MEETING_JOIN_POLL_MS = 4 * 1000;
 const OUTGOING_RING_MS = 90_000;
 const INCOMING_RING_MS = 90_000;
 const SIGNAL_REPEAT_MS = 1_000;
@@ -168,6 +178,10 @@ function formatCallSignalingError(): string {
   return 'Could not connect call notifications. Please try again later.';
 }
 
+function readCanModerateMeeting(token: CallTokenResult | null, isInitiator: boolean): boolean {
+  return isInitiator || token?.canModerateMeeting === true;
+}
+
 export function useCallManager({
   currentUserId,
   currentUserLabel,
@@ -199,6 +213,7 @@ export function useCallManager({
   const acceptIntervalRef = useRef<number | null>(null);
   const incomingTimeoutRef = useRef<number | null>(null);
   const seenCallIdsRef = useRef<Set<string>>(new Set());
+  const activePeerUserIdRef = useRef<string | null>(null);
   const signalingErrorShownRef = useRef(false);
   const directHandlersRef = useRef<{
     onInvite: (payload: CallInvitePayload) => void;
@@ -362,8 +377,42 @@ export function useCallManager({
     [snapshotCallContext, writeCallLogSnapshot],
   );
 
+  const releaseDirectCallPeer = useCallback(() => {
+    const peerUserId = activePeerUserIdRef.current;
+    activePeerUserIdRef.current = null;
+
+    if (currentUserId && peerUserId) {
+      releaseDirectCallPeerChannel(currentUserId, peerUserId);
+    }
+  }, [currentUserId]);
+
+  const bindDirectCallPeerChannel = useCallback(
+    (peerUserId: string) => {
+      if (!currentUserId || !peerUserId.trim() || peerUserId === currentUserId) {
+        return;
+      }
+
+      activePeerUserIdRef.current = peerUserId;
+
+      void ensureDirectCallPeerChannel(currentUserId, peerUserId, {
+        onInvite: (payload) => directHandlersRef.current?.onInvite?.(payload),
+        onAccept: (payload) => directHandlersRef.current?.onAccept?.(payload),
+        onReject: (payload) => directHandlersRef.current?.onReject?.(payload),
+        onCancel: (payload) => directHandlersRef.current?.onCancel?.(payload),
+        onEnd: (payload) => directHandlersRef.current?.onEnd?.(payload),
+      }).catch((error) => {
+        logCallDebug(
+          '[Calls] Peer channel subscribe failed',
+          error instanceof Error ? error.message : error,
+        );
+      });
+    },
+    [currentUserId],
+  );
+
   const resetSession = useCallback(() => {
     clearCallSignalTimers();
+    releaseDirectCallPeer();
     initiatorIdRef.current = null;
     setMicEnabled(true);
     setCameraEnabled(false);
@@ -375,7 +424,7 @@ export function useCallManager({
     pendingJoinConversationRef.current = null;
     setSession(INITIAL_SESSION);
     void disconnectRoom();
-  }, [clearCallSignalTimers, disconnectRoom]);
+  }, [clearCallSignalTimers, disconnectRoom, releaseDirectCallPeer]);
 
   const armIncomingCallTimeout = useCallback(
     (payload: Pick<CallInvitePayload, 'callId' | 'conversationId' | 'caller'>) => {
@@ -390,11 +439,23 @@ export function useCallManager({
           return;
         }
 
-        void sendSignalWithRetries(getUserCallChannelName(payload.caller.id), 'call:reject', {
-          callId: payload.callId,
-          conversationId: payload.conversationId,
-          reason: 'declined',
-        }).catch(() => undefined);
+        void (async () => {
+          const rejectPayload = {
+            callId: payload.callId,
+            conversationId: payload.conversationId,
+            reason: 'declined' as const,
+          };
+          const channelNames = currentUserId
+            ? [getUserCallChannelName(payload.caller.id), getUserCallChannelName(currentUserId)]
+            : [getUserCallChannelName(payload.caller.id)];
+
+          try {
+            await broadcastDirectCallSignalBurst(channelNames, 'call:reject', rejectPayload, 3);
+            await broadcastDirectCallSignalBurst(channelNames, 'call:declined', rejectPayload, 2);
+          } catch {
+            // Timeout decline still ends the local session.
+          }
+        })();
 
         seenCallIdsRef.current.add(payload.callId);
         resetSession();
@@ -408,7 +469,7 @@ export function useCallManager({
         );
       }, INCOMING_RING_MS);
     },
-    [resetSession, writeCallLogSnapshot],
+    [currentUserId, resetSession, writeCallLogSnapshot],
   );
 
   const connectLiveKit = useCallback(
@@ -419,7 +480,12 @@ export function useCallManager({
         throw new Error(permissionResult.error);
       }
 
-      setSession((current) => ({ ...current, phase: 'connecting', liveToken: tokenResult }));
+      setSession((current) => ({
+        ...current,
+        phase: 'connecting',
+        liveToken: tokenResult,
+        canModerateMeeting: readCanModerateMeeting(tokenResult, current.isInitiator),
+      }));
 
       if (tokenResult.engine === 'mediasoup') {
         const session = await MediasoupCallSession.connect(tokenResult, video, {
@@ -444,6 +510,15 @@ export function useCallManager({
           onRoomEnded: () => {
             removedFromMeetingRef.current = true;
             logCallDebug('[Calls] Removed from mediasoup meeting');
+            const active = sessionRef.current;
+            const durationSec =
+              active.connectedAt != null
+                ? Math.max(0, Math.floor((Date.now() - active.connectedAt) / 1000))
+                : 0;
+            const context = snapshotCallContext();
+            resetSession();
+            reportErrorRef.current('You were removed from the meeting.');
+            void writeCallLogSnapshot(context, 'completed', durationSec);
           },
         });
 
@@ -508,6 +583,19 @@ export function useCallManager({
         ) {
           removedFromMeetingRef.current = true;
           logCallDebug('[Calls] Removed from meeting', String(reason));
+          const active = sessionRef.current;
+          const durationSec =
+            active.connectedAt != null
+              ? Math.max(0, Math.floor((Date.now() - active.connectedAt) / 1000))
+              : 0;
+          const context = snapshotCallContext();
+          resetSession();
+          reportErrorRef.current(
+            reason === DisconnectReason.ROOM_DELETED
+              ? 'The meeting ended.'
+              : 'You were removed from the meeting.',
+          );
+          void writeCallLogSnapshot(context, 'completed', durationSec);
         }
       });
 
@@ -619,11 +707,18 @@ export function useCallManager({
       }
 
       if (isRemoteUserBusy(payload, active, phase)) {
-        void sendSignalWithRetries(getUserCallChannelName(payload.caller.id), 'call:reject', {
+        const rejectPayload = {
           callId: payload.callId,
           conversationId: payload.conversationId,
-          reason: 'busy',
-        }).catch(() => undefined);
+          reason: 'busy' as const,
+        };
+        const channelNames = currentUserId
+          ? [getUserCallChannelName(payload.caller.id), getUserCallChannelName(currentUserId)]
+          : [getUserCallChannelName(payload.caller.id)];
+
+        void broadcastDirectCallSignalBurst(channelNames, 'call:reject', rejectPayload, 3).catch(
+          () => undefined,
+        );
         return;
       }
 
@@ -643,6 +738,7 @@ export function useCallManager({
         video: payload.video,
         isGroup: false,
         isInitiator: false,
+        canModerateMeeting: false,
         peerUserId: payload.caller.id,
         peerLabel: payload.caller.username,
         peerAvatar: payload.caller.avatar,
@@ -675,10 +771,12 @@ export function useCallManager({
         },
       );
 
+      bindDirectCallPeerChannel(payload.caller.id);
       armIncomingCallTimeout(payload);
     },
     [
       armIncomingCallTimeout,
+      bindDirectCallPeerChannel,
       clearCallSignalTimers,
       currentUserId,
       disconnectRoom,
@@ -751,7 +849,14 @@ export function useCallManager({
     async (payload: { callId: string; conversationId: string; reason?: 'declined' | 'busy' }) => {
       const active = sessionRef.current;
 
-      if (active.phase !== 'outgoing' || active.callId !== payload.callId) {
+      if (
+        active.isGroup ||
+        active.callId !== payload.callId ||
+        (active.conversationId &&
+          payload.conversationId &&
+          active.conversationId !== payload.conversationId) ||
+        (active.phase !== 'outgoing' && active.phase !== 'connecting')
+      ) {
         return;
       }
 
@@ -759,6 +864,7 @@ export function useCallManager({
         return;
       }
 
+      logCallDebug('[Calls] Remote reject handled', payload.callId);
       clearCallSignalTimers();
       seenCallIdsRef.current.add(payload.callId);
       const context = snapshotCallContext();
@@ -776,7 +882,14 @@ export function useCallManager({
     async (payload: { callId: string; conversationId: string }) => {
       const active = sessionRef.current;
 
-      if (active.phase !== 'incoming' || active.callId !== payload.callId) {
+      if (
+        active.isGroup ||
+        active.callId !== payload.callId ||
+        (active.conversationId &&
+          payload.conversationId &&
+          active.conversationId !== payload.conversationId) ||
+        (active.phase !== 'incoming' && active.phase !== 'connecting')
+      ) {
         return;
       }
 
@@ -784,12 +897,14 @@ export function useCallManager({
         return;
       }
 
+      logCallDebug('[Calls] Remote cancel handled', payload.callId);
+      clearCallSignalTimers();
       seenCallIdsRef.current.add(payload.callId);
       const context = snapshotCallContext();
       resetSession();
       void writeCallLogSnapshot(context, 'missed', 0);
     },
-    [resetSession, snapshotCallContext, writeCallLogSnapshot],
+    [clearCallSignalTimers, resetSession, snapshotCallContext, writeCallLogSnapshot],
   );
 
   const handleRemoteEnd = useCallback(
@@ -872,17 +987,23 @@ export function useCallManager({
       }
 
       const active = sessionRef.current;
-      const isActiveHost =
+      const isActiveModerator =
         active.isGroup &&
         active.conversationId === payload.conversationId &&
         (active.phase === 'active' || active.phase === 'connecting') &&
-        active.isInitiator;
+        isMeetingModerator(active);
 
-      if (!isActiveHost && active.meetingBanner?.conversationId !== payload.conversationId) {
+      if (!isActiveModerator) {
         return;
       }
 
       upsertJoinRequest(payload);
+
+      void listMeetingJoinRequests(payload.conversationId).then((result) => {
+        if (result.ok) {
+          setPendingJoinRequests(result.data);
+        }
+      });
     },
     [currentUserId, upsertJoinRequest],
   );
@@ -903,6 +1024,7 @@ export function useCallManager({
         video,
         isGroup: true,
         isInitiator: false,
+        canModerateMeeting: tokenResult.data.canModerateMeeting === true,
         peerUserId: null,
         peerLabel: conversation.title,
         peerAvatar: conversation.avatarUrl,
@@ -994,6 +1116,7 @@ export function useCallManager({
         video,
         isGroup: true,
         isInitiator: false,
+        canModerateMeeting: false,
         peerUserId: null,
         peerLabel: conversation.title,
         peerAvatar: conversation.avatarUrl,
@@ -1010,7 +1133,7 @@ export function useCallManager({
     async (requestId: string, approved: boolean) => {
       const active = sessionRef.current;
 
-      if (!currentUserId || !active.conversationId || !active.isGroup) {
+      if (!currentUserId || !active.conversationId || !active.isGroup || !isMeetingModerator(active)) {
         return;
       }
 
@@ -1100,7 +1223,7 @@ export function useCallManager({
   const refreshMeetingJoinRequests = useCallback(async () => {
     const active = sessionRef.current;
 
-    if (!active.isGroup || !active.isInitiator || !active.conversationId) {
+    if (!active.isGroup || !active.conversationId || !isMeetingModerator(active)) {
       return;
     }
 
@@ -1294,7 +1417,7 @@ export function useCallManager({
   useEffect(() => {
     if (
       !session.isGroup ||
-      !session.isInitiator ||
+      !isMeetingModerator(session) ||
       (session.phase !== 'active' && session.phase !== 'connecting')
     ) {
       return;
@@ -1310,6 +1433,7 @@ export function useCallManager({
     };
   }, [
     refreshMeetingJoinRequests,
+    session.canModerateMeeting,
     session.conversationId,
     session.isGroup,
     session.isInitiator,
@@ -1400,6 +1524,7 @@ export function useCallManager({
         video,
         isGroup: false,
         isInitiator: true,
+        canModerateMeeting: false,
         peerUserId: conversation.peerUserId,
         peerLabel: conversation.title,
         peerAvatar: conversation.avatarUrl,
@@ -1448,6 +1573,7 @@ export function useCallManager({
           });
       };
 
+      bindDirectCallPeerChannel(conversation.peerUserId!);
       clearCallSignalTimers();
       sendInvite();
       setBusy(false);
@@ -1485,6 +1611,7 @@ export function useCallManager({
       }, OUTGOING_RING_MS);
     },
     [
+      bindDirectCallPeerChannel,
       clearCallSignalTimers,
       currentUserAvatar,
       currentUserId,
@@ -1623,6 +1750,36 @@ export function useCallManager({
     reportError,
   ]);
 
+  const deliverDirectCallEndSignal = useCallback(
+    async (peerUserId: string, event: 'call:reject' | 'call:cancel', payload: unknown) => {
+      const ready = await ensureCallSignalingReady();
+
+      if (!ready) {
+        throw new Error(formatCallSignalingError());
+      }
+
+      if (!currentUserId) {
+        throw new Error('Sign in again to manage calls.');
+      }
+
+      const channelNames = [
+        getUserCallChannelName(peerUserId),
+        getUserCallChannelName(currentUserId),
+      ];
+
+      await broadcastDirectCallSignalBurst(channelNames, event, payload, 4);
+
+      if (event === 'call:reject') {
+        try {
+          await broadcastDirectCallSignalBurst(channelNames, 'call:declined', payload, 2);
+        } catch {
+          // Primary reject already sent.
+        }
+      }
+    },
+    [currentUserId, ensureCallSignalingReady],
+  );
+
   const rejectIncomingCall = useCallback(async () => {
     const active = sessionRef.current;
 
@@ -1634,20 +1791,36 @@ export function useCallManager({
       return;
     }
 
+    clearCallSignalTimers();
+
     const context = snapshotCallContext();
     const { callId, conversationId, peerUserId } = active;
 
     seenCallIdsRef.current.add(callId);
+    void writeCallLogSnapshot(context, 'declined', 0);
     resetSession();
 
-    void sendSignalWithRetries(getUserCallChannelName(peerUserId), 'call:reject', {
-      callId,
-      conversationId,
-      reason: 'declined',
-    }).catch(() => undefined);
-
-    void writeCallLogSnapshot(context, 'declined', 0);
-  }, [resetSession, snapshotCallContext, writeCallLogSnapshot]);
+    try {
+      await deliverDirectCallEndSignal(peerUserId, 'call:reject', {
+        callId,
+        conversationId,
+        reason: 'declined',
+      });
+    } catch (error) {
+      logCallDebug(
+        '[Calls] Reject signal failed',
+        error instanceof Error ? error.message : error,
+      );
+      reportError(formatCallSignalingError());
+    }
+  }, [
+    clearCallSignalTimers,
+    deliverDirectCallEndSignal,
+    reportError,
+    resetSession,
+    snapshotCallContext,
+    writeCallLogSnapshot,
+  ]);
 
   const cancelOutgoingCall = useCallback(async () => {
     const active = sessionRef.current;
@@ -1666,25 +1839,39 @@ export function useCallManager({
     const { callId, conversationId, peerUserId } = active;
 
     seenCallIdsRef.current.add(callId);
+    void writeCallLogSnapshot(context, 'cancelled', 0);
     resetSession();
 
-    void sendSignalWithRetries(getUserCallChannelName(peerUserId), 'call:cancel', {
-      callId,
-      conversationId,
-    }).catch(() => undefined);
-
-    void writeCallLogSnapshot(context, 'cancelled', 0);
-  }, [clearCallSignalTimers, resetSession, snapshotCallContext, writeCallLogSnapshot]);
+    try {
+      await deliverDirectCallEndSignal(peerUserId, 'call:cancel', {
+        callId,
+        conversationId,
+      });
+    } catch (error) {
+      logCallDebug(
+        '[Calls] Cancel signal failed',
+        error instanceof Error ? error.message : error,
+      );
+      reportError(formatCallSignalingError());
+    }
+  }, [
+    clearCallSignalTimers,
+    deliverDirectCallEndSignal,
+    reportError,
+    resetSession,
+    snapshotCallContext,
+    writeCallLogSnapshot,
+  ]);
 
   const endActiveCall = useCallback(async () => {
     const active = sessionRef.current;
 
-    if (active.phase === 'outgoing') {
+    if (active.phase === 'outgoing' || (active.phase === 'connecting' && active.isInitiator)) {
       await cancelOutgoingCall();
       return;
     }
 
-    if (active.phase === 'incoming') {
+    if (active.phase === 'incoming' || (active.phase === 'connecting' && !active.isInitiator)) {
       await rejectIncomingCall();
       return;
     }
@@ -1702,13 +1889,13 @@ export function useCallManager({
       conversationId,
       peerUserId,
       isGroup,
-      isInitiator,
     } = active;
+    const shouldEndMeetingForAll = isGroup && isMeetingModerator(active);
 
     resetSession();
 
     if (isGroup) {
-      if (isInitiator) {
+      if (shouldEndMeetingForAll) {
         void endCallMeeting(conversationId).catch(() => undefined);
         void broadcastCallEvent(getHubCallChannelName(conversationId), 'call:meeting-ended', {
           callId,
@@ -1824,6 +2011,7 @@ export function useCallManager({
         video,
         isGroup: true,
         isInitiator: true,
+        canModerateMeeting: readCanModerateMeeting(tokenResult.data, true),
         peerUserId: null,
         peerLabel: conversation.title,
         peerAvatar: conversation.avatarUrl,
@@ -1834,6 +2022,7 @@ export function useCallManager({
 
       try {
         await connectLiveKit(tokenResult.data, video);
+        void refreshMeetingJoinRequests();
       } catch (error) {
         reportError('Could not start the meeting. Please try again.');
         await resetSession();
@@ -1847,6 +2036,7 @@ export function useCallManager({
       currentUserId,
       currentUserLabel,
       ensureCallSignalingReady,
+      refreshMeetingJoinRequests,
       reportError,
       resetSession,
     ],
@@ -1896,6 +2086,7 @@ export function useCallManager({
           video,
           isGroup: true,
           isInitiator: false,
+          canModerateMeeting: tokenResult.data.canModerateMeeting === true,
           peerUserId: null,
           peerLabel: conversation.title,
           peerAvatar: conversation.avatarUrl,
@@ -1905,6 +2096,9 @@ export function useCallManager({
         });
 
         await connectLiveKit(tokenResult.data, video);
+        if (tokenResult.data.canModerateMeeting) {
+          void refreshMeetingJoinRequests();
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to join the meeting.';
 
@@ -1925,11 +2119,25 @@ export function useCallManager({
         setBusy(false);
       }
     },
-    [connectLiveKit, currentUserId, reportError, resetSession, submitMeetingJoinRequest],
+    [connectLiveKit, currentUserId, refreshMeetingJoinRequests, reportError, resetSession, submitMeetingJoinRequest],
   );
 
   const dismissMeetingBanner = useCallback(() => {
+    const banner = sessionRef.current.meetingBanner;
+
     setSession((current) => ({ ...current, meetingBanner: null }));
+
+    if (banner?.conversationId && banner.callId) {
+      void declineCallMeetingInvite({
+        conversationId: banner.conversationId,
+        callId: banner.callId,
+      }).catch((error) => {
+        logCallDebug(
+          '[Calls] Meeting invite decline failed',
+          error instanceof Error ? error.message : error,
+        );
+      });
+    }
   }, []);
 
   const toggleMic = useCallback(async () => {
@@ -1978,12 +2186,8 @@ export function useCallManager({
   }, [cameraEnabled, reportError]);
 
   const toggleScreenShare = useCallback(async () => {
+    const mediasoupSession = mediasoupRef.current;
     const room = roomRef.current;
-
-    if (!room) {
-      return;
-    }
-
     const next = !screenShareEnabled;
 
     if (next) {
@@ -1996,6 +2200,21 @@ export function useCallManager({
     }
 
     try {
+      if (mediasoupSession) {
+        await mediasoupSession.setScreenShareEnabled(next);
+        setScreenShareEnabled(mediasoupSession.isScreenShareEnabled());
+        setMediasoupLocalVideo(
+          mediasoupSession.getScreenShareStream() ?? mediasoupSession.getLocalVideoStream(),
+        );
+        logCallDebug(next ? '[Calls] Mediasoup screen sharing started' : '[Calls] Mediasoup screen sharing stopped');
+        return;
+      }
+
+      if (!room) {
+        reportError('Screen sharing is not available for this call yet.');
+        return;
+      }
+
       await room.localParticipant.setScreenShareEnabled(next, {
         audio: true,
       });

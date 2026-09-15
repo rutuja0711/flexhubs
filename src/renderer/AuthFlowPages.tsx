@@ -7,19 +7,42 @@ import {
   verifyPasswordResetCode,
 } from './authExtrasApi';
 import { storeAuth } from './authApi';
-import { AppLogoHorizontal } from './brand/AppLogo';
+import { AppLogoHorizontal, AppLogoWhite, FlexhubsSymbolSvg } from './brand/AppLogo';
 import { readInviteRegistrationEmail } from '../shared/auth';
-import { FiMessageSquare, FiShield, FiUsers, FiMoon, FiSun } from 'react-icons/fi';
+import {
+  FiMessageSquare,
+  FiShield,
+  FiUsers,
+  FiMoon,
+  FiSun,
+  FiMail,
+  FiLock,
+  FiZap,
+  FiMic,
+  FiCheckCircle,
+  FiArrowLeft,
+} from 'react-icons/fi';
 import { useTheme } from './theme/ThemeProvider';
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const RESEND_SECONDS = 20;
 
-const inputClassName =
-  'w-full rounded-[10px] border border-app-border bg-app-surface-input px-3.5 py-3 text-app-text outline-none transition-colors placeholder:text-app-placeholder focus:border-app-border-strong';
+export const inputClassName =
+  'w-full rounded-xl border border-app-border-strong bg-white px-3.5 py-3 text-app-text shadow-sm outline-none transition-all placeholder:text-app-placeholder focus:border-accent focus:ring-2 focus:ring-accent/15 dark:border-app-border dark:bg-app-surface-input dark:shadow-none dark:focus:ring-accent/20';
 
-const submitClassName =
-  'mt-1 w-full rounded-[10px] border-none bg-accent px-4 py-3.5 text-[0.9375rem] font-semibold text-white transition-colors hover:bg-accent-hover disabled:opacity-70';
+export const submitClassName =
+  'w-full rounded-xl border-none bg-gradient-to-r from-[#943853] via-[#802D45] to-[#6a2337] px-4 py-3.5 text-[0.9375rem] font-semibold text-white shadow-lg shadow-accent/20 transition-all hover:brightness-110 active:scale-[0.99] disabled:opacity-60 disabled:cursor-not-allowed dark:shadow-accent/25';
+
+export const formAlertClassName =
+  'flex items-start gap-2.5 rounded-xl border border-red-200 bg-red-50 px-3.5 py-3 text-xs leading-snug text-red-700 dark:border-accent/35 dark:bg-accent/10 dark:text-accent-soft';
+
+export const formErrorClassName =
+  'text-[11px] leading-snug text-red-600 dark:text-accent-soft';
+
+export const formSuccessClassName = 'text-xs text-emerald-600 dark:text-emerald-400';
+
+export const authSecondaryButtonClassName =
+  'flex items-center justify-center gap-2 rounded-xl border border-app-border bg-white px-3 py-2.5 text-xs font-semibold text-app-text shadow-sm transition-all hover:border-accent hover:bg-accent/[0.04] hover:text-accent active:scale-[0.98] dark:border-app-border dark:bg-app-surface-input dark:shadow-none dark:hover:bg-accent/5';
 
 type ForgotStep = 'email' | 'code' | 'password';
 
@@ -64,26 +87,46 @@ export function RegisterPage({
   return (
     <AuthShell
       title="Create account"
-      subtitle="Start with a personal account, create a company workspace, or join with an invite link."
+      subtitle="Choose the account type that best fits your workflow."
       onBack={onBack}
     >
-      <div className="space-y-4 text-sm leading-relaxed text-app-muted">
-        <p>
-          Personal accounts let you chat with friends by username. Workspaces are for teams that need
-          org hubs, roles, and billing.
-        </p>
+      <div className="space-y-4">
         {onCreatePersonalAccount ? (
-          <button type="button" className={submitClassName} onClick={onCreatePersonalAccount}>
-            Create a personal account
+          <button
+            type="button"
+            className="group relative flex w-full flex-col items-start gap-1 rounded-2xl border border-app-border bg-white p-4 text-left shadow-sm transition-all hover:border-accent hover:bg-accent/[0.04] dark:bg-app-surface-input dark:shadow-none dark:hover:bg-accent/5"
+            onClick={onCreatePersonalAccount}
+          >
+            <div className="flex items-center gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/15 text-accent">
+                <FiUsers size={16} />
+              </span>
+              <span className="text-sm font-semibold text-app-text">Personal Account</span>
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-app-muted">
+              Connect and chat with friends or colleagues 1-on-1 and in direct groups by username.
+            </p>
           </button>
         ) : null}
+
         {onCreateWorkspace ? (
           <button
             type="button"
-            className="w-full rounded-[10px] border border-app-border bg-app-surface-input px-4 py-3.5 text-[0.9375rem] font-semibold text-app-text transition-colors hover:bg-app-chat-hover"
+            className="group relative flex w-full flex-col items-start gap-1 rounded-2xl border border-app-border bg-white p-4 text-left shadow-sm transition-all hover:border-accent hover:bg-accent/[0.04] dark:bg-app-surface-input dark:shadow-none dark:hover:bg-accent/5"
             onClick={onCreateWorkspace}
           >
-            Create a workspace
+            <div className="flex items-center gap-2">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent text-white shadow-sm shadow-accent/40">
+                <FiShield size={16} />
+              </span>
+              <span className="text-sm font-semibold text-app-text">Company Workspace</span>
+              <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent">
+                For Teams
+              </span>
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-app-muted">
+              Dedicated organization hubs, channels, admin controls, team billing, and role management.
+            </p>
           </button>
         ) : null}
       </div>
@@ -282,15 +325,22 @@ export function ForgotPasswordPage({
     return (
       <AuthShell
         title="Reset password"
-        subtitle="Enter the email address linked to your FlexHubs account. We'll send a 6-digit code to verify it's you."
+        subtitle="Enter your email to receive a 6-digit verification code."
         onBack={onBack}
       >
         <form className="space-y-4" onSubmit={(event) => void handleSendCode(event)}>
-          <Field label="Email" value={email} type="email" onChange={setEmail} placeholder="you@company.com" />
-          {message ? <p className="text-sm text-[#3ecf8e]">{message}</p> : null}
-          {error ? <p className="text-sm text-accent-soft">{error}</p> : null}
+          <Field
+            label="Email address"
+            icon={<FiMail size={16} />}
+            value={email}
+            type="email"
+            onChange={setEmail}
+            placeholder="you@company.com"
+          />
+          {message ? <p className={formSuccessClassName}>{message}</p> : null}
+          {error ? <p className={formErrorClassName}>{error}</p> : null}
           <button type="submit" disabled={loading} className={submitClassName}>
-            {loading ? 'Sending...' : 'Send reset code'}
+            {loading ? 'Sending code...' : 'Send reset code'}
           </button>
         </form>
       </AuthShell>
@@ -300,29 +350,37 @@ export function ForgotPasswordPage({
   if (step === 'code') {
     return (
       <AuthShell
-        title="Verify your email"
-        subtitle="Enter your account email again and the 6-digit code we sent. Codes expire after 10 minutes."
+        title="Verify reset code"
+        subtitle="Enter the 6-digit code sent to your email."
         onBack={onBack}
       >
         <form className="space-y-4" onSubmit={(event) => void handleVerifyCode(event)}>
-          <Field label="Email" value={email} type="email" onChange={setEmail} placeholder="you@company.com" />
           <Field
-            label="Reset code"
+            label="Email address"
+            icon={<FiMail size={16} />}
+            value={email}
+            type="email"
+            onChange={setEmail}
+            placeholder="you@company.com"
+          />
+          <Field
+            label="6-Digit Reset Code"
+            icon={<FiShield size={16} />}
             value={code}
             onChange={setCode}
-            placeholder="6-digit code"
+            placeholder="123456"
             inputMode="numeric"
             autoComplete="one-time-code"
           />
-          {message ? <p className="text-sm text-[#3ecf8e]">{message}</p> : null}
-          {error ? <p className="text-sm text-accent-soft">{error}</p> : null}
+          {message ? <p className={formSuccessClassName}>{message}</p> : null}
+          {error ? <p className={formErrorClassName}>{error}</p> : null}
           <button type="submit" disabled={loading} className={submitClassName}>
             {loading ? 'Verifying...' : 'Verify code'}
           </button>
-          <div className="flex flex-col items-center gap-2 pt-2 text-sm">
+          <div className="flex flex-col items-center gap-2 pt-2 text-xs">
             <button
               type="button"
-              className="text-accent hover:opacity-85"
+              className="text-accent hover:underline"
               onClick={() => {
                 setStep('email');
                 setCode('');
@@ -338,7 +396,7 @@ export function ForgotPasswordPage({
               className="text-app-muted hover:text-app-text disabled:opacity-50"
               onClick={() => void handleResend()}
             >
-              {resendSeconds > 0 ? `Resend in ${resendSeconds}s` : "Didn't get a code? Resend"}
+              {resendSeconds > 0 ? `Resend code in ${resendSeconds}s` : "Didn't get a code? Resend"}
             </button>
           </div>
         </form>
@@ -348,8 +406,8 @@ export function ForgotPasswordPage({
 
   return (
     <AuthShell
-      title="Choose a new password"
-      subtitle={`Code verified for ${email.trim()}. Enter and confirm your new password below.`}
+      title="Choose new password"
+      subtitle={`Code verified for ${email.trim()}. Enter your new password.`}
       onBack={onBack}
     >
       <form className="space-y-4" onSubmit={(event) => void handleResetPassword(event)}>
@@ -369,14 +427,14 @@ export function ForgotPasswordPage({
           onToggle={() => setShowConfirmPassword((current) => !current)}
           onChange={setConfirmPassword}
         />
-        {message ? <p className="text-sm text-[#3ecf8e]">{message}</p> : null}
-        {error ? <p className="text-sm text-accent-soft">{error}</p> : null}
+        {message ? <p className={formSuccessClassName}>{message}</p> : null}
+        {error ? <p className={formErrorClassName}>{error}</p> : null}
         <button type="submit" disabled={loading} className={submitClassName}>
           {loading ? 'Saving...' : 'Set new password'}
         </button>
         <button
           type="button"
-          className="w-full text-sm text-accent hover:opacity-85"
+          className="w-full text-center text-xs text-accent hover:underline"
           onClick={() => {
             setStep('code');
             setCodeVerified(false);
@@ -488,8 +546,10 @@ export function InviteRegisterPage({
 
   if (loadingInvite) {
     return (
-      <AuthShell title="Accept invite" subtitle="Loading invitation..." onBack={onBack}>
-        <p className="text-sm text-app-muted">Checking your invitation link...</p>
+      <AuthShell title="Accept invite" subtitle="Loading invitation details..." onBack={onBack}>
+        <div className="flex items-center justify-center py-8">
+          <div className="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+        </div>
       </AuthShell>
     );
   }
@@ -497,25 +557,55 @@ export function InviteRegisterPage({
   if (inviteError) {
     return (
       <AuthShell title="Accept invite" subtitle="This invitation could not be loaded." onBack={onBack}>
-        <p className="text-sm text-accent-soft">{inviteError}</p>
+        <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700 dark:border-accent/30 dark:bg-accent/10 dark:text-accent-soft">
+          {inviteError}
+        </div>
       </AuthShell>
     );
   }
 
   return (
-    <AuthShell title="Accept invite" subtitle="Complete your account to join the workspace." onBack={onBack}>
+    <AuthShell
+      title="Accept invite"
+      subtitle="Complete your account details to join the workspace."
+      onBack={onBack}
+    >
       <form className="space-y-4" onSubmit={(event) => void handleSubmit(event)}>
-        <Field label="Work email" value={email} onChange={setEmail} type="email" autoComplete="email" />
-        <Field label="Username" value={username} onChange={setUsername} autoComplete="username" />
-        <Field label="Password" value={password} onChange={setPassword} type="password" autoComplete="new-password" />
+        <Field
+          label="Work email"
+          icon={<FiMail size={16} />}
+          value={email}
+          onChange={setEmail}
+          type="email"
+          autoComplete="email"
+        />
+        <Field
+          label="Username"
+          icon={<FiUsers size={16} />}
+          value={username}
+          onChange={setUsername}
+          autoComplete="username"
+          placeholder="your_handle"
+        />
+        <Field
+          label="Password"
+          icon={<FiLock size={16} />}
+          value={password}
+          onChange={setPassword}
+          type="password"
+          autoComplete="new-password"
+          placeholder="At least 8 characters"
+        />
         <Field
           label="Confirm password"
+          icon={<FiLock size={16} />}
           value={confirmPassword}
           onChange={setConfirmPassword}
           type="password"
           autoComplete="new-password"
+          placeholder="Re-enter password"
         />
-        {error ? <p className="text-sm text-accent-soft">{error}</p> : null}
+        {error ? <p className={formErrorClassName}>{error}</p> : null}
         <button type="submit" disabled={loading} className={submitClassName}>
           {loading ? 'Joining...' : 'Create account & join'}
         </button>
@@ -524,61 +614,166 @@ export function InviteRegisterPage({
   );
 }
 
+/**
+ * Rich Left Showcase Panel featuring Flexhubs Brand & Interactive Workspace Mockup
+ */
 export function BrandingPanel() {
   const features = [
     {
-      icon: FiMessageSquare,
-      title: 'Real-time messaging',
-      description: 'DMs, groups, and organization hubs in one place.',
+      icon: FiZap,
+      title: 'Ultra-fast Real-time Messaging',
+      description: 'DMs, group channels, and high-frequency sync.',
     },
     {
-      icon: FiUsers,
-      title: 'Built for teams',
-      description: 'Invite teammates and keep conversations organized.',
+      icon: FiMic,
+      title: 'Voice & Video Hubs',
+      description: 'Low-latency spatial audio rooms & screen sharing.',
     },
     {
       icon: FiShield,
-      title: 'Workspace controls',
-      description: 'Roles, invites, and notification preferences.',
+      title: 'Enterprise Workspace Security',
+      description: 'Role-based access, audit trails & encryption.',
     },
   ];
 
   return (
-    <div className="relative hidden min-h-full flex-col justify-between overflow-hidden bg-gradient-to-br from-accent via-accent-hover to-accent-active p-10 text-white lg:flex">
-      <div>
-        <AppLogoHorizontal className="mb-10 h-12 brightness-0 invert" />
-        <h1 className="text-3xl font-bold leading-tight">
-          Connect, chat, and collaborate in real time
+    <div className="relative hidden w-[48%] flex-col justify-between overflow-hidden bg-gradient-to-br from-[#1b0b14] via-[#12070e] to-[#090307] p-10 text-white lg:flex select-none">
+      {/* Ambient background glow orbs */}
+      <div className="pointer-events-none absolute -top-24 -left-24 h-96 w-96 rounded-full bg-accent/25 blur-[100px]" />
+      <div className="pointer-events-none absolute top-1/2 -right-24 h-80 w-80 rounded-full bg-[#943853]/20 blur-[90px]" />
+      <div className="pointer-events-none absolute -bottom-20 left-1/4 h-72 w-72 rounded-full bg-accent/15 blur-[80px]" />
+
+      {/* Subtle background tech grid */}
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.04]"
+        style={{
+          backgroundImage:
+            'radial-gradient(circle at 1px 1px, white 1px, transparent 0)',
+          backgroundSize: '24px 24px',
+        }}
+      />
+
+      {/* Top Header */}
+      <div className="relative z-10">
+        <div className="flex items-center">
+          <AppLogoWhite className="h-11" />
+        </div>
+
+        <h1 className="mt-8 text-3xl font-extrabold tracking-tight text-white leading-tight">
+          Connect, chat, and collaborate{' '}
+          <span className="bg-gradient-to-r from-[#e3829b] via-[#f7b5c6] to-white bg-clip-text text-transparent">
+            in real time
+          </span>
         </h1>
-        <p className="mt-4 max-w-md text-base leading-relaxed text-white/85">
-          Flexhubs brings your team conversations, hubs, and notifications together in a focused
-          workspace.
+        <p className="mt-3 max-w-md text-sm leading-relaxed text-white/75">
+          Flexhubs brings your team conversations, audio hubs, and workspaces together into one seamless, high-performance client.
         </p>
+
+        {/* Realistic Desktop App Mockup Card */}
+        <div className="mt-7 relative overflow-hidden rounded-2xl border border-white/15 bg-white/[0.04] p-4 backdrop-blur-xl shadow-2xl">
+          {/* Mock Window Bar */}
+          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+            <div className="flex items-center gap-1.5">
+              <div className="h-2.5 w-2.5 rounded-full bg-[#ff5f56]/80" />
+              <div className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e]/80" />
+              <div className="h-2.5 w-2.5 rounded-full bg-[#27c93f]/80" />
+              <span className="ml-2 text-[11px] font-medium text-white/60">
+                ⚡️ Acme Engineering Hub
+              </span>
+            </div>
+            <span className="flex items-center gap-1 text-[10px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
+              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              18 Online
+            </span>
+          </div>
+
+          {/* Mock Chat Feed Preview */}
+          <div className="mt-3.5 space-y-3 text-xs">
+            {/* Message 1 */}
+            <div className="flex items-start gap-2.5">
+              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500 to-indigo-600 text-[11px] font-bold text-white shadow-sm">
+                AK
+              </div>
+              <div className="flex-1 rounded-xl bg-white/[0.06] p-2.5 border border-white/5">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-white/95">Alex Kim</span>
+                  <span className="text-[10px] text-white/40">11:42 AM</span>
+                </div>
+                <p className="mt-1 text-white/80 leading-snug">
+                  Just deployed the real-time audio rooms to production! 🚀
+                </p>
+                <div className="mt-2 flex items-center gap-1.5">
+                  <span className="inline-flex items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] text-white/90">
+                    🔥 6
+                  </span>
+                  <span className="inline-flex items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] text-white/90">
+                    🎉 4
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Active Voice Hub Pill */}
+            <div className="flex items-center justify-between rounded-xl bg-accent/20 border border-accent/35 px-3 py-2">
+              <div className="flex items-center gap-2">
+                <div className="flex h-6 w-6 items-center justify-center rounded-md bg-accent text-white">
+                  <FiMic size={12} />
+                </div>
+                <div>
+                  <p className="text-[11px] font-semibold text-white">Sprint Planning Room</p>
+                  <p className="text-[10px] text-white/60">3 members connected</p>
+                </div>
+              </div>
+              <div className="flex items-center gap-1">
+                <span className="h-2 w-1 rounded-full bg-accent-soft animate-bounce" />
+                <span className="h-3.5 w-1 rounded-full bg-white animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="h-2 w-1 rounded-full bg-accent-soft animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
-      <div className="space-y-5">
+
+      {/* Feature Highlights Grid */}
+      <div className="relative z-10 space-y-3.5 pt-6">
         {features.map((feature) => (
-          <div key={feature.title} className="flex gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/12">
-              <feature.icon size={18} />
+          <div
+            key={feature.title}
+            className="flex items-center gap-3.5 rounded-xl border border-white/5 bg-white/[0.03] p-2.5 backdrop-blur-sm transition-colors hover:bg-white/[0.06]"
+          >
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-[#5e1f30] text-white shadow-md shadow-accent/20">
+              <feature.icon size={16} />
             </div>
             <div>
-              <p className="font-semibold">{feature.title}</p>
-              <p className="mt-0.5 text-sm text-white/80">{feature.description}</p>
+              <p className="text-xs font-semibold text-white/95">{feature.title}</p>
+              <p className="text-[11px] text-white/65 leading-tight">{feature.description}</p>
             </div>
           </div>
         ))}
+
+        {/* Security / Quality stamp */}
+        <div className="flex items-center justify-between pt-2 text-[11px] text-white/50 border-t border-white/10">
+          <span className="flex items-center gap-1">
+            <FiCheckCircle size={12} className="text-emerald-400" /> End-to-end encrypted
+          </span>
+          <span>99.9% Real-time SLA</span>
+          <span>High-performance Hubs</span>
+        </div>
       </div>
     </div>
   );
 }
 
+/**
+ * Universal Authentication Page Shell
+ */
 export function AuthShell({
   title,
   subtitle,
   onBack,
   children,
   headerContent,
-  backLabel = '← Back to login',
+  backLabel = 'Back to sign in',
 }: {
   title?: string;
   subtitle?: string;
@@ -590,28 +785,59 @@ export function AuthShell({
   const { theme, toggleTheme } = useTheme();
 
   return (
-    <div className="flex min-h-full bg-app-bg">
+    <div className="flex h-screen w-full overflow-hidden bg-app-bg-login text-app-text">
       <BrandingPanel />
-      <div className="flex flex-1 items-center justify-center p-6 relative">
-        <button
-          type="button"
-          aria-label="Toggle theme"
-          className="absolute top-6 right-6 flex h-9 w-9 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
-          onClick={toggleTheme}
-        >
-          {theme === 'dark' ? <FiSun size={18} /> : <FiMoon size={18} />}
-        </button>
 
-        <div className="w-full max-w-[440px] rounded-[20px] border border-app-border bg-app-surface p-8 shadow-app">
+      {/* Right Form Area */}
+      <div className="relative flex flex-1 flex-col items-center justify-center overflow-y-auto bg-app-bg-login p-6 sm:p-10">
+        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white via-transparent to-app-inset/40 dark:hidden" />
+        <div className="pointer-events-none absolute top-10 right-10 h-64 w-64 rounded-full bg-accent/[0.06] blur-[90px] dark:bg-accent/10" />
+
+        {/* Theme Toggle Button */}
+        <div className="absolute top-6 right-6 z-20">
+          <button
+            type="button"
+            aria-label="Toggle theme"
+            className="flex h-10 w-10 items-center justify-center rounded-xl border border-app-border bg-app-surface text-app-muted shadow-sm transition-all hover:border-app-border-strong hover:text-app-text hover:shadow-md active:scale-95 dark:hover:shadow"
+            onClick={toggleTheme}
+            title={theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+          >
+            {theme === 'dark' ? <FiSun size={17} className="text-amber-400" /> : <FiMoon size={17} className="text-app-text" />}
+          </button>
+        </div>
+
+        {/* Main Form Card */}
+        <div className="relative z-10 w-full max-w-[440px] rounded-[24px] border border-app-border bg-app-surface p-7 shadow-[0_20px_50px_rgba(15,23,42,0.08)] sm:p-9 dark:border-app-border dark:bg-app-surface/95 dark:shadow-2xl dark:backdrop-blur-md">
+          {/* Back Action */}
           {onBack ? (
-            <button type="button" className="mb-4 text-sm text-app-muted hover:text-app-text" onClick={onBack}>
-              {backLabel}
+            <button
+              type="button"
+              className="mb-4 inline-flex items-center gap-1.5 text-xs font-medium text-app-muted transition-colors hover:text-app-text"
+              onClick={onBack}
+            >
+              <FiArrowLeft size={14} /> {backLabel}
             </button>
           ) : null}
-          <AppLogoHorizontal className="mb-5 h-10 lg:hidden" />
+
+          {/* Mobile Logo Header */}
+          <div className="mb-6 flex justify-center lg:hidden">
+            <AppLogoHorizontal className="h-10" theme={theme === 'dark' ? 'dark' : 'light'} />
+          </div>
+
           {headerContent}
-          {title ? <h1 className="text-2xl font-bold text-app-text">{title}</h1> : null}
-          {subtitle ? <p className="mt-1 mb-6 text-sm text-app-muted">{subtitle}</p> : null}
+          
+          {title ? (
+            <h2 className="text-2xl font-bold tracking-tight text-app-text">
+              {title}
+            </h2>
+          ) : null}
+          
+          {subtitle ? (
+            <p className="mt-1.5 mb-6 text-xs sm:text-sm leading-relaxed text-app-muted">
+              {subtitle}
+            </p>
+          ) : null}
+
           {children}
         </div>
       </div>
@@ -619,7 +845,7 @@ export function AuthShell({
   );
 }
 
-function Field({
+export function Field({
   label,
   value,
   onChange,
@@ -627,6 +853,7 @@ function Field({
   placeholder,
   inputMode,
   autoComplete,
+  icon,
 }: {
   label: string;
   value: string;
@@ -635,24 +862,32 @@ function Field({
   placeholder?: string;
   inputMode?: HTMLAttributes<HTMLInputElement>['inputMode'];
   autoComplete?: string;
+  icon?: ReactNode;
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm font-medium text-app-text">{label}</span>
-      <input
-        type={type}
-        value={value}
-        placeholder={placeholder}
-        inputMode={inputMode}
-        autoComplete={autoComplete}
-        className={inputClassName}
-        onChange={(event) => onChange(event.target.value)}
-      />
+      <span className="mb-1.5 block text-xs font-medium text-app-text">{label}</span>
+      <div className="relative flex items-center">
+        {icon ? (
+          <span className="pointer-events-none absolute left-3.5 text-app-muted">
+            {icon}
+          </span>
+        ) : null}
+        <input
+          type={type}
+          value={value}
+          placeholder={placeholder}
+          inputMode={inputMode}
+          autoComplete={autoComplete}
+          className={`${inputClassName} ${icon ? 'pl-10' : ''}`}
+          onChange={(event) => onChange(event.target.value)}
+        />
+      </div>
     </label>
   );
 }
 
-function PasswordField({
+export function PasswordField({
   label,
   value,
   visible,
@@ -669,19 +904,22 @@ function PasswordField({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-sm font-medium text-app-text">{label}</span>
-      <div className="relative">
+      <span className="mb-1.5 block text-xs font-medium text-app-text">{label}</span>
+      <div className="relative flex items-center">
+        <span className="pointer-events-none absolute left-3.5 text-app-muted">
+          <FiLock size={16} />
+        </span>
         <input
           type={visible ? 'text' : 'password'}
           value={value}
           placeholder={placeholder}
           autoComplete="new-password"
-          className={`${inputClassName} pr-11`}
+          className={`${inputClassName} pl-10 pr-11`}
           onChange={(event) => onChange(event.target.value)}
         />
         <button
           type="button"
-          className="absolute top-1/2 right-3 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border-none bg-transparent text-app-muted transition-colors hover:text-app-text"
+          className="absolute right-3 flex h-7 w-7 items-center justify-center rounded-md text-app-muted transition-colors hover:text-app-text"
           aria-label={visible ? 'Hide password' : 'Show password'}
           onClick={onToggle}
         >

@@ -9,6 +9,7 @@ import {
 } from '../chatApi';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
+import { ConversationSharedFiles } from './ConversationSharedFiles';
 
 type GroupMembersPanelProps = {
   conversation: ConversationItem;
@@ -190,32 +191,35 @@ export function GroupMembersPanel({
   };
 
   return (
-    <div className="flex h-full w-[350px] shrink-0 flex-col border-l border-app-border bg-app-inset font-sans text-app-text">
-      <header className="flex items-start justify-between border-b border-app-border/40 p-5">
+    <div className="flex h-full w-[360px] shrink-0 flex-col border-l border-app-border/70 bg-app-surface/95 backdrop-blur-xl font-sans text-app-text shadow-2xl">
+      <header className="flex items-center justify-between border-b border-app-border/50 px-5 py-4">
         <div className="min-w-0 flex-1">
-          <span className="mb-1 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Group</span>
-          <h2 className="truncate text-lg font-semibold text-app-text">{conversation.title}</h2>
-          <p className="mt-1 text-xs text-app-muted">{members.length} members</p>
+          <span className="block text-[10px] font-bold tracking-wider text-app-muted uppercase">Group Info</span>
+          <h2 className="truncate text-base font-semibold text-app-text tracking-tight">{conversation.title}</h2>
+          <p className="mt-0.5 text-xs text-app-muted">{members.length} members</p>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="rounded-lg p-1.5 text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+          className="flex h-8 w-8 items-center justify-center rounded-xl text-app-muted transition-colors hover:bg-app-inset hover:text-app-text"
           aria-label="Close group panel"
         >
-          <FiX className="text-lg" />
+          <FiX className="text-base" />
         </button>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto p-5">
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <ConversationSharedFiles conversationId={conversation.id} />
+
+        <div className="p-5">
         {isAdmin ? (
           <section className="mb-6">
-            <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Add members</span>
+            <span className="mb-2 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Add members</span>
             <input
               type="text"
               value={query}
               placeholder="Search people..."
-              className="mb-2 w-full rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent"
+              className="mb-2 w-full rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
               onChange={(event) => {
                 const next = event.target.value;
                 setQuery(next);
@@ -224,16 +228,16 @@ export function GroupMembersPanel({
             />
             {searching ? <p className="text-xs text-app-muted">Searching...</p> : null}
             {searchResults.length > 0 ? (
-              <div className="space-y-2">
+              <div className="space-y-2 mt-2">
                 {searchResults.map((person) => (
                   <button
                     key={person.id}
                     type="button"
                     disabled={adding}
-                    className="flex w-full items-center justify-between rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-left text-sm hover:bg-app-chat-hover disabled:opacity-50"
+                    className="flex w-full items-center justify-between rounded-2xl border border-app-border/60 bg-app-card/60 px-3.5 py-2.5 text-left text-sm hover:bg-app-card hover:border-app-border disabled:opacity-50 transition-all"
                     onClick={() => void handleAddMember(person.id)}
                   >
-                    <span className="truncate text-app-text">{person.name}</span>
+                    <span className="truncate text-app-text font-medium">{person.name}</span>
                     <FiUserPlus className="shrink-0 text-accent-soft" />
                   </button>
                 ))}
@@ -245,7 +249,7 @@ export function GroupMembersPanel({
         <section>
           <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Members</span>
           {members.length === 0 ? (
-            <p className="text-sm text-app-muted">No members loaded yet.</p>
+            <p className="text-xs text-app-muted">No members loaded yet.</p>
           ) : (
             <div className="space-y-2">
               {members.map((member) => {
@@ -255,10 +259,10 @@ export function GroupMembersPanel({
                 return (
                   <div
                     key={member.id}
-                    className="flex items-center justify-between gap-2 rounded-xl border border-app-border bg-app-elevated px-3 py-2.5"
+                    className="flex items-center justify-between gap-2 rounded-2xl border border-app-border/60 bg-app-card/50 px-3.5 py-2.5 transition-colors hover:bg-app-card"
                   >
                     <div className="min-w-0 flex-1">
-                      <span className="block truncate text-sm text-app-text">
+                      <span className="block truncate text-sm font-medium text-app-text">
                         {member.name}
                         {isSelf ? ' (you)' : ''}
                       </span>
@@ -271,7 +275,7 @@ export function GroupMembersPanel({
                         <select
                           value={member.role}
                           disabled={Boolean(busyUserId)}
-                          className="rounded-lg border border-app-border bg-app-inset px-2 py-1 text-xs text-app-text outline-none focus:border-accent disabled:opacity-50"
+                          className="rounded-xl border border-app-border/70 bg-app-surface-input px-2.5 py-1 text-xs text-app-text outline-none focus:border-accent disabled:opacity-50 transition-colors"
                           onChange={(event) => void handleRoleChange(member.id, event.target.value)}
                         >
                           {MEMBER_ROLES.map((role) => (
@@ -285,7 +289,7 @@ export function GroupMembersPanel({
                         <button
                           type="button"
                           disabled={Boolean(busyUserId)}
-                          className="flex shrink-0 items-center gap-1 rounded-lg px-2 py-1 text-xs text-accent-soft hover:bg-accent-soft/10 disabled:opacity-50"
+                          className="flex shrink-0 items-center gap-1 rounded-xl px-2.5 py-1 text-xs text-accent-soft hover:bg-accent-soft/10 disabled:opacity-50 transition-colors"
                           onClick={() => void handleRemoveMember(member.id, member.name)}
                         >
                           <FiUserMinus />
@@ -299,6 +303,7 @@ export function GroupMembersPanel({
             </div>
           )}
         </section>
+        </div>
       </div>
     </div>
   );

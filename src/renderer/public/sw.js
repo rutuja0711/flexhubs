@@ -41,7 +41,7 @@ self.addEventListener('push', (event) => {
   event.waitUntil(
     self.registration.showNotification(payload.title || 'Flexhubs', {
       body: payload.body || '',
-      icon: '/icon-256.png',
+      icon: '/logo-symbol.png',
       data: { ...payload, url: targetUrl },
     }),
   );

@@ -86,6 +86,8 @@ export class MediasoupCallSession {
   private recvTransport: Transport | null = null;
   private micProducer: Producer | null = null;
   private cameraProducer: Producer | null = null;
+  private screenProducer: Producer | null = null;
+  private screenStream: MediaStream | null = null;
   private consumers = new Map<string, Consumer>();
   private peers = new Map<string, MediasoupRemotePeer>();
   private localVideoStream: MediaStream | null = null;
@@ -147,6 +149,62 @@ export class MediasoupCallSession {
     }
   }
 
+  async setScreenShareEnabled(enabled: boolean): Promise<void> {
+    if (!this.sendTransport) {
+      throw new Error('Screen sharing is not available for this call.');
+    }
+
+    if (!enabled) {
+      this.screenProducer?.close();
+      this.screenProducer = null;
+      this.screenStream?.getTracks().forEach((track) => track.stop());
+      this.screenStream = null;
+
+      if (this.cameraProducer) {
+        await this.cameraProducer.resume();
+      }
+
+      this.notifyPeersChanged();
+      return;
+    }
+
+    const stream = await navigator.mediaDevices.getDisplayMedia({
+      video: true,
+      audio: true,
+    });
+    const track = stream.getVideoTracks()[0];
+
+    if (!track) {
+      stream.getTracks().forEach((mediaTrack) => mediaTrack.stop());
+      throw new Error('Could not access your screen.');
+    }
+
+    track.onended = () => {
+      void this.setScreenShareEnabled(false);
+    };
+
+    this.screenStream = stream;
+
+    if (this.cameraProducer) {
+      await this.cameraProducer.pause();
+    }
+
+    this.screenProducer = await this.sendTransport.produce({
+      track,
+      appData: { source: 'screen' },
+    });
+
+    this.notifyPeersChanged();
+  }
+
+  isScreenShareEnabled(): boolean {
+    return Boolean(this.screenProducer);
+  }
+
+  getScreenShareStream(): MediaStream | null {
+    return this.screenStream;
+  }
+
   async disconnect(): Promise<void> {
     if (this.closed) {
       return;
@@ -162,6 +220,9 @@ export class MediasoupCallSession {
 
     this.micProducer?.close();
     this.cameraProducer?.close();
+    this.screenProducer?.close();
+    this.screenStream?.getTracks().forEach((track) => track.stop());
+    this.screenStream = null;
 
     for (const consumer of this.consumers.values()) {
       consumer.close();

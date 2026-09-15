@@ -15,7 +15,7 @@ export function CallMessage({ callLog, currentUserId, compact = false }: CallMes
   }
 
   return (
-    <div className="inline-flex min-w-[180px] flex-col rounded-xl border border-app-border/60 bg-app-inset/40 px-3 py-2">
+    <div className="inline-flex min-w-[180px] flex-col rounded-xl bg-app-inset/50 px-3 py-2">
       <p className="text-sm font-medium text-app-text">{label}</p>
       <p className="text-xs capitalize text-app-muted">{callLog.outcome.replace('_', ' ')}</p>
     </div>

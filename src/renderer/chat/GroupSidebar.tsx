@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FiBell, FiChevronDown, FiUserMinus, FiX } from 'react-icons/fi';
+import { mapApiPresenceToStatus, type PresenceStatus } from '../../shared/chat';
+import {
+  formatContactPresenceLabel,
+  mapContactPresenceStatus,
+  presenceDotClass,
+} from '../../shared/contact';
+import { resolveAvatarUrl } from '../../shared/profile';
+import { loadUserPresence } from '../chatApi';
+import { Avatar } from './ChatIcons';
+import { ConversationSharedFiles } from './ConversationSharedFiles';
 import type { ConversationItem } from '../../shared/chat';
 import {
   buildConversationSnoozePayload,
@@ -47,6 +57,54 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 function readRecordString(record: Record<string, unknown> | null, key: string): string {
   const value = record?.[key];
   return typeof value === 'string' ? value : '';
+}
+
+type HubMemberDisplay = {
+  id: string;
+  name: string;
+  bio: string | null;
+  avatarUrl: string | null;
+  avatarInitials: string;
+  role: string;
+  lastSeenAt: string | null;
+  status: string | null;
+};
+
+function initialsFromName(name: string): string {
+  const parts = name.split(/\s+/).filter(Boolean);
+
+  if (parts.length >= 2) {
+    return `${parts[0][0]}${parts[1][0]}`.toUpperCase();
+  }
+
+  return name.slice(0, 2).toUpperCase();
+}
+
+function extractHubMemberDisplay(member: Record<string, unknown>): HubMemberDisplay | null {
+  const user = asRecord(member.user);
+  const id =
+    readRecordString(user, 'id') || readRecordString(member, 'userId') || readRecordString(member, 'id');
+
+  if (!id) {
+    return null;
+  }
+
+  const name =
+    readRecordString(user, 'name') ||
+    readRecordString(user, 'username') ||
+    readRecordString(member, 'username') ||
+    'Member';
+
+  return {
+    id,
+    name,
+    bio: readRecordString(user, 'bio') || null,
+    avatarUrl: user ? resolveAvatarUrl(user) : null,
+    avatarInitials: initialsFromName(name),
+    role: String(member.role ?? 'MEMBER').toUpperCase(),
+    lastSeenAt: readRecordString(user, 'lastSeenAt') || readRecordString(user, 'lastSeen') || null,
+    status: readRecordString(user, 'status') || readRecordString(user, 'presence') || null,
+  };
 }
 
 function extractHubMembers(hub: Record<string, unknown>): Record<string, unknown>[] {
@@ -172,6 +230,65 @@ export function GroupSidebar({
   const [invitesLoading, setInvitesLoading] = useState(false);
   const [revokingInviteId, setRevokingInviteId] = useState<string | null>(null);
   const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
+  const [presenceByUserId, setPresenceByUserId] = useState<Map<string, PresenceStatus>>(new Map());
+  const [loadedHubDetails, setLoadedHubDetails] = useState<Record<string, unknown> | null>(hubDetails);
+
+  useEffect(() => {
+    setLoadedHubDetails(hubDetails);
+  }, [hubDetails]);
+
+  const hubMembers = useMemo(
+    () =>
+      loadedHubDetails
+        ? extractHubMembers(loadedHubDetails)
+            .map(extractHubMemberDisplay)
+            .filter((member): member is HubMemberDisplay => member !== null)
+        : [],
+    [loadedHubDetails],
+  );
+
+  const hubAdmins = useMemo(
+    () => hubMembers.filter((member) => member.role === 'ADMIN' || member.role.includes('OWNER')),
+    [hubMembers],
+  );
+
+  const hubRegularMembers = useMemo(
+    () => hubMembers.filter((member) => !hubAdmins.some((admin) => admin.id === member.id)),
+    [hubAdmins, hubMembers],
+  );
+
+  useEffect(() => {
+    const userIds = hubMembers.map((member) => member.id);
+
+    if (userIds.length === 0) {
+      setPresenceByUserId(new Map());
+      return;
+    }
+
+    let cancelled = false;
+
+    void loadUserPresence(userIds).then((result) => {
+      if (cancelled || !result.ok) {
+        return;
+      }
+
+      const nextPresence = new Map<string, PresenceStatus>();
+
+      for (const item of result.data) {
+        const status = mapApiPresenceToStatus(item.status);
+
+        if (status) {
+          nextPresence.set(item.userId, status);
+        }
+      }
+
+      setPresenceByUserId(nextPresence);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [hubMembers]);
 
   const loadPendingInvites = useCallback(async () => {
     if (!isAdmin) {
@@ -225,7 +342,9 @@ export function GroupSidebar({
           return;
         }
 
-        const state = deriveHubPanelState(result.data.conversation, conversation, currentUserId);
+        const conversationRecord = asRecord(result.data.conversation) ?? {};
+        const state = deriveHubPanelState(conversationRecord, conversation, currentUserId);
+        setLoadedHubDetails(conversationRecord);
         setDisplayName(state.displayName);
         setSlug(state.slug);
         setDescription(state.description);
@@ -467,38 +586,108 @@ export function GroupSidebar({
   };
 
   return (
-    <div className="flex h-full w-[350px] shrink-0 flex-col border-l border-app-border bg-app-inset font-sans text-app-text">
-      <header className="flex flex-col border-b border-app-border/40 p-5">
+    <div className="flex h-full w-[360px] shrink-0 flex-col border-l border-app-border/70 bg-app-surface/95 backdrop-blur-xl font-sans text-app-text shadow-2xl">
+      <header className="flex flex-col border-b border-app-border/50 px-5 py-4">
         <div className="flex items-start justify-between">
           <div className="min-w-0 flex-1">
-            <span className="mb-1 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub</span>
-            <h2 className="truncate text-lg font-semibold text-app-text">{displayName || conversation.title}</h2>
-            <p className="mt-1 text-xs text-app-muted">
+            <span className="mb-0.5 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub Info</span>
+            <h2 className="truncate text-base font-semibold text-app-text tracking-tight">{displayName || conversation.title}</h2>
+            <p className="mt-0.5 text-xs text-app-muted">
               {refreshing ? 'Refreshing hub details...' : subtitle}
             </p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="rounded-lg p-1.5 text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+            className="flex h-8 w-8 items-center justify-center rounded-xl text-app-muted transition-colors hover:bg-app-inset hover:text-app-text"
             aria-label="Close hub panel"
           >
-            <FiX className="text-lg" />
+            <FiX className="text-base" />
           </button>
         </div>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        <ConversationSharedFiles conversationId={conversation.id} />
+
+        {hubAdmins.length > 0 ? (
+          <section className="border-b border-app-border/50 p-5">
+            <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">
+              Hub admins
+            </span>
+            <div className="space-y-3">
+              {hubAdmins.map((admin) => {
+                const liveStatus = presenceByUserId.get(admin.id) ?? mapContactPresenceStatus(admin.status);
+                const presenceLabel = formatContactPresenceLabel(liveStatus, admin.lastSeenAt);
+
+                return (
+                  <div key={admin.id} className="flex items-start gap-3 rounded-2xl border border-app-border/60 bg-app-card/60 p-3 shadow-xs">
+                    <div className="relative shrink-0">
+                      <Avatar imageUrl={admin.avatarUrl} initials={admin.avatarInitials} size="md" />
+                      <span
+                        className={`absolute right-0 bottom-0 h-3 w-3 rounded-full ring-2 ring-app-surface ${presenceDotClass(liveStatus)}`}
+                        aria-hidden="true"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="truncate text-sm font-semibold text-app-text">{admin.name}</p>
+                        <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent-soft">
+                          Admin
+                        </span>
+                      </div>
+                      <p className="mt-0.5 text-xs text-app-muted">{presenceLabel}</p>
+                      {admin.bio ? (
+                        <p className="mt-1 text-xs leading-relaxed text-app-muted">{admin.bio}</p>
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
+        {hubRegularMembers.length > 0 ? (
+          <section className="border-b border-app-border/50 p-5">
+            <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">
+              Members
+            </span>
+            <div className="space-y-2">
+              {hubRegularMembers.map((member) => {
+                const liveStatus = presenceByUserId.get(member.id) ?? mapContactPresenceStatus(member.status);
+                const presenceLabel = formatContactPresenceLabel(liveStatus, member.lastSeenAt);
+
+                return (
+                  <div key={member.id} className="flex items-center gap-3 rounded-2xl border border-app-border/60 bg-app-card/50 px-3.5 py-2.5 transition-colors hover:bg-app-card">
+                    <div className="relative shrink-0">
+                      <Avatar imageUrl={member.avatarUrl} initials={member.avatarInitials} size="sm" />
+                      <span
+                        className={`absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full ring-2 ring-app-surface ${presenceDotClass(liveStatus)}`}
+                        aria-hidden="true"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-app-text">{member.name}</p>
+                      <p className="text-xs text-app-muted">{presenceLabel}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
         {isAdmin ? (
-          <section className="border-b border-app-border/40 p-5">
+          <section className="border-b border-app-border/50 p-5">
             <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub details</span>
 
-            <label className="mb-1 block text-xs text-app-muted">Display name</label>
+            <label className="mb-1 block text-xs font-medium text-app-muted">Display name</label>
             <input
               type="text"
               value={displayName}
               disabled={saving}
-              className="mb-2 w-full rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent disabled:opacity-60"
+              className="mb-2 w-full rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-60 transition-all"
               onChange={(event) => setDisplayName(event.target.value)}
             />
             <p className="mb-3 text-xs text-app-muted">
@@ -508,14 +697,14 @@ export function GroupSidebar({
 
             {slug ? <p className="mb-3 text-xs text-app-muted">Slug: #{slug}</p> : null}
 
-            <label className="mb-1 block text-xs text-app-muted">Description</label>
+            <label className="mb-1 block text-xs font-medium text-app-muted">Description</label>
             <textarea
               value={description}
               maxLength={500}
               rows={4}
               disabled={saving}
               placeholder="Describe this hub..."
-              className="mb-1 w-full resize-none rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent disabled:opacity-60"
+              className="mb-1 w-full resize-none rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-60 transition-all"
               onChange={(event) => setDescription(event.target.value)}
             />
             <p className="mb-4 text-right text-xs text-app-muted">{description.length}/500</p>
@@ -523,7 +712,7 @@ export function GroupSidebar({
             <button
               type="button"
               disabled={saving}
-              className="w-full rounded-xl bg-accent py-3 text-sm font-semibold text-white transition-opacity disabled:opacity-50"
+              className="w-full rounded-xl bg-gradient-to-r from-accent to-[#632a38] py-2.5 text-sm font-semibold text-white shadow-md shadow-accent/20 transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
               onClick={() => {
                 void handleSaveDetails();
               }}
@@ -532,14 +721,14 @@ export function GroupSidebar({
             </button>
           </section>
         ) : description.trim() ? (
-          <section className="border-b border-app-border/40 p-5">
+          <section className="border-b border-app-border/50 p-5">
             <span className="mb-2 block text-[10px] font-bold tracking-wider text-app-muted uppercase">About</span>
             <p className="text-sm leading-relaxed text-app-text">{description.trim()}</p>
           </section>
         ) : null}
 
         {isAdmin ? (
-          <section className="border-b border-app-border/40 p-5">
+          <section className="border-b border-app-border/50 p-5">
             <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub settings</span>
             <div className="flex items-center justify-between gap-3">
               <div>
@@ -551,7 +740,7 @@ export function GroupSidebar({
                 role="switch"
                 aria-checked={readReceiptsEnabled}
                 disabled={saving}
-                className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
                   readReceiptsEnabled ? 'bg-accent' : 'bg-app-inset-active'
                 }`}
                 onClick={() => {
@@ -559,7 +748,7 @@ export function GroupSidebar({
                 }}
               >
                 <span
-                  className={`absolute top-0.5 h-6 w-6 rounded-full bg-white transition-transform ${
+                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-xs transition-transform ${
                     readReceiptsEnabled ? 'left-[22px]' : 'left-0.5'
                   }`}
                 />
@@ -569,7 +758,7 @@ export function GroupSidebar({
         ) : null}
 
         {isAdmin ? (
-          <section className="border-b border-app-border/40 p-5">
+          <section className="border-b border-app-border/50 p-5">
             <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">
               Pending invites
             </span>
@@ -578,9 +767,9 @@ export function GroupSidebar({
             </p>
 
             {invitesLoading ? (
-              <p className="text-sm text-app-muted">Loading invites...</p>
+              <p className="text-xs text-app-muted">Loading invites...</p>
             ) : pendingInvites.length === 0 ? (
-              <p className="rounded-xl border border-dashed border-app-border px-3 py-4 text-sm text-app-muted">
+              <p className="rounded-2xl border border-dashed border-app-border/70 p-4 text-center text-xs text-app-muted">
                 No pending invites.
               </p>
             ) : (
@@ -592,7 +781,7 @@ export function GroupSidebar({
                   return (
                     <div
                       key={invite.id}
-                      className="flex items-center justify-between gap-3 rounded-xl border border-app-border bg-app-elevated px-3 py-2.5"
+                      className="flex items-center justify-between gap-3 rounded-2xl border border-app-border/60 bg-app-card/50 px-3.5 py-2.5"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-sm font-medium text-app-text">{label}</p>
@@ -609,7 +798,7 @@ export function GroupSidebar({
                       <button
                         type="button"
                         disabled={isRevoking || Boolean(revokingInviteId)}
-                        className="flex shrink-0 items-center gap-1.5 rounded-lg border border-accent-soft/30 px-2.5 py-1.5 text-xs font-medium text-accent-soft transition-colors hover:bg-accent-soft/10 disabled:opacity-50"
+                        className="flex shrink-0 items-center gap-1.5 rounded-xl border border-accent-soft/30 px-2.5 py-1 text-xs font-medium text-accent-soft transition-colors hover:bg-accent-soft/10 disabled:opacity-50"
                         onClick={() => {
                           void handleRevokeInvite(invite);
                         }}
@@ -625,7 +814,7 @@ export function GroupSidebar({
           </section>
         ) : null}
 
-        <section className="p-5">
+        <section className="border-t border-app-border/50 p-5">
           <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">
             Snooze notifications
           </span>
@@ -634,22 +823,27 @@ export function GroupSidebar({
               type="button"
               disabled={snoozeSaving}
               onClick={() => setSnoozeMenuOpen((open) => !open)}
-              className="flex w-full items-center justify-between rounded-xl border border-app-border bg-app-elevated px-3 py-3 text-left transition-colors hover:border-app-muted disabled:opacity-50"
+              className="flex w-full items-center justify-between rounded-2xl border border-app-border/60 bg-app-card/60 px-3.5 py-3 text-left transition-all hover:bg-app-card hover:border-app-border disabled:opacity-50"
             >
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-medium text-app-text">Snooze for this hub</p>
-                <p className="mt-0.5 text-xs text-app-muted">
-                  {snoozed
-                    ? formatConversationSnoozeUntil(snoozedUntil, snoozedForever)
-                    : 'Notifications on'}
-                </p>
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-app-inset text-app-muted">
+                  <FiBell className="text-base" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-app-text">Snooze for this hub</p>
+                  <p className="mt-0.5 text-xs text-app-muted">
+                    {snoozed
+                      ? formatConversationSnoozeUntil(snoozedUntil, snoozedForever)
+                      : 'Notifications on'}
+                  </p>
+                </div>
               </div>
               <FiChevronDown
                 className={`ml-2 shrink-0 text-app-muted transition-transform ${snoozeMenuOpen ? 'rotate-180' : ''}`}
               />
             </button>
             {snoozeMenuOpen ? (
-              <div className="absolute z-10 mt-2 w-full rounded-xl border border-app-border bg-app-elevated py-1 shadow-lg">
+              <div className="absolute z-10 mt-2 w-full rounded-2xl border border-app-border/80 bg-app-surface/95 backdrop-blur-xl p-1.5 shadow-xl">
                 {snoozed ? (
                   <button
                     type="button"
@@ -657,9 +851,9 @@ export function GroupSidebar({
                     onClick={() => {
                       void handleSnooze('off');
                     }}
-                    className="flex w-full items-center gap-2 px-4 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                    className="flex w-full items-center gap-2 rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-app-inset transition-colors disabled:opacity-50"
                   >
-                    <FiBell className="text-base text-accent-soft" />
+                    <FiBell className="text-sm text-accent-soft" />
                     Turn notifications back on
                   </button>
                 ) : null}
@@ -671,7 +865,7 @@ export function GroupSidebar({
                     onClick={() => {
                       void handleSnooze(option.value);
                     }}
-                    className="block w-full px-4 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                    className="block w-full rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-app-inset transition-colors disabled:opacity-50"
                   >
                     {option.label}
                   </button>
@@ -682,7 +876,7 @@ export function GroupSidebar({
         </section>
       </div>
 
-      <div className="space-y-3 border-t border-app-border/40 bg-app-inset p-5">
+      <div className="space-y-2 border-t border-app-border/50 bg-app-surface/60 backdrop-blur-md p-5">
         {error ? (
           <p className="text-center text-xs text-accent-soft" role="alert">
             {error}
@@ -693,7 +887,7 @@ export function GroupSidebar({
           <button
             type="button"
             disabled={deleting || leaving}
-            className="w-full rounded-2xl border border-accent-soft/30 bg-transparent px-4 py-3.5 text-sm font-semibold text-accent-soft transition-colors hover:bg-accent-soft/10 disabled:opacity-50"
+            className="w-full rounded-xl border border-accent-soft/30 bg-transparent px-4 py-2.5 text-xs font-semibold text-accent-soft transition-colors hover:bg-accent-soft/10 active:scale-[0.98] disabled:opacity-50"
             onClick={() => {
               void handleDelete();
             }}
@@ -705,7 +899,7 @@ export function GroupSidebar({
         <button
           type="button"
           disabled={leaving || deleting}
-          className="w-full rounded-2xl border border-accent-soft/30 bg-transparent px-4 py-3.5 text-sm font-semibold text-accent-soft transition-colors hover:bg-accent-soft/10 disabled:opacity-50"
+          className="w-full rounded-xl border border-app-border bg-app-card/60 px-4 py-2.5 text-xs font-semibold text-app-text transition-colors hover:bg-app-card active:scale-[0.98] disabled:opacity-50"
           onClick={() => {
             void handleLeave();
           }}

@@ -323,7 +323,11 @@ declare global {
         token: string,
         messageId: string,
       ) => Promise<ApiResult<{ conversationId: string }>>;
-      getFiles: (token: string, filter: string) => Promise<ApiResult<FileItem[]>>;
+      getFiles: (
+        token: string,
+        filter: string,
+        conversationId?: string,
+      ) => Promise<ApiResult<FileItem[]>>;
       getCalendarEvents: (token: string) => Promise<ApiResult<CalendarEventItem[]>>;
       getCalendarMentionableUsers: (
         token: string,
@@ -507,7 +511,7 @@ declare global {
         title: string,
         body: string,
         tag?: string,
-      ) => Promise<{ ok: boolean }>;
+      ) => Promise<{ ok: boolean; error?: string }>;
       logRendererDebug: (message: string) => Promise<{ ok: boolean }>;
       onDesktopNotificationClick: (callback: (tag: string) => void) => () => void;
     };

@@ -11,6 +11,8 @@ import {
   shell,
   systemPreferences,
 } from 'electron';
+import { execSync } from 'node:child_process';
+import fs from 'node:fs';
 import path from 'node:path';
 import started from 'electron-squirrel-startup';
 import { performLogin } from './main/authLogin';
@@ -172,22 +174,20 @@ let savedMainBounds: Electron.Rectangle | null = null;
 const DEFAULT_MIN_SIZE = { width: 960, height: 640 };
 const CALL_PIP_SIZE = { width: 360, height: 300 };
 
-function resolveNativeIconPath(): string | undefined {
-  const assetsDir = app.isPackaged
+function resolveAssetsDir(): string {
+  return app.isPackaged
     ? path.join(process.resourcesPath, 'assets')
     : path.join(__dirname, '..', '..', 'assets');
-  const iconPath =
-    process.platform === 'win32'
-      ? path.join(assetsDir, 'icon.ico')
-      : path.join(assetsDir, 'icon.png');
-
-  return iconPath;
 }
 
-function resolveNativeIconImage(): Electron.NativeImage | undefined {
-  const iconPath = resolveNativeIconPath();
+function resolveAppIconPngPath(): string {
+  return path.join(resolveAssetsDir(), 'logo-symbol.png');
+}
 
-  if (!iconPath) {
+function resolveAppIconImage(): Electron.NativeImage | undefined {
+  const iconPath = resolveAppIconPngPath();
+
+  if (!fs.existsSync(iconPath)) {
     return undefined;
   }
 
@@ -196,8 +196,84 @@ function resolveNativeIconImage(): Electron.NativeImage | undefined {
   return icon.isEmpty() ? undefined : icon;
 }
 
+function resolveAppIconIcnsPath(): string | undefined {
+  const icnsPath = path.join(resolveAssetsDir(), 'logo-symbol.icns');
+  return fs.existsSync(icnsPath) ? icnsPath : undefined;
+}
+
+function buildAppIconIcnsFromPng(): string | undefined {
+  if (process.platform !== 'darwin') {
+    return undefined;
+  }
+
+  const sourcePng = resolveAppIconPngPath();
+
+  if (!fs.existsSync(sourcePng)) {
+    return undefined;
+  }
+
+  const iconsetDir = path.join(app.getPath('temp'), 'flexhubs-logo-symbol.iconset');
+  const outputIcns = path.join(app.getPath('temp'), 'flexhubs-logo-symbol.icns');
+  const iconSizes: Array<[number, string]> = [
+    [16, '16x16'],
+    [32, '16x16@2x'],
+    [32, '32x32'],
+    [64, '32x32@2x'],
+    [128, '128x128'],
+    [256, '128x128@2x'],
+    [256, '256x256'],
+    [512, '256x256@2x'],
+    [512, '512x512'],
+    [1024, '512x512@2x'],
+  ];
+
+  try {
+    fs.rmSync(iconsetDir, { recursive: true, force: true });
+    fs.mkdirSync(iconsetDir, { recursive: true });
+
+    for (const [size, name] of iconSizes) {
+      execSync(
+        `sips -z ${size} ${size} "${sourcePng}" --out "${path.join(iconsetDir, `icon_${name}.png`)}"`,
+        { stdio: 'ignore' },
+      );
+    }
+
+    execSync(`iconutil -c icns "${iconsetDir}" -o "${outputIcns}"`, { stdio: 'ignore' });
+
+    return fs.existsSync(outputIcns) ? outputIcns : undefined;
+  } catch (error) {
+    console.warn('[FlexHubs] Could not build app icon from logo-symbol.png:', error);
+    return undefined;
+  }
+}
+
+function patchDevElectronNotificationIcon(): void {
+  if (app.isPackaged || process.platform !== 'darwin') {
+    return;
+  }
+
+  const sourceIcns = resolveAppIconIcnsPath() ?? buildAppIconIcnsFromPng();
+
+  if (!sourceIcns) {
+    return;
+  }
+
+  const electronResourcesDir = path.join(path.dirname(path.dirname(process.execPath)), 'Resources');
+  const targetIcns = path.join(electronResourcesDir, 'electron.icns');
+
+  if (!fs.existsSync(targetIcns)) {
+    return;
+  }
+
+  try {
+    fs.copyFileSync(sourceIcns, targetIcns);
+  } catch (error) {
+    console.warn('[FlexHubs] Could not patch Electron notification icon in dev:', error);
+  }
+}
+
 function applyApplicationIcon(): void {
-  const icon = resolveNativeIconImage();
+  const icon = resolveAppIconImage();
 
   if (!icon) {
     return;
@@ -219,13 +295,16 @@ function notificationOptions(title: string, body: string): Electron.Notification
     silent: false,
   };
 
-  // In development, the app badge is usually the Electron logo.
-  // Passing the icon explicitly will display it as a right-side attachment on macOS,
-  // which ensures the Flexhubs logo is visible even in dev mode.
-  const iconPath = resolveNativeIconPath();
+  // macOS uses the app bundle icon on the left; setting `icon` adds a right-side thumbnail.
+  if (process.platform !== 'darwin') {
+    const iconImage = resolveAppIconImage();
+    const iconPath = resolveAppIconPngPath();
 
-  if (iconPath) {
-    options.icon = iconPath;
+    if (iconImage && !iconImage.isEmpty()) {
+      options.icon = iconImage;
+    } else if (fs.existsSync(iconPath)) {
+      options.icon = iconPath;
+    }
   }
 
   return options;
@@ -652,8 +731,10 @@ ipcMain.handle('search:messages', (_event, token: string, conversationId: string
   fetchMessageSearch(token, conversationId, query),
 );
 ipcMain.handle('features:saved-messages', (_event, token: string) => fetchSavedMessages(token));
-ipcMain.handle('features:files', (_event, token: string, filter: string) =>
-  fetchFiles(token, filter),
+ipcMain.handle(
+  'features:files',
+  (_event, token: string, filter: string, conversationId?: string) =>
+    fetchFiles(token, filter, conversationId),
 );
 ipcMain.handle('features:calendar', (_event, token: string) => fetchCalendarEvents(token));
 ipcMain.handle('extras:calendar-mentionable-users', (_event, token: string) =>
@@ -1044,7 +1125,7 @@ setRealtimeHandlers({
 });
 
 const createWindow = (): void => {
-  const appIcon = resolveNativeIconImage();
+  const appIcon = resolveAppIconImage();
 
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -1189,6 +1270,26 @@ async function ensureMacScreenCaptureAccess(): Promise<{ ok: true } | { ok: fals
   };
 }
 
+function resolveNotificationSettingsAppName(): string {
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    return 'Electron';
+  }
+
+  return app.getName();
+}
+
+function buildNotificationBlockedMessage(): string {
+  const appName = resolveNotificationSettingsAppName();
+  let message = `Enable ${appName} in System Settings → Notifications.`;
+
+  if (process.platform === 'darwin' && !app.isPackaged) {
+    message +=
+      ' Dev mode uses unsigned Electron; macOS may still block alerts until notifications are enabled for Electron or you run a signed build.';
+  }
+
+  return message;
+}
+
 function logScreenCaptureStartupHint(): void {
   if (process.platform !== 'darwin') {
     return;
@@ -1200,6 +1301,30 @@ function logScreenCaptureStartupHint(): void {
   if (status !== 'granted') {
     console.log(
       '[ScreenShare] If screen share fails, add the binary above in System Settings → Privacy & Security → Screen & System Audio Recording.',
+    );
+  }
+}
+
+function logNotificationStartupHint(): void {
+  if (!Notification.isSupported()) {
+    console.warn('[FlexHubs] Native notifications are not supported on this device.');
+    return;
+  }
+
+  console.log('[FlexHubs] Native notifications are supported in the main process.');
+
+  if (process.platform !== 'darwin') {
+    return;
+  }
+
+  const appName = resolveNotificationSettingsAppName();
+  console.log(
+    `[FlexHubs] Desktop alerts — enable "${appName}" in System Settings → Notifications (binary: ${process.execPath}).`,
+  );
+
+  if (!app.isPackaged) {
+    console.log(
+      '[FlexHubs] Dev note: npm start runs unsigned Electron. If alerts never appear, enable Electron in Notifications or test with a signed packaged build.',
     );
   }
 }
@@ -1334,6 +1459,7 @@ app.whenReady().then(() => {
   console.log('[FlexHubs] Call debug: lines starting with [Calls] appear here after login.');
 
   setupAutoUpdater();
+  patchDevElectronNotificationIcon();
   applyApplicationIcon();
 
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
@@ -1346,6 +1472,7 @@ app.whenReady().then(() => {
 
   setupDisplayMediaHandler();
   logScreenCaptureStartupHint();
+  logNotificationStartupHint();
 
   ipcMain.handle(
     'desktop:notify',
@@ -1360,27 +1487,8 @@ app.whenReady().then(() => {
           notificationOptions(payload.title?.trim() || 'FlexHubs', payload.body ?? ''),
         );
 
-        let settled = false;
-        const finish = (result: { ok: boolean; error?: string }) => {
-          if (settled) {
-            return;
-          }
-
-          settled = true;
-          resolve(result);
-        };
-
-        notification.on('show', () => {
-          finish({ ok: true });
-        });
-
         notification.on('failed', (_event, error) => {
           console.warn('[FlexHubs] Native notification failed:', error);
-          finish({
-            ok: false,
-            error:
-              'Notification was blocked. Enable FlexHubs in System Settings → Notifications.',
-          });
         });
 
         notification.on('click', () => {
@@ -1397,11 +1505,16 @@ app.whenReady().then(() => {
           mainWindow.webContents.send('desktop:notify-click', payload.tag ?? '');
         });
 
-        notification.show();
-
-        setTimeout(() => {
-          finish({ ok: true });
-        }, 750);
+        try {
+          notification.show();
+          resolve({ ok: true });
+        } catch (error) {
+          console.warn('[FlexHubs] Native notification show() threw:', error);
+          resolve({
+            ok: false,
+            error: `Notification was blocked. ${buildNotificationBlockedMessage()}`,
+          });
+        }
       }),
   );
 

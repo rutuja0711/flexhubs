@@ -14,61 +14,65 @@
 
   :root,
   .light {
-    --app-bg: #f3f4f6;
-    --app-bg-login: #eef0f3;
+    --app-bg: #f6f7fa;
+    --app-bg-login: #f1f3f7;
     --app-surface: #ffffff;
-    --app-surface-input: #f9fafb;
-    --app-border: #e5e7eb;
-    --app-border-strong: #d1d5db;
-    --app-text: #111827;
-    --app-text-muted: #6b7280;
-    --app-chat-bg: #f3f4f6;
+    --app-surface-input: #f2f4f8;
+    --app-border: rgba(0, 0, 0, 0.05);
+    --app-border-subtle: rgba(0, 0, 0, 0.025);
+    --app-border-strong: rgba(0, 0, 0, 0.08);
+    --app-text: #0f172a;
+    --app-text-muted: #64748b;
+    --app-chat-bg: #f6f7fa;
     --app-chat-rail: #ffffff;
-    --app-chat-sidebar: #ffffff;
-    --app-chat-panel: #f9fafb;
-    --app-chat-hover: #f3f4f6;
-    --app-chat-active: #e5e7eb;
+    --app-chat-sidebar: #fbfcfd;
+    --app-chat-panel: #f1f3f8;
+    --app-chat-hover: #eef1f6;
+    --app-chat-active: #e3e7f0;
     --app-elevated: #ffffff;
-    --app-inset: #f3f4f6;
-    --app-inset-active: #e5e7eb;
-    --app-avatar-fallback: #e5e7eb;
+    --app-inset: #f1f3f8;
+    --app-inset-active: #e2e6f0;
+    --app-avatar-fallback: #e2e8f0;
     --app-message-in: #ffffff;
     --app-message-out: #803d4c;
     --app-message-out-text: #ffffff;
-    --app-placeholder: #9ca3af;
-    --app-shadow: rgba(0, 0, 0, 0.08);
+    --app-placeholder: #94a3b8;
+    --app-glass-bg: rgba(255, 255, 255, 0.88);
+    --app-shadow: rgba(15, 23, 42, 0.08);
     --scrollbar-track: transparent;
-    --scrollbar-thumb: #c4c4c4;
-    --scrollbar-thumb-hover: #a3a3a3;
+    --scrollbar-thumb: #cbd5e1;
+    --scrollbar-thumb-hover: #94a3b8;
   }
 
   .dark {
-    --app-bg: #0d0d0d;
-    --app-bg-login: #0a0a0a;
-    --app-surface: #1e1e1e;
-    --app-surface-input: #141414;
-    --app-border: #2a2a2a;
-    --app-border-strong: #555555;
-    --app-text: #ffffff;
-    --app-text-muted: #9a9a9a;
-    --app-chat-bg: #0d0d0d;
-    --app-chat-rail: #111111;
-    --app-chat-sidebar: #161616;
-    --app-chat-panel: #1a1a1a;
-    --app-chat-hover: #222222;
-    --app-chat-active: #2a2a2a;
-    --app-elevated: #2c2c2e;
-    --app-inset: #1c1c1e;
-    --app-inset-active: #3a3a3c;
-    --app-avatar-fallback: #2d3340;
-    --app-message-in: #2a2a2a;
+    --app-bg: #0b0c10;
+    --app-bg-login: #08090d;
+    --app-surface: #181922;
+    --app-surface-input: #12131a;
+    --app-border: rgba(255, 255, 255, 0.05);
+    --app-border-subtle: rgba(255, 255, 255, 0.025);
+    --app-border-strong: rgba(255, 255, 255, 0.08);
+    --app-text: #f8fafc;
+    --app-text-muted: #8e93a6;
+    --app-chat-bg: #0b0c10;
+    --app-chat-rail: #101116;
+    --app-chat-sidebar: #13141b;
+    --app-chat-panel: #161720;
+    --app-chat-hover: #1b1d28;
+    --app-chat-active: #252837;
+    --app-elevated: #1a1b25;
+    --app-inset: #111218;
+    --app-inset-active: #20222f;
+    --app-avatar-fallback: #242634;
+    --app-message-in: #191a23;
     --app-message-out: #803d4c;
     --app-message-out-text: #ffffff;
-    --app-placeholder: #666666;
-    --app-shadow: rgba(0, 0, 0, 0.45);
+    --app-placeholder: #5d6175;
+    --app-glass-bg: rgba(19, 20, 27, 0.8);
+    --app-shadow: rgba(0, 0, 0, 0.55);
     --scrollbar-track: transparent;
-    --scrollbar-thumb: #3a3a3a;
-    --scrollbar-thumb-hover: #4f4f4f;
+    --scrollbar-thumb: #282a3a;
+    --scrollbar-thumb-hover: #3d4158;
   }
 
   * {
@@ -258,4 +262,62 @@
   .stagger-3 { animation-delay: 150ms; }
   .stagger-4 { animation-delay: 200ms; }
   .stagger-5 { animation-delay: 250ms; }
+
+  /* Glassmorphism & Depth */
+  .glass-panel {
+    background: var(--app-glass-bg);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid var(--app-border-subtle);
+  }
+
+  .glass-card {
+    background: var(--app-surface);
+    border: 1px solid var(--app-border-subtle);
+    box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.2);
+  }
+
+  .glass-elevated {
+    background: var(--app-elevated);
+    border: 1px solid var(--app-border-subtle);
+    box-shadow: 0 8px 32px -4px rgba(0, 0, 0, 0.35);
+  }
+
+  /* Micro-interactions */
+  .hover-lift {
+    transition: transform 180ms cubic-bezier(0.16, 1, 0.3, 1), box-shadow 180ms ease, background-color 180ms ease;
+  }
+  .hover-lift:hover {
+    transform: translateY(-1px);
+  }
+  .active-press:active {
+    transform: scale(0.97);
+  }
+
+  /* Ambient Glow Utilities (FlexHubs Burgundy) */
+  .glow-burgundy-sm {
+    box-shadow: 0 0 16px -2px rgba(var(--accent-rgb) / 0.3);
+  }
+  .glow-burgundy-md {
+    box-shadow: 0 0 24px -2px rgba(var(--accent-rgb) / 0.45);
+  }
+
+  /* Selected Conversation Card */
+  .conversation-card-active {
+    background-color: var(--app-chat-active);
+    box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb) / 0.3), 0 4px 16px -2px rgba(0, 0, 0, 0.25);
+  }
+
+  /* Respect reduced motion */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    ::before,
+    ::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
 }
+

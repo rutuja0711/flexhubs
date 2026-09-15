@@ -141,7 +141,7 @@ function statusDotClass(statusUi: string): string {
 
 function SectionCard({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`rounded-xl border border-app-border bg-app-surface ${className}`}>{children}</div>
+    <div className={`rounded-2xl border border-app-border/70 bg-app-card/60 shadow-xs backdrop-blur-sm ${className}`}>{children}</div>
   );
 }
 
@@ -829,19 +829,19 @@ export function ProfileSettingsView({
     <div className="flex h-full w-full flex-col overflow-y-auto bg-app-chat-bg px-12 py-8 text-app-text">
       <div className="mx-auto w-full max-w-7xl">
         <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-[1.75rem] font-bold text-app-text">Profile & settings</h1>
-          {saving ? <span className="text-xs text-app-muted">Saving...</span> : null}
+          <h1 className="text-2xl font-bold text-app-text tracking-tight">Profile & Settings</h1>
+          {saving ? <span className="text-xs text-app-muted font-medium animate-pulse">Saving changes...</span> : null}
         </div>
 
         {actionError ? (
-          <p className="mb-4 text-sm text-accent-soft" role="alert">{actionError}</p>
+          <p className="mb-4 text-xs font-medium text-accent-soft" role="alert">{actionError}</p>
         ) : null}
 
-        {/* Profile card */}
-        <SectionCard className="mb-12 flex items-start gap-4 p-6">
+        {/* Profile hero card */}
+        <SectionCard className="mb-10 flex items-start gap-5 p-6 border-app-border/70 bg-gradient-to-br from-accent/10 via-app-card/70 to-app-card/50 shadow-md">
           <div className="relative shrink-0">
-            <div className="relative flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-full bg-blue-400">
-              <span className="absolute inset-0 flex items-center justify-center text-xl font-bold text-app-text">
+            <div className="relative flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-accent to-[#632a38] text-white shadow-md shadow-accent/20 ring-1 ring-white/10">
+              <span className="absolute inset-0 flex items-center justify-center text-xl font-bold">
                 {initials}
               </span>
               {previewAvatarUrl ? (
@@ -853,10 +853,10 @@ export function ProfileSettingsView({
                 />
               ) : null}
             </div>
-            <div className={`absolute right-0 bottom-0 h-4 w-4 rounded-full border-2 border-app-surface ${statusDotClass(statusUi)}`} />
+            <div className={`absolute -right-0.5 -bottom-0.5 h-4 w-4 rounded-full ring-2 ring-app-surface shadow-xs ${statusDotClass(statusUi)}`} />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-bold text-app-text">{displayName}</h2>
+            <h2 className="text-lg font-bold text-app-text tracking-tight">{displayName}</h2>
             {profile.email ? (
               <p className="mt-1 flex items-center gap-2 text-sm text-app-muted">
                 <FiMail className="shrink-0" />

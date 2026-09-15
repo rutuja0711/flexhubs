@@ -4,28 +4,41 @@ import type { MessageItem, NotificationItem } from '../shared/messages';
 import { isCallLogMessage } from '../shared/messages';
 import { getUserId } from '../shared/user';
 import { getStoredUser } from './authApi';
+import { APP_LOGO_SYMBOL_SRC } from './brand/logoAssets';
+import { playMessageNotificationSound } from './messageSound';
 
 let notificationSnapshotReady = false;
 const knownNotificationKeys = new Set<string>();
 const shownMessageIds = new Set<string>();
-const shownFingerprints = new Set<string>();
 const pendingClicks = new Map<string, () => void>();
 let clickListenerBound = false;
+let shouldPlayMessageSound: (() => boolean) | null = null;
+const playedSoundMessageIds = new Set<string>();
 
-function normalizeFingerprint(value: string): string {
-  return value.trim().replace(/\s+/g, ' ').toLowerCase();
+export function bindMessageNotificationSound(enabled: () => boolean): void {
+  shouldPlayMessageSound = enabled;
 }
 
-function notificationFingerprint(notification: NotificationItem): string | null {
-  if (!notification.conversationId || !notification.body.trim()) {
-    return null;
+function maybePlayAlertSound(messageId?: string): void {
+  if (messageId) {
+    if (playedSoundMessageIds.has(messageId)) {
+      return;
+    }
+
+    playedSoundMessageIds.add(messageId);
+
+    if (playedSoundMessageIds.size > 200) {
+      const oldest = playedSoundMessageIds.values().next().value;
+
+      if (oldest) {
+        playedSoundMessageIds.delete(oldest);
+      }
+    }
   }
 
-  return normalizeFingerprint(`${notification.conversationId}|${notification.body}`);
-}
-
-function messageFingerprint(conversationId: string, body: string): string {
-  return normalizeFingerprint(`${conversationId}|${body}`);
+  if (shouldPlayMessageSound?.()) {
+    void playMessageNotificationSound();
+  }
 }
 
 export function isIncomingMessageNotification(notification: NotificationItem): boolean {
@@ -38,7 +51,11 @@ export function isIncomingMessageNotification(notification: NotificationItem): b
 }
 
 function notificationIconUrl(): string {
-  return new URL('./icon-256.png', window.location.href).href;
+  if (typeof APP_LOGO_SYMBOL_SRC === 'string' && APP_LOGO_SYMBOL_SRC.length > 0) {
+    return APP_LOGO_SYMBOL_SRC;
+  }
+
+  return new URL('./logo-symbol.png', window.location.href).href;
 }
 
 function bindNativeNotificationClicks(): void {
@@ -95,12 +112,7 @@ function wasAlreadyShown(notification: NotificationItem): boolean {
     return true;
   }
 
-  if (notification.messageId && shownMessageIds.has(notification.messageId)) {
-    return true;
-  }
-
-  const fingerprint = notificationFingerprint(notification);
-  return Boolean(fingerprint && shownFingerprints.has(fingerprint));
+  return Boolean(notification.messageId && shownMessageIds.has(notification.messageId));
 }
 
 function rememberShownNotification(notification: NotificationItem): void {
@@ -108,11 +120,6 @@ function rememberShownNotification(notification: NotificationItem): void {
 
   if (notification.messageId) {
     shownMessageIds.add(notification.messageId);
-  }
-
-  const fingerprint = notificationFingerprint(notification);
-  if (fingerprint) {
-    shownFingerprints.add(fingerprint);
   }
 }
 
@@ -144,41 +151,60 @@ export async function ensureNotificationPermission(): Promise<boolean> {
   return permission === 'granted';
 }
 
+function logNotificationFailure(reason: string): void {
+  console.warn('[FlexHubs] Desktop notification failed:', reason);
+  void window.electronAPI?.logRendererDebug?.(`[FlexHubs] Desktop notification failed: ${reason}`);
+}
+
 async function openDesktopNotification(
   title: string,
   body: string,
   tag: string,
   onClick: () => void,
-): Promise<void> {
+): Promise<boolean> {
   bindNativeNotificationClicks();
 
   if (window.electronAPI?.showDesktopNotification) {
     pendingClicks.set(tag, onClick);
-    const result = await window.electronAPI.showDesktopNotification(title, body, tag);
 
-    if (result.ok) {
-      return;
-    }
+    void window.electronAPI.showDesktopNotification(title, body, tag).then((result) => {
+      if (result.ok) {
+        return;
+      }
+
+      pendingClicks.delete(tag);
+      logNotificationFailure(result.error ?? 'Native notification IPC returned ok:false.');
+    });
+
+    return true;
   }
 
   const allowed = await ensureNotificationPermission();
 
   if (!allowed) {
-    return;
+    logNotificationFailure('Notification permission is not granted.');
+    return false;
   }
 
-  const desktopNotification = new Notification(title || 'FlexHubs Desktop', {
-    body,
-    tag,
-    // macOS treats icon as a right-side attachment; native notifications use the app icon instead.
-    ...(window.electronAPI ? {} : { icon: notificationIconUrl() }),
-  });
+  try {
+    const desktopNotification = new Notification(title || 'FlexHubs Desktop', {
+      body,
+      tag,
+      // Main-process notifications use the app bundle icon on macOS.
+      ...(window.electronAPI ? {} : { icon: notificationIconUrl() }),
+    });
 
-  desktopNotification.onclick = () => {
-    window.focus();
-    onClick();
-    desktopNotification.close();
-  };
+    desktopNotification.onclick = () => {
+      window.focus();
+      onClick();
+      desktopNotification.close();
+    };
+
+    return true;
+  } catch (error) {
+    logNotificationFailure(error instanceof Error ? error.message : 'Unable to create notification.');
+    return false;
+  }
 }
 
 function parseSenderFromNotificationBody(body: string): string | null {
@@ -220,13 +246,10 @@ export async function showDesktopNotification(
   notification: NotificationItem,
   onClick: () => void,
   conversation: Pick<ConversationItem, 'kind' | 'title'> | null = null,
-): Promise<void> {
+): Promise<boolean> {
   if (wasAlreadyShown(notification)) {
-    rememberShownNotification(notification);
-    return;
+    return false;
   }
-
-  rememberShownNotification(notification);
 
   const formattedBody = formatNotificationDisplayBody(
     notification.body || '',
@@ -256,12 +279,30 @@ export async function showDesktopNotification(
     body = formatted.body;
   }
 
-  await openDesktopNotification(
+  const notificationKey = getNotificationKey(notification);
+
+  rememberShownNotification(notification);
+
+  if (isIncomingMessageNotification(notification)) {
+    maybePlayAlertSound(notification.messageId ?? undefined);
+  }
+
+  const delivered = await openDesktopNotification(
     title,
     body,
-    notification.messageId ? `message-${notification.messageId}` : getNotificationKey(notification),
+    notification.messageId ? `message-${notification.messageId}` : notificationKey,
     onClick,
   );
+
+  if (!delivered) {
+    knownNotificationKeys.delete(notificationKey);
+
+    if (notification.messageId) {
+      shownMessageIds.delete(notification.messageId);
+    }
+  }
+
+  return delivered;
 }
 
 export function peekNewNotifications(notifications: NotificationItem[]): NotificationItem[] {
@@ -279,20 +320,30 @@ export async function alertNewDesktopNotifications(
   onClick: (notification: NotificationItem) => void,
   onNewNotification?: (notification: NotificationItem) => void,
   resolveConversation?: (notification: NotificationItem) => ConversationItem | null,
+  shouldSkip?: (notification: NotificationItem) => boolean,
 ): Promise<void> {
   if (!notificationSnapshotReady) {
     seedNotificationSnapshot(notifications);
     return;
   }
 
-  for (const notification of peekNewNotifications(notifications)) {
+  const candidates = peekNewNotifications(notifications).filter((notification) => {
     if (wasAlreadyShown(notification)) {
       rememberShownNotification(notification);
-      continue;
+      return false;
     }
 
+    if (shouldSkip?.(notification)) {
+      rememberShownNotification(notification);
+      return false;
+    }
+
+    return true;
+  });
+
+  for (const notification of candidates) {
     onNewNotification?.(notification);
-    await showDesktopNotification(
+    void showDesktopNotification(
       notification,
       () => onClick(notification),
       resolveConversation?.(notification) ?? null,
@@ -339,9 +390,9 @@ export async function showIncomingMessageDesktopNotification(
   conversation: Pick<ConversationItem, 'kind' | 'title'> | null,
   onClick: () => void,
   conversationId?: string,
-): Promise<void> {
+): Promise<boolean> {
   if (isCallLogMessage(message)) {
-    return;
+    return false;
   }
 
   const effectiveConversation =
@@ -359,18 +410,22 @@ export async function showIncomingMessageDesktopNotification(
     message.senderName,
     effectiveConversation,
   );
-  const fingerprint = conversationId ? messageFingerprint(conversationId, body) : null;
-
-  if (shownMessageIds.has(message.id) || (fingerprint && shownFingerprints.has(fingerprint))) {
-    return;
+  if (shownMessageIds.has(message.id)) {
+    return false;
   }
 
   shownMessageIds.add(message.id);
-  if (fingerprint) {
-    shownFingerprints.add(fingerprint);
+  maybePlayAlertSound(message.id);
+
+  const delivered = await openDesktopNotification(title, body, `message-${message.id}`, onClick);
+
+  if (!delivered) {
+    shownMessageIds.delete(message.id);
+    playedSoundMessageIds.delete(message.id);
+    return false;
   }
 
-  await openDesktopNotification(title, body, `message-${message.id}`, onClick);
+  return true;
 }
 
 export async function showIncomingCallDesktopNotification(

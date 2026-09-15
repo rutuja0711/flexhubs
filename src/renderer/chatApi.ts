@@ -499,6 +499,17 @@ export async function loadFiles(
   return withToken((token) => window.electronAPI.getFiles(token, filter));
 }
 
+export async function loadConversationFiles(
+  conversationId: string,
+  filter: 'media' | 'docs' | 'links',
+): Promise<ApiResult<import('../shared/features').FileItem[]>> {
+  if (!window.electronAPI?.getFiles) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getFiles(token, filter, conversationId));
+}
+
 export async function loadCalendarEvents(): Promise<
   ApiResult<import('../shared/features').CalendarEventItem[]>
 > {

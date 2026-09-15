@@ -92,7 +92,7 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
   const panel = open ? (
     <div
       ref={panelRef}
-      className="fixed z-[9999] flex flex-col overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-2xl"
+      className="fixed z-[9999] flex flex-col overflow-hidden rounded-2xl border border-app-border/80 bg-app-elevated/95 backdrop-blur-xl shadow-2xl animate-pop-in"
       style={{
         top: pickerPosition.top,
         left: pickerPosition.left,
@@ -102,14 +102,14 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
       role="dialog"
       aria-label="Choose a reaction"
     >
-      <div className="border-b border-app-border px-3 py-2">
+      <div className="border-b border-app-border/40 px-3 py-2">
         <div className="flex flex-wrap gap-1">
           {QUICK_REACTIONS.map((emoji) => (
             <button
               key={emoji}
               type="button"
               aria-label={`React with ${emoji}`}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-xl transition-colors hover:bg-app-chat-hover"
+              className="flex h-8 w-8 items-center justify-center rounded-xl text-xl transition-transform hover:scale-110 active:scale-95 hover:bg-app-chat-hover"
               onClick={() => selectEmoji(emoji)}
             >
               {emoji}
@@ -118,14 +118,14 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
         </div>
       </div>
 
-      <div className="flex gap-1 overflow-x-auto border-b border-app-border px-2 py-1.5">
+      <div className="flex gap-1 overflow-x-auto border-b border-app-border/40 px-2 py-1.5">
         {REACTION_EMOJI_CATEGORIES.map((category, index) => (
           <button
             key={category.label}
             type="button"
-            className={`shrink-0 rounded-md px-2 py-1 text-xs transition-colors ${
+            className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold tracking-tight transition-colors ${
               activeCategory === index
-                ? 'bg-accent/15 text-accent-soft'
+                ? 'bg-accent/20 text-accent-soft'
                 : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
             }`}
             onClick={() => setActiveCategory(index)}
@@ -142,7 +142,7 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
               key={`${activeCategory}-${emoji}`}
               type="button"
               aria-label={`React with ${emoji}`}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-xl transition-colors hover:bg-app-chat-hover"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-xl transition-transform hover:scale-110 active:scale-95 hover:bg-app-chat-hover"
               onClick={() => selectEmoji(emoji)}
             >
               {emoji}
@@ -151,14 +151,14 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
         </div>
       </div>
 
-      <div className="border-t border-app-border px-3 py-2">
+      <div className="border-t border-app-border/40 px-3 py-2">
         <input
           ref={customInputRef}
           type="text"
           value={customEmoji}
           placeholder="Paste any emoji"
           aria-label="Paste any emoji"
-          className="w-full rounded-lg border border-app-border bg-app-bg px-3 py-1.5 text-sm text-app-text outline-none transition-colors placeholder:text-app-muted focus:border-accent"
+          className="w-full rounded-xl border border-app-border/60 bg-app-surface-input px-3 py-1.5 text-xs text-app-text outline-none transition-all placeholder:text-app-muted focus:border-accent focus:ring-1 focus:ring-accent/30"
           onChange={(event) => handleCustomEmojiChange(event.target.value)}
           onFocus={() => customInputRef.current?.select()}
         />
@@ -174,8 +174,10 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
         aria-label="Add reaction"
         aria-expanded={open}
         aria-haspopup="dialog"
-        className={`flex h-6 w-6 items-center justify-center rounded text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text ${
-          open ? 'bg-app-chat-hover text-app-text' : ''
+        className={`flex h-7 w-7 items-center justify-center rounded-lg transition-all duration-150 ${
+          open
+            ? 'bg-accent/15 text-accent dark:text-accent-soft shadow-sm'
+            : 'text-app-muted hover:text-app-text hover:bg-black/[0.06] dark:hover:bg-white/[0.1] active:scale-95'
         }`}
         onClick={() => setOpen((current) => !current)}
       >

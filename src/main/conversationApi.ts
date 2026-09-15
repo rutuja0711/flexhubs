@@ -8,6 +8,7 @@ import {
   normalizeBootstrap,
   normalizeDraft,
   normalizeMessage,
+  normalizeMessageReadReceipts,
   normalizeMessageThread,
 } from '../shared/messages';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './apiRequest';
@@ -352,9 +353,22 @@ export async function addMessageReaction(
 }
 
 function normalizeMessageResult(payload: unknown): MessageItem {
+  const record = asRecord(payload);
   const messageRecord = extractMessageFromPayload(payload);
+  const message = normalizeMessage((messageRecord ?? record ?? {}) as Record<string, unknown>, 0);
+  const readBySource =
+    message.readBy.length > 0
+      ? message.readBy
+      : normalizeMessageReadReceipts(
+          record?.readBy ??
+            record?.seenBy ??
+            record?.readReceipts ??
+            messageRecord?.readBy ??
+            messageRecord?.seenBy ??
+            messageRecord?.readReceipts,
+        );
 
-  return normalizeMessage((messageRecord ?? {}) as Record<string, unknown>, 0);
+  return readBySource.length > 0 ? { ...message, readBy: readBySource } : message;
 }
 
 export async function editMessage(

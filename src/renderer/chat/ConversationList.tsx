@@ -27,14 +27,16 @@ export const ConversationRow = memo(function ConversationRow({
 
   return (
     <div
-      className={`group flex w-full items-center gap-3 rounded-xl px-3 py-2.5 transition-all duration-200 animate-slide-in stagger-${(index % 5) + 1} opacity-0 ${
-        selected ? 'bg-app-chat-hover hover:bg-app-chat-active' : 'hover:bg-app-chat-hover'
+      className={`group relative flex w-full items-center gap-3 rounded-[16px] px-3 py-2.5 transition-all duration-200 animate-slide-in stagger-${(index % 5) + 1} opacity-0 ${
+        selected
+          ? 'bg-app-elevated border border-accent/25 shadow-sm'
+          : 'border border-transparent hover:bg-app-chat-hover/70'
       }`}
       onMouseEnter={() => onPrefetch?.(conversation.id)}
     >
       <button
         type="button"
-        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        className="flex min-w-0 flex-1 items-center gap-3 text-left focus:outline-none"
         onClick={() => onSelect(conversation.id)}
         onFocus={() => onPrefetch?.(conversation.id)}
       >
@@ -44,9 +46,11 @@ export const ConversationRow = memo(function ConversationRow({
         </div>
 
         <div className="min-w-0 flex-1">
-          <span className="block truncate text-[0.9375rem] font-medium text-app-text">{displayTitle}</span>
+          <span className={`block truncate text-sm tracking-tight ${selected ? 'font-semibold text-app-text' : 'font-medium text-app-text/90'}`}>
+            {displayTitle}
+          </span>
           {typingPreview ? (
-            <p className="flex min-w-0 items-center gap-1.5 truncate text-sm text-accent-soft">
+            <p className="flex min-w-0 items-center gap-1.5 truncate text-xs text-accent-soft mt-0.5">
               <span className="inline-flex shrink-0 items-end gap-0.5" aria-hidden="true">
                 <span className="h-1 w-1 animate-bounce rounded-full bg-accent [animation-delay:-0.2s]" />
                 <span className="h-1 w-1 animate-bounce rounded-full bg-accent [animation-delay:-0.1s]" />
@@ -55,17 +59,17 @@ export const ConversationRow = memo(function ConversationRow({
               <span className="truncate italic">{typingPreview}</span>
             </p>
           ) : conversation.isDraftPreview && conversation.draftPreview ? (
-            <p className="truncate text-sm">
-              <span className="text-accent-soft">Draft: </span>
+            <p className="truncate text-xs mt-0.5">
+              <span className="text-accent-soft font-medium">Draft: </span>
               <span className="text-app-muted">{conversation.draftPreview}</span>
             </p>
           ) : conversation.subtitle ? (
-            <p className="truncate text-sm text-app-muted">{conversation.subtitle}</p>
+            <p className="truncate text-xs text-app-muted mt-0.5">{conversation.subtitle}</p>
           ) : null}
         </div>
       </button>
 
-      <div className="flex shrink-0 flex-col items-end gap-1">
+      <div className="flex shrink-0 flex-col items-end gap-1.5">
         <div className="flex items-center gap-1">
           {conversation.isPinned ? (
             <button
@@ -73,15 +77,15 @@ export const ConversationRow = memo(function ConversationRow({
               aria-label="Unpin chat"
               aria-pressed={true}
               disabled={pinBusy}
-              className={`flex shrink-0 items-center justify-center transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                selected ? 'text-app-muted hover:text-app-text' : 'text-accent hover:text-accent-hover'
+              className={`flex shrink-0 items-center justify-center p-0.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                selected ? 'text-accent hover:text-accent-hover' : 'text-accent hover:text-accent-hover'
               }`}
               onClick={(event) => {
                 event.stopPropagation();
                 onTogglePin?.(conversation.id, conversation.isPinned);
               }}
             >
-              <PinIcon />
+              <PinIcon size={13} />
             </button>
           ) : onTogglePin ? (
             <button
@@ -89,18 +93,18 @@ export const ConversationRow = memo(function ConversationRow({
               aria-label="Pin chat"
               aria-pressed={false}
               disabled={pinBusy}
-              className="hidden shrink-0 items-center justify-center text-app-muted transition-colors group-hover:flex hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+              className="hidden shrink-0 items-center justify-center p-0.5 text-app-muted transition-colors group-hover:flex hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
               onClick={(event) => {
                 event.stopPropagation();
                 onTogglePin(conversation.id, conversation.isPinned);
               }}
             >
-              <PinIcon />
+              <PinIcon size={13} />
             </button>
           ) : null}
           {conversation.timestamp ? (
             <span
-              className={`whitespace-nowrap text-xs text-app-muted ${
+              className={`whitespace-nowrap text-[0.6875rem] font-medium text-app-muted ${
                 conversation.isPinned ? '' : 'group-hover:hidden'
               }`}
             >
@@ -109,7 +113,7 @@ export const ConversationRow = memo(function ConversationRow({
           ) : null}
         </div>
         {conversation.unreadCount > 0 ? (
-          <span className="rounded-full bg-accent px-2 py-0.5 text-[0.6875rem] font-semibold text-white">
+          <span className="rounded-full bg-accent px-1.5 py-0.5 text-[0.625rem] font-bold text-white shadow-sm shadow-accent/40">
             {conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}
           </span>
         ) : null}

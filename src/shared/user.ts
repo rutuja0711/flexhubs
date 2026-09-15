@@ -21,8 +21,20 @@ function readNameFromRecord(record: Record<string, unknown>): string | null {
   );
 }
 
-export function getUserId(user: unknown): string | null {
+export function unwrapAuthUser(user: unknown): unknown {
   const record = asRecord(user);
+
+  if (!record) {
+    return user;
+  }
+
+  const nestedUser = asRecord(record.user);
+
+  return nestedUser ?? user;
+}
+
+export function getUserId(user: unknown): string | null {
+  const record = asRecord(unwrapAuthUser(user));
 
   if (!record) {
     return null;
@@ -113,7 +125,7 @@ export function getUserInitials(user: unknown): string {
 }
 
 export function userInOrganization(user: unknown): boolean {
-  const record = asRecord(user);
+  const record = asRecord(unwrapAuthUser(user));
 
   if (!record) {
     return false;

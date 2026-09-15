@@ -2,8 +2,8 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { AppLogoMark } from '../brand/AppLogo';
 import { RemoteImage } from '../RemoteImage';
 
-export function FlexLogo() {
-  return <AppLogoMark />;
+export function FlexLogo({ className = 'h-10 w-10' }: { className?: string }) {
+  return <AppLogoMark className={className} />;
 }
 
 export function BellIcon() {
@@ -79,9 +79,9 @@ export function HeartChatIcon() {
   );
 }
 
-export function BuildingIcon() {
+export function BuildingIcon({ className = '', size = 16 }: { className?: string; size?: number } = {}) {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
       <path
         d="M3 21H21M5 21V7L12 3L19 7V21M9 21V13H15V21"
         stroke="currentColor"
@@ -128,7 +128,7 @@ export function NotificationBadge({
 
   return (
     <span
-      className={`absolute -top-0.5 -right-0.5 z-10 flex h-4 min-w-4 items-center justify-center rounded-full bg-accent px-1 text-[0.5625rem] font-bold leading-none text-white ring-2 ${ringClass}`}
+      className={`absolute -top-1 -right-1 z-10 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[0.625rem] font-bold leading-none text-white shadow-sm shadow-accent/40 ring-2 ${ringClass}`}
     >
       {count > 99 ? '99+' : count}
     </span>
@@ -141,16 +141,18 @@ export function NavIconButton({ label, active, badge, onClick, children }: NavIc
       type="button"
       aria-label={badge && badge > 0 ? `${label}, ${badge} unread` : label}
       aria-current={active ? 'page' : undefined}
-      className={`relative z-10 flex h-[60px] w-full flex-col items-center justify-center gap-1 rounded-xl text-[0.6875rem] transition-all duration-200 active:scale-95 ${
-        active ? 'text-accent-soft' : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
+      className={`group relative z-10 flex h-[58px] w-full flex-col items-center justify-center gap-1 rounded-2xl text-[0.6875rem] font-medium transition-all duration-200 active:scale-95 ${
+        active
+          ? 'text-accent dark:text-white font-semibold'
+          : 'text-app-muted hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-white'
       }`}
       onClick={onClick}
     >
-      <span className="relative inline-flex">
+      <span className="relative inline-flex items-center justify-center transition-transform duration-200 group-hover:scale-105">
         {children}
         <NotificationBadge count={badge ?? 0} />
       </span>
-      <span className="leading-none">{label}</span>
+      <span className="leading-none tracking-tight">{label}</span>
     </button>
   );
 }
@@ -160,6 +162,20 @@ export function ActivityNavIcon() {
     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path
         d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78Z"
+        stroke="currentColor"
+        strokeWidth="1.75"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function CallsNavIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+      <path
+        d="M22 16.92V19.92C22.0011 20.1986 21.9441 20.4742 21.8325 20.7294C21.7209 20.9846 21.5573 21.2137 21.3522 21.402C21.1472 21.5902 20.9053 21.7336 20.6425 21.8228C20.3797 21.912 20.102 21.9451 19.826 21.92C16.7428 21.5857 13.787 20.5342 11.19 18.85C8.77382 17.3148 6.72533 15.2663 5.19001 12.85C3.49998 10.2412 2.44824 7.271 2.12001 4.18C2.09501 3.90347 2.12788 3.62476 2.21649 3.36162C2.3051 3.09849 2.44756 2.85669 2.63476 2.65162C2.82196 2.44655 3.0498 2.28271 3.30379 2.17052C3.55777 2.05833 3.83233 2.00026 4.11001 2H7.11001C7.59531 1.99522 8.06679 2.16708 8.43376 2.48353C8.80073 2.79999 9.04207 3.23945 9.11001 3.72C9.23662 4.68007 9.47144 5.62273 9.81001 6.53C9.94454 6.88792 9.97366 7.27691 9.8939 7.65088C9.81415 8.02485 9.62886 8.36811 9.36001 8.64L8.09001 9.91C9.51355 12.4136 11.5864 14.4865 14.09 15.91L15.36 14.64C15.6319 14.3711 15.9751 14.1858 16.3491 14.1061C16.7231 14.0263 17.1121 14.0555 17.47 14.19C18.3773 14.5286 19.3199 14.7634 20.28 14.89C20.7658 14.9586 21.2094 15.2032 21.5265 15.5775C21.8437 15.9518 22.0122 16.4296 22 16.92Z"
         stroke="currentColor"
         strokeWidth="1.75"
         strokeLinecap="round"
@@ -240,7 +256,7 @@ export function PresenceDot({ status }: { status: keyof typeof STATUS_COLORS | n
 
   return (
     <span
-      className={`absolute right-0 bottom-0 h-3 w-3 rounded-full border-2 border-app-chat-sidebar ${STATUS_COLORS[status]}`}
+      className={`absolute right-0 bottom-0 h-3 w-3 rounded-full ring-2 ring-app-chat-sidebar shadow-sm ${STATUS_COLORS[status]}`}
       aria-hidden="true"
     />
   );
@@ -253,10 +269,15 @@ export function Avatar({
 }: {
   imageUrl: string | null;
   initials: string;
-  size?: 'sm' | 'md';
+  size?: 'sm' | 'md' | 'lg';
 }) {
   const [failed, setFailed] = useState(false);
-  const sizeClass = size === 'sm' ? 'h-8 w-8 text-xs' : 'h-10 w-10 text-sm';
+  const sizeClass =
+    size === 'sm'
+      ? 'h-8 w-8 text-xs'
+      : size === 'lg'
+        ? 'h-20 w-20 text-2xl font-bold'
+        : 'h-10 w-10 text-sm font-semibold';
 
   useEffect(() => {
     setFailed(false);
@@ -267,7 +288,7 @@ export function Avatar({
       <RemoteImage
         src={imageUrl}
         alt=""
-        className={`${sizeClass} rounded-full object-cover`}
+        className={`${sizeClass} rounded-full object-cover ring-1 ring-white/10 shadow-sm`}
         onError={() => setFailed(true)}
       />
     );
@@ -275,7 +296,7 @@ export function Avatar({
 
   return (
     <div
-      className={`${sizeClass} flex items-center justify-center rounded-full bg-app-avatar-fallback font-semibold text-app-text`}
+      className={`${sizeClass} flex items-center justify-center rounded-full bg-app-avatar-fallback font-semibold text-app-text ring-1 ring-white/10 shadow-sm`}
     >
       {initials}
     </div>

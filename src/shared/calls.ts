@@ -122,6 +122,62 @@ export function normalizeCallInvitePayload(payload: unknown): CallInvitePayload 
   };
 }
 
+function readDirectCallSignalIds(record: Record<string, unknown>): {
+  callId: string | null;
+  conversationId: string | null;
+} {
+  const nested = asRecord(record.payload) ?? asRecord(record.data) ?? asRecord(record.message) ?? record;
+
+  return {
+    callId:
+      readString(nested.callId) ??
+      readString(nested.call_id) ??
+      readString(nested.id),
+    conversationId:
+      readString(nested.conversationId) ??
+      readString(nested.conversation_id),
+  };
+}
+
+export function normalizeCallRejectPayload(payload: unknown): CallRejectPayload | null {
+  const record = asRecord(payload);
+
+  if (!record) {
+    return null;
+  }
+
+  const { callId, conversationId } = readDirectCallSignalIds(record);
+
+  if (!callId || !conversationId) {
+    return null;
+  }
+
+  const nested = asRecord(record.payload) ?? asRecord(record.data) ?? record;
+  const reasonRaw = readString(nested.reason)?.toLowerCase();
+
+  return {
+    callId,
+    conversationId,
+    reason: reasonRaw === 'busy' ? 'busy' : reasonRaw === 'declined' ? 'declined' : undefined,
+  };
+}
+
+export function normalizeCallCancelPayload(payload: unknown): CallCancelPayload | null {
+  const record = asRecord(payload);
+
+  if (!record) {
+    return null;
+  }
+
+  const { callId, conversationId } = readDirectCallSignalIds(record);
+
+  if (!callId || !conversationId) {
+    return null;
+  }
+
+  return { callId, conversationId };
+}
+
 export function parseMeetingNotificationBody(body: string): MeetingStartedPayload | null {
   const trimmed = body.trim();
 
@@ -568,4 +624,189 @@ export function buildUserCallChannel(userId: string): string {
 
 export function buildHubCallChannel(conversationId: string): string {
   return `call:hub:${conversationId}`;
+}
+
+export function isMeetingModerator(session: {
+  isGroup: boolean;
+  isInitiator: boolean;
+  canModerateMeeting?: boolean;
+}): boolean {
+  return session.isGroup && (session.isInitiator || session.canModerateMeeting === true);
+}
+
+export type CallHistoryItem = {
+  id: string;
+  callId: string;
+  conversationId: string;
+  messageId?: string;
+  mode: 'audio' | 'video';
+  outcome: CallLogOutcome;
+  durationSec: number;
+  initiatorId: string;
+  initiatorName: string;
+  peerName: string;
+  conversationTitle?: string;
+  createdAt: string;
+};
+
+function normalizeCallOutcome(value: unknown): CallLogOutcome {
+  const raw = readString(value)?.toLowerCase();
+
+  if (raw === 'completed' || raw === 'missed' || raw === 'declined' || raw === 'cancelled') {
+    return raw;
+  }
+
+  return 'completed';
+}
+
+function normalizeCallHistoryItem(raw: unknown, index: number): CallHistoryItem | null {
+  const record = asRecord(raw);
+
+  if (!record) {
+    return null;
+  }
+
+  const content = readString(record.content);
+  const parsedLog = content ? parseCallLogContent(content) : null;
+  const conversationRecord = asRecord(record.conversation);
+  const sender = readCallParticipant(record.sender) ?? readCallParticipant(record.author);
+  const initiator =
+    readCallParticipant(record.initiator) ??
+    readCallParticipant(record.startedBy) ??
+    (parsedLog?.initiatorId && sender?.id === parsedLog.initiatorId ? sender : null) ??
+    sender;
+  const peer =
+    readCallParticipant(record.peer) ??
+    readCallParticipant(record.otherParticipant) ??
+    readCallParticipant(record.participant) ??
+    readCallParticipant(record.with) ??
+    readCallParticipant(record.callee) ??
+    readCallParticipant(record.caller);
+
+  const callId =
+    readString(record.callId) ??
+    parsedLog?.callId ??
+    readString(record.id) ??
+    `call-${index}`;
+  const conversationId =
+    readString(record.conversationId) ?? readString(conversationRecord?.id) ?? '';
+  const messageId = readString(record.messageId) ?? (parsedLog ? readString(record.id) ?? undefined : undefined);
+  const video =
+    record.video === true ||
+    parsedLog?.mode === 'video' ||
+    readString(record.mode)?.toLowerCase() === 'video';
+  const mode = video ? 'video' : 'audio';
+  const outcome = normalizeCallOutcome(record.outcome ?? parsedLog?.outcome);
+  const durationSec =
+    typeof record.durationSec === 'number'
+      ? Math.max(0, record.durationSec)
+      : parsedLog?.durationSec ?? 0;
+  const initiatorId =
+    readString(record.initiatorId) ??
+    parsedLog?.initiatorId ??
+    initiator?.id ??
+    sender?.id ??
+    '';
+  const initiatorName =
+    initiator?.username ??
+    readString(record.initiatorName) ??
+    readString(record.startedByName) ??
+    sender?.username ??
+    '';
+  const conversationTitle =
+    readString(record.conversationTitle) ??
+    readString(conversationRecord?.title) ??
+    readString(conversationRecord?.name) ??
+    undefined;
+  const peerName =
+    peer?.username ??
+    readString(record.peerName) ??
+    readString(record.participantName) ??
+    readString(record.withName) ??
+    conversationTitle ??
+    '';
+  const createdAt =
+    readString(record.createdAt) ??
+    readString(record.startedAt) ??
+    readString(record.timestamp) ??
+    readString(record.loggedAt) ??
+    readString(record.messageAt) ??
+    '';
+
+  const id = readString(record.id) ?? callId;
+
+  if (!callId) {
+    return null;
+  }
+
+  return {
+    id,
+    callId,
+    conversationId,
+    messageId,
+    mode,
+    outcome,
+    durationSec,
+    initiatorId,
+    initiatorName,
+    peerName,
+    conversationTitle,
+    createdAt: createdAt || new Date(0).toISOString(),
+  };
+}
+
+export function normalizeCallHistoryList(payload: unknown): CallHistoryItem[] {
+  const items = extractArray(payload, ['items', 'calls', 'history', 'data', 'results']);
+
+  return items
+    .map((item, index) => normalizeCallHistoryItem(item, index))
+    .filter((item): item is CallHistoryItem => item !== null)
+    .sort((left, right) => {
+      const leftTime = Date.parse(left.createdAt);
+      const rightTime = Date.parse(right.createdAt);
+
+      if (Number.isNaN(leftTime) || Number.isNaN(rightTime)) {
+        return 0;
+      }
+
+      return rightTime - leftTime;
+    });
+}
+
+export function formatCallHistoryTitle(item: Pick<CallHistoryItem, 'mode' | 'outcome' | 'durationSec'>): string {
+  const modeLabel = item.mode === 'video' ? 'Video call' : 'Audio call';
+
+  switch (item.outcome) {
+    case 'completed': {
+      if (item.durationSec > 0) {
+        const mins = Math.floor(item.durationSec / 60);
+        const secs = item.durationSec % 60;
+        const duration = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        return `${modeLabel} · ${duration}`;
+      }
+
+      return `${modeLabel} completed`;
+    }
+    case 'missed':
+      return `Missed ${item.mode === 'video' ? 'video' : 'audio'} call`;
+    case 'declined':
+      return `${modeLabel} declined`;
+    case 'cancelled':
+      return `${modeLabel} cancelled`;
+    default:
+      return modeLabel;
+  }
+}
+
+export function formatCallHistorySubtitle(
+  item: Pick<CallHistoryItem, 'initiatorId' | 'initiatorName' | 'peerName' | 'conversationTitle'>,
+  currentUserId: string | null,
+): string {
+  const starter =
+    currentUserId && item.initiatorId === currentUserId
+      ? 'you'
+      : item.initiatorName.trim() || 'Someone';
+  const peer = item.peerName.trim() || item.conversationTitle?.trim() || 'Unknown';
+
+  return `Started by ${starter} - ${peer}`;
 }

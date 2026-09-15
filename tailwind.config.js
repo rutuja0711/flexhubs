@@ -17,6 +17,7 @@ module.exports = {
           surface: 'var(--app-surface)',
           'surface-input': 'var(--app-surface-input)',
           border: 'var(--app-border)',
+          'border-subtle': 'var(--app-border-subtle)',
           'border-strong': 'var(--app-border-strong)',
           text: 'var(--app-text)',
           muted: 'var(--app-text-muted)',
@@ -34,14 +35,15 @@ module.exports = {
           'message-in': 'var(--app-message-in)',
           'message-out': 'var(--app-message-out)',
           'message-out-text': 'var(--app-message-out-text)',
+          glass: 'var(--app-glass-bg)',
         },
         surface: {
-          DEFAULT: '#1e1e1e',
-          input: '#141414',
+          DEFAULT: '#1c1e27',
+          input: '#121318',
         },
         border: {
-          DEFAULT: '#2a2a2a',
-          input: '#333333',
+          DEFAULT: '#272a38',
+          input: '#222430',
         },
         muted: '#9a9a9a',
         chat: {
@@ -55,6 +57,10 @@ module.exports = {
       },
       boxShadow: {
         app: '0 24px 48px var(--app-shadow)',
+        glass: '0 8px 32px 0 rgba(0, 0, 0, 0.36)',
+        'accent-glow': '0 0 20px -3px rgba(var(--accent-rgb) / 0.35)',
+        composer: '0 12px 36px -4px rgba(0, 0, 0, 0.35), 0 0 0 1px var(--app-border-subtle)',
+        'composer-focus': '0 16px 40px -4px rgba(0, 0, 0, 0.45), 0 0 0 1.5px rgba(var(--accent-rgb) / 0.5), 0 0 24px -2px rgba(var(--accent-rgb) / 0.25)',
       },
     },
   },

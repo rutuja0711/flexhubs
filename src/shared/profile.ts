@@ -315,7 +315,12 @@ export function normalizeUserProfile(user: unknown, settings?: ProfileSettings):
       '',
     timezone: readString(record.timezone) ?? readString(record.timeZone) ?? 'UTC',
     organizationRole: roleName,
-    inOrganization: Boolean(record.organizationId ?? record.organization ?? roleName),
+    inOrganization: Boolean(
+      record.inOrganization === true ||
+        record.organizationId ||
+        record.organization ||
+        roleName,
+    ),
     shareOnlineStatus: settings?.shareOnlineStatus ?? readBoolean(record.shareOnlineStatus) ?? readBoolean(record.sharePresence) ?? true,
   };
 }
@@ -342,8 +347,18 @@ function isWorkspaceOwnerRole(role: string | null | undefined): boolean {
   );
 }
 
+function unwrapAuthUserRecord(user: unknown): Record<string, unknown> | null {
+  const record = asRecord(user);
+
+  if (!record) {
+    return null;
+  }
+
+  return asRecord(record.user) ?? record;
+}
+
 export function userIsWorkspaceOwner(user: unknown): boolean {
-  const record = asRecord(user) ?? {};
+  const record = unwrapAuthUserRecord(user) ?? {};
   const organization = asRecord(record.organization);
   const membership = asRecord(record.membership) ?? asRecord(record.organizationMembership);
   const organizationRole = asRecord(record.organizationRole);
@@ -355,9 +370,17 @@ export function userIsWorkspaceOwner(user: unknown): boolean {
     record.isWorkspaceOwner === true ||
     record.createdWorkspace === true ||
     record.organizationOwner === true ||
+    record.isAdmin === true ||
+    record.isOrganizationAdmin === true ||
+    record.canManageOrganization === true ||
+    record.canManageBilling === true ||
+    organization?.isAdmin === true ||
+    organization?.canManageOrganization === true ||
     membership?.isOwner === true ||
     membership?.isFounder === true ||
-    membership?.isCreator === true
+    membership?.isCreator === true ||
+    membership?.isAdmin === true ||
+    membership?.isOrganizationAdmin === true
   ) {
     return true;
   }
@@ -389,8 +412,94 @@ export function userIsWorkspaceOwner(user: unknown): boolean {
   return roleCandidates.some((role) => isWorkspaceOwnerRole(role));
 }
 
-export function userCanManageOrganization(user: unknown): boolean {
-  return userIsWorkspaceOwner(user);
+function readProfileEmail(user: unknown): string {
+  const record = unwrapAuthUserRecord(user);
+
+  if (!record) {
+    return '';
+  }
+
+  return (readString(record.email) ?? '').toLowerCase();
+}
+
+function readProfileUserId(user: unknown): string {
+  const record = unwrapAuthUserRecord(user);
+
+  if (!record) {
+    return '';
+  }
+
+  return readString(record.id) ?? readString(record.userId) ?? '';
+}
+
+function memberMatchesCurrentUser(
+  member: OrganizationMemberItem,
+  userId: string,
+  profileEmail: string,
+): boolean {
+  if (userId && member.id === userId) {
+    return true;
+  }
+
+  if (profileEmail && member.email.toLowerCase() === profileEmail) {
+    return true;
+  }
+
+  return false;
+}
+
+export function userCanManageOrganization(
+  user: unknown,
+  members?: OrganizationMemberItem[],
+): boolean {
+  const record = unwrapAuthUserRecord(user) ?? {};
+  const organization = asRecord(record.organization);
+  const membership = asRecord(record.membership) ?? asRecord(record.organizationMembership);
+  const userId = readString(record.id) ?? readString(record.userId);
+
+  if (
+    record.isOrganizationAdmin === true ||
+    membership?.isOrganizationAdmin === true
+  ) {
+    return true;
+  }
+
+  if (
+    record.isOwner === true ||
+    record.isFounder === true ||
+    record.createdWorkspace === true ||
+    record.organizationOwner === true ||
+    record.isWorkspaceOwner === true ||
+    membership?.isOwner === true ||
+    membership?.isFounder === true ||
+    membership?.isCreator === true
+  ) {
+    return true;
+  }
+
+  const ownerId =
+    readString(record.organizationOwnerId) ??
+    readString(organization?.ownerId) ??
+    readString(organization?.createdById) ??
+    readString(organization?.founderId) ??
+    readString(asRecord(organization?.owner)?.id) ??
+    readString(asRecord(organization?.createdBy)?.id);
+
+  if (userId && ownerId && userId === ownerId) {
+    return true;
+  }
+
+  if (!members || members.length === 0) {
+    return false;
+  }
+
+  const profileEmail = readProfileEmail(user);
+
+  return members.some(
+    (member) =>
+      (member.isOwner || member.isAdmin) &&
+      memberMatchesCurrentUser(member, userId ?? '', profileEmail),
+  );
 }
 
 export function normalizeOrganizationMembers(payload: unknown): OrganizationMemberItem[] {
@@ -416,17 +525,25 @@ export function normalizeOrganizationMembers(payload: unknown): OrganizationMemb
         'Member';
 
       const normalizedRole = role.toLowerCase();
+      const memberType = readString(record.memberType) ?? readString(record.type);
+      const normalizedMemberType = (memberType ?? '').toLowerCase();
       const isOwner =
         record.isOwner === true ||
         userRecord.isOwner === true ||
         record.isFounder === true ||
         userRecord.isFounder === true ||
+        record.isOrganizationOwner === true ||
+        userRecord.isOrganizationOwner === true ||
+        normalizedMemberType.includes('founder') ||
+        normalizedMemberType.includes('owner') ||
         normalizedRole.includes('founder') ||
         normalizedRole.includes('owner');
       const isAdmin =
         isOwner ||
-        normalizedRole.includes('admin') ||
-        normalizedRole.includes('director');
+        record.isOrganizationAdmin === true ||
+        userRecord.isOrganizationAdmin === true ||
+        record.organizationAdmin === true ||
+        userRecord.organizationAdmin === true;
 
       return {
         id:

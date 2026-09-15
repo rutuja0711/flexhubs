@@ -215,28 +215,33 @@ export function NewEventModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-6">
-      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl border border-app-border bg-app-inset p-6 shadow-xl">
+    <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4 sm:p-6 backdrop-blur-md animate-fade-in">
+      <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-app-border/80 bg-app-surface/95 backdrop-blur-2xl p-6 shadow-2xl animate-pop-in origin-center">
+        <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent pointer-events-none" />
+
         <div className="mb-5 flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/20 text-accent">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-accent to-[#632a38] text-white shadow-md shadow-accent/20">
               <CalendarNavIcon className="h-5 w-5" />
             </div>
-            <h2 className="text-lg font-bold text-app-text">New event</h2>
+            <div>
+              <h2 className="text-base font-semibold text-app-text tracking-tight">New event</h2>
+              <p className="text-xs text-app-muted">Schedule an event or deadline</p>
+            </div>
           </div>
           <button
             type="button"
             aria-label="Close"
-            className="rounded-lg p-2 text-app-muted hover:bg-app-chat-hover hover:text-app-text"
+            className="flex h-8 w-8 items-center justify-center rounded-xl text-app-muted transition-colors hover:bg-app-inset hover:text-app-text"
             onClick={onClose}
           >
-            <FiX />
+            <FiX className="text-base" />
           </button>
         </div>
 
         <form onSubmit={(event) => void handleSubmit(event)} className="space-y-4">
           <div>
-            <label className="mb-2 block text-[11px] font-semibold tracking-wide text-app-muted uppercase">
+            <label className="mb-1.5 block text-xs font-medium text-app-muted">
               Title
             </label>
             <input
@@ -244,12 +249,12 @@ export function NewEventModal({
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Team sync, deadline, reminder..."
-              className="w-full rounded-xl border border-accent bg-app-surface-input px-3.5 py-3 text-sm text-app-text outline-none"
+              className="w-full rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
             />
           </div>
 
           <div>
-            <label className="mb-2 block text-[11px] font-semibold tracking-wide text-app-muted uppercase">
+            <label className="mb-1.5 block text-xs font-medium text-app-muted">
               When
             </label>
             <div className="relative">
@@ -257,30 +262,30 @@ export function NewEventModal({
                 type="datetime-local"
                 value={startsAtLocal}
                 onChange={(event) => setStartsAtLocal(event.target.value)}
-                className="datetime-input w-full rounded-xl border border-app-border bg-app-surface-input px-3.5 py-3 pr-10 text-sm text-app-text outline-none"
+                className="datetime-input w-full rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 pr-10 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
               />
-              <CalendarNavIcon className="pointer-events-none absolute top-1/2 right-3 h-4 w-4 -translate-y-1/2 text-app-muted" />
+              <CalendarNavIcon className="pointer-events-none absolute top-1/2 right-3.5 h-4 w-4 -translate-y-1/2 text-app-muted" />
             </div>
-            <p className="mt-2 text-xs text-app-muted">Events must be at least 1 minute from now.</p>
+            <p className="mt-1.5 text-xs text-app-muted">Events must be at least 1 minute from now.</p>
           </div>
 
           <div>
-            <label className="mb-2 block text-[11px] font-semibold tracking-wide text-app-muted uppercase">
+            <label className="mb-1.5 block text-xs font-medium text-app-muted">
               Share with
             </label>
-            <div className="rounded-xl border border-app-border bg-app-surface-input p-3">
+            <div className="rounded-2xl border border-app-border/60 bg-app-card/50 p-3.5">
               {selectedUsers.length > 0 ? (
                 <div className="mb-3 flex flex-wrap gap-2">
                   {selectedUsers.map((user) => (
                     <span
                       key={user.id}
-                      className="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2.5 py-1 text-xs text-accent"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-app-border/60 bg-app-card px-2.5 py-1 text-xs text-app-text font-medium shadow-xs"
                     >
                       {user.name}
                       <button
                         type="button"
                         aria-label={`Remove ${user.name}`}
-                        className="rounded-full p-0.5 hover:bg-app-chat-hover"
+                        className="text-app-muted hover:text-accent-soft transition-colors"
                         onClick={() => removePerson(user.id)}
                       >
                         <FiX className="h-3 w-3" />
@@ -301,7 +306,7 @@ export function NewEventModal({
                   value={peopleQuery}
                   onChange={(event) => setPeopleQuery(event.target.value)}
                   placeholder="Search teammates to invite"
-                  className="w-full rounded-lg border border-app-border bg-app-elevated py-2 pr-3 pl-9 text-sm text-app-text outline-none"
+                  className="w-full rounded-xl border border-app-border/70 bg-app-surface-input py-2 pr-3 pl-9 text-xs text-app-text outline-none focus:border-accent transition-all"
                 />
               </div>
 
@@ -312,16 +317,16 @@ export function NewEventModal({
                 <p className="mt-3 text-xs text-accent-soft">{membersError}</p>
               ) : null}
               {!membersLoading && filteredPeople.length > 0 ? (
-                <div className="mt-2 overflow-hidden rounded-lg border border-app-border">
+                <div className="mt-2 overflow-hidden rounded-xl border border-app-border/60 bg-app-card">
                   {filteredPeople.map((user) => (
                     <button
                       key={user.id}
                       type="button"
-                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-app-chat-hover"
+                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs hover:bg-app-inset transition-colors"
                       onClick={() => addPerson(user)}
                     >
-                      <FiUserPlus className="h-4 w-4 text-accent-soft" />
-                      <span className="font-medium text-app-text">{user.name}</span>
+                      <FiUserPlus className="h-3.5 w-3.5 text-accent-soft" />
+                      <span className="font-semibold text-app-text">{user.name}</span>
                       <span className="text-app-muted">@{user.username}</span>
                     </button>
                   ))}
@@ -331,7 +336,7 @@ export function NewEventModal({
           </div>
 
           <div className="relative">
-            <label className="mb-2 block text-[11px] font-semibold tracking-wide text-app-muted uppercase">
+            <label className="mb-1.5 block text-xs font-medium text-app-muted">
               Notes
             </label>
             <textarea
@@ -353,35 +358,35 @@ export function NewEventModal({
                 )
               }
               placeholder="Private notes... Use @name to share with a teammate"
-              rows={4}
-              className="w-full resize-none rounded-xl border border-app-border bg-app-surface-input px-3.5 py-3 text-sm text-app-text outline-none"
+              rows={3}
+              className="w-full resize-none rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
             />
             {mentionSuggestions.length > 0 ? (
-              <div className="absolute right-0 bottom-full left-0 z-10 mb-1 rounded-xl border border-app-border bg-app-elevated py-1 shadow-lg">
+              <div className="absolute right-0 bottom-full left-0 z-10 mb-1 rounded-2xl border border-app-border/80 bg-app-surface/95 backdrop-blur-xl p-1 shadow-xl">
                 {mentionSuggestions.map((user) => (
                   <button
                     key={user.id}
                     type="button"
-                    className="flex w-full px-3 py-2 text-left text-sm hover:bg-app-chat-hover"
+                    className="flex w-full px-3 py-2 text-left text-xs hover:bg-app-inset rounded-xl transition-colors"
                     onClick={() => insertMention(user)}
                   >
-                    <span className="font-medium text-app-text">{user.name}</span>
+                    <span className="font-semibold text-app-text">{user.name}</span>
                     <span className="ml-2 text-app-muted">@{user.username}</span>
                   </button>
                 ))}
               </div>
             ) : null}
-            <p className="mt-2 text-xs text-app-muted">
+            <p className="mt-1.5 text-xs text-app-muted">
               Teammates you add or @mention will be notified and see this event on their calendar.
             </p>
           </div>
 
-          {error ? <p className="text-sm text-accent-soft">{error}</p> : null}
+          {error ? <p className="text-xs text-accent-soft font-medium">{error}</p> : null}
 
-          <div className="flex justify-end gap-3 pt-2">
+          <div className="flex justify-end gap-2.5 pt-3">
             <button
               type="button"
-              className="rounded-xl border border-app-border px-4 py-2.5 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
+              className="rounded-xl border border-app-border/70 bg-app-card px-4 py-2 text-xs font-semibold text-app-text hover:bg-app-inset transition-colors disabled:opacity-50"
               onClick={onClose}
               disabled={saving}
             >
@@ -390,7 +395,7 @@ export function NewEventModal({
             <button
               type="submit"
               disabled={saving}
-              className="rounded-xl bg-accent px-4 py-2.5 text-sm font-semibold text-white hover:bg-accent-hover disabled:opacity-60"
+              className="rounded-xl bg-gradient-to-r from-accent to-[#632a38] px-4 py-2 text-xs font-semibold text-white shadow-md shadow-accent/20 hover:brightness-110 active:scale-[0.98] disabled:opacity-60 transition-all"
             >
               {saving ? 'Saving…' : 'Save event'}
             </button>

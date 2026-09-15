@@ -270,56 +270,61 @@ export function FlexAiPanel({
   }
 
   return (
-    <div className="pointer-events-none fixed bottom-5 left-[88px] z-[70] flex flex-col items-start">
-      <div className="pointer-events-auto flex h-[440px] w-[360px] flex-col overflow-hidden rounded-[20px] border border-app-border bg-app-surface shadow-app">
-          <div className="flex items-center justify-between border-b border-app-border/50 bg-app-chat-panel px-3.5 py-2.5">
-            <div className="flex items-center gap-2.5">
-              <div className="flex h-9 w-9 items-center justify-center rounded-full bg-accent text-white">
+    <div className="pointer-events-none fixed bottom-5 left-[90px] z-[70] flex flex-col items-start">
+      <div className="pointer-events-auto flex h-[460px] w-[380px] flex-col overflow-hidden rounded-[24px] border border-app-border/80 bg-app-surface/95 backdrop-blur-xl shadow-2xl animate-pop-in">
+          <div className="flex items-center justify-between border-b border-app-border/40 bg-app-chat-panel/80 px-4 py-3">
+            <div className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-2xl bg-gradient-to-br from-accent to-[#5c2431] text-white shadow-md shadow-accent/30">
                 <FlexRobotIcon />
               </div>
               <div>
-                <p className="text-sm font-semibold text-app-text">Flex</p>
-                <p className="text-[11px] text-app-muted">AI assistant</p>
+                <p className="text-sm font-bold tracking-tight text-app-text">Flex AI</p>
+                <p className="text-[11px] font-medium text-app-muted">Workplace Assistant</p>
               </div>
             </div>
             <button
               type="button"
               aria-label="Close Flex"
-              className="rounded-lg p-1.5 text-app-muted hover:bg-app-chat-hover hover:text-app-text"
+              className="rounded-xl p-1.5 text-app-muted hover:bg-app-chat-hover hover:text-app-text transition-colors"
               onClick={onClose}
             >
               <FiX className="text-base" />
             </button>
           </div>
 
-          <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-3.5 py-3">
+          <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3.5">
             {messages.map((message) => (
               <div
                 key={message.id}
                 className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`max-w-[92%] rounded-2xl px-3 py-2 text-[13px] leading-5 whitespace-pre-wrap ${
+                  className={`max-w-[90%] rounded-[18px] px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap shadow-sm ${
                     message.role === 'user'
-                      ? 'bg-accent text-white'
-                      : 'bg-app-inset text-app-text'
+                      ? 'bg-gradient-to-br from-accent via-accent to-[#632a38] text-white shadow-accent/20'
+                      : 'bg-app-inset/90 border border-app-border/50 text-app-text'
                   }`}
                 >
                   {message.text}
                 </div>
               </div>
             ))}
-            {busy ? <p className="text-xs text-app-muted">Flex is working…</p> : null}
+            {busy ? (
+              <div className="flex items-center gap-2 text-xs text-accent-soft">
+                <div className="h-2 w-2 animate-ping rounded-full bg-accent" />
+                <span>Flex is thinking…</span>
+              </div>
+            ) : null}
           </div>
 
-          <div className="border-t border-app-border/50 px-3 py-2.5">
+          <div className="border-t border-app-border/40 bg-app-chat-panel/50 px-3.5 py-3">
             <div className="flex items-center gap-1.5">
               <input
                 ref={inputRef}
                 value={input}
                 placeholder="Ask Flex or dictate a message..."
                 disabled={busy}
-                className="h-10 min-w-0 flex-1 rounded-xl border border-app-border bg-app-surface-input px-3 text-sm text-app-text outline-none placeholder:text-app-placeholder focus:border-accent disabled:opacity-60"
+                className="h-9 min-w-0 flex-1 rounded-xl border border-app-border/60 bg-app-surface-input px-3 text-xs text-app-text outline-none transition-all placeholder:text-app-placeholder/70 focus:border-accent focus:ring-1 focus:ring-accent/30 disabled:opacity-50"
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
@@ -333,7 +338,7 @@ export function FlexAiPanel({
                 aria-label="Enhance with Flex"
                 title="Enhance or generate"
                 disabled={busy}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-app-muted hover:bg-app-chat-hover hover:text-app-text disabled:opacity-50"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-app-muted hover:bg-app-chat-hover hover:text-app-text transition-all active:scale-95 disabled:opacity-40"
                 onClick={() => void runEnhanceOrGenerate()}
               >
                 <EnhanceIcon />
@@ -343,21 +348,21 @@ export function FlexAiPanel({
                 aria-label={recording ? 'Stop dictation' : 'Dictate a message'}
                 title={recording ? 'Stop dictation' : 'Dictate a message'}
                 disabled={busy && !recording}
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg hover:bg-app-chat-hover disabled:opacity-50 ${
-                  recording ? 'text-accent' : 'text-app-muted hover:text-app-text'
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all active:scale-95 hover:bg-app-chat-hover disabled:opacity-40 ${
+                  recording ? 'text-accent font-bold ring-1 ring-accent animate-pulse' : 'text-app-muted hover:text-app-text'
                 }`}
                 onClick={() => void toggleRecording()}
               >
-                <FiMic className="text-lg" />
+                <FiMic className="text-base" />
               </button>
               <button
                 type="button"
                 aria-label="Send to Flex"
                 disabled={busy || !input.trim()}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[10px] bg-accent text-white hover:bg-accent-hover disabled:opacity-50"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-[#5c2431] text-white shadow-sm shadow-accent/30 transition-all hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
                 onClick={() => void runCommand()}
               >
-                <FiSend className="text-base" />
+                <FiSend className="text-sm" />
               </button>
             </div>
           </div>

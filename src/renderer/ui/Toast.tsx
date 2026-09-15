@@ -20,21 +20,21 @@ const ToastContext = createContext<ToastApi | null>(null);
 function toneStyles(tone: ToastTone): { container: string; icon: ReactNode } {
   if (tone === 'success') {
     return {
-      container: 'border-[#3ecf8e]/30 bg-app-elevated',
-      icon: <FiCheckCircle className="shrink-0 text-lg text-[#3ecf8e]" aria-hidden="true" />,
+      container: 'border-[#3ecf8e]/30 bg-app-surface/95 backdrop-blur-xl shadow-lg shadow-[#3ecf8e]/5',
+      icon: <FiCheckCircle className="shrink-0 text-base text-[#3ecf8e] mt-0.5" aria-hidden="true" />,
     };
   }
 
   if (tone === 'error') {
     return {
-      container: 'border-accent-soft/40 bg-app-elevated',
-      icon: <FiAlertCircle className="shrink-0 text-lg text-accent-soft" aria-hidden="true" />,
+      container: 'border-accent-soft/40 bg-app-surface/95 backdrop-blur-xl shadow-lg shadow-accent/10',
+      icon: <FiAlertCircle className="shrink-0 text-base text-accent-soft mt-0.5" aria-hidden="true" />,
     };
   }
 
   return {
-    container: 'border-app-border bg-app-elevated',
-    icon: <FiInfo className="shrink-0 text-lg text-app-muted" aria-hidden="true" />,
+    container: 'border-app-border/80 bg-app-surface/95 backdrop-blur-xl shadow-lg',
+    icon: <FiInfo className="shrink-0 text-base text-app-muted mt-0.5" aria-hidden="true" />,
   };
 }
 
@@ -82,17 +82,17 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             <div
               key={item.id}
               role="status"
-              className={`pointer-events-auto flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-app ${styles.container}`}
+              className={`pointer-events-auto flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-xl animate-pop-in ${styles.container}`}
             >
               {styles.icon}
-              <p className="min-w-0 flex-1 text-sm text-app-text">{item.message}</p>
+              <p className="min-w-0 flex-1 text-xs font-medium text-app-text leading-relaxed">{item.message}</p>
               <button
                 type="button"
                 aria-label="Dismiss notification"
-                className="shrink-0 rounded-lg p-1 text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+                className="shrink-0 flex h-6 w-6 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-inset hover:text-app-text"
                 onClick={() => dismiss(item.id)}
               >
-                <FiX />
+                <FiX className="text-xs" />
               </button>
             </div>
           );

@@ -46,6 +46,12 @@ export type MessagePoll = {
   totalVotes: number;
 };
 
+export type MessageReadReceipt = {
+  userId: string;
+  name: string;
+  readAt: string | null;
+};
+
 export type MessageItem = {
   id: string;
   content: string;
@@ -57,6 +63,7 @@ export type MessageItem = {
   pinnedAt: string | null;
   isOwn: boolean;
   status: 'sending' | 'delivered' | 'seen' | null;
+  readBy: MessageReadReceipt[];
   reactions: MessageReaction[];
   replyToMessageId?: string;
   replyToMessage?: MessageItem;
@@ -275,63 +282,160 @@ function extractArray(payload: unknown, keys: string[]): unknown[] {
   return [];
 }
 
+function readReactionUserId(value: unknown): string {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim();
+  }
+
+  const record = asRecord(value);
+
+  if (!record) {
+    return '';
+  }
+
+  return (
+    readString(record.id) ??
+    readString(record._id) ??
+    readString(record.userId) ??
+    readString(record.user_id) ??
+    ''
+  );
+}
+
+function readReactionUsername(value: unknown): string {
+  if (typeof value === 'string') {
+    return '';
+  }
+
+  const record = asRecord(value);
+
+  if (!record) {
+    return '';
+  }
+
+  return (
+    readString(record.username) ??
+    readString(record.name) ??
+    readString(record.displayName) ??
+    ''
+  );
+}
+
+function appendReactionUsers(
+  reactions: MessageReaction[],
+  emoji: string,
+  users: unknown[],
+): void {
+  for (const user of users) {
+    const userId = readReactionUserId(user);
+
+    if (!userId) {
+      continue;
+    }
+
+    reactions.push({
+      emoji,
+      userId,
+      username: readReactionUsername(user),
+    });
+  }
+}
+
+function normalizeGroupedReactionRecord(
+  record: Record<string, unknown>,
+  fallbackEmoji?: string,
+): MessageReaction[] {
+  const reactions: MessageReaction[] = [];
+  const emoji =
+    readString(record.emoji) ??
+    readString(record.reaction) ??
+    fallbackEmoji ??
+    '👍';
+  const user = asRecord(record.user) ?? asRecord(record.sender);
+  const userId =
+    readString(record.userId) ??
+    readString(record.user_id) ??
+    readReactionUserId(user);
+
+  if (userId) {
+    reactions.push({
+      emoji,
+      userId,
+      username:
+        readString(record.username) ??
+        readReactionUsername(user),
+    });
+    return reactions;
+  }
+
+  const nestedUsers = [
+    ...(Array.isArray(record.users) ? record.users : []),
+    ...(Array.isArray(record.userIds) ? record.userIds : []),
+    ...(Array.isArray(record.user_ids) ? record.user_ids : []),
+  ];
+
+  appendReactionUsers(reactions, emoji, nestedUsers);
+  return reactions;
+}
+
+export function mergeMessageReactions(
+  previous: MessageReaction[],
+  incoming: MessageReaction[],
+): MessageReaction[] {
+  const merged = new Map<string, MessageReaction>();
+
+  for (const reaction of previous) {
+    merged.set(`${reaction.userId}::${reaction.emoji}`, reaction);
+  }
+
+  for (const reaction of incoming) {
+    const key = `${reaction.userId}::${reaction.emoji}`;
+    const existing = merged.get(key);
+    merged.set(key, {
+      emoji: reaction.emoji,
+      userId: reaction.userId,
+      username: reaction.username || existing?.username || '',
+    });
+  }
+
+  return Array.from(merged.values());
+}
+
 function normalizeReactions(value: unknown): MessageReaction[] {
-  if (!Array.isArray(value)) {
+  if (Array.isArray(value)) {
+    const reactions: MessageReaction[] = [];
+
+    for (const entry of value) {
+      const record = asRecord(entry);
+
+      if (!record) {
+        continue;
+      }
+
+      reactions.push(...normalizeGroupedReactionRecord(record));
+    }
+
+    return reactions.filter((reaction) => reaction.userId);
+  }
+
+  const record = asRecord(value);
+
+  if (!record) {
     return [];
   }
 
   const reactions: MessageReaction[] = [];
 
-  for (const entry of value) {
-    const record = asRecord(entry);
-
-    if (!record) {
+  for (const [key, entry] of Object.entries(record)) {
+    if (Array.isArray(entry)) {
+      appendReactionUsers(reactions, key, entry);
       continue;
     }
 
-    const user = asRecord(record.user) ?? asRecord(record.sender);
-    const emoji = readString(record.emoji) ?? readString(record.reaction) ?? '👍';
-    const userId =
-      readString(record.userId) ??
-      readString(user?.id) ??
-      readString(user?.userId) ??
-      '';
-    const username =
-      readString(record.username) ??
-      readString(user?.username) ??
-      readString(user?.name) ??
-      readString(user?.displayName) ??
-      '';
+    const entryRecord = asRecord(entry);
 
-    if (userId) {
-      reactions.push({ emoji, userId, username });
-      continue;
-    }
-
-    const nestedUsers = Array.isArray(record.users) ? record.users : [];
-
-    for (const nestedUser of nestedUsers) {
-      const userRecord = asRecord(nestedUser);
-      if (!userRecord) {
-        continue;
-      }
-
-      const nestedUserId =
-        readString(userRecord.id) ??
-        readString(userRecord.userId) ??
-        '';
-
-      if (nestedUserId) {
-        reactions.push({
-          emoji,
-          userId: nestedUserId,
-          username:
-            readString(userRecord.username) ??
-            readString(userRecord.name) ??
-            readString(userRecord.displayName) ??
-            '',
-        });
-      }
+    if (entryRecord) {
+      reactions.push(...normalizeGroupedReactionRecord(entryRecord, key));
     }
   }
 
@@ -342,17 +446,23 @@ export function applyReactionPatch(
   message: MessageItem,
   patch: {
     incoming?: MessageItem;
+    replaceReactions?: boolean;
     reactions?: MessageReaction[];
     addedReaction?: MessageReaction | null;
     removedReaction?: { emoji: string; userId: string } | null;
   },
 ): MessageItem {
   if (patch.incoming) {
-    return mergeMessageUpdates(message, patch.incoming);
+    return mergeMessageUpdates(message, patch.incoming, {
+      replaceReactions: patch.replaceReactions === true,
+    });
   }
 
   if (patch.reactions) {
-    return { ...message, reactions: patch.reactions };
+    return {
+      ...message,
+      reactions: mergeMessageReactions(message.reactions, patch.reactions),
+    };
   }
 
   if (patch.addedReaction) {
@@ -383,7 +493,11 @@ export function applyReactionPatch(
   return message;
 }
 
-export function mergeMessageUpdates(previous: MessageItem, incoming: MessageItem): MessageItem {
+export function mergeMessageUpdates(
+  previous: MessageItem,
+  incoming: MessageItem,
+  options?: { replaceReactions?: boolean },
+): MessageItem {
   if (isDeletedMessage(incoming)) {
     return markMessageDeletedForEveryone({
       ...previous,
@@ -394,15 +508,23 @@ export function mergeMessageUpdates(previous: MessageItem, incoming: MessageItem
     });
   }
 
+  const mergedReactions =
+    incoming.reactions.length > 0
+      ? options?.replaceReactions
+        ? incoming.reactions
+        : mergeMessageReactions(previous.reactions, incoming.reactions)
+      : previous.reactions;
+
   return {
     ...previous,
     ...incoming,
     content: incoming.content || previous.content,
     senderName: incoming.senderName !== 'Unknown' ? incoming.senderName : previous.senderName,
     senderId: incoming.senderId ?? previous.senderId,
-    reactions: incoming.reactions.length > 0 ? incoming.reactions : previous.reactions,
+    reactions: mergedReactions,
     media: incoming.media.length > 0 ? incoming.media : previous.media,
     status: incoming.status ?? previous.status,
+    readBy: incoming.readBy.length > 0 ? incoming.readBy : previous.readBy,
     poll: incoming.poll ?? previous.poll,
   };
 }
@@ -890,6 +1012,320 @@ export function extractPeerLastReadMessageIds(
   return [...ids];
 }
 
+function readMemberDisplayName(member: Record<string, unknown>): string {
+  const user = asRecord(member.user) ?? member;
+
+  return (
+    readString(user.username) ??
+    readString(user.name) ??
+    readString(user.displayName) ??
+    readString(member.username) ??
+    readString(member.name) ??
+    readString(member.displayName) ??
+    'Someone'
+  );
+}
+
+export function buildConversationMemberNameIndex(
+  conversation: Record<string, unknown> | null,
+): Map<string, string> {
+  const index = new Map<string, string>();
+
+  if (!conversation) {
+    return index;
+  }
+
+  for (const key of ['members', 'participants', 'users', 'groupMembers']) {
+    const value = conversation[key];
+
+    if (!Array.isArray(value)) {
+      continue;
+    }
+
+    for (const entry of value) {
+      const member = asRecord(entry);
+
+      if (!member) {
+        continue;
+      }
+
+      const userId = readMemberUserId(member);
+
+      if (!userId) {
+        continue;
+      }
+
+      index.set(userId, readMemberDisplayName(member));
+    }
+  }
+
+  const peerUserId =
+    readString(conversation.peerUserId) ??
+    readString(conversation.otherUserId) ??
+    readString(conversation.directUserId);
+
+  if (peerUserId) {
+    const peerName =
+      readString(conversation.title) ??
+      readString(conversation.displayName) ??
+      readString(conversation.name);
+
+    if (peerName) {
+      index.set(peerUserId, peerName);
+    }
+  }
+
+  return index;
+}
+
+export function enrichMessageReadReceipts(
+  readers: MessageReadReceipt[],
+  nameIndex: Map<string, string>,
+): MessageReadReceipt[] {
+  return readers.map((reader) => {
+    const resolvedName =
+      (reader.name.trim() && reader.name !== 'Someone' ? reader.name : null) ??
+      nameIndex.get(reader.userId) ??
+      reader.name;
+
+    return {
+      ...reader,
+      name: resolvedName.trim() || 'Someone',
+    };
+  });
+}
+
+function readMemberUserId(member: Record<string, unknown>): string | null {
+  const user = asRecord(member.user) ?? member;
+
+  return readString(user.id) ?? readString(member.userId) ?? readString(member.id);
+}
+
+function readMemberLastReadMessageId(member: Record<string, unknown>): string | null {
+  const user = asRecord(member.user) ?? member;
+
+  return (
+    readString(member.lastReadMessageId) ??
+    readString(member.readUpToMessageId) ??
+    readString(member.lastSeenMessageId) ??
+    readString(user.lastReadMessageId) ??
+    readString(user.readUpToMessageId) ??
+    readString(user.lastSeenMessageId)
+  );
+}
+
+export function memberHasReadMessage(
+  lastReadMessageId: string | null,
+  messageId: string,
+  messages: MessageItem[],
+): boolean {
+  if (!lastReadMessageId) {
+    return false;
+  }
+
+  const messageIndex = messages.findIndex((message) => message.id === messageId);
+  const readIndex = messages.findIndex((message) => message.id === lastReadMessageId);
+
+  if (messageIndex < 0 || readIndex < 0) {
+    return false;
+  }
+
+  return readIndex >= messageIndex;
+}
+
+export function normalizeMessageReadReceipts(
+  value: unknown,
+  nameIndex?: Map<string, string>,
+): MessageReadReceipt[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const readers: MessageReadReceipt[] = [];
+
+  for (const [index, entry] of value.entries()) {
+    if (typeof entry === 'string') {
+      const userId = entry.trim();
+
+      if (!userId) {
+        continue;
+      }
+
+      readers.push({
+        userId,
+        name: nameIndex?.get(userId) ?? 'Someone',
+        readAt: null,
+      });
+      continue;
+    }
+
+    const record = asRecord(entry);
+    if (!record) {
+      continue;
+    }
+
+    const user =
+      asRecord(record.user) ??
+      asRecord(record.member) ??
+      asRecord(record.reader) ??
+      record;
+    const userId =
+      readString(record.userId) ??
+      readString(user.id) ??
+      readString(record.id) ??
+      `reader-${index}`;
+    const name =
+      readString(record.name) ??
+      readString(record.displayName) ??
+      readString(record.username) ??
+      readMemberDisplayName(asRecord(record.user) ? record : { user: record });
+    const readAt =
+      readString(record.readAt) ??
+      readString(record.seenAt) ??
+      readString(record.readAtUtc) ??
+      null;
+
+    readers.push({
+      userId,
+      name: nameIndex?.get(userId) ?? name,
+      readAt,
+    });
+  }
+
+  const unique = new Map<string, MessageReadReceipt>();
+
+  for (const reader of readers) {
+    unique.set(reader.userId, reader);
+  }
+
+  const deduped = [...unique.values()];
+
+  return nameIndex ? enrichMessageReadReceipts(deduped, nameIndex) : deduped;
+}
+
+export function extractReadersFromConversation(
+  conversation: Record<string, unknown> | null,
+  messageId: string,
+  messages: MessageItem[],
+  currentUserId: string | null,
+): MessageReadReceipt[] {
+  if (!conversation) {
+    return [];
+  }
+
+  const readers: MessageReadReceipt[] = [];
+  const seenUserIds = new Set<string>();
+
+  const addReader = (userId: string | null, name: string, readAt: string | null = null) => {
+    if (!userId || (currentUserId && userId === currentUserId) || seenUserIds.has(userId)) {
+      return;
+    }
+
+    seenUserIds.add(userId);
+    readers.push({ userId, name, readAt });
+  };
+
+  const nameIndex = buildConversationMemberNameIndex(conversation);
+  const peerLastReadId =
+    readString(conversation.peerLastReadMessageId) ??
+    readString(conversation.otherLastReadMessageId) ??
+    readString(conversation.lastSeenByOtherMessageId);
+
+  if (peerLastReadId && memberHasReadMessage(peerLastReadId, messageId, messages)) {
+    const peerUserId =
+      readString(conversation.peerUserId) ??
+      readString(conversation.otherUserId) ??
+      readString(conversation.directUserId);
+
+    if (peerUserId && peerUserId !== currentUserId) {
+      addReader(
+        peerUserId,
+        readString(conversation.title) ??
+          readString(conversation.displayName) ??
+          readString(conversation.name) ??
+          nameIndex.get(peerUserId) ??
+          'Someone',
+      );
+    }
+  }
+
+  for (const key of ['members', 'participants', 'users', 'groupMembers']) {
+    const value = conversation[key];
+    if (!Array.isArray(value)) {
+      continue;
+    }
+
+    for (const entry of value) {
+      const member = asRecord(entry);
+      if (!member) {
+        continue;
+      }
+
+      const userId = readMemberUserId(member);
+      if (!userId || (currentUserId && userId === currentUserId)) {
+        continue;
+      }
+
+      const lastReadMessageId = readMemberLastReadMessageId(member);
+      if (!memberHasReadMessage(lastReadMessageId, messageId, messages)) {
+        continue;
+      }
+
+      addReader(
+        userId,
+        nameIndex.get(userId) ?? readMemberDisplayName(member),
+        readString(member.readAt) ?? readString(member.seenAt),
+      );
+    }
+  }
+
+  return enrichMessageReadReceipts(readers, nameIndex);
+}
+
+export function resolveMessageReadBy(
+  message: Pick<MessageItem, 'id' | 'isOwn' | 'status' | 'readBy'>,
+  conversation: Record<string, unknown> | null,
+  messages: MessageItem[],
+  currentUserId: string | null,
+): MessageReadReceipt[] {
+  if (!message.isOwn || message.status !== 'seen') {
+    return [];
+  }
+
+  const nameIndex = buildConversationMemberNameIndex(conversation);
+
+  if (message.readBy.length > 0) {
+    return enrichMessageReadReceipts(message.readBy, nameIndex);
+  }
+
+  return extractReadersFromConversation(conversation, message.id, messages, currentUserId);
+}
+
+export function formatMessageSeenByLabel(readers: MessageReadReceipt[]): string {
+  if (readers.length === 0) {
+    return '';
+  }
+
+  return `Seen by ${formatMessageSeenByDetail(readers)}`;
+}
+
+export function formatMessageSeenByDetail(readers: MessageReadReceipt[]): string {
+  if (readers.length === 0) {
+    return '';
+  }
+
+  if (readers.length === 1) {
+    return readers[0].name;
+  }
+
+  if (readers.length === 2) {
+    return `${readers[0].name} and ${readers[1].name}`;
+  }
+
+  const remaining = readers.length - 2;
+  return `${readers[0].name}, ${readers[1].name}, and ${remaining} other${remaining === 1 ? '' : 's'}`;
+}
+
 export function applyMessageReadReceipts(
   messages: MessageItem[],
   peerLastReadIds: string[],
@@ -1303,8 +1739,8 @@ export function normalizeMessage(record: Record<string, unknown>, index: number)
 
   const statusRaw = String(record.status ?? record.deliveryStatus ?? record.readStatus ?? '').toLowerCase();
   let status: MessageItem['status'] = null;
-  const readBy = record.readBy ?? record.seenBy ?? record.readReceipts;
-  const hasReaders = Array.isArray(readBy) && readBy.length > 0;
+  const readBy = normalizeMessageReadReceipts(record.readBy ?? record.seenBy ?? record.readReceipts);
+  const hasReaders = readBy.length > 0;
 
   if (
     statusRaw.includes('seen') ||
@@ -1342,7 +1778,13 @@ export function normalizeMessage(record: Record<string, unknown>, index: number)
     pinnedAt: readString(record.pinnedAt),
     isOwn: record.isOwn === true || record.isMine === true || record.mine === true,
     status,
-    reactions: normalizeReactions(record.reactions),
+    readBy,
+    reactions: normalizeReactions(
+      record.reactions ??
+        record.reactionsSummary ??
+        record.messageReactions ??
+        record.reactionSummary,
+    ),
     replyToMessageId: readString(record.replyToId) ?? readString(record.replyToMessageId) ?? undefined,
     replyToMessage: (() => {
       const replyRecord = readReplyToRecord(record);

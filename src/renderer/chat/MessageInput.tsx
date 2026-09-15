@@ -623,11 +623,11 @@ export function MessageInput({
   };
 
   const iconButtonClass = compact
-    ? 'flex h-7 w-7 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text disabled:cursor-not-allowed disabled:opacity-50'
-    : 'flex h-8 w-8 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text disabled:cursor-not-allowed disabled:opacity-50';
+    ? 'flex h-7 w-7 items-center justify-center rounded-lg text-app-muted transition-all hover:bg-app-chat-hover hover:text-app-text active:scale-95 disabled:cursor-not-allowed disabled:opacity-40'
+    : 'flex h-8 w-8 items-center justify-center rounded-xl text-app-muted transition-all hover:bg-app-chat-hover hover:text-app-text active:scale-95 disabled:cursor-not-allowed disabled:opacity-40';
 
   return (
-    <div className={compact ? '' : 'border-t border-app-border px-4 py-4'}>
+    <div className={compact ? '' : 'px-6 pb-4 pt-1.5'}>
       {displayError ? (
         <p className="mb-2 text-xs text-accent-soft" role="alert">
           {displayError}
@@ -637,24 +637,24 @@ export function MessageInput({
       {pendingAttachments.length > 0 ? (
         <div className="mb-2 flex flex-wrap items-start gap-3">
           {pendingAttachments.map((attachment, index) => (
-            <div key={index} className="flex items-start gap-3 rounded-xl border border-app-border bg-app-surface-input px-3 py-2 w-full sm:w-auto min-w-[200px]">
+            <div key={index} className="flex items-start gap-3 rounded-2xl border border-app-border/70 bg-app-surface/90 backdrop-blur-md p-2.5 shadow-sm w-full sm:w-auto min-w-[200px]">
               {attachment.isImage ? (
                 <img
                   src={attachment.previewUrl}
                   alt={attachment.file.name}
-                  className="h-20 w-20 shrink-0 rounded-lg border border-app-border object-cover"
+                  className="h-16 w-16 shrink-0 rounded-xl border border-app-border/60 object-cover"
                 />
               ) : attachment.isVideo ? (
-                <video src={attachment.previewUrl} className="h-20 w-20 shrink-0 rounded-lg border border-app-border object-cover bg-app-chat-hover" />
+                <video src={attachment.previewUrl} className="h-16 w-16 shrink-0 rounded-xl border border-app-border/60 object-cover bg-app-chat-hover" />
               ) : (
-                <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-lg border border-app-border bg-app-surface text-xs text-app-muted">
+                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl border border-app-border/60 bg-app-surface text-xs text-app-muted">
                   File
                 </div>
               )}
               <div className="min-w-0 flex-1 pt-0.5">
-                <p className="truncate text-sm font-medium text-app-text">{attachment.file.name}</p>
+                <p className="truncate text-xs font-semibold text-app-text">{attachment.file.name}</p>
                 {index === 0 && (
-                  <p className="mt-0.5 text-xs text-app-muted">
+                  <p className="mt-0.5 text-[11px] text-app-muted">
                     {attachment.isImage || attachment.isVideo
                       ? 'Add an optional caption, then press Send.'
                       : 'Add an optional message, then press Send.'}
@@ -675,7 +675,7 @@ export function MessageInput({
       ) : null}
 
       {replyingToMessage ? (
-        <div className="mb-2 flex flex-col rounded-t-[8px] border-l-4 border-l-accent bg-app-surface-input px-3 py-2 text-sm text-app-muted">
+        <div className="flex flex-col rounded-t-2xl border border-b-0 border-app-border/60 bg-app-surface/95 backdrop-blur-md px-4 py-2 text-xs text-app-muted border-l-4 border-l-accent shadow-sm">
           <div className="mb-1 flex items-center justify-between">
             <span className="font-semibold text-accent-soft">
               Replying to {replyingToMessage.senderName || replyingToMessage.senderId}
@@ -696,10 +696,10 @@ export function MessageInput({
       ) : null}
 
       <div
-        className={`relative flex flex-col rounded-[12px] border bg-app-surface-input transition-colors ${
+        className={`relative flex flex-col rounded-2xl border bg-app-surface-input/90 backdrop-blur-md transition-all duration-200 shadow-composer focus-within:shadow-composer-focus ${
           replyingToMessage ? 'rounded-t-none border-t-0' : ''
         } ${
-          displayError ? 'border-accent' : 'border-app-border'
+          displayError ? 'border-accent' : 'border-app-border/60 focus-within:border-accent/60'
         }`}
       >
         <input
@@ -873,38 +873,38 @@ export function MessageInput({
                       className="fixed inset-0 z-10 cursor-default"
                       onClick={() => setAiMenuOpen(false)}
                     />
-                    <div className="absolute bottom-full right-0 z-20 mb-2 w-52 overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-lg">
+                    <div className="absolute bottom-full right-0 z-20 mb-2 w-56 overflow-hidden rounded-2xl border border-app-border/80 bg-app-elevated/95 backdrop-blur-xl p-1 shadow-2xl animate-pop-in">
                       <button
                         type="button"
                         disabled={!value.trim()}
-                        className="block w-full px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
+                        className="block w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
                         onClick={() => void handleAiEnhance()}
                       >
                         Enhance message
                       </button>
                       <button
                         type="button"
-                        className="block w-full px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
+                        className="block w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
                         onClick={() => void handleAiGenerate()}
                       >
                         Generate message
                       </button>
                       <button
                         type="button"
-                        className="block w-full px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
+                        className="block w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
                         onClick={() => void handleFlexCommand()}
                       >
                         Flex command
                       </button>
                       <button
                         type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
+                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
                         onClick={() => {
                           setAiMenuOpen(false);
                           audioInputRef.current?.click();
                         }}
                       >
-                        <FiMic className="h-4 w-4" />
+                        <FiMic className="h-3.5 w-3.5" />
                         Transcribe audio
                       </button>
                     </div>
@@ -937,22 +937,22 @@ export function MessageInput({
                       className="fixed inset-0 z-10 cursor-default"
                       onClick={() => setActionsMenuOpen(false)}
                     />
-                    <div className="absolute bottom-full right-0 z-20 mb-2 w-64 overflow-hidden rounded-xl border border-app-border bg-app-surface shadow-lg">
+                    <div className="absolute bottom-full right-0 z-20 mb-2 w-64 overflow-hidden rounded-2xl border border-app-border/80 bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl animate-pop-in">
                       <button
                         type="button"
                         disabled={disabled || isSending || !conversationId}
-                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
                         onClick={() => {
                           setActionsMenuOpen(false);
                           fileInputRef.current?.click();
                         }}
                       >
-                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
-                          <FiLink className="h-4 w-4" />
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
+                          <FiLink className="h-3.5 w-3.5" />
                         </span>
                         <span>
-                          <span className="block font-medium">Attach a file</span>
-                          <span className="text-xs text-app-muted">Upload from your computer</span>
+                          <span className="block font-semibold">Attach a file</span>
+                          <span className="text-[10px] text-app-muted">Upload from your computer</span>
                         </span>
                       </button>
                       {!compact ? (
@@ -960,35 +960,35 @@ export function MessageInput({
                       <button
                         type="button"
                         disabled={disabled || isSending || !conversationId}
-                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
                         onClick={() => {
                           setActionsMenuOpen(false);
                           setPollOpen(true);
                         }}
                       >
-                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
-                          <FiBarChart2 className="h-4 w-4" />
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
+                          <FiBarChart2 className="h-3.5 w-3.5" />
                         </span>
                         <span>
-                          <span className="block font-medium">Poll</span>
-                          <span className="text-xs text-app-muted">Ask a question with options</span>
+                          <span className="block font-semibold">Poll</span>
+                          <span className="text-[10px] text-app-muted">Ask a question with options</span>
                         </span>
                       </button>
                       <button
                         type="button"
                         disabled={disabled || isSending || !conversationId}
-                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
                         onClick={() => {
                           setActionsMenuOpen(false);
                           setScheduleOpen(true);
                         }}
                       >
-                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
-                          <FiClock className="h-4 w-4" />
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
+                          <FiClock className="h-3.5 w-3.5" />
                         </span>
                         <span>
-                          <span className="block font-medium">Schedule message</span>
-                          <span className="text-xs text-app-muted">Send later at a set time</span>
+                          <span className="block font-semibold">Schedule message</span>
+                          <span className="text-[10px] text-app-muted">Send later at a set time</span>
                         </span>
                       </button>
                         </>
@@ -996,18 +996,18 @@ export function MessageInput({
                       <button
                         type="button"
                         disabled={aiDisabled}
-                        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left text-sm text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
+                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
                         onClick={() => {
                           setActionsMenuOpen(false);
                           audioInputRef.current?.click();
                         }}
                       >
-                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/15 text-accent-soft">
-                          <FiMic className="h-4 w-4" />
+                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
+                          <FiMic className="h-3.5 w-3.5" />
                         </span>
                         <span>
-                          <span className="block font-medium">Voice typing</span>
-                          <span className="text-xs text-app-muted">Transcribe audio to text</span>
+                          <span className="block font-semibold">Voice typing</span>
+                          <span className="text-[10px] text-app-muted">Transcribe audio to text</span>
                         </span>
                       </button>
                     </div>
@@ -1019,10 +1019,10 @@ export function MessageInput({
             type="button"
             disabled={disabled || isSending || aiBusy || (!value.trim() && pendingAttachments.length === 0)}
             aria-label={isSending ? 'Sending message' : aiBusy ? 'Working' : 'Send message'}
-            className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center self-end rounded-lg bg-accent text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+            className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center self-end rounded-xl bg-gradient-to-br from-accent via-accent to-[#632a38] text-white shadow-md shadow-accent/30 transition-all duration-200 hover:shadow-accent-glow hover:scale-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100 disabled:shadow-none"
             onClick={handleSendAction}
           >
-            <FiSend className="text-base" />
+            <FiSend className="text-sm" />
           </button>
         </div>
       </div>

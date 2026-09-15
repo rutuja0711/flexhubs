@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FiBriefcase,
   FiClock,
@@ -9,6 +9,7 @@ import {
   FiHome,
   FiLogOut,
   FiSend,
+  FiShield,
   FiTrash2,
   FiUserPlus,
   FiUsers,
@@ -29,9 +30,10 @@ import type {
   OrgInvoiceItem,
 } from '../../shared/organization';
 import { toProductionRegisterUrl } from '../../shared/organization';
-import { userIsWorkspaceOwner, type OrganizationMemberItem } from '../../shared/profile';
+import { userCanManageOrganization, type OrganizationMemberItem } from '../../shared/profile';
+import { getCurrentUser, getStoredUser } from '../authApi';
 import type { WorkspaceBillingPeriod, WorkspacePlanId } from '../../shared/workspace';
-import { getUserId } from '../../shared/user';
+import { getUserId, unwrapAuthUser } from '../../shared/user';
 import {
   createOrganizationRole,
   createUpgradeOrder,
@@ -42,7 +44,7 @@ import {
   loadOrgInvoices,
   loadOrgSubscription,
   loadOrganizationInvites,
-  loadOrganizationMembersAdmin,
+  loadOrganizationMembersList,
   loadOrganizationRoles,
   loadOrganizationSeats,
   loadPaymentPlans,
@@ -52,7 +54,7 @@ import {
   sendOrganizationInvite,
   verifyUpgradeSubscription,
 } from '../organizationApi';
-import { Avatar } from './ChatIcons';
+import { Avatar, BuildingIcon } from './ChatIcons';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
 
@@ -68,6 +70,7 @@ type OrganizationViewProps = {
   user: unknown;
   onUnauthorized: (status?: number) => boolean;
   onLeftOrganization?: () => void;
+  onUserUpdated?: (user: unknown) => void;
 };
 
 function loadRazorpay(): Promise<boolean> {
@@ -120,31 +123,39 @@ function planIcon(planId: WorkspacePlanId) {
   return <FiHeadphones size={18} />;
 }
 
-export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: OrganizationViewProps) {
+export function OrganizationView({
+  user,
+  onUnauthorized,
+  onLeftOrganization,
+  onUserUpdated,
+}: OrganizationViewProps) {
   const toast = useToast();
   const confirm = useConfirm();
-  const currentUserId = getUserId(user);
+  const onUserUpdatedRef = useRef(onUserUpdated);
+  const userRef = useRef(user);
+  const loadRequestRef = useRef(0);
+  const [sessionUser, setSessionUser] = useState(() => unwrapAuthUser(user));
+  const currentUserId = getUserId(sessionUser);
 
   const [members, setMembers] = useState<OrganizationMemberItem[]>([]);
-  const isOwner = useMemo(() => {
-    if (userIsWorkspaceOwner(user)) {
-      return true;
-    }
+  const canManageOrganization = useMemo(
+    () => userCanManageOrganization(sessionUser, members),
+    [members, sessionUser],
+  );
+  const isOwner = canManageOrganization;
+  const isAdmin = canManageOrganization;
 
-    const profileEmail =
-      typeof user === 'object' && user && 'email' in user && typeof user.email === 'string'
-        ? user.email.toLowerCase()
-        : '';
+  useEffect(() => {
+    onUserUpdatedRef.current = onUserUpdated;
+  }, [onUserUpdated]);
 
-    return members.some(
-      (member) =>
-        member.isOwner &&
-        (member.id === currentUserId || (profileEmail !== '' && member.email.toLowerCase() === profileEmail)),
-    );
-  }, [currentUserId, members, user]);
-  const isAdmin = isOwner;
+  useEffect(() => {
+    userRef.current = user;
+    setSessionUser(unwrapAuthUser(user));
+  }, [user]);
 
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [plans, setPlans] = useState<PaymentPlanItem[]>(getDefaultPaymentPlans());
   const [subscription, setSubscription] = useState<OrgSubscriptionInfo | null>(null);
   const [seats, setSeats] = useState<OrganizationSeatsInfo>({ used: 0, total: 0, remaining: 0 });
@@ -171,58 +182,125 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
   );
 
   const loadAll = useCallback(async () => {
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
+    setLoadError('');
 
-    const [
-      plansResult,
-      subscriptionResult,
-      seatsResult,
-      membersResult,
-      rolesResult,
-      invitesResult,
-      invoicesResult,
-    ] = await Promise.all([
-      loadPaymentPlans(),
-      loadOrgSubscription(),
-      loadOrganizationSeats(),
-      loadOrganizationMembersAdmin(),
-      loadOrganizationRoles(),
-      loadOrganizationInvites(),
-      loadOrgInvoices(),
-    ]);
+    try {
+      const meResult = await getCurrentUser();
+      if (requestId !== loadRequestRef.current) {
+        return;
+      }
 
-    const unauthorized = [
-      subscriptionResult,
-      seatsResult,
-      membersResult,
-      rolesResult,
-      invitesResult,
-      invoicesResult,
-    ].some((result) => !result.ok && onUnauthorized(result.status));
+      let activeUser = unwrapAuthUser(getStoredUser() ?? userRef.current);
 
-    if (unauthorized) {
-      setLoading(false);
-      return;
+      if (meResult.ok) {
+        activeUser = unwrapAuthUser(meResult.data.user ?? meResult.data);
+        setSessionUser(activeUser);
+      } else if (meResult.status === 401 && onUnauthorized(401)) {
+        return;
+      }
+
+      const canManage = userCanManageOrganization(activeUser);
+      const membersPromise = loadOrganizationMembersList(canManage);
+      const adminPromises = canManage
+        ? ([
+            loadPaymentPlans(),
+            loadOrgSubscription(),
+            loadOrganizationSeats(),
+            loadOrganizationRoles(),
+            loadOrganizationInvites(),
+            loadOrgInvoices(),
+          ] as const)
+        : [];
+
+      const [membersPage, ...adminResults] = await Promise.all([membersPromise, ...adminPromises]);
+
+      if (requestId !== loadRequestRef.current) {
+        return;
+      }
+
+      if (membersPage.status === 401 && onUnauthorized(401)) {
+        return;
+      }
+
+      for (const result of adminResults) {
+        if (!result.ok && result.status === 401 && onUnauthorized(401)) {
+          return;
+        }
+      }
+
+      setMembers(membersPage.members);
+
+      const failures: string[] = [];
+
+      if (membersPage.members.length === 0 && membersPage.status && membersPage.status !== 401) {
+        failures.push('Could not load organization members.');
+      }
+
+      if (canManage) {
+        for (const result of adminResults) {
+          if (!result.ok && result.error) {
+            failures.push(result.error);
+          }
+        }
+      }
+
+      setLoadError(failures[0] ?? '');
+
+      if (!canManage) {
+        setSubscription(null);
+        setRoles([]);
+        setInvites([]);
+        setInvoices([]);
+        setSeats({ used: 0, total: 0, remaining: 0 });
+      } else {
+        const [plansResult, subscriptionResult, seatsResult, rolesResult, invitesResult, invoicesResult] =
+          adminResults;
+
+        if (plansResult?.ok) {
+          setPlans(plansResult.data);
+        }
+
+        if (subscriptionResult?.ok) {
+          if (subscriptionResult.data) {
+            setSubscription(subscriptionResult.data);
+            setSelectedPlanId(subscriptionResult.data.planId);
+            setBillingPeriod(subscriptionResult.data.billingPeriod);
+            setTeamSize((current) => subscriptionResult.data?.teamSize || current || 11);
+          } else {
+            setSubscription(null);
+          }
+        }
+
+        if (seatsResult?.ok) {
+          setSeats(seatsResult.data);
+        }
+
+        if (rolesResult?.ok) {
+          setRoles(rolesResult.data);
+        }
+
+        if (invitesResult?.ok) {
+          setInvites(invitesResult.data);
+        }
+
+        if (invoicesResult?.ok) {
+          setInvoices(invoicesResult.data);
+        }
+      }
+    } catch (error) {
+      if (requestId !== loadRequestRef.current) {
+        return;
+      }
+
+      console.error('[OrganizationView] load failed:', error);
+      setLoadError('Could not load organization settings. Please try again.');
+    } finally {
+      if (requestId === loadRequestRef.current) {
+        setLoading(false);
+      }
     }
-
-    if (plansResult.ok) {
-      setPlans(plansResult.data);
-    }
-
-    if (subscriptionResult.ok && subscriptionResult.data) {
-      setSubscription(subscriptionResult.data);
-      setSelectedPlanId(subscriptionResult.data.planId);
-      setBillingPeriod(subscriptionResult.data.billingPeriod);
-      setTeamSize(subscriptionResult.data.teamSize || teamSize);
-    }
-
-    if (seatsResult.ok) setSeats(seatsResult.data);
-    if (membersResult.ok) setMembers(membersResult.data);
-    if (rolesResult.ok) setRoles(rolesResult.data);
-    if (invitesResult.ok) setInvites(invitesResult.data);
-    if (invoicesResult.ok) setInvoices(invoicesResult.data);
-
-    setLoading(false);
   }, [onUnauthorized]);
 
   useEffect(() => {
@@ -230,7 +308,7 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
   }, [loadAll]);
 
   useEffect(() => {
-    if (!selectedPlanId) return;
+    if (!canManageOrganization || !selectedPlanId) return;
 
     void loadPlanCompliance(selectedPlanId, teamSize).then((result) => {
       if (result.ok && result.data.rules.length > 0) {
@@ -240,7 +318,7 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
 
       setComplianceRules(DEFAULT_PLAN_RULES);
     });
-  }, [selectedPlanId, teamSize]);
+  }, [canManageOrganization, selectedPlanId, teamSize]);
 
   const handlePayUpgrade = async () => {
     if (selectedPlan.contactOnly) {
@@ -321,6 +399,22 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
     paymentObject.open();
   };
 
+  const refreshRoles = useCallback(async () => {
+    const result = await loadOrganizationRoles();
+    if (result.ok) {
+      setRoles(result.data);
+    }
+    return result;
+  }, []);
+
+  const refreshInvites = useCallback(async () => {
+    const result = await loadOrganizationInvites();
+    if (result.ok) {
+      setInvites(result.data);
+    }
+    return result;
+  }, []);
+
   const handleSendInvite = async () => {
     const email = inviteEmail.trim();
     if (!email) {
@@ -339,9 +433,10 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
     }
 
     setInviteEmail('');
-    setInvites(result.data);
 
-    const sentInvite = result.data.find((item) => item.email.toLowerCase() === email.toLowerCase());
+    const invitesResult = await refreshInvites();
+    const inviteItems = invitesResult.ok ? invitesResult.data : result.data;
+    const sentInvite = inviteItems.find((item) => item.email.toLowerCase() === email.toLowerCase());
     const registerLink = toProductionRegisterUrl(sentInvite?.registerUrl);
     if (registerLink) {
       setLastInviteLink(registerLink);
@@ -373,11 +468,11 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
 
     setNewRoleName('');
 
-    if (result.data.length > 0) {
-      setRoles(result.data);
-    } else {
-      const reload = await loadOrganizationRoles();
-      if (reload.ok) setRoles(reload.data);
+    const reload = await refreshRoles();
+    if (!reload.ok) {
+      if (onUnauthorized(reload.status)) return;
+      toast.error(reload.error);
+      return;
     }
 
     toast.success(`Role "${name}" added.`);
@@ -394,7 +489,11 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
       return;
     }
 
-    setRoles(result.data);
+    const reload = await refreshRoles();
+    if (!reload.ok && onUnauthorized(reload.status)) {
+      return;
+    }
+
     toast.success('Role updated.');
   };
 
@@ -415,7 +514,11 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
       return;
     }
 
-    setRoles(result.data);
+    const reload = await refreshRoles();
+    if (!reload.ok && onUnauthorized(reload.status)) {
+      return;
+    }
+
     toast.success('Role deleted.');
   };
 
@@ -427,7 +530,11 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
       return;
     }
 
-    setInvites(result.data);
+    const reload = await refreshInvites();
+    if (!reload.ok && onUnauthorized(reload.status)) {
+      return;
+    }
+
     toast.success('Invitation revoked.');
   };
 
@@ -506,6 +613,114 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
     );
   }
 
+  if (loadError && members.length === 0 && !subscription && roles.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4 bg-app-chat-bg px-8 text-center text-app-muted">
+        <p>{loadError}</p>
+        <button
+          type="button"
+          className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
+          onClick={() => {
+            void loadAll();
+          }}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+
+  if (!canManageOrganization) {
+    const currentUserMember = members.find((m) => m.id === currentUserId);
+    const currentUserRole = currentUserMember?.role || 'Intern';
+
+    return (
+      <div className="flex h-full flex-col bg-app-chat-bg text-app-text overflow-hidden">
+        {/* Top Header Bar */}
+        <div className="flex h-14 shrink-0 items-center border-b border-app-border/60 bg-white dark:bg-app-surface px-8">
+          <h1 className="text-lg font-bold text-app-text tracking-tight">Organization</h1>
+        </div>
+
+        {/* Centered Scrollable Content */}
+        <div className="flex-1 overflow-y-auto px-6 py-8">
+          <div className="mx-auto w-full max-w-[620px] space-y-5">
+            {loadError ? (
+              <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+                {loadError}
+              </div>
+            ) : null}
+
+            {/* Top Card: You're in the team */}
+            <div className="rounded-2xl border border-app-border/70 bg-white dark:bg-app-surface p-7 shadow-sm flex flex-col items-center text-center">
+              <div className="mb-3.5 flex h-12 w-12 items-center justify-center rounded-2xl bg-app-inset dark:bg-app-surface-input text-app-muted">
+                <BuildingIcon size={20} />
+              </div>
+              <h2 className="text-base font-bold text-app-text tracking-tight">You're in the team</h2>
+              <p className="mt-1 text-xs text-app-muted">
+                Your role is {currentUserRole}. Only admins can send invites and manage roles.
+              </p>
+            </div>
+
+            {/* Bottom Card: Team members */}
+            <div className="rounded-2xl border border-app-border/70 bg-white dark:bg-app-surface shadow-sm overflow-hidden">
+              <div className="flex items-center gap-3.5 p-5 border-b border-app-border/50">
+                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
+                  <FiUsers size={18} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-app-text flex items-center gap-2">
+                    Team members <span className="text-sm font-normal text-app-muted">{members.length}</span>
+                  </h3>
+                  <p className="text-xs text-app-muted">People in your organization.</p>
+                </div>
+              </div>
+
+              <div className="p-4 space-y-2.5">
+                {members.map((member) => (
+                  <div
+                    key={member.id}
+                    className="flex items-center gap-3.5 rounded-2xl border border-app-border/70 bg-white dark:bg-app-surface-input p-3.5 transition-colors"
+                  >
+                    <Avatar imageUrl={member.avatarUrl} initials={member.initials} size="sm" />
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="truncate text-sm font-medium text-app-text">{member.name}</span>
+                        {member.isAdmin || member.isOwner ? (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent border border-accent/20">
+                            <FiShield className="text-[10px]" />
+                            Admin
+                          </span>
+                        ) : null}
+                      </div>
+                      <p className="mt-0.5 truncate text-xs text-app-muted">
+                        {member.role || 'No role'} · {member.email}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Subtle Leave Organization option */}
+            <div className="flex justify-center pt-2">
+              <button
+                type="button"
+                disabled={leaving}
+                onClick={() => {
+                  void handleLeave();
+                }}
+                className="inline-flex items-center gap-1.5 text-xs text-red-500/70 hover:text-red-500 transition-colors disabled:opacity-50"
+              >
+                <FiLogOut size={13} />
+                {leaving ? 'Leaving…' : 'Leave organization'}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   const seatTotal = seats.total || subscription?.teamSize || teamSize;
   const seatsRemaining = seats.remaining || Math.max(0, seatTotal - seats.used);
   const displayedRules = complianceRules.length > 0 ? complianceRules : DEFAULT_PLAN_RULES;
@@ -513,6 +728,11 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
   return (
     <div className="h-full overflow-y-auto bg-app-chat-bg px-8 py-8 text-app-text">
       <div className="mx-auto w-full max-w-6xl space-y-8">
+        {loadError ? (
+          <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            {loadError}
+          </div>
+        ) : null}
         {isOwner ? (
         <div className="flex items-start gap-3">
           <FiCreditCard className="mt-1 text-accent" size={22} />
@@ -531,40 +751,40 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
         )}
 
         {isOwner && subscription ? (
-          <section className="rounded-2xl border border-app-border bg-app-surface p-6">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-accent">Active plan</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
-              <h2 className="text-xl font-semibold capitalize text-app-text">{subscription.planName}</h2>
-              <span className="rounded-full bg-[#3ecf8e]/15 px-2.5 py-1 text-xs font-medium text-[#3ecf8e] capitalize">
+          <section className="rounded-2xl border border-app-border/70 bg-gradient-to-br from-accent/10 via-app-card/70 to-app-card/50 p-6 shadow-sm">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-accent-soft">Active plan</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2.5">
+              <h2 className="text-xl font-bold capitalize text-app-text tracking-tight">{subscription.planName}</h2>
+              <span className="rounded-full bg-[#3ecf8e]/15 px-3 py-0.5 text-xs font-medium text-[#3ecf8e] capitalize border border-[#3ecf8e]/20">
                 {subscription.status}
               </span>
             </div>
             <div className="mt-5 grid grid-cols-2 gap-5 text-sm md:grid-cols-4">
               <div>
-                <p className="text-app-muted">Team size</p>
-                <p className="mt-1 font-medium text-app-text">
+                <p className="text-xs text-app-muted">Team size</p>
+                <p className="mt-1 font-semibold text-app-text">
                   {subscription.teamSize} members · {subscription.usedSeats} in use
                 </p>
               </div>
               <div>
-                <p className="text-app-muted">Billing period</p>
-                <p className="mt-1 font-medium text-app-text">{billingPeriodLabel(subscription.billingPeriod)}</p>
+                <p className="text-xs text-app-muted">Billing period</p>
+                <p className="mt-1 font-semibold text-app-text">{billingPeriodLabel(subscription.billingPeriod)}</p>
               </div>
               <div>
-                <p className="text-app-muted">Activated on</p>
-                <p className="mt-1 font-medium text-app-text">{formatDate(subscription.activatedAt)}</p>
+                <p className="text-xs text-app-muted">Activated on</p>
+                <p className="mt-1 font-semibold text-app-text">{formatDate(subscription.activatedAt)}</p>
               </div>
               <div>
-                <p className="text-app-muted">Renews on</p>
-                <p className="mt-1 font-medium text-app-text">{formatDate(subscription.renewsAt)}</p>
+                <p className="text-xs text-app-muted">Renews on</p>
+                <p className="mt-1 font-semibold text-app-text">{formatDate(subscription.renewsAt)}</p>
               </div>
             </div>
           </section>
         ) : isOwner ? (
-          <section className="rounded-2xl border border-dashed border-app-border bg-app-surface p-6">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-accent">Active plan</p>
-            <h2 className="mt-2 text-xl font-semibold text-app-text">No subscription on file</h2>
-            <p className="mt-1 text-sm text-app-muted">
+          <section className="rounded-2xl border border-dashed border-app-border/80 bg-app-card/40 p-6">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-accent-soft">Active plan</p>
+            <h2 className="mt-2 text-lg font-semibold text-app-text">No subscription on file</h2>
+            <p className="mt-1 text-xs text-app-muted">
               Choose a plan below to activate billing for this workspace.
             </p>
           </section>
@@ -573,14 +793,14 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
         {isOwner ? (
         <>
             <div className="flex justify-center">
-              <div className="inline-flex rounded-xl bg-app-surface-input p-1">
+              <div className="inline-flex rounded-2xl bg-app-inset/80 p-1 border border-app-border/40 backdrop-blur-sm">
                 {(['monthly', '6months', 'annual'] as WorkspaceBillingPeriod[]).map((period) => (
                   <button
                     key={period}
                     type="button"
                     onClick={() => setBillingPeriod(period)}
-                    className={`rounded-lg px-5 py-2 text-sm font-medium transition-colors ${
-                      billingPeriod === period ? 'bg-app-chat-active text-app-text' : 'text-app-muted hover:text-app-text'
+                    className={`rounded-xl px-5 py-2 text-xs font-medium transition-all duration-150 ${
+                      billingPeriod === period ? 'bg-app-card text-app-text font-semibold shadow-sm border border-app-border/60' : 'text-app-muted hover:text-app-text hover:bg-app-inset/60'
                     }`}
                   >
                     {billingPeriodLabel(period)}
@@ -604,21 +824,21 @@ export function OrganizationView({ user, onUnauthorized, onLeftOrganization }: O
                       const next = Math.max(plan.minSeats, teamSize);
                       setTeamSize(plan.maxSeats ? Math.min(plan.maxSeats, next) : next);
                     }}
-                    className={`relative rounded-xl border p-4 text-left transition-all ${
+                    className={`relative rounded-2xl border p-5 text-left transition-all duration-200 ${
                       isSelected
-                        ? 'border-accent bg-accent/[0.07] ring-1 ring-accent/30'
-                        : 'border-app-border hover:border-app-border-strong'
+                        ? 'border-accent/80 bg-accent/10 ring-2 ring-accent/30 shadow-md shadow-accent/10'
+                        : 'border-app-border/70 bg-app-card/60 hover:bg-app-card hover:border-app-border hover:shadow-xs'
                     }`}
                   >
                     {isCurrent ? (
-                      <span className="absolute top-3 right-3 rounded bg-accent px-1.5 py-0.5 text-[9px] font-semibold uppercase text-white">
+                      <span className="absolute top-3.5 right-3.5 rounded-lg bg-accent px-2 py-0.5 text-[9px] font-semibold uppercase text-white shadow-xs">
                         Current
                       </span>
                     ) : null}
-                    <span className="text-accent">{planIcon(plan.id)}</span>
-                    <p className="mt-3 text-base font-semibold text-app-text">{plan.name}</p>
+                    <span className="text-accent-soft inline-block mb-1">{planIcon(plan.id)}</span>
+                    <p className="mt-2 text-base font-semibold text-app-text tracking-tight">{plan.name}</p>
                     {plan.contactOnly ? (
-                      <p className="mt-1 text-lg font-bold text-accent">Contact us</p>
+                      <p className="mt-1 text-lg font-bold text-accent-soft">Contact us</p>
                     ) : (
                       <p className="mt-1 text-lg font-bold text-app-text">
                         ₹{plan.pricePerMember}{' '}

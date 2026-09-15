@@ -1,1 +1,10 @@
-export type MainView = 'chat' | 'hubs' | 'activity' | 'saved' | 'files' | 'calendar' | 'profile' | 'organization';
+export type MainView =
+  | 'chat'
+  | 'hubs'
+  | 'activity'
+  | 'calls'
+  | 'saved'
+  | 'files'
+  | 'calendar'
+  | 'profile'
+  | 'organization';
