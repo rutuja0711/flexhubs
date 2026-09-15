@@ -19,6 +19,7 @@ export type ConversationItem = {
   isPinned: boolean;
   isSelf: boolean;
   status: PresenceStatus | null;
+  peerStatusMessage?: string | null;
   unreadCount: number;
   peerUserId: string | null;
   channelId: string | null;

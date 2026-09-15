@@ -459,9 +459,14 @@ declare global {
       ensureCallMediaPermissions: (video: boolean) => Promise<ApiResult<{ ok: true }>>;
       getAppName: () => Promise<string>;
       ensureScreenCapturePermission: () => Promise<ApiResult<{ ok: true }>>;
+      describeScreenCaptureFailure: () => Promise<ApiResult<string>>;
+      listScreenCaptureSources: (
+        kind: import('../shared/screenShare').ScreenCaptureSourceKind,
+      ) => Promise<ApiResult<import('../shared/screenShare').ScreenCaptureSource[]>>;
       setCallAlwaysOnTop: (enabled: boolean, mode?: string) => Promise<{ ok: true }>;
       moveCallWindowBy: (deltaX: number, deltaY: number) => Promise<{ ok: boolean }>;
       focusCallWindow: () => Promise<{ ok: true }>;
+      onCallWindowPresentationChanged: (callback: (mode: string) => void) => () => void;
       logCall: (
         token: string,
         payloadJson: string,

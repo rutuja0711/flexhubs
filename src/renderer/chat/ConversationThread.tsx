@@ -200,6 +200,12 @@ export function ConversationThread({
       return 'Hub';
     }
 
+    const customStatus = conversation.peerStatusMessage?.trim();
+
+    if (customStatus) {
+      return customStatus;
+    }
+
     return presenceLabel(conversation.status) ?? 'Available';
   })();
 

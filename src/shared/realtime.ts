@@ -1,3 +1,4 @@
+import { readUserStatusMessage, readUserStatusMessageUpdate } from './profile';
 import { normalizeMessage, parseMessageReactions, type MessageItem, type MessageReaction } from './messages';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -89,6 +90,7 @@ export type RealtimeStatusPayload = {
 export type PresenceItem = {
   userId: string;
   status: string;
+  statusMessage: string;
 };
 
 function extractArray(payload: unknown, keys: string[]): unknown[] {
@@ -135,7 +137,11 @@ export function normalizePresencePayload(payload: unknown): PresenceItem[] {
             return null;
           }
 
-          return { userId, status };
+          return {
+            userId,
+            status,
+            statusMessage: readUserStatusMessage(entry ?? { status: value }),
+          };
         })
         .filter((item): item is PresenceItem => item !== null);
     }
@@ -160,7 +166,11 @@ export function normalizePresencePayload(payload: unknown): PresenceItem[] {
         return null;
       }
 
-      return { userId, status };
+      return {
+        userId,
+        status,
+        statusMessage: readUserStatusMessage(entry),
+      };
     })
     .filter((item): item is PresenceItem => item !== null);
 }
@@ -602,7 +612,7 @@ export function isPresenceEvent(type: string): boolean {
 
 export function extractPresenceUpdate(
   payload: unknown,
-): { userId: string; status: string } | null {
+): { userId: string; status: string; statusMessage?: string } | null {
   const record = asRecord(payload);
 
   if (!record) {
@@ -615,15 +625,23 @@ export function extractPresenceUpdate(
     readString(nested?.id) ??
     readString(record.id);
   const status =
+    readString(record.presenceStatus) ??
     readString(record.status) ??
     readString(record.presence) ??
+    readString(nested?.presenceStatus) ??
     readString(nested?.status);
 
-  if (!userId || !status) {
+  const statusMessage = readUserStatusMessageUpdate(record);
+
+  if (!userId || (!status && statusMessage === undefined)) {
     return null;
   }
 
-  return { userId, status };
+  return {
+    userId,
+    status: status ?? '',
+    ...(statusMessage !== undefined ? { statusMessage } : {}),
+  };
 }
 
 export function isTypingEvent(type: string): boolean {

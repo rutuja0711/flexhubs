@@ -171,9 +171,9 @@ declare const MAIN_WINDOW_VITE_NAME: string;
 let mainWindow: BrowserWindow | null = null;
 let callPresentationActive = false;
 let savedMainBounds: Electron.Rectangle | null = null;
+let savedCallWindowBounds: Electron.Rectangle | null = null;
+let callWindowWasNativeFullscreen = false;
 const DEFAULT_MIN_SIZE = { width: 960, height: 640 };
-const CALL_PIP_SIZE = { width: 380, height: 340 };
-
 function resolveAssetsDir(): string {
   return app.isPackaged
     ? path.join(process.resourcesPath, 'assets')
@@ -1004,6 +1004,47 @@ ipcMain.handle('calls:ensure-media-permissions', async (_event, video: boolean) 
 
 ipcMain.handle('calls:ensure-screen-capture', async () => ensureMacScreenCaptureAccess());
 
+ipcMain.handle('calls:describe-screen-capture-failure', () => ({
+  ok: true as const,
+  data: describeMacScreenCaptureFailure(),
+}));
+
+ipcMain.handle(
+  'screen-share:list-sources',
+  async (_event, kind: 'screen' | 'window') => {
+    const access = await ensureMacScreenCaptureAccess();
+
+    if (!access.ok) {
+      return { ok: false as const, error: describeMacScreenCaptureFailure() };
+    }
+
+    try {
+      const types = kind === 'screen' ? (['screen'] as const) : (['window'] as const);
+      const sources = await desktopCapturer.getSources({
+        types: [...types],
+        thumbnailSize: { width: 320, height: 180 },
+        fetchWindowIcons: true,
+      });
+
+      return {
+        ok: true as const,
+        data: sources.map((source) => ({
+          id: source.id,
+          name: source.name,
+          thumbnailDataUrl: source.thumbnail.isEmpty() ? '' : source.thumbnail.toDataURL(),
+          kind,
+        })),
+      };
+    } catch (error) {
+      console.error('[ScreenShare] Failed to list capture sources.', error);
+      return {
+        ok: false as const,
+        error: describeMacScreenCaptureFailure(),
+      };
+    }
+  },
+);
+
 ipcMain.handle(
   'window:set-call-always-on-top',
   (_event, enabled: boolean, mode?: string) => {
@@ -1147,6 +1188,7 @@ const createWindow = (): void => {
     height: 800,
     minWidth: 960,
     minHeight: 640,
+    fullscreenable: true,
     backgroundColor: resolveWindowBackgroundColor(),
     show: false,
     ...(appIcon ? { icon: appIcon } : {}),
@@ -1169,6 +1211,25 @@ const createWindow = (): void => {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
+  });
+
+  mainWindow.on('enter-full-screen', () => {
+    callWindowWasNativeFullscreen = true;
+  });
+
+  mainWindow.on('leave-full-screen', () => {
+    if (!callPresentationActive || !callWindowWasNativeFullscreen) {
+      return;
+    }
+
+    callWindowWasNativeFullscreen = false;
+
+    if (savedCallWindowBounds) {
+      mainWindow?.setBounds(savedCallWindowBounds);
+      savedCallWindowBounds = null;
+    }
+
+    notifyCallWindowPresentation('floating');
   });
 
   mainWindow.on('closed', () => {
@@ -1238,44 +1299,78 @@ function readMediaAppName(): string {
   return app.isPackaged ? app.getName() : 'Electron';
 }
 
+function buildMacScreenCaptureHint(): string {
+  const appName = readMediaAppName();
+  const execPath = process.execPath;
+  const reportedStatus = systemPreferences.getMediaAccessStatus('screen');
+
+  let message =
+    `Enable Screen Recording for this app in System Settings → Privacy & Security → Screen & System Audio Recording.\n\n` +
+    `Add and enable:\n${execPath}\n\n` +
+    `Then fully quit the app (Cmd+Q) and relaunch.\n\n` +
+    `(macOS currently reports "${reportedStatus}" for ${appName}.)`;
+
+  if (!app.isPackaged) {
+    message +=
+      `\n\nDev note: npm start runs Electron, not the packaged FlexHubs app. If you already enabled "FlexHubs", also enable Electron at the path above. If you launch from Cursor or Terminal, enable those too.`;
+  }
+
+  return message;
+}
+
+async function probeMacScreenCaptureSources(): Promise<number> {
+  const sources = await Promise.race([
+    desktopCapturer.getSources({
+      types: ['screen', 'window'],
+      thumbnailSize: { width: 1, height: 1 },
+    }),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Screen capture probe timed out')), 2500);
+    }),
+  ]);
+
+  return sources.length;
+}
+
 async function ensureMacScreenCaptureAccess(): Promise<{ ok: true } | { ok: false; error: string }> {
   if (process.platform !== 'darwin') {
     return { ok: true };
   }
 
-  const appName = readMediaAppName();
   const execPath = process.execPath;
   const reportedStatus = systemPreferences.getMediaAccessStatus('screen');
 
   console.log(`[ScreenShare] execPath: ${execPath}`);
   console.log(`[ScreenShare] getMediaAccessStatus('screen'): ${reportedStatus}`);
 
+  if (reportedStatus === 'granted') {
+    return { ok: true };
+  }
+
   try {
-    const sources = await desktopCapturer.getSources({
-      types: ['screen'],
-      thumbnailSize: { width: 1, height: 1 },
-    });
+    const sourceCount = await probeMacScreenCaptureSources();
+    console.log(`[ScreenShare] Permission probe found ${sourceCount} capture source(s).`);
 
-    console.log(`[ScreenShare] Permission probe found ${sources.length} screen source(s).`);
-
-    if (sources.length > 0) {
+    if (sourceCount > 0) {
       return { ok: true };
     }
   } catch (error) {
-    console.error('[ScreenShare] Permission probe failed.', error);
+    console.warn('[ScreenShare] Permission probe inconclusive.', error);
   }
 
-  const enableTarget = execPath.includes('Electron.app') ? execPath : appName;
+  // macOS can report "denied" even after the user grants access (stale TCC cache,
+  // wrong binary in the list, or dev app launched from Cursor/Terminal).
+  // Let getDisplayMedia attempt capture instead of blocking with a false negative.
+  console.warn('[ScreenShare] Proceeding despite inconclusive permission probe.');
+  return { ok: true };
+}
 
-  return {
-    ok: false,
-    error:
-      `Screen recording is still blocked for this app.\n\n` +
-      `1. Open System Settings → Privacy & Security → Screen & System Audio Recording\n` +
-      `2. Click + and add this exact app:\n${execPath}\n` +
-      `3. Turn it ON, then fully quit the app (Cmd+Q) and run npm start again\n\n` +
-      `(Settings currently reports "${reportedStatus}" for ${appName}. macOS often lists the wrong name until the correct binary is added.)`,
-  };
+function describeMacScreenCaptureFailure(): string {
+  if (process.platform !== 'darwin') {
+    return 'Could not share your screen. Please try again.';
+  }
+
+  return buildMacScreenCaptureHint();
 }
 
 function resolveNotificationSettingsAppName(): string {
@@ -1338,50 +1433,39 @@ function logNotificationStartupHint(): void {
 }
 
 function setupDisplayMediaHandler(): void {
-  session.defaultSession.setDisplayMediaRequestHandler(
-    (request, callback) => {
-      void desktopCapturer
-        .getSources({
-          types: ['screen', 'window'],
-          thumbnailSize: { width: 320, height: 180 },
-          fetchWindowIcons: true,
-        })
-        .then((sources) => {
-          console.log(`[ScreenShare] Found ${sources.length} capture source(s).`);
+  // Screen share uses the in-app FlexHubs picker (ScreenSharePicker) + desktopCapturer.
+  session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+    callback({});
+  });
+}
 
-          const screenSource =
-            sources.find((source) => source.id.startsWith('screen:')) ??
-            sources.find((source) => /screen|display|monitor/i.test(source.name)) ??
-            sources[0];
+function restoreCallWindowBounds(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
 
-          if (!screenSource) {
-            console.warn('[ScreenShare] No capture sources available.');
-            console.warn(`[ScreenShare] execPath: ${process.execPath}`);
-            console.warn(
-              `[ScreenShare] screen status: ${systemPreferences.getMediaAccessStatus('screen')}`,
-            );
-            callback({});
-            return;
-          }
+  if (mainWindow.isFullScreen()) {
+    mainWindow.setFullScreen(false);
+  }
 
-          console.log(`[ScreenShare] Using source: ${screenSource.name} (${screenSource.id})`);
+  if (mainWindow.isMaximized()) {
+    mainWindow.unmaximize();
+  }
 
-          callback({
-            video: screenSource,
-            audio: request.audioRequested
-              ? process.platform === 'darwin'
-                ? 'loopback'
-                : true
-              : undefined,
-          });
-        })
-        .catch((error) => {
-          console.error('[ScreenShare] Failed to enumerate capture sources.', error);
-          callback({});
-        });
-    },
-    { useSystemPicker: process.platform === 'darwin' },
-  );
+  if (savedCallWindowBounds) {
+    mainWindow.setBounds(savedCallWindowBounds);
+    savedCallWindowBounds = null;
+  }
+
+  callWindowWasNativeFullscreen = false;
+}
+
+function notifyCallWindowPresentation(mode: string): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  mainWindow.webContents.send('call:window-presentation-changed', mode);
 }
 
 function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
@@ -1398,39 +1482,17 @@ function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
       savedMainBounds = null;
     }
 
+    restoreCallWindowBounds();
     mainWindow.setAlwaysOnTop(false);
     mainWindow.setVisibleOnAllWorkspaces(false);
     callPresentationActive = false;
     return;
   }
 
-  // Keep normal window stacking so users can switch to other apps during calls.
+  // Call layout (floating / minimized / fullscreen) is handled in-app via CSS overlays.
+  // Never pin or re-focus during active calls so users can switch to other apps freely.
   mainWindow.setAlwaysOnTop(false);
   mainWindow.setVisibleOnAllWorkspaces(false);
-
-  if (mainWindow.isMinimized()) {
-    mainWindow.restore();
-  }
-
-  if (mode === 'minimized') {
-    if (!savedMainBounds) {
-      savedMainBounds = mainWindow.getBounds();
-    }
-
-    const anchor = savedMainBounds ?? mainWindow.getBounds();
-    const display = screen.getDisplayMatching(anchor);
-    const workArea = display.workArea;
-
-    mainWindow.setMinimumSize(280, 200);
-    mainWindow.setBounds({
-      x: workArea.x + workArea.width - CALL_PIP_SIZE.width - 16,
-      y: workArea.y + workArea.height - CALL_PIP_SIZE.height - 16,
-      width: CALL_PIP_SIZE.width,
-      height: CALL_PIP_SIZE.height,
-    });
-    mainWindow.show();
-    return;
-  }
 
   if (savedMainBounds) {
     mainWindow.setMinimumSize(DEFAULT_MIN_SIZE.width, DEFAULT_MIN_SIZE.height);
@@ -1438,9 +1500,18 @@ function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
     savedMainBounds = null;
   }
 
+  restoreCallWindowBounds();
+
   if (mode === 'ringing') {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+
     mainWindow.show();
+    mainWindow.focus();
   }
+
+  notifyCallWindowPresentation(mode);
 }
 
 if (process.platform === 'win32') {

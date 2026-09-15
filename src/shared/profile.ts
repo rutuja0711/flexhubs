@@ -10,6 +10,83 @@ function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+const PRESENCE_STATUS_VALUES = new Set(['ONLINE', 'AWAY', 'BUSY', 'DND', 'OFFLINE']);
+
+function isPresenceStatusValue(value: string): boolean {
+  return PRESENCE_STATUS_VALUES.has(value.trim().toUpperCase());
+}
+
+function readStatusMessageFromRecord(record: Record<string, unknown>): string {
+  for (const key of ['statusMessage', 'customStatus', 'message'] as const) {
+    const value = readString(record[key]);
+
+    if (value && !isPresenceStatusValue(value)) {
+      return value;
+    }
+  }
+
+  return '';
+}
+
+export function readUserStatusMessage(source: unknown): string {
+  const record = asRecord(source);
+
+  if (!record) {
+    return '';
+  }
+
+  const candidates = [
+    record,
+    asRecord(record.user),
+    asRecord(record.presence),
+    asRecord(record.profile),
+  ].filter((entry): entry is Record<string, unknown> => entry !== null);
+
+  for (const entry of candidates) {
+    const message = readStatusMessageFromRecord(entry);
+
+    if (message) {
+      return message;
+    }
+  }
+
+  return '';
+}
+
+export function readUserStatusMessageUpdate(source: unknown): string | undefined {
+  const record = asRecord(source);
+
+  if (!record) {
+    return undefined;
+  }
+
+  const candidates = [
+    record,
+    asRecord(record.user),
+    asRecord(record.presence),
+    asRecord(record.profile),
+  ].filter((entry): entry is Record<string, unknown> => entry !== null);
+
+  for (const entry of candidates) {
+    for (const key of ['statusMessage', 'customStatus', 'message'] as const) {
+      if (!(key in entry) || typeof entry[key] !== 'string') {
+        continue;
+      }
+
+      const raw = entry[key] as string;
+      const trimmed = raw.trim();
+
+      if (trimmed && isPresenceStatusValue(trimmed)) {
+        continue;
+      }
+
+      return trimmed;
+    }
+  }
+
+  return undefined;
+}
+
 function readBoolean(value: unknown): boolean | null {
   return typeof value === 'boolean' ? value : null;
 }
@@ -335,11 +412,7 @@ export function normalizeUserProfile(user: unknown, settings?: ProfileSettings):
       normalizedStatus === 'OFFLINE'
         ? normalizedStatus
         : 'ONLINE',
-    statusMessage:
-      readString(record.statusMessage) ??
-      readString(record.message) ??
-      readString(record.customStatus) ??
-      '',
+    statusMessage: readUserStatusMessage(record),
     timezone: readString(record.timezone) ?? readString(record.timeZone) ?? 'UTC',
     organizationRole: roleName,
     inOrganization: Boolean(

@@ -149,7 +149,7 @@ export class MediasoupCallSession {
     }
   }
 
-  async setScreenShareEnabled(enabled: boolean): Promise<void> {
+  async setScreenShareEnabled(enabled: boolean, stream?: MediaStream): Promise<void> {
     if (!this.sendTransport) {
       throw new Error('Screen sharing is not available for this call.');
     }
@@ -168,14 +168,16 @@ export class MediasoupCallSession {
       return;
     }
 
-    const stream = await navigator.mediaDevices.getDisplayMedia({
-      video: true,
-      audio: true,
-    });
-    const track = stream.getVideoTracks()[0];
+    const captureStream = stream ?? null;
+
+    if (!captureStream) {
+      throw new Error('Choose a screen or window to share.');
+    }
+
+    const track = captureStream.getVideoTracks()[0];
 
     if (!track) {
-      stream.getTracks().forEach((mediaTrack) => mediaTrack.stop());
+      captureStream.getTracks().forEach((mediaTrack) => mediaTrack.stop());
       throw new Error('Could not access your screen.');
     }
 
@@ -183,7 +185,7 @@ export class MediasoupCallSession {
       void this.setScreenShareEnabled(false);
     };
 
-    this.screenStream = stream;
+    this.screenStream = captureStream;
 
     if (this.cameraProducer) {
       await this.cameraProducer.pause();

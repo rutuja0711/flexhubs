@@ -617,11 +617,28 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppName: (): Promise<string> => ipcRenderer.invoke('app:get-name'),
   ensureScreenCapturePermission: (): Promise<ApiResult<{ ok: true }>> =>
     ipcRenderer.invoke('calls:ensure-screen-capture'),
-      setCallAlwaysOnTop: (enabled: boolean, mode?: string): Promise<{ ok: true }> =>
-        ipcRenderer.invoke('window:set-call-always-on-top', enabled, mode),
-      moveCallWindowBy: (deltaX: number, deltaY: number): Promise<{ ok: boolean }> =>
-        ipcRenderer.invoke('window:move-call-by', deltaX, deltaY),
-      focusCallWindow: (): Promise<{ ok: true }> => ipcRenderer.invoke('window:focus-call'),
+  describeScreenCaptureFailure: (): Promise<ApiResult<string>> =>
+    ipcRenderer.invoke('calls:describe-screen-capture-failure'),
+  listScreenCaptureSources: (
+    kind: 'screen' | 'window',
+  ): Promise<ApiResult<import('./shared/screenShare').ScreenCaptureSource[]>> =>
+    ipcRenderer.invoke('screen-share:list-sources', kind),
+  setCallAlwaysOnTop: (enabled: boolean, mode?: string): Promise<{ ok: true }> =>
+    ipcRenderer.invoke('window:set-call-always-on-top', enabled, mode),
+  moveCallWindowBy: (deltaX: number, deltaY: number): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('window:move-call-by', deltaX, deltaY),
+  focusCallWindow: (): Promise<{ ok: true }> => ipcRenderer.invoke('window:focus-call'),
+  onCallWindowPresentationChanged: (callback: (mode: string) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, mode: string) => {
+      callback(mode);
+    };
+
+    ipcRenderer.on('call:window-presentation-changed', handler);
+
+    return () => {
+      ipcRenderer.removeListener('call:window-presentation-changed', handler);
+    };
+  },
   logCall: (token: string, payloadJson: string): Promise<ApiResult<{ message?: unknown }>> =>
     ipcRenderer.invoke('calls:log', token, payloadJson),
   notifyCallMeeting: (

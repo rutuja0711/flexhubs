@@ -24,12 +24,14 @@ import {
   isMeetingModerator,
   normalizeMeetingJoinRequestPayload,
 } from '../shared/calls';
+import { captureDesktopSource } from './call/captureDesktopSource';
 import { MediasoupCallSession, type MediasoupRemotePeer } from './call/mediasoupAdapter';
+import type { ScreenCaptureSource } from '../shared/screenShare';
 import {
   declineCallMeetingInvite,
   endCallMeeting,
   ensureCallMediaPermissions,
-  ensureScreenCapturePermission,
+  describeScreenCaptureFailure,
   listMeetingJoinRequests,
   loadCallToken,
   loadRealtimeConfig,
@@ -218,9 +220,11 @@ export function useCallManager({
   const [mediasoupPeers, setMediasoupPeers] = useState<MediasoupRemotePeer[]>([]);
   const [mediasoupLocalVideo, setMediasoupLocalVideo] = useState<MediaStream | null>(null);
   const [callNotice, setCallNotice] = useState('');
+  const [screenSharePickerOpen, setScreenSharePickerOpen] = useState(false);
 
   const sessionRef = useRef(session);
   const roomRef = useRef<Room | null>(null);
+  const screenShareTrackRef = useRef<MediaStreamTrack | null>(null);
   const mediasoupRef = useRef<MediasoupCallSession | null>(null);
   const removedFromMeetingRef = useRef(false);
   const pendingJoinConversationRef = useRef<ConversationItem | null>(null);
@@ -335,6 +339,11 @@ export function useCallManager({
     roomRef.current = null;
     setActiveRoom(null);
 
+    if (screenShareTrackRef.current) {
+      screenShareTrackRef.current.stop();
+      screenShareTrackRef.current = null;
+    }
+
     if (!room) {
       setRemoteParticipants([]);
       return;
@@ -444,6 +453,7 @@ export function useCallManager({
     setMicEnabled(true);
     setCameraEnabled(false);
     setScreenShareEnabled(false);
+    setScreenSharePickerOpen(false);
     setBusy(false);
     setCallNotice('');
     setPendingJoinRequests([]);
@@ -2195,6 +2205,103 @@ export function useCallManager({
     return room;
   }, []);
 
+  const stopLiveKitScreenShare = useCallback(
+    async (room: Room) => {
+      try {
+        await room.localParticipant.setScreenShareEnabled(false);
+      } catch {
+        // LiveKit may not own the track if we published manually.
+      }
+
+      const publication = room.localParticipant.getTrackPublication(Track.Source.ScreenShare);
+
+      if (publication?.track) {
+        await room.localParticipant.unpublishTrack(publication.track, true);
+      }
+
+      if (screenShareTrackRef.current) {
+        screenShareTrackRef.current.stop();
+        screenShareTrackRef.current = null;
+      }
+
+      syncLocalMediaFromRoom(room);
+    },
+    [syncLocalMediaFromRoom],
+  );
+
+  const startLiveKitScreenShare = useCallback(
+    async (room: Room, stream: MediaStream) => {
+      const videoTrack = stream.getVideoTracks()[0];
+
+      if (!videoTrack) {
+        stream.getTracks().forEach((track) => track.stop());
+        throw new Error('No screen capture track was returned.');
+      }
+
+      screenShareTrackRef.current = videoTrack;
+      videoTrack.onended = () => {
+        screenShareTrackRef.current = null;
+        setScreenShareEnabled(false);
+        syncLocalMediaFromRoom(room);
+      };
+
+      await room.localParticipant.publishTrack(videoTrack, {
+        source: Track.Source.ScreenShare,
+        simulcast: true,
+      });
+
+      syncLocalMediaFromRoom(room);
+    },
+    [syncLocalMediaFromRoom],
+  );
+
+  const shareScreenFromSource = useCallback(
+    async (source: ScreenCaptureSource) => {
+      const mediasoupSession = mediasoupRef.current;
+      const room = readLiveKitRoom();
+
+      if (!mediasoupSession && !room) {
+        reportError('Call is still connecting. Try again in a moment.');
+        setScreenSharePickerOpen(false);
+        return;
+      }
+
+      try {
+        const stream = await captureDesktopSource(source.id);
+
+        if (mediasoupSession) {
+          await mediasoupSession.setScreenShareEnabled(true, stream);
+          setScreenShareEnabled(mediasoupSession.isScreenShareEnabled());
+          setMediasoupLocalVideo(
+            mediasoupSession.getScreenShareStream() ?? mediasoupSession.getLocalVideoStream(),
+          );
+          logCallDebug('[Calls] Mediasoup screen sharing started');
+          return;
+        }
+
+        if (room) {
+          await startLiveKitScreenShare(room, stream);
+          logCallDebug('[Calls] Screen sharing started');
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unable to share your screen.';
+        const permissionLike =
+          message.includes('Permission') ||
+          message.includes('NotAllowed') ||
+          message.includes('blocked') ||
+          message.includes('denied');
+
+        reportError(
+          permissionLike ? await describeScreenCaptureFailure() : 'Could not share your screen. Please try again.',
+        );
+        logCallDebug('[Calls] Screen sharing failed', message);
+      } finally {
+        setScreenSharePickerOpen(false);
+      }
+    },
+    [readLiveKitRoom, reportError, startLiveKitScreenShare],
+  );
+
   const toggleMic = useCallback(async () => {
     const mediasoupSession = mediasoupRef.current;
 
@@ -2276,22 +2383,23 @@ export function useCallManager({
     const next = !screenShareEnabled;
 
     if (next) {
-      const permissionResult = await ensureScreenCapturePermission();
-
-      if (!permissionResult.ok) {
-        reportError('Screen sharing is not allowed. Check Settings and try again.');
+      if (!mediasoupSession && !room) {
+        reportError('Call is still connecting. Try again in a moment.');
         return;
       }
+
+      setScreenSharePickerOpen(true);
+      return;
     }
 
     try {
       if (mediasoupSession) {
-        await mediasoupSession.setScreenShareEnabled(next);
+        await mediasoupSession.setScreenShareEnabled(false);
         setScreenShareEnabled(mediasoupSession.isScreenShareEnabled());
         setMediasoupLocalVideo(
           mediasoupSession.getScreenShareStream() ?? mediasoupSession.getLocalVideoStream(),
         );
-        logCallDebug(next ? '[Calls] Mediasoup screen sharing started' : '[Calls] Mediasoup screen sharing stopped');
+        logCallDebug('[Calls] Mediasoup screen sharing stopped');
         return;
       }
 
@@ -2300,17 +2408,18 @@ export function useCallManager({
         return;
       }
 
-      await room.localParticipant.setScreenShareEnabled(next, {
-        audio: true,
-      });
-      syncLocalMediaFromRoom(room);
-      logCallDebug(next ? '[Calls] Screen sharing started' : '[Calls] Screen sharing stopped');
+      await stopLiveKitScreenShare(room);
+      logCallDebug('[Calls] Screen sharing stopped');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to share your screen.';
-      reportError('Could not share your screen. Please try again.');
-      logCallDebug('[Calls] Screen sharing failed', message);
+      reportError('Could not stop screen sharing. Please try again.');
+      logCallDebug('[Calls] Screen sharing stop failed', message);
     }
-  }, [readLiveKitRoom, reportError, screenShareEnabled, syncLocalMediaFromRoom]);
+  }, [readLiveKitRoom, reportError, screenShareEnabled, stopLiveKitScreenShare]);
+
+  const closeScreenSharePicker = useCallback(() => {
+    setScreenSharePickerOpen(false);
+  }, []);
 
   const localVideoTrack = activeRoom?.localParticipant.getTrackPublication(Track.Source.Camera)?.videoTrack ?? null;
 
@@ -2322,6 +2431,7 @@ export function useCallManager({
     micEnabled,
     cameraEnabled,
     screenShareEnabled,
+    screenSharePickerOpen,
     pendingJoinRequests,
     awaitingJoinApproval,
     localVideoTrack,
@@ -2344,6 +2454,8 @@ export function useCallManager({
     toggleMic,
     toggleCamera,
     toggleScreenShare,
+    closeScreenSharePicker,
+    shareScreenFromSource,
   };
 }
 

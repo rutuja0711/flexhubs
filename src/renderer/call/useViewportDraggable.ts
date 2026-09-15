@@ -28,15 +28,23 @@ export function useViewportDraggable(enabled: boolean, nativeWindowDrag = false)
   const ensureDefaultPosition = useCallback(() => {
     const panel = panelRef.current;
 
-    if (!panel || position) {
+    if (!panel) {
       return;
     }
 
     const rect = panel.getBoundingClientRect();
-    setPosition(
-      clampToViewport(window.innerWidth - rect.width - 16, window.innerHeight - rect.height - 16),
-    );
-  }, [clampToViewport, position]);
+
+    setPosition((current) => {
+      if (!current) {
+        return clampToViewport(
+          window.innerWidth - rect.width - 16,
+          window.innerHeight - rect.height - 16,
+        );
+      }
+
+      return clampToViewport(current.x, current.y);
+    });
+  }, [clampToViewport]);
 
   useEffect(() => {
     if (!enabled) {
@@ -50,7 +58,27 @@ export function useViewportDraggable(enabled: boolean, nativeWindowDrag = false)
     };
 
     window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+
+    const panel = panelRef.current;
+    let resizeObserver: ResizeObserver | null = null;
+
+    if (panel && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        setPosition((current) => {
+          if (!current) {
+            return current;
+          }
+
+          return clampToViewport(current.x, current.y);
+        });
+      });
+      resizeObserver.observe(panel);
+    }
+
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      resizeObserver?.disconnect();
+    };
   }, [clampToViewport, enabled, ensureDefaultPosition]);
 
   const startDrag = useCallback(
@@ -127,15 +155,21 @@ export function useViewportDraggable(enabled: boolean, nativeWindowDrag = false)
     }
   }, []);
 
-  const panelStyle: CSSProperties | undefined =
-    enabled && position
+  const panelStyle: CSSProperties | undefined = enabled
+    ? position
       ? {
           left: position.x,
           top: position.y,
           right: 'auto',
           bottom: 'auto',
         }
-      : undefined;
+      : {
+          right: 16,
+          bottom: 16,
+          left: 'auto',
+          top: 'auto',
+        }
+    : undefined;
 
   return {
     panelRef,

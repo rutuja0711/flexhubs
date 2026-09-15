@@ -184,6 +184,16 @@ export function ensureScreenCapturePermission(): Promise<ApiResult<{ ok: true }>
   return window.electronAPI.ensureScreenCapturePermission();
 }
 
+export async function describeScreenCaptureFailure(): Promise<string> {
+  const result = await window.electronAPI?.describeScreenCaptureFailure?.();
+
+  if (result?.ok && result.data) {
+    return result.data;
+  }
+
+  return 'Could not share your screen. Allow screen recording for this app in System Settings, then fully quit and relaunch.';
+}
+
 export function logCall(payload: {
   conversationId: string;
   callId: string;

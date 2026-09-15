@@ -147,7 +147,10 @@ export function startPresenceManager(initialStatus: UserPresenceStatus, initialM
   autoAway = false;
 
   if (started) {
+    manualStatus = initialStatus;
+    statusMessage = initialMessage;
     notify();
+    void syncPresenceToServer();
     return;
   }
 

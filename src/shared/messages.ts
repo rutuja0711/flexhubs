@@ -3,7 +3,7 @@ import {
   isCallLogMessage as isCallLogContent,
   parseCallLogContent,
 } from './calls';
-import { normalizeUploadUrl, resolveAvatarUrl } from './profile';
+import { normalizeUploadUrl, readUserStatusMessage, resolveAvatarUrl } from './profile';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
@@ -2295,23 +2295,27 @@ export function normalizeTeammates(payload: unknown): TeammateItem[] {
     .map(asRecord)
     .filter((item): item is Record<string, unknown> => item !== null)
     .map((record, index) => {
+      const user = asRecord(record.user) ?? record;
       const name =
+        readString(user.name) ??
+        readString(user.displayName) ??
+        readString(user.username) ??
         readString(record.name) ??
         readString(record.displayName) ??
         readString(record.username) ??
         'Teammate';
 
       return {
-        id: readString(record.id) ?? readString(record.userId) ?? `member-${index}`,
+        id:
+          readString(user.id) ??
+          readString(record.userId) ??
+          readString(record.id) ??
+          `member-${index}`,
         name,
-        username: readString(record.username) ?? '',
-        avatarUrl: resolveAvatarUrl(record),
+        username: readString(user.username) ?? readString(record.username) ?? '',
+        avatarUrl: resolveAvatarUrl(user) ?? resolveAvatarUrl(record),
         initials: initialsFromName(name),
-        statusMessage:
-          readString(record.statusMessage) ??
-          readString(record.status) ??
-          readString(record.bio) ??
-          '',
+        statusMessage: readUserStatusMessage(record),
       };
     });
 }

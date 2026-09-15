@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { isAppInBackground, subscribeAppFocus } from '../appFocus';
 import { createPortal } from 'react-dom';
 import { Track } from 'livekit-client';
@@ -16,8 +16,10 @@ import { MeetingRoomView } from '../call/MeetingRoomView';
 import { VideoCallView } from '../call/VideoCallView';
 import { VoiceCallView } from '../call/VoiceCallView';
 import { startIncomingCallRing, startOutgoingCallRing, stopCallRing } from '../call/callRingtone';
+import { ScreenSharePicker } from '../call/ScreenSharePicker';
 import { useCallDuration } from '../call/useCallDuration';
 import { focusCallWindow, setCallWindowPresentation } from '../callWindowApi';
+import type { ScreenCaptureSource } from '../../shared/screenShare';
 
 type CallOverlayProps = {
   session: CallSession;
@@ -30,6 +32,9 @@ type CallOverlayProps = {
   micEnabled: boolean;
   cameraEnabled: boolean;
   screenShareEnabled: boolean;
+  screenSharePickerOpen: boolean;
+  onCloseScreenSharePicker: () => void;
+  onShareScreenSource: (source: ScreenCaptureSource) => void;
   pendingJoinRequests: import('../../shared/calls').MeetingJoinRequestItem[];
   awaitingJoinApproval: boolean;
   onAccept: () => void;
@@ -45,7 +50,8 @@ type CallOverlayProps = {
   onDenyJoinRequest: (requestId: string) => void;
   onMuteParticipant: (participantIdentity: string, muted: boolean) => void;
   onRemoveParticipant: (participantIdentity: string) => void;
-  onPanelLayoutChange?: (layout: CallPanelLayout) => void;
+  panelLayout: CallPanelLayout;
+  onPanelLayoutChange: (layout: CallPanelLayout) => void;
 };
 
 function remoteHasVideo(participants: RemoteParticipant[]): boolean {
@@ -65,6 +71,9 @@ export function CallOverlay({
   micEnabled,
   cameraEnabled,
   screenShareEnabled,
+  screenSharePickerOpen,
+  onCloseScreenSharePicker,
+  onShareScreenSource,
   pendingJoinRequests,
   awaitingJoinApproval,
   onAccept,
@@ -80,20 +89,21 @@ export function CallOverlay({
   onDenyJoinRequest,
   onMuteParticipant,
   onRemoveParticipant,
+  panelLayout,
   onPanelLayoutChange,
 }: CallOverlayProps) {
   const appInBackground = useSyncExternalStore(subscribeAppFocus, isAppInBackground, () => false);
-  const [panelLayout, setPanelLayout] = useState<CallPanelLayout>('floating');
 
-  const updatePanelLayout = (layout: CallPanelLayout) => {
-    setPanelLayout(layout);
-    onPanelLayoutChange?.(layout);
-  };
+  const updatePanelLayout = useCallback(
+    (layout: CallPanelLayout) => {
+      onPanelLayoutChange(layout);
 
-  useEffect(() => {
-    updatePanelLayout('floating');
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- reset layout when call id changes
-  }, [session.callId]);
+      if (session.phase === 'active' || session.phase === 'connecting') {
+        setCallWindowPresentation(true, layout);
+      }
+    },
+    [onPanelLayoutChange, session.phase],
+  );
 
   const callWindowActive =
     session.phase === 'incoming' ||
@@ -168,14 +178,7 @@ export function CallOverlay({
     if (session.phase === 'incoming' && !appInBackground) {
       focusCallWindow();
     }
-  }, [
-    appInBackground,
-    callWindowActive,
-    panelLayout,
-    session.phase,
-    showRingingUi,
-    suppressIncomingRingUi,
-  ]);
+  }, [callWindowActive, panelLayout, session.phase, showRingingUi, suppressIncomingRingUi]);
 
   useEffect(() => {
     return () => {
@@ -430,7 +433,6 @@ export function CallOverlay({
       showCamera={showCameraControls}
       showScreenShare={showScreenShareControls}
       onLayoutChange={updatePanelLayout}
-      pipMode={panelLayout === 'minimized'}
       onToggleMic={onToggleMic}
       onToggleCamera={onToggleCamera}
       onToggleScreenShare={onToggleScreenShare}
@@ -438,6 +440,11 @@ export function CallOverlay({
     >
       {panelContent}
     </CallFloatingPanel>
+      <ScreenSharePicker
+        open={screenSharePickerOpen}
+        onClose={onCloseScreenSharePicker}
+        onShare={onShareScreenSource}
+      />
     </>,
     document.body,
   );

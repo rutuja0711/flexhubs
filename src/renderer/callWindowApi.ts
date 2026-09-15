@@ -20,3 +20,9 @@ export function focusCallWindow(): void {
 export function moveCallWindowBy(deltaX: number, deltaY: number): void {
   void window.electronAPI?.moveCallWindowBy?.(deltaX, deltaY);
 }
+
+export function subscribeCallWindowPresentation(
+  listener: (mode: CallWindowPresentationMode) => void,
+): () => void {
+  return window.electronAPI?.onCallWindowPresentationChanged?.(listener) ?? (() => {});
+}

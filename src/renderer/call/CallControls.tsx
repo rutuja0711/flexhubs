@@ -45,7 +45,10 @@ export function CallControls({
     : 'inline-flex h-11 w-11 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20';
 
   return (
-    <div className={`flex flex-wrap items-center justify-center gap-2 ${compact ? '' : 'gap-3'}`}>
+    <div
+      className={`flex flex-wrap items-center justify-center gap-2 ${compact ? '' : 'gap-3'}`}
+      onPointerDown={(event) => event.stopPropagation()}
+    >
       {showExpand && onToggleExpanded ? (
         <button
           type="button"

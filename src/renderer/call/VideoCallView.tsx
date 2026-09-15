@@ -58,12 +58,7 @@ export function VideoCallView({
   const initial = title.slice(0, 1).toUpperCase() || '?';
 
   return (
-    <div ref={stageRef} className="relative flex h-full min-h-[280px] flex-col bg-[#0b0c10]">
-      <div className="border-b border-white/10 px-4 py-3">
-        <p className="truncate text-sm font-semibold text-white">{title}</p>
-        <p className="text-xs text-white/55">{statusLabel}</p>
-      </div>
-
+    <div ref={stageRef} className="relative flex h-full min-h-0 flex-col bg-[#0b0c10]">
       <div className="relative min-h-0 flex-1 p-3">
         {screenShareTarget ? (
           <ParticipantTile

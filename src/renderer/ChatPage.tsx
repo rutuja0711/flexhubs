@@ -151,6 +151,7 @@ import { isUserCallChannelSubscribed } from './callSignaling';
 import { CallOverlay } from './chat/CallOverlay';
 import { MediaPreviewHost } from './chat/MediaPreviewHost';
 import type { CallPanelLayout } from './call/CallFloatingPanel';
+import { subscribeCallWindowPresentation } from './callWindowApi';
 import { FlexAiPanel } from './chat/FlexAiPanel';
 import {
   broadcastTypingIndicator,
@@ -1433,6 +1434,21 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       const statusByUserId = new Map(
         result.data.map((item) => [item.userId, mapApiPresenceToStatus(item.status)] as const),
       );
+      const statusMessageByUserId = new Map(
+        result.data.map((item) => [item.userId, item.statusMessage] as const),
+      );
+
+      setTeammates((current) =>
+        current.map((teammate) => {
+          const statusMessage = statusMessageByUserId.get(teammate.id);
+
+          if (statusMessage === undefined) {
+            return teammate;
+          }
+
+          return { ...teammate, statusMessage };
+        }),
+      );
 
       setConversations((current) =>
         applyDraftPreviews(
@@ -1442,12 +1458,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             }
 
             const status = statusByUserId.get(conversation.peerUserId);
+            const peerStatusMessage = statusMessageByUserId.get(conversation.peerUserId);
 
-            if (!status) {
+            if (!status && peerStatusMessage === undefined) {
               return conversation;
             }
 
-            return { ...conversation, status };
+            return {
+              ...conversation,
+              ...(status ? { status } : {}),
+              ...(peerStatusMessage !== undefined ? { peerStatusMessage } : {}),
+            };
           }),
         ),
       );
@@ -1771,6 +1792,18 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     callPhaseRef.current = phase;
   }, [callManager.session.phase]);
+
+  useEffect(() => {
+    setCallPanelLayout('floating');
+  }, [callManager.session.callId]);
+
+  useEffect(() => {
+    return subscribeCallWindowPresentation((mode) => {
+      if (mode === 'fullscreen' || mode === 'floating' || mode === 'minimized') {
+        setCallPanelLayout(mode);
+      }
+    });
+  }, []);
 
   callMeetingActionsRef.current = {
     ingestMeeting: callManager.ingestMeetingNotification,
@@ -2457,12 +2490,28 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         if (presenceUpdate) {
           const status = mapApiPresenceToStatus(presenceUpdate.status);
 
-          if (status) {
+          if (presenceUpdate.statusMessage !== undefined) {
+            setTeammates((current) =>
+              current.map((teammate) =>
+                teammate.id === presenceUpdate.userId
+                  ? { ...teammate, statusMessage: presenceUpdate.statusMessage ?? '' }
+                  : teammate,
+              ),
+            );
+          }
+
+          if (status || presenceUpdate.statusMessage !== undefined) {
             setConversations((current) =>
               applyDraftPreviews(
                 current.map((conversation) =>
                   conversation.peerUserId === presenceUpdate.userId
-                    ? { ...conversation, status }
+                    ? {
+                        ...conversation,
+                        ...(status ? { status } : {}),
+                        ...(presenceUpdate.statusMessage !== undefined
+                          ? { peerStatusMessage: presenceUpdate.statusMessage }
+                          : {}),
+                      }
                     : conversation,
                 ),
               ),
@@ -4240,7 +4289,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           onUserUpdated={() => {
             void getCurrentUser().then((result) => {
               if (result.ok) {
-                setUser(result.data.user ?? result.data);
+                const userPayload = result.data.user ?? result.data;
+                setUser(userPayload);
+                const profile = normalizeUserProfile(userPayload);
+                startPresenceManager(profile.status, profile.statusMessage);
               }
             });
           }}
@@ -4412,14 +4464,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     );
   };
 
-  const callPipMode =
-    callManager.session.phase === 'active' && callPanelLayout === 'minimized';
+  const callImmersiveMode =
+    callManager.session.phase === 'active' && callPanelLayout === 'fullscreen';
   const showMeetingBanner =
     callManager.session.phase === 'idle' && Boolean(callManager.session.meetingBanner);
 
   return (
     <div
-      className={`flex h-full bg-app-chat-bg ${callPipMode ? 'overflow-hidden bg-[#101114]' : ''}`}
+      className={`flex h-full bg-app-chat-bg ${callImmersiveMode ? 'overflow-hidden bg-[#101114]' : ''}`}
     >
       <MediaPreviewHost />
       <CallOverlay
@@ -4433,8 +4485,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         micEnabled={callManager.micEnabled}
         cameraEnabled={callManager.cameraEnabled}
         screenShareEnabled={callManager.screenShareEnabled}
+        screenSharePickerOpen={callManager.screenSharePickerOpen}
+        onCloseScreenSharePicker={callManager.closeScreenSharePicker}
+        onShareScreenSource={(source) => void callManager.shareScreenFromSource(source)}
         pendingJoinRequests={callManager.pendingJoinRequests}
         awaitingJoinApproval={callManager.awaitingJoinApproval}
+        panelLayout={callPanelLayout}
         onPanelLayoutChange={setCallPanelLayout}
         onAccept={() => void callManager.acceptIncomingCall()}
         onReject={() => void callManager.rejectIncomingCall()}
@@ -4475,8 +4531,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
       />
       <div
-        className={`flex min-h-0 min-w-0 flex-1 ${callPipMode ? 'pointer-events-none invisible' : ''}`}
-        aria-hidden={callPipMode}
+        className={`flex min-h-0 min-w-0 flex-1 ${callImmersiveMode ? 'pointer-events-none invisible' : ''}`}
+        aria-hidden={callImmersiveMode}
       >
       <FlexAiPanel
         open={flexAiOpen}
