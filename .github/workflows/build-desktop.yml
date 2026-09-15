@@ -107,14 +107,6 @@ jobs:
           cp "$dmg" out/FlexHubs-Desktop.dmg
           echo "Staged installer: $dmg -> out/FlexHubs-Desktop.dmg"
 
-      - name: Upload Mac DMG
-        if: matrix.os == 'macos-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: FlexHubs-Desktop.dmg
-          path: out/FlexHubs-Desktop.dmg
-          if-no-files-found: error
-
       - name: Stage Windows Setup.exe
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -135,14 +127,6 @@ jobs:
 
           Copy-Item -Path $setup.FullName -Destination out/FlexHubs-Desktop-Setup.exe -Force
           Write-Host "Staged installer: $($setup.Name) -> out/FlexHubs-Desktop-Setup.exe"
-
-      - name: Upload Windows installer (Setup.exe only)
-        if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: FlexHubs-Desktop-Setup.exe
-          path: out/FlexHubs-Desktop-Setup.exe
-          if-no-files-found: error
 
       - name: Publish Mac DMG to GitHub Release
         if: matrix.os == 'macos-latest' && github.ref == 'refs/heads/main'
