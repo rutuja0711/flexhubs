@@ -29,6 +29,7 @@ export type DirectCallHandlers = {
   onReject?: (payload: CallRejectPayload) => void;
   onCancel?: (payload: CallCancelPayload) => void;
   onEnd?: (payload: CallEndPayload) => void;
+  onMeetingJoinResponse?: (payload: MeetingJoinResponsePayload) => void;
 };
 
 export type HubCallHandlers = {
@@ -182,6 +183,14 @@ function attachDirectHandlers(channel: RealtimeChannel, channelName: string): vo
     .on('broadcast', { event: CALL_EVENTS.end }, ({ payload }) => {
       const parsed = asPayload<CallEndPayload>(payload);
       if (parsed) readDirectHandlers(channelName)?.onEnd?.(parsed);
+    })
+    .on('broadcast', { event: HUB_EVENTS.joinResponse }, ({ payload }) => {
+      const parsed = normalizeMeetingJoinResponsePayload(payload);
+
+      if (parsed) {
+        logCallDebug('[Calls] Meeting join response (user channel)', parsed.approved ? 'approved' : 'denied');
+        readDirectHandlers(channelName)?.onMeetingJoinResponse?.(parsed);
+      }
     });
 }
 

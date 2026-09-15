@@ -78,11 +78,17 @@ export function loadRealtimeConfig(): Promise<ApiResult<RealtimeClientConfig>> {
 
     if (!supabaseUrl || !supabaseAnonKey) {
       const injected = readInjectedSupabaseConfig();
-      const packagedBuild = !injected.url && !injected.key && !import.meta.env.DEV;
+
+      if (!apiResult.ok && apiResult.error) {
+        return apiResult;
+      }
 
       return {
         ok: false,
-        error: 'Calls are not available right now. Please try again later.',
+        error:
+          injected.url && injected.key
+            ? 'Call signaling is not available right now. Please try again later.'
+            : 'Call signaling is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env, then restart the app.',
       };
     }
 
@@ -134,13 +140,17 @@ async function probeCallMediaAccess(requestCamera: boolean): Promise<ApiResult<{
   }
 
   if (window.electronAPI?.ensureCallMediaPermissions) {
-    await window.electronAPI.ensureCallMediaPermissions(requestCamera);
+    const ipcResult = await window.electronAPI.ensureCallMediaPermissions(requestCamera);
+
+    if (!ipcResult.ok) {
+      return { ok: false, error: ipcResult.error };
+    }
   }
 
   try {
     const stream = await navigator.mediaDevices.getUserMedia({
       audio: true,
-      video: false,
+      video: requestCamera,
     });
     stream.getTracks().forEach((track) => track.stop());
     return { ok: true, data: { ok: true } };
@@ -239,8 +249,9 @@ export function listMeetingJoinRequests(
 
 export function respondMeetingJoinRequestCall(payload: {
   conversationId: string;
-  requestId: string;
-  approved: boolean;
+  participantIdentity: string;
+  callId: string;
+  accept: boolean;
 }): Promise<ApiResult<unknown>> {
   return withToken((token) =>
     window.electronAPI.respondMeetingJoinRequest(token, JSON.stringify(payload)),

@@ -20,6 +20,7 @@ import type {
 } from '../shared/calls';
 import {
   buildDirectCallRoomName,
+  buildLiveKitRtcConfig,
   isMeetingModerator,
   normalizeMeetingJoinRequestPayload,
 } from '../shared/calls';
@@ -117,7 +118,11 @@ function createCallId(): string {
   return crypto.randomUUID();
 }
 
-function shouldUseMeetingJoinRequest(error: string, status?: number): boolean {
+function shouldUseMeetingJoinRequest(error: string, status?: number, code?: string): boolean {
+  if (code === 'MEETING_REJOIN_REQUIRES_APPROVAL') {
+    return true;
+  }
+
   const normalized = error.toLowerCase();
 
   return (
@@ -126,7 +131,8 @@ function shouldUseMeetingJoinRequest(error: string, status?: number): boolean {
     normalized.includes('removed') ||
     normalized.includes('not allowed') ||
     normalized.includes('denied') ||
-    normalized.includes('rejoin')
+    normalized.includes('rejoin') ||
+    normalized.includes('host approval')
   );
 }
 
@@ -167,6 +173,16 @@ function formatCallMediaError(error: unknown): string {
     return 'Your mic or camera is in use by another app. Close it and try again.';
   }
 
+  if (
+    normalized.includes('content security policy') ||
+    normalized.includes('refused to connect') ||
+    normalized.includes('websocket') ||
+    normalized.includes('media server') ||
+    normalized.includes('livekit')
+  ) {
+    return 'Could not reach the call server. Check your connection and try again.';
+  }
+
   return 'Could not connect the call. Please try again.';
 }
 
@@ -191,6 +207,7 @@ export function useCallManager({
   onError,
 }: UseCallManagerOptions) {
   const [session, setSession] = useState<CallSession>(INITIAL_SESSION);
+  const [activeRoom, setActiveRoom] = useState<Room | null>(null);
   const [remoteParticipants, setRemoteParticipants] = useState<RemoteParticipant[]>([]);
   const [micEnabled, setMicEnabled] = useState(true);
   const [cameraEnabled, setCameraEnabled] = useState(false);
@@ -221,6 +238,7 @@ export function useCallManager({
     onReject: (payload: { callId: string; conversationId: string }) => void;
     onCancel: (payload: { callId: string; conversationId: string }) => void;
     onEnd: (payload: { callId: string; conversationId: string }) => void;
+    onMeetingJoinResponse: (payload: MeetingJoinResponsePayload) => void;
   } | null>(null);
   const hubHandlersRef = useRef<{
     onMeetingStarted: (payload: MeetingStartedPayload) => void;
@@ -295,6 +313,14 @@ export function useCallManager({
     [],
   );
 
+  const syncLocalMediaFromRoom = useCallback((room: Room) => {
+    setMicEnabled(room.localParticipant.isMicrophoneEnabled);
+    setCameraEnabled(room.localParticipant.isCameraEnabled);
+    setScreenShareEnabled(
+      Boolean(room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track),
+    );
+  }, []);
+
   const disconnectRoom = useCallback(async () => {
     const mediasoupSession = mediasoupRef.current;
     mediasoupRef.current = null;
@@ -307,6 +333,7 @@ export function useCallManager({
 
     const room = roomRef.current;
     roomRef.current = null;
+    setActiveRoom(null);
 
     if (!room) {
       setRemoteParticipants([]);
@@ -554,17 +581,22 @@ export function useCallManager({
       room.on(RoomEvent.TrackPublished, syncRemoteParticipants);
       room.on(RoomEvent.TrackUnpublished, syncRemoteParticipants);
       room.on(RoomEvent.LocalTrackPublished, () => {
-        const sharingScreen = Boolean(
-          room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track,
-        );
-        setScreenShareEnabled(sharingScreen);
+        syncLocalMediaFromRoom(room);
         syncRemoteParticipants();
       });
-      room.on(RoomEvent.LocalTrackUnpublished, (publication) => {
-        if (publication.source === Track.Source.ScreenShare) {
-          setScreenShareEnabled(false);
-        }
+      room.on(RoomEvent.LocalTrackUnpublished, () => {
+        syncLocalMediaFromRoom(room);
         syncRemoteParticipants();
+      });
+      room.on(RoomEvent.TrackMuted, (publication, participant) => {
+        if (participant.isLocal) {
+          syncLocalMediaFromRoom(room);
+        }
+      });
+      room.on(RoomEvent.TrackUnmuted, (publication, participant) => {
+        if (participant.isLocal) {
+          syncLocalMediaFromRoom(room);
+        }
       });
       room.on(RoomEvent.ConnectionStateChanged, (state) => {
         if (state === ConnectionState.Connected) {
@@ -600,6 +632,7 @@ export function useCallManager({
       });
 
       roomRef.current = room;
+      setActiveRoom(room);
 
       logCallDebug('[Calls] Connecting LiveKit', {
         url: tokenResult.url,
@@ -607,8 +640,14 @@ export function useCallManager({
         video,
       });
 
+      const rtcConfig = buildLiveKitRtcConfig(tokenResult);
+
       try {
-        await room.connect(tokenResult.url, tokenResult.token);
+        await room.connect(
+          tokenResult.url,
+          tokenResult.token,
+          rtcConfig ? { rtcConfig } : undefined,
+        );
       } catch (error) {
         logCallDebug('[Calls] LiveKit connect failed', error instanceof Error ? error.message : error);
         throw new Error(formatCallMediaError(error));
@@ -642,6 +681,7 @@ export function useCallManager({
       }
 
       setScreenShareEnabled(false);
+      syncLocalMediaFromRoom(room);
       syncRemoteParticipants();
 
       try {
@@ -654,7 +694,7 @@ export function useCallManager({
         );
       }
     },
-    [],
+    [syncLocalMediaFromRoom],
   );
 
   const finalizeDirectCall = useCallback(
@@ -1142,10 +1182,14 @@ export function useCallManager({
       setBusy(true);
 
       try {
+        const participantIdentity = request?.requester.id ?? requestId.split(':')[0] ?? '';
+        const callId = request?.callId ?? active.callId;
+
         const result = await respondMeetingJoinRequestCall({
           conversationId: active.conversationId,
-          requestId,
-          approved,
+          participantIdentity,
+          callId,
+          accept: approved,
         });
 
         if (!result.ok) {
@@ -1153,22 +1197,16 @@ export function useCallManager({
           return;
         }
 
-        const responsePayload: MeetingJoinResponsePayload = {
-          requestId,
+        const responsePayload = {
+          callId,
           conversationId: active.conversationId,
-          callId: active.callId,
-          requesterId: request?.requester.id ?? '',
-          approved,
-          respondedBy: {
-            id: currentUserId,
-            username: currentUserLabel,
-            avatar: currentUserAvatar,
-          },
-          respondedAt: new Date().toISOString(),
+          accepted: approved,
+          respondedBy: currentUserId,
+          requesterId: participantIdentity,
         };
 
         await broadcastCallEvent(
-          getHubCallChannelName(active.conversationId),
+          getUserCallChannelName(participantIdentity),
           'call:meeting-join-response',
           responsePayload,
         );
@@ -1252,6 +1290,9 @@ export function useCallManager({
     onEnd: (payload) => {
       void handleRemoteEnd(payload);
     },
+    onMeetingJoinResponse: (payload) => {
+      void handleMeetingJoinResponse(payload);
+    },
   };
 
   hubHandlersRef.current = {
@@ -1279,6 +1320,8 @@ export function useCallManager({
         onReject: (payload) => directHandlersRef.current?.onReject(payload),
         onCancel: (payload) => directHandlersRef.current?.onCancel(payload),
         onEnd: (payload) => directHandlersRef.current?.onEnd(payload),
+        onMeetingJoinResponse: (payload) =>
+          directHandlersRef.current?.onMeetingJoinResponse?.(payload),
       });
     };
 
@@ -1507,14 +1550,16 @@ export function useCallManager({
         video,
       });
 
-      const liveToken = tokenResult.ok ? tokenResult.data : null;
-
       if (!tokenResult.ok) {
+        setBusy(false);
         reportError(formatCallApiError(tokenResult.error, tokenResult.status));
+        return;
       }
 
+      const liveToken = tokenResult.data;
+
       const roomName =
-        liveToken?.roomName || buildDirectCallRoomName(conversation.id);
+        liveToken.roomName || buildDirectCallRoomName(conversation.id);
 
       setSession({
         phase: 'outgoing',
@@ -2069,7 +2114,7 @@ export function useCallManager({
         const tokenResult = await loadCallToken({ conversationId: conversation.id, video });
 
         if (!tokenResult.ok) {
-          if (shouldUseMeetingJoinRequest(tokenResult.error, tokenResult.status)) {
+          if (shouldUseMeetingJoinRequest(tokenResult.error, tokenResult.status, tokenResult.code)) {
             await submitMeetingJoinRequest(conversation, callId, video);
             return;
           }
@@ -2140,31 +2185,59 @@ export function useCallManager({
     }
   }, []);
 
-  const toggleMic = useCallback(async () => {
-    const next = !micEnabled;
-    const mediasoupSession = mediasoupRef.current;
-
-    if (mediasoupSession) {
-      await mediasoupSession.setMicEnabled(next);
-      setMicEnabled(next);
-      return;
-    }
-
+  const readLiveKitRoom = useCallback((): Room | null => {
     const room = roomRef.current;
 
-    if (!room) {
-      return;
+    if (!room || room.state !== ConnectionState.Connected) {
+      return null;
     }
 
-    await room.localParticipant.setMicrophoneEnabled(next);
-    setMicEnabled(next);
-  }, [micEnabled]);
+    return room;
+  }, []);
 
-  const toggleCamera = useCallback(async () => {
-    const next = !cameraEnabled;
+  const toggleMic = useCallback(async () => {
     const mediasoupSession = mediasoupRef.current;
 
     if (mediasoupSession) {
+      const next = !micEnabled;
+
+      try {
+        await mediasoupSession.setMicEnabled(next);
+        setMicEnabled(next);
+      } catch (error) {
+        reportError(formatCallMediaError(error));
+      }
+
+      return;
+    }
+
+    const room = readLiveKitRoom();
+
+    if (!room) {
+      reportError('Call is still connecting. Try again in a moment.');
+      return;
+    }
+
+    const next = !room.localParticipant.isMicrophoneEnabled;
+
+    try {
+      await room.localParticipant.setMicrophoneEnabled(next);
+      syncLocalMediaFromRoom(room);
+    } catch (error) {
+      reportError(formatCallMediaError(error));
+    }
+  }, [micEnabled, readLiveKitRoom, reportError, syncLocalMediaFromRoom]);
+
+  const toggleCamera = useCallback(async () => {
+    if (!sessionRef.current.video) {
+      return;
+    }
+
+    const mediasoupSession = mediasoupRef.current;
+
+    if (mediasoupSession) {
+      const next = !cameraEnabled;
+
       try {
         await mediasoupSession.setCameraEnabled(next);
         setCameraEnabled(next);
@@ -2172,22 +2245,34 @@ export function useCallManager({
       } catch (error) {
         reportError(formatCallMediaError(error));
       }
+
       return;
     }
 
-    const room = roomRef.current;
+    const room = readLiveKitRoom();
 
     if (!room) {
+      reportError('Call is still connecting. Try again in a moment.');
       return;
     }
 
-    await room.localParticipant.setCameraEnabled(next);
-    setCameraEnabled(next);
-  }, [cameraEnabled, reportError]);
+    const next = !room.localParticipant.isCameraEnabled;
+
+    try {
+      await room.localParticipant.setCameraEnabled(next);
+      syncLocalMediaFromRoom(room);
+    } catch (error) {
+      reportError(formatCallMediaError(error));
+    }
+  }, [cameraEnabled, readLiveKitRoom, reportError, syncLocalMediaFromRoom]);
 
   const toggleScreenShare = useCallback(async () => {
+    if (!sessionRef.current.video) {
+      return;
+    }
+
     const mediasoupSession = mediasoupRef.current;
-    const room = roomRef.current;
+    const room = readLiveKitRoom();
     const next = !screenShareEnabled;
 
     if (next) {
@@ -2211,23 +2296,23 @@ export function useCallManager({
       }
 
       if (!room) {
-        reportError('Screen sharing is not available for this call yet.');
+        reportError('Call is still connecting. Try again in a moment.');
         return;
       }
 
       await room.localParticipant.setScreenShareEnabled(next, {
         audio: true,
       });
-      setScreenShareEnabled(next);
+      syncLocalMediaFromRoom(room);
       logCallDebug(next ? '[Calls] Screen sharing started' : '[Calls] Screen sharing stopped');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unable to share your screen.';
       reportError('Could not share your screen. Please try again.');
       logCallDebug('[Calls] Screen sharing failed', message);
     }
-  }, [reportError, screenShareEnabled]);
+  }, [readLiveKitRoom, reportError, screenShareEnabled, syncLocalMediaFromRoom]);
 
-  const localVideoTrack = roomRef.current?.localParticipant.getTrackPublication(Track.Source.Camera)?.videoTrack ?? null;
+  const localVideoTrack = activeRoom?.localParticipant.getTrackPublication(Track.Source.Camera)?.videoTrack ?? null;
 
   return {
     session,
@@ -2242,7 +2327,7 @@ export function useCallManager({
     localVideoTrack,
     mediasoupPeers,
     mediasoupLocalVideo,
-    room: roomRef.current,
+    room: activeRoom,
     startDirectCall,
     acceptIncomingCall,
     rejectIncomingCall,

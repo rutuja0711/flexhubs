@@ -62,7 +62,7 @@ export type MessageItem = {
   editedAt: string | null;
   pinnedAt: string | null;
   isOwn: boolean;
-  status: 'sending' | 'delivered' | 'seen' | null;
+  status: 'sending' | 'delivered' | 'seen' | 'failed' | null;
   readBy: MessageReadReceipt[];
   reactions: MessageReaction[];
   replyToMessageId?: string;
@@ -226,12 +226,14 @@ export type NotificationItem = {
   eventId: string | null;
   messageId: string | null;
   scheduledMessageId: string | null;
+  inviteId: string | null;
   link: string | null;
 };
 
 export type NotificationAction =
   | { kind: 'calendar'; eventId: string | null }
   | { kind: 'chat'; conversationId: string; messageId: string | null }
+  | { kind: 'hubs'; channelId: string | null; inviteId: string | null }
   | { kind: 'none' };
 
 export type PendingFriendItem = {
@@ -1544,6 +1546,32 @@ export function formatMessagePreview(
   return trimmedContent;
 }
 
+export function isStickerMessage(
+  message: Pick<MessageItem, 'content' | 'media' | 'messageType'>,
+): boolean {
+  const messageType = String(message.messageType ?? '').toUpperCase();
+  const content = message.content.trim().toLowerCase();
+
+  if (messageType === 'STICKER' || content === 'sticker') {
+    return true;
+  }
+
+  return message.media.length > 0 && message.media.every((item) => item.kind === 'sticker');
+}
+
+function messageContentMatchesMediaUrl(
+  content: string,
+  media: MessageMedia[],
+): boolean {
+  const trimmed = content.trim();
+
+  if (!trimmed) {
+    return false;
+  }
+
+  return media.some((item) => item.url === trimmed || item.previewUrl === trimmed);
+}
+
 export function isMediaOnlyMessage(
   message: Pick<MessageItem, 'content' | 'media' | 'messageType' | 'deletedForEveryone'>,
 ): boolean {
@@ -1551,8 +1579,16 @@ export function isMediaOnlyMessage(
     return false;
   }
 
-  const trimmedContent =
+  if (isStickerMessage(message)) {
+    return message.media.length > 0;
+  }
+
+  let trimmedContent =
     message.content.trim() === 'sticker' ? '' : message.content.trim();
+
+  if (trimmedContent && messageContentMatchesMediaUrl(trimmedContent, message.media)) {
+    trimmedContent = '';
+  }
 
   if (trimmedContent || message.media.length === 0) {
     return false;
@@ -1759,7 +1795,15 @@ export function normalizeMessage(record: Record<string, unknown>, index: number)
       readString(record.contentType) ??
       null;
 
-  const media = deletedForEveryone ? [] : extractMessageMedia(record, content);
+  const rawMedia = deletedForEveryone ? [] : extractMessageMedia(record, content);
+  const stickerMessage =
+    String(messageType ?? '').toUpperCase() === 'STICKER' ||
+    content.trim().toLowerCase() === 'sticker';
+  const media = stickerMessage
+    ? rawMedia.map((item) =>
+        item.kind === 'file' ? item : { ...item, kind: 'sticker' as const },
+      )
+    : rawMedia;
 
   const statusRaw = String(record.status ?? record.deliveryStatus ?? record.readStatus ?? '').toLowerCase();
   let status: MessageItem['status'] = null;
@@ -2026,6 +2070,12 @@ export function normalizeNotifications(payload: unknown): NotificationItem[] {
           readString(data?.scheduledMessageId) ??
           (scheduledMessage ? readString(scheduledMessage.id) : null) ??
           null,
+        inviteId:
+          readString(record.inviteId) ??
+          readString(data?.inviteId) ??
+          readString(data?.hubInviteId) ??
+          readString(record.hubInviteId) ??
+          null,
         link:
           readString(record.link) ??
           readString(record.url) ??
@@ -2040,7 +2090,33 @@ function notificationHaystack(notification: NotificationItem): string {
   return `${notification.type} ${notification.title} ${notification.body} ${notification.link ?? ''}`.toLowerCase();
 }
 
+export function isHubInviteNotification(notification: NotificationItem): boolean {
+  const type = notification.type.toLowerCase();
+  const haystack = notificationHaystack(notification);
+
+  return (
+    (type.includes('hub') && type.includes('invite')) ||
+    haystack.includes('hub invite') ||
+    (haystack.includes('invited you') && haystack.includes('hub'))
+  );
+}
+
+export function isGroupInviteNotification(notification: NotificationItem): boolean {
+  const type = notification.type.toLowerCase();
+  const haystack = notificationHaystack(notification);
+
+  return (
+    (type.includes('group') && type.includes('invite')) ||
+    haystack.includes('group invitation') ||
+    haystack.includes('group invite')
+  );
+}
+
 export function isCalendarRelatedNotification(notification: NotificationItem): boolean {
+  if (isHubInviteNotification(notification) || isGroupInviteNotification(notification)) {
+    return false;
+  }
+
   if (notification.eventId) {
     return true;
   }
@@ -2050,7 +2126,7 @@ export function isCalendarRelatedNotification(notification: NotificationItem): b
     type.includes('calendar') ||
     type.includes('event') ||
     type.includes('reminder') ||
-    type.includes('invite')
+    (type.includes('invite') && (type.includes('calendar') || type.includes('event')))
   ) {
     return true;
   }
@@ -2079,6 +2155,14 @@ export function resolveNotificationAction(
   notification: NotificationItem,
   conversations: import('./chat').ConversationItem[],
 ): NotificationAction {
+  if (isHubInviteNotification(notification) || isGroupInviteNotification(notification)) {
+    return {
+      kind: 'hubs',
+      channelId: notification.channelId ?? notification.conversationId,
+      inviteId: notification.inviteId,
+    };
+  }
+
   if (isCalendarRelatedNotification(notification) && !isScheduledMessageNotification(notification)) {
     return { kind: 'calendar', eventId: notification.eventId };
   }

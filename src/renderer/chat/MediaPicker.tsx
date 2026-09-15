@@ -310,7 +310,7 @@ export function MediaPicker({
                   <button
                     key={item.id}
                     type="button"
-                    className="overflow-hidden rounded-lg bg-app-surface hover:ring-2 hover:ring-accent/60"
+                    className="overflow-hidden rounded-lg bg-transparent hover:ring-2 hover:ring-accent/60"
                     onClick={() => onSelectMedia(item, 'sticker')}
                     aria-label={item.title ?? 'Custom sticker'}
                   >
@@ -348,7 +348,9 @@ export function MediaPicker({
                 <button
                   key={`${tab}-${item.id}`}
                   type="button"
-                  className="overflow-hidden rounded-lg bg-app-surface hover:ring-2 hover:ring-accent/60"
+                  className={`overflow-hidden rounded-lg hover:ring-2 hover:ring-accent/60 ${
+                    tab === 'sticker' ? 'bg-transparent' : 'bg-app-surface'
+                  }`}
                   onClick={() => onSelectMedia(item, tab)}
                   aria-label={item.title ?? (tab === 'gif' ? 'GIF' : 'Sticker')}
                 >
@@ -356,7 +358,7 @@ export function MediaPicker({
                     src={item.previewUrl}
                     alt={item.title ?? ''}
                     loading="lazy"
-                    className={`h-20 w-full object-cover ${tab === 'sticker' ? 'object-contain p-1' : ''}`}
+                    className={`h-20 w-full ${tab === 'sticker' ? 'bg-transparent object-contain p-1' : 'object-cover'}`}
                   />
                 </button>
               ))}

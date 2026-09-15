@@ -7,6 +7,7 @@ import {
   isCallLogMessage,
   isDeletedMessage,
   isPollMessage,
+  isStickerMessage,
   parseCallLogContent,
 } from '../../shared/messages';
 import { RemoteImage } from '../RemoteImage';
@@ -118,6 +119,7 @@ export function MessageContent({
   }
 
   const media = message.media ?? [];
+  const stickerMessage = isStickerMessage(message);
   const normalizedContent =
     message.content.trim() === 'sticker' ? '' : message.content.trim();
   const visibleText = media.some((item) => item.url === normalizedContent) ? '' : normalizedContent;
@@ -146,12 +148,25 @@ export function MessageContent({
           );
         }
 
+        const isSticker = stickerMessage || item.kind === 'sticker';
         const isVideo =
           item.kind === 'video' ||
           item.name?.toLowerCase().endsWith('.mp4') ||
           item.url?.toLowerCase().endsWith('.mp4');
-        const isPreviewable = isVideo || item.kind === 'image';
+        const isPreviewable = !isSticker && (isVideo || item.kind === 'image');
         const previewUrl = item.previewUrl ?? item.url;
+
+        if (isSticker) {
+          return (
+            <RemoteImage
+              key={item.url}
+              src={item.kind === 'gif' ? item.url : previewUrl}
+              alt={item.name ?? 'Sticker'}
+              loading="lazy"
+              className="max-h-40 max-w-full bg-transparent object-contain"
+            />
+          );
+        }
 
         return (
           <div key={item.url} className="overflow-hidden rounded-2xl ring-1 ring-black/10 dark:ring-white/10 shadow-sm">
@@ -189,9 +204,7 @@ export function MessageContent({
                 src={item.kind === 'gif' ? item.url : previewUrl}
                 alt={item.name ?? mediaLabel(item.kind)}
                 loading="lazy"
-                className={`max-h-72 max-w-full bg-transparent object-contain ${
-                  item.kind === 'sticker' ? 'max-h-40' : 'rounded-2xl'
-                }`}
+                className="max-h-72 max-w-full rounded-2xl bg-transparent object-contain"
               />
             )}
           </div>
@@ -270,7 +283,9 @@ export function MessageReplyPreview({
           }
           alt={primaryMedia.name ?? mediaLabel(primaryMedia.kind)}
           loading="lazy"
-          className="h-10 w-10 shrink-0 rounded-md bg-app-chat-hover object-contain"
+          className={`h-10 w-10 shrink-0 object-contain ${
+            primaryMedia.kind === 'sticker' ? 'bg-transparent' : 'rounded-md bg-app-chat-hover'
+          }`}
         />
       ) : null}
       {visibleText ? (

@@ -75,10 +75,13 @@ async function parseResponse<T>(response: Response, label: string): Promise<ApiR
         ? 'flexhubs.in is temporarily unavailable. Try again in a few minutes.'
         : 'Request failed. Please try again.';
 
+    const errorCode = typeof data.code === 'string' ? data.code : undefined;
+
     return {
       ok: false,
       error: data.error ?? fallbackError,
       status: response.status,
+      code: errorCode,
     };
   }
 

@@ -54,6 +54,7 @@ type ConversationThreadProps = {
   isSending: boolean;
   onDraftChange: (value: string) => void;
   onSend: (replyToId?: string) => void;
+  onRetryMessage?: (messageId: string) => void;
   onSendMedia?: (item: GifPickerItem, kind: 'gif' | 'sticker', replyToId?: string, threadRootId?: string) => void;
   onSendFile?: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
   onUnauthorized: (status?: number) => boolean;
@@ -99,6 +100,7 @@ export function ConversationThread({
   isSending,
   onDraftChange,
   onSend,
+  onRetryMessage,
   onSendMedia,
   onSendFile,
   onUnauthorized,
@@ -791,6 +793,7 @@ export function ConversationThread({
         }}
         currentUserId={currentUserId}
         onAddReaction={onAddReaction}
+        onRetryMessage={onRetryMessage}
         onReplyMessage={(messageId) => {
           const message = messages.find((m) => m.id === messageId);
           if (message) {

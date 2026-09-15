@@ -28,6 +28,7 @@ export type CallTokenResult = {
   video: boolean;
   canModerateMeeting?: boolean;
   iceServers?: CallIceServer[];
+  turnRelayRequired?: boolean;
   rtpCapabilities?: Record<string, unknown>;
 };
 
@@ -361,12 +362,12 @@ export function normalizeMeetingJoinRequestPayload(payload: unknown): MeetingJoi
         }
       : null);
 
-  if (!requestId || !conversationId || !callId || !requester) {
+  if (!conversationId || !callId || !requester) {
     return null;
   }
 
   return {
-    requestId,
+    requestId: requestId ?? `${requester.id}:${callId}`,
     conversationId,
     callId,
     requester,
@@ -391,29 +392,40 @@ export function normalizeMeetingJoinResponsePayload(payload: unknown): MeetingJo
     readString(nested.userId) ??
     readCallParticipant(nested.requester)?.id ??
     null;
+  const respondedById =
+    readString(nested.respondedBy) ??
+    readString(nested.respondedById) ??
+    readCallParticipant(nested.respondedBy)?.id ??
+    readCallParticipant(nested.moderator)?.id ??
+    readCallParticipant(nested.by)?.id ??
+    null;
   const respondedBy =
     readCallParticipant(nested.respondedBy) ??
     readCallParticipant(nested.moderator) ??
     readCallParticipant(nested.by) ??
-    (readString(nested.respondedById)
+    (respondedById
       ? {
-          id: readString(nested.respondedById)!,
+          id: respondedById,
           username: readString(nested.respondedByName) ?? 'Host',
           avatar: readString(nested.respondedByAvatar) ?? null,
         }
       : null);
 
-  if (!requestId || !conversationId || !callId || !requesterId || !respondedBy) {
+  if (!conversationId || !callId || !requesterId) {
     return null;
   }
 
   return {
-    requestId,
+    requestId: requestId ?? `${requesterId}:${callId}`,
     conversationId,
     callId,
     requesterId,
     approved: readApproved(nested),
-    respondedBy,
+    respondedBy: respondedBy ?? {
+      id: respondedById ?? 'unknown',
+      username: 'Host',
+      avatar: null,
+    },
     respondedAt: readString(nested.respondedAt) ?? readString(nested.createdAt) ?? new Date().toISOString(),
   };
 }
@@ -526,8 +538,35 @@ export function normalizeCallTokenResult(payload: unknown, requestedVideo: boole
     video: typeof record.video === 'boolean' ? record.video : requestedVideo,
     canModerateMeeting: record.canModerateMeeting === true,
     iceServers: normalizeIceServers(record.iceServers),
+    turnRelayRequired: record.turnRelayRequired === true,
     rtpCapabilities: rtpCapabilitiesRecord ?? undefined,
   };
+}
+
+export function buildLiveKitRtcConfig(
+  tokenResult: Pick<CallTokenResult, 'iceServers' | 'turnRelayRequired'>,
+): RTCConfiguration | undefined {
+  const iceServers = tokenResult.iceServers;
+
+  if (!iceServers?.length && !tokenResult.turnRelayRequired) {
+    return undefined;
+  }
+
+  const config: RTCConfiguration = {};
+
+  if (iceServers?.length) {
+    config.iceServers = iceServers.map((server) => ({
+      urls: server.urls,
+      username: server.username,
+      credential: server.credential,
+    }));
+  }
+
+  if (tokenResult.turnRelayRequired) {
+    config.iceTransportPolicy = 'relay';
+  }
+
+  return config;
 }
 
 export function parseCallLogContent(content: string): FlexhubCallLog | null {

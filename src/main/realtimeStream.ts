@@ -4,7 +4,6 @@ import {
   fetchRealtimeStatus,
   fetchRealtimeToken,
   sendRealtimeHeartbeat,
-  setUserOnline,
 } from './realtimeApi';
 
 const HEARTBEAT_MS = 30_000;
@@ -207,8 +206,6 @@ async function connect(authToken: string): Promise<void> {
       scheduleReconnect();
       return;
     }
-
-    void setUserOnline(authToken);
 
     const connected = await openEventStream(authToken, tokenResult.data, signal, (event) => {
       onEventHandler?.(event);

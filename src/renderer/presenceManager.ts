@@ -133,6 +133,14 @@ function handleVisibilityChange(): void {
   handleForeground();
 }
 
+export async function syncPresenceToServer(): Promise<void> {
+  if (!started) {
+    return;
+  }
+
+  await patchPresenceStatus(getEffectivePresenceStatus());
+}
+
 export function startPresenceManager(initialStatus: UserPresenceStatus, initialMessage = ''): void {
   manualStatus = initialStatus;
   statusMessage = initialMessage;
@@ -144,6 +152,7 @@ export function startPresenceManager(initialStatus: UserPresenceStatus, initialM
   }
 
   started = true;
+  void syncPresenceToServer();
 
   window.addEventListener('focus', handleForeground);
   window.addEventListener('blur', handleBackground);

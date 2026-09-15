@@ -24,6 +24,7 @@ import {
   uiStatusToApi,
   type AvatarStyleItem,
   type ProfileSettings,
+  type UserPresenceStatus,
   type UserProfileState,
 } from '../../shared/profile';
 import { formatTimezoneLabel, getTimezoneOptions } from '../../shared/timezones';
@@ -201,6 +202,33 @@ export function ProfileSettingsView({
   const saveTimeoutRef = useRef<number | undefined>(undefined);
   const timezoneOptions = useMemo(() => getTimezoneOptions(), []);
 
+  const persistLocalStatus = useCallback(
+    (apiStatus: UserPresenceStatus, message: string) => {
+      setProfile((currentProfile) => {
+        if (!currentProfile) {
+          return currentProfile;
+        }
+
+        const nextProfile = {
+          ...currentProfile,
+          status: apiStatus,
+          statusMessage: message,
+        };
+
+        if (settings) {
+          writeProfileCache({
+            profile: nextProfile,
+            settings,
+            avatarStyles,
+          });
+        }
+
+        return nextProfile;
+      });
+    },
+    [avatarStyles, settings],
+  );
+
   const applyProfileSnapshot = useCallback(
     (
       nextProfile: UserProfileState,
@@ -358,6 +386,8 @@ export function ProfileSettingsView({
       return;
     }
 
+    const apiStatus = uiStatusToApi(nextStatus);
+    persistLocalStatus(apiStatus, statusMessage);
     toast.success(`Status set to ${nextStatus}.`);
     onUserUpdated?.();
   };
@@ -378,7 +408,10 @@ export function ProfileSettingsView({
           }
           return;
         }
+
+        persistLocalStatus(uiStatusToApi(statusUi), message);
         toast.success('Status message saved.');
+        onUserUpdated?.();
       })();
     }, 800);
   };
@@ -1025,7 +1058,7 @@ export function ProfileSettingsView({
             <section>
               <h3 className="text-base font-bold text-app-text">Status</h3>
               <p className="mt-1 mb-4 text-sm text-app-muted">
-                Shown under your name in chats. Available stays on while the app is open.
+                Shown under your name in chats. Status saves automatically when you pick an option or edit the message below.
               </p>
               <div className="mb-4 grid grid-cols-2 gap-3">
                 {STATUS_OPTIONS.map((option) => (

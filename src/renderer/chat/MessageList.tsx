@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { FiCheck, FiMessageSquare, FiChevronUp } from 'react-icons/fi';
+import { FiCheck, FiMessageSquare, FiChevronUp, FiRefreshCw } from 'react-icons/fi';
 import type { MessageItem, MessageReadReceipt } from '../../shared/messages';
 import {
   buildConversationMemberNameIndex,
@@ -145,6 +145,7 @@ type MessageRowProps = {
   onSaveMessage: (messageId: string) => void;
   onUnsaveMessage: (messageId: string) => void;
   savedMessageIds: ReadonlySet<string>;
+  onRetryMessage?: (messageId: string) => void;
   onSendThreadMessage?: (
     content: string,
     threadRootId: string,
@@ -262,6 +263,7 @@ function MessageTimeInline({
   conversationDetails,
   currentUserId,
   conversationKind,
+  onRetryMessage,
   className = '',
 }: {
   message: MessageItem;
@@ -270,6 +272,7 @@ function MessageTimeInline({
   conversationDetails?: Record<string, unknown> | null;
   currentUserId: string | null;
   conversationKind?: string;
+  onRetryMessage?: (messageId: string) => void;
   className?: string;
 }) {
   if (!message.createdAt && !message.editedAt && !message.isOwn) {
@@ -288,9 +291,26 @@ function MessageTimeInline({
     >
       {message.editedAt ? <span className="lowercase">edited</span> : null}
       {message.createdAt ? formatConversationTimestamp(message.createdAt) : null}
+      {message.isOwn && message.status === 'sending' ? (
+        <span className="text-[10px] italic opacity-75">Sending…</span>
+      ) : null}
       {message.isOwn && message.status === 'seen' ? <DoubleCheckIcon /> : null}
       {message.isOwn && message.status === 'delivered' ? (
         <FiCheck className="text-[11px]" strokeWidth={2.5} aria-hidden="true" />
+      ) : null}
+      {message.isOwn && message.status === 'failed' && onRetryMessage ? (
+        <button
+          type="button"
+          className="inline-flex items-center rounded p-0.5 text-red-200 transition-colors hover:text-white"
+          aria-label="Retry sending message"
+          title="Failed to send. Tap to retry."
+          onClick={(event) => {
+            event.stopPropagation();
+            onRetryMessage(message.id);
+          }}
+        >
+          <FiRefreshCw className="text-[11px]" aria-hidden="true" />
+        </button>
       ) : null}
       {!isDirect ? (
         <MessageSeenBy
@@ -330,6 +350,7 @@ const MessageRow = memo(function MessageRow({
   onSaveMessage,
   onUnsaveMessage,
   savedMessageIds,
+  onRetryMessage,
   onSendThreadMessage,
   onVotePoll,
   threadsEnabled = false,
@@ -346,6 +367,7 @@ const MessageRow = memo(function MessageRow({
     conversationDetails,
     currentUserId,
     conversationKind,
+    onRetryMessage,
   };
   const isPinned = Boolean(message.pinnedAt);
   const isEditing = editingId === message.id;
@@ -370,7 +392,9 @@ const MessageRow = memo(function MessageRow({
             ? 'message-appear message-appear-own'
             : 'message-appear'
           : ''
-      } ${isHighlighted ? 'message-target-highlight rounded-2xl p-2' : ''}`}
+      } ${message.isOwn && message.status === 'failed' ? 'opacity-80' : ''} ${
+        isHighlighted ? 'message-target-highlight rounded-2xl p-2' : ''
+      }`}
     >
       {!message.isOwn ? (
         <Avatar imageUrl={null} initials={message.senderInitials} size="sm" />
@@ -593,6 +617,7 @@ type MessageListProps = {
   onSaveMessage: (messageId: string) => void;
   onUnsaveMessage: (messageId: string) => void;
   savedMessageIds: ReadonlySet<string>;
+  onRetryMessage?: (messageId: string) => void;
   expandedThreadMessageId?: string | null;
   onSendThreadMessage?: (
     content: string,
@@ -629,6 +654,7 @@ export function MessageList({
   onSaveMessage,
   onUnsaveMessage,
   savedMessageIds,
+  onRetryMessage,
   expandedThreadMessageId,
   onSendThreadMessage,
   conversationId,
@@ -913,6 +939,7 @@ export function MessageList({
               onSaveMessage={onSaveMessage}
               onUnsaveMessage={onUnsaveMessage}
               savedMessageIds={savedMessageIds}
+              onRetryMessage={onRetryMessage}
               onSendThreadMessage={onSendThreadMessage}
               onVotePoll={onVotePoll}
               threadsEnabled={threadsEnabled}

@@ -172,7 +172,7 @@ let mainWindow: BrowserWindow | null = null;
 let callPresentationActive = false;
 let savedMainBounds: Electron.Rectangle | null = null;
 const DEFAULT_MIN_SIZE = { width: 960, height: 640 };
-const CALL_PIP_SIZE = { width: 360, height: 300 };
+const CALL_PIP_SIZE = { width: 380, height: 340 };
 
 function resolveAssetsDir(): string {
   return app.isPackaged
@@ -992,9 +992,15 @@ ipcMain.handle('calls:token', (_event, token: string, payloadJson: string) => {
   }
 });
 
-ipcMain.handle('calls:ensure-media-permissions', async (_event, video: boolean) =>
-  ensureMacMediaPermissions(Boolean(video)),
-);
+ipcMain.handle('calls:ensure-media-permissions', async (_event, video: boolean) => {
+  const result = await ensureMacMediaPermissions(Boolean(video));
+
+  if (!result.ok) {
+    return { ok: false as const, error: result.error };
+  }
+
+  return { ok: true as const, data: { ok: true as const } };
+});
 
 ipcMain.handle('calls:ensure-screen-capture', async () => ensureMacScreenCaptureAccess());
 
@@ -1083,8 +1089,9 @@ ipcMain.handle('calls:join-request-respond', (_event, token: string, payloadJson
   try {
     const payload = JSON.parse(payloadJson) as {
       conversationId: string;
-      requestId: string;
-      approved: boolean;
+      participantIdentity: string;
+      callId: string;
+      accept: boolean;
     };
     return respondMeetingJoinRequest(token, payload);
   } catch {
@@ -1162,13 +1169,6 @@ const createWindow = (): void => {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
-  });
-
-  mainWindow.on('blur', () => {
-    if (callPresentationActive && mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.setAlwaysOnTop(true, 'screen-saver');
-      mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
-    }
   });
 
   mainWindow.on('closed', () => {
@@ -1389,7 +1389,7 @@ function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
     return;
   }
 
-  callPresentationActive = active;
+  callPresentationActive = active && mode !== 'idle';
 
   if (!active || mode === 'idle') {
     if (savedMainBounds) {
@@ -1404,12 +1404,13 @@ function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
     return;
   }
 
+  // Keep normal window stacking so users can switch to other apps during calls.
+  mainWindow.setAlwaysOnTop(false);
+  mainWindow.setVisibleOnAllWorkspaces(false);
+
   if (mainWindow.isMinimized()) {
     mainWindow.restore();
   }
-
-  mainWindow.setAlwaysOnTop(true, 'screen-saver');
-  mainWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
 
   if (mode === 'minimized') {
     if (!savedMainBounds) {
@@ -1428,7 +1429,6 @@ function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
       height: CALL_PIP_SIZE.height,
     });
     mainWindow.show();
-    mainWindow.focus();
     return;
   }
 
@@ -1438,8 +1438,9 @@ function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
     savedMainBounds = null;
   }
 
-  mainWindow.show();
-  mainWindow.focus();
+  if (mode === 'ringing') {
+    mainWindow.show();
+  }
 }
 
 if (process.platform === 'win32') {

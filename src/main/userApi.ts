@@ -97,11 +97,13 @@ export async function updateUserStatus(
 
   if (updates.status) {
     payload.status = updates.status;
+    payload.presenceStatus = updates.status;
   }
 
   if (updates.message !== undefined) {
     payload.message = updates.message;
     payload.statusMessage = updates.message;
+    payload.customStatus = updates.message;
   }
 
   const result = await apiPatch<unknown>(

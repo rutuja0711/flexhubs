@@ -165,8 +165,9 @@ export async function respondMeetingJoinRequest(
   token: string,
   payload: {
     conversationId: string;
-    requestId: string;
-    approved: boolean;
+    participantIdentity: string;
+    callId: string;
+    accept: boolean;
   },
 ): Promise<ApiResult<unknown>> {
   return apiPost<unknown>(

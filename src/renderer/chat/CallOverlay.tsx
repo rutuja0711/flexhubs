@@ -101,22 +101,21 @@ export function CallOverlay({
     session.phase === 'connecting' ||
     session.phase === 'active';
 
-  const showRinging =
-    session.phase === 'incoming' ||
-    session.phase === 'outgoing' ||
-    session.phase === 'connecting';
-
   const suppressIncomingRingUi =
     appInBackground &&
     !session.isInitiator &&
-    (session.phase === 'incoming' || session.phase === 'connecting');
+    session.phase === 'incoming';
 
-  const showRingingUi = showRinging && !suppressIncomingRingUi;
+  const showRingingUi =
+    session.phase === 'incoming' || session.phase === 'outgoing';
 
-  const showActivePanel = session.phase === 'active';
+  const showInCallPanel = session.phase === 'active';
+  const showConnectingUi = session.phase === 'connecting';
 
   const isLive = session.phase === 'active';
   const durationLabel = useCallDuration(session.connectedAt, isLive);
+  const showCameraControls = session.video;
+  const showScreenShareControls = session.video;
 
   const usesMediasoup = session.liveToken?.engine === 'mediasoup';
 
@@ -163,10 +162,10 @@ export function CallOverlay({
       return;
     }
 
-    const mode = showRinging ? 'ringing' : panelLayout;
+    const mode = showRingingUi ? 'ringing' : panelLayout;
     setCallWindowPresentation(callWindowActive, callWindowActive ? mode : 'idle');
 
-    if (session.phase === 'outgoing' || (session.phase === 'incoming' && !appInBackground)) {
+    if (session.phase === 'incoming' && !appInBackground) {
       focusCallWindow();
     }
   }, [
@@ -174,7 +173,7 @@ export function CallOverlay({
     callWindowActive,
     panelLayout,
     session.phase,
-    showRinging,
+    showRingingUi,
     suppressIncomingRingUi,
   ]);
 
@@ -220,6 +219,13 @@ export function CallOverlay({
           </button>
           <button
             type="button"
+            className="shrink-0 rounded-xl border border-app-border px-3 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
+            onClick={onDismissMeetingBanner}
+          >
+            Decline
+          </button>
+          <button
+            type="button"
             aria-label="Dismiss meeting banner"
             className="shrink-0 rounded-lg p-2 text-app-muted hover:bg-app-chat-hover hover:text-app-text"
             onClick={onDismissMeetingBanner}
@@ -260,7 +266,31 @@ export function CallOverlay({
     );
   }
 
-  if (!showActivePanel) {
+  if (showConnectingUi) {
+    return createPortal(
+      <>
+        {usesMediasoup ? (
+          <MediasoupMediaPlayback
+            localVideoStream={mediasoupLocalVideo}
+            remotePeers={mediasoupPeers}
+          />
+        ) : room ? (
+          <RemoteAudioPlayback room={room} />
+        ) : null}
+        <CallRingingView
+          session={session}
+          busy={busy}
+          notice={callNotice || 'Connecting...'}
+          onAccept={onAccept}
+          onReject={onReject}
+          onCancel={onCancel}
+        />
+      </>,
+      document.body,
+    );
+  }
+
+  if (!showInCallPanel) {
     return null;
   }
 
@@ -397,6 +427,8 @@ export function CallOverlay({
       cameraEnabled={cameraEnabled}
       screenShareEnabled={screenShareEnabled}
       showVideoControls={showVideoLayout}
+      showCamera={showCameraControls}
+      showScreenShare={showScreenShareControls}
       onLayoutChange={updatePanelLayout}
       pipMode={panelLayout === 'minimized'}
       onToggleMic={onToggleMic}

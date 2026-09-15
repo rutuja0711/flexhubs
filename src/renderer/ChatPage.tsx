@@ -164,7 +164,7 @@ import {
   subscribeRealtimeEvent,
   subscribeRealtimeStatus,
 } from './realtimeApi';
-import { startPresenceManager, stopPresenceManager } from './presenceManager';
+import { startPresenceManager, stopPresenceManager, syncPresenceToServer } from './presenceManager';
 import {
   getThreadCacheEntry,
   patchThreadCacheMessages,
@@ -295,6 +295,16 @@ function withDeliveredStatus(message: MessageItem): MessageItem {
     isOwn: true,
     status: message.status === 'seen' ? 'seen' : 'delivered',
   };
+}
+
+function markMessageStatus(
+  current: MessageItem[],
+  messageId: string,
+  status: MessageItem['status'],
+): MessageItem[] {
+  return current.map((message) =>
+    message.id === messageId ? { ...message, status } : message,
+  );
 }
 
 function replaceLocalMessage(
@@ -445,6 +455,18 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const [callPanelLayout, setCallPanelLayout] = useState<CallPanelLayout>('floating');
   const [messageScrollRestoreKey, setMessageScrollRestoreKey] = useState(0);
   const callPhaseRef = useRef<'idle' | 'outgoing' | 'incoming' | 'connecting' | 'active' | 'ending'>('idle');
+  const pendingFileRetriesRef = useRef(
+    new Map<
+      string,
+      {
+        file: File;
+        caption: string;
+        replyToId?: string;
+        threadRootId?: string;
+        uploadedUrl?: string;
+      }
+    >(),
+  );
 
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
@@ -2048,6 +2070,61 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
   }, [commitConversationList, handleUnauthorized]);
 
+  const openHubFromNotification = useCallback(
+    async (channelId: string | null, inviteId: string | null) => {
+      setNotificationsOpen(false);
+
+      if (channelId) {
+        const existing = findConversationByAnyId(conversationsRef.current, channelId);
+
+        if (existing) {
+          handleSelectConversationRef.current(existing.id);
+          return;
+        }
+      }
+
+      if (inviteId) {
+        const result = await acceptHubInviteById(inviteId);
+
+        if (result.ok) {
+          await refreshConversations();
+          void loadHubsData();
+
+          if (channelId) {
+            handleSelectConversationRef.current(channelId);
+          } else {
+            setMainView('hubs');
+          }
+
+          toast.success('Hub invite accepted.');
+          return;
+        }
+
+        if (handleUnauthorized(result.status)) {
+          return;
+        }
+      } else if (channelId) {
+        const result = await acceptHubInvite(channelId);
+
+        if (result.ok) {
+          await refreshConversations();
+          void loadHubsData();
+          handleSelectConversationRef.current(channelId);
+          toast.success('Joined hub successfully.');
+          return;
+        }
+
+        if (handleUnauthorized(result.status)) {
+          return;
+        }
+      }
+
+      setMainView('hubs');
+      void loadHubsData();
+    },
+    [handleUnauthorized, loadHubsData, refreshConversations],
+  );
+
   const scheduleConversationsRefresh = useCallback(() => {
     if (refreshConversationsTimerRef.current) {
       window.clearTimeout(refreshConversationsTimerRef.current);
@@ -2510,6 +2587,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
       if (status === 'connected' && previous !== 'connected') {
         void syncNotificationsRef.current();
+        void syncPresenceToServer();
       }
     });
 
@@ -3079,6 +3157,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
+    if (action.kind === 'hubs') {
+      void openHubFromNotification(action.channelId, action.inviteId);
+      return;
+    }
+
     if (action.kind === 'chat') {
       handleSelectConversation(action.conversationId, action.messageId);
     }
@@ -3135,8 +3218,130 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     if (!result.ok) {
       setDraftError(result.error);
-      setMessages((current) => current.filter((message) => message.id !== localId));
-      setDraft(content);
+      setMessages((current) => markMessageStatus(current, localId, 'failed'));
+      return;
+    }
+
+    setMessages((current) => replaceLocalMessage(current, localId, result.data, userId));
+    touchConversationWithMessage(conversationId, withDeliveredStatus(result.data), false);
+  };
+
+  const handleRetryMessage = async (messageId: string) => {
+    if (!selectedId) {
+      return;
+    }
+
+    const message = messagesRef.current.find((item) => item.id === messageId);
+    if (!message || !isLocalMessageId(messageId) || message.status !== 'failed') {
+      return;
+    }
+
+    const conversationId = selectedId;
+    const userId = getUserId(user);
+    const localId = messageId;
+
+    setDraftError('');
+    setMessages((current) => markMessageStatus(current, localId, 'sending'));
+
+    const media = message.media[0];
+    const isGifOrSticker = media?.kind === 'gif' || media?.kind === 'sticker';
+    const isUploadedFile =
+      media && (media.kind === 'image' || media.kind === 'file') && !isGifOrSticker;
+
+    let result: Awaited<ReturnType<typeof sendChatMessage>>;
+
+    if (isGifOrSticker && media) {
+      const kind = media.kind as 'gif' | 'sticker';
+      const item: GifPickerItem = {
+        id: media.url,
+        url: media.url,
+        previewUrl: media.previewUrl ?? media.url,
+        title: media.name,
+        width: null,
+        height: null,
+        mimeType: kind === 'gif' ? 'image/gif' : 'image/png',
+      };
+      result = await sendChatMediaMessage(
+        conversationId,
+        item,
+        kind,
+        message.replyToMessageId,
+        message.threadRootId,
+      );
+    } else if (isUploadedFile && media) {
+      const pending = pendingFileRetriesRef.current.get(localId);
+      let uploadedUrl =
+        pending?.uploadedUrl ?? (media.url.startsWith('http') ? media.url : undefined);
+
+      if (!uploadedUrl && pending?.file) {
+        const uploadResult = await uploadChatFile(pending.file);
+
+        if (handleUnauthorized(uploadResult.status)) {
+          setMessages((current) => markMessageStatus(current, localId, 'failed'));
+          return;
+        }
+
+        if (!uploadResult.ok) {
+          setDraftError(uploadResult.error);
+          setMessages((current) => markMessageStatus(current, localId, 'failed'));
+          return;
+        }
+
+        uploadedUrl = uploadResult.data.url;
+        pendingFileRetriesRef.current.set(localId, { ...pending, uploadedUrl });
+      }
+
+      if (!uploadedUrl || !pending?.file) {
+        setDraftError('Unable to resend this file. Please attach it again.');
+        setMessages((current) => markMessageStatus(current, localId, 'failed'));
+        return;
+      }
+
+      result = await sendChatFileMessage(
+        conversationId,
+        uploadedUrl,
+        pending.file.name,
+        pending.file.type || 'application/octet-stream',
+        message.replyToMessageId,
+        message.threadRootId,
+        message.content.trim() || undefined,
+      );
+    } else {
+      result = await sendChatMessage(
+        conversationId,
+        message.content,
+        message.replyToMessageId,
+        message.threadRootId,
+      );
+    }
+
+    if (handleUnauthorized(result.status)) {
+      setMessages((current) => current.filter((item) => item.id !== localId));
+      pendingFileRetriesRef.current.delete(localId);
+      return;
+    }
+
+    if (!result.ok) {
+      setDraftError(result.error);
+      setMessages((current) => markMessageStatus(current, localId, 'failed'));
+      return;
+    }
+
+    pendingFileRetriesRef.current.delete(localId);
+
+    if (message.threadRootId) {
+      registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? message.threadRootId);
+      appendThreadReply(
+        conversationId,
+        result.data.threadRootId ?? message.threadRootId,
+        result.data,
+      );
+      setMessages((current) =>
+        bumpThreadReplyCount(
+          filterMainChatMessages(current),
+          result.data.threadRootId ?? message.threadRootId,
+        ),
+      );
       return;
     }
 
@@ -3342,7 +3547,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     if (!result.ok) {
       setDraftError(result.error);
       if (!threadRootId) {
-        setMessages((current) => current.filter((message) => message.id !== localId));
+        setMessages((current) => markMessageStatus(current, localId, 'failed'));
       }
       return;
     }
@@ -3413,6 +3618,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     };
 
     setDraftError('');
+    pendingFileRetriesRef.current.set(localId, {
+      file,
+      caption: messageCaption,
+      replyToId,
+      threadRootId,
+    });
     if (!threadRootId) {
       setDraft('');
       lastSavedDraftRef.current = '';
@@ -3431,9 +3642,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     const uploadResult = await uploadChatFile(file);
 
     if (handleUnauthorized(uploadResult.status) || !uploadResult.ok) {
-      URL.revokeObjectURL(previewUrl);
       if (!threadRootId) {
-        setMessages((current) => current.filter((message) => message.id !== localId));
+        setMessages((current) => markMessageStatus(current, localId, 'failed'));
+      } else {
+        URL.revokeObjectURL(previewUrl);
+        pendingFileRetriesRef.current.delete(localId);
       }
       if (!uploadResult.ok && !handleUnauthorized(uploadResult.status)) {
         setDraftError(uploadResult.error);
@@ -3442,6 +3655,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     const uploadedUrl = uploadResult.data.url;
+    pendingFileRetriesRef.current.set(localId, {
+      file,
+      caption: messageCaption,
+      replyToId,
+      threadRootId,
+      uploadedUrl,
+    });
     if (!threadRootId) {
       setMessages((current) =>
         current.map((message) =>
@@ -3475,13 +3695,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     if (handleUnauthorized(result.status) || !result.ok) {
       if (!threadRootId) {
-        setMessages((current) => current.filter((message) => message.id !== localId));
+        setMessages((current) => markMessageStatus(current, localId, 'failed'));
+      } else {
+        pendingFileRetriesRef.current.delete(localId);
       }
       if (!result.ok && !handleUnauthorized(result.status)) {
         setDraftError(result.error);
       }
       return;
     }
+
+    pendingFileRetriesRef.current.delete(localId);
 
     if (threadRootId) {
       registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
@@ -4061,6 +4285,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           onDraftChange={handleDraftChange}
           onSend={(replyToMessageId) => {
             void handleSendMessage(replyToMessageId);
+          }}
+          onRetryMessage={(messageId) => {
+            void handleRetryMessage(messageId);
           }}
           onSendMedia={(item, kind, replyToId, threadRootId) => {
             void handleSendMedia(item, kind, replyToId, threadRootId);

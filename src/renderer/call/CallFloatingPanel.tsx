@@ -15,6 +15,8 @@ type CallFloatingPanelProps = {
   cameraEnabled: boolean;
   screenShareEnabled: boolean;
   showVideoControls: boolean;
+  showCamera?: boolean;
+  showScreenShare?: boolean;
   pipMode?: boolean;
   children: ReactNode;
   onLayoutChange: (layout: CallPanelLayout) => void;
@@ -71,6 +73,8 @@ export function CallFloatingPanel({
   cameraEnabled,
   screenShareEnabled,
   showVideoControls,
+  showCamera,
+  showScreenShare,
   pipMode = false,
   children,
   onLayoutChange,
@@ -82,6 +86,8 @@ export function CallFloatingPanel({
   const title = session.peerLabel || (session.isGroup ? 'Meeting' : 'Call');
   const initial = title.slice(0, 1).toUpperCase() || '?';
   const callTypeLabel = session.video || showVideoControls ? 'Video call' : 'Voice call';
+  const cameraControlVisible = showCamera ?? showVideoControls;
+  const screenShareControlVisible = showScreenShare ?? showVideoControls;
   const isDraggable = layout !== 'fullscreen';
   const { panelRef, panelStyle, isDragging, startDrag, moveDrag, endDrag, ensureDefaultPosition } =
     useViewportDraggable(isDraggable, pipMode);
@@ -140,8 +146,8 @@ export function CallFloatingPanel({
             micEnabled={micEnabled}
             cameraEnabled={cameraEnabled}
             screenShareEnabled={screenShareEnabled}
-            showCamera={false}
-            showScreenShare={false}
+            showCamera={cameraControlVisible}
+            showScreenShare={screenShareControlVisible}
             compact
             onToggleMic={onToggleMic}
             onToggleCamera={onToggleCamera}
@@ -193,8 +199,8 @@ export function CallFloatingPanel({
           micEnabled={micEnabled}
           cameraEnabled={cameraEnabled}
           screenShareEnabled={screenShareEnabled}
-          showCamera={showVideoControls}
-          showScreenShare={showVideoControls}
+          showCamera={cameraControlVisible}
+          showScreenShare={screenShareControlVisible}
           onToggleMic={onToggleMic}
           onToggleCamera={onToggleCamera}
           onToggleScreenShare={onToggleScreenShare}
