@@ -75,6 +75,7 @@ import { NavRail } from './chat/NavRail';
 import { SavedView } from './chat/SavedView';
 import { ProfileSettingsView } from './chat/ProfileSettingsView';
 import { OrganizationView } from './chat/OrganizationView';
+import { SuperAdminView } from './chat/SuperAdminView';
 import { OrganizationInviteModal } from './chat/OrganizationInviteModal';
 import { NotificationStatusBanner } from './chat/NotificationStatusBanner';
 import { PlanComplianceBanner } from './chat/PlanComplianceBanner';
@@ -144,6 +145,7 @@ import {
   type RealtimeConnectionStatus,
 } from '../shared/realtime';
 import { getUserAvatarUrl, getUserDisplayName, getUserId, getUserInitials, getWorkspaceName, getWorkspaceShortName, userInOrganization } from '../shared/user';
+import { userIsSuperAdmin } from '../shared/superadmin';
 import { parseMeetingNotificationBody, type MeetingStartedPayload } from '../shared/calls';
 import { loadCallHistory } from './callsApi';
 import { useCallManager } from './callManager';
@@ -426,8 +428,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const workspaceName = getWorkspaceName(user);
   const workspaceShortName = getWorkspaceShortName(user);
   const selfLabel = `${getUserDisplayName(user)} (Yourself)`;
+  const allowSuperAdminAutoLandingRef = useRef(userIsSuperAdmin(getStoredUser()));
 
-  const [mainView, setMainView] = useState<MainView>('chat');
+  const [mainView, setMainView] = useState<MainView>(() =>
+    userIsSuperAdmin(getStoredUser()) ? 'superadmin' : 'chat',
+  );
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
   const [conversationPlaceholders, setConversationPlaceholders] = useState<Record<string, ConversationItem>>({});
   const [teammates, setTeammates] = useState<TeammateItem[]>([]);
@@ -1492,6 +1497,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       setUser(userPayload);
       const profile = normalizeUserProfile(userPayload);
       startPresenceManager(profile.status, profile.statusMessage);
+
+      if (allowSuperAdminAutoLandingRef.current && userIsSuperAdmin(userPayload)) {
+        setMainView('superadmin');
+      }
     }
 
     const currentUser = meResult.ok ? (meResult.data.user ?? meResult.data) : getStoredUser();
@@ -3038,7 +3047,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   };
 
   const handleNavigate = useCallback((view: MainView) => {
-    if (view === 'organization') {
+    if (view !== 'superadmin') {
+      allowSuperAdminAutoLandingRef.current = false;
+    }
+
+    if (view === 'organization' || view === 'superadmin') {
       setNotificationsOpen(false);
     }
 
@@ -4319,6 +4332,25 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       );
     }
 
+    if (mainView === 'superadmin') {
+      if (!userIsSuperAdmin(user)) {
+        return (
+          <div className="flex flex-1 items-center justify-center bg-app-chat-bg px-6 text-sm text-app-muted">
+            You do not have super admin access.
+          </div>
+        );
+      }
+
+      return (
+        <SuperAdminView
+          user={user}
+          onUnauthorized={handleUnauthorized}
+          onLogout={() => void handleSignOut()}
+          onExitSuperAdmin={() => handleNavigate('chat')}
+        />
+      );
+    }
+
     if (selectedConversation) {
       return (
         <ConversationThread
@@ -4555,6 +4587,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           });
         }}
       />
+      {mainView !== 'superadmin' ? (
       <NavRail
         unreadCount={unreadCount}
         user={user}
@@ -4563,7 +4596,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         onOpenFlexAi={() => setFlexAiOpen((current) => !current)}
         onLogout={() => void handleSignOut()}
       />
+      ) : null}
 
+      {mainView !== 'superadmin' ? (
       <ChatSidebar
         workspaceName={workspaceShortName}
         organizationNavEnabled={userInOrganization(user)}
@@ -4645,6 +4680,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           return { ok: true };
         }}
       />
+      ) : null}
 
       <main
         className={`relative flex min-w-0 flex-1 flex-col ${showMeetingBanner ? 'pt-[4.25rem] sm:pt-20' : ''}`}

@@ -1,7 +1,8 @@
 import { useState, useRef, useEffect } from 'react';
-import { FiBell, FiLogOut, FiSettings, FiSun } from 'react-icons/fi';
+import { FiBell, FiLogOut, FiSettings, FiShield, FiSun } from 'react-icons/fi';
 import type { MainView } from '../../shared/nav';
 import { apiStatusToUi, userPresenceDotClass, type UserPresenceStatus } from '../../shared/profile';
+import { userIsSuperAdmin } from '../../shared/superadmin';
 import {
   Avatar,
   BuildingIcon,
@@ -54,6 +55,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
   const navItemKeys: MainView[] = ['activity', 'calls', 'hubs', 'saved', 'calendar'];
   const activeNavIndex = navItemKeys.indexOf(activeView);
   const isRailViewActive = activeNavIndex !== -1;
+  const showSuperAdminNav = userIsSuperAdmin(user);
 
   return (
     <aside className="relative z-[80] flex w-[76px] shrink-0 flex-col items-center overflow-visible border-r border-app-border bg-app-chat-rail py-4 transition-colors">
@@ -189,6 +191,19 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
                 <BuildingIcon />
                 <span>Organization</span>
               </button>
+              {showSuperAdminNav ? (
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    onNavigate('superadmin');
+                  }}
+                >
+                  <FiShield className="shrink-0 text-sm text-app-muted" />
+                  <span>Super Admin</span>
+                </button>
+              ) : null}
               <button
                 type="button"
                 className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft"

@@ -134,6 +134,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     invoiceId: string,
   ): Promise<ApiResult<import('./shared/organization').OrgInvoiceItem>> =>
     ipcRenderer.invoke('org:invoice', token, invoiceId),
+  getSuperAdminStats: (
+    token: string,
+  ): Promise<ApiResult<import('./shared/superadmin').SuperAdminStats>> =>
+    ipcRenderer.invoke('superadmin:stats', token),
+  getSuperAdminOrganizations: (
+    token: string,
+    page: number,
+    pageSize?: number,
+  ): Promise<ApiResult<import('./shared/superadmin').SuperAdminOrganizationsPage>> =>
+    ipcRenderer.invoke('superadmin:organizations', token, page, pageSize),
+  suspendSuperAdminOrganization: (
+    token: string,
+    organizationId: string,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('superadmin:suspend', token, organizationId),
   getConversations: (
     token: string,
     viewerUserId?: string | null,

@@ -7,4 +7,5 @@ export type MainView =
   | 'files'
   | 'calendar'
   | 'profile'
-  | 'organization';
+  | 'organization'
+  | 'superadmin';
