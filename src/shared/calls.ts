@@ -265,6 +265,34 @@ export type CallAcceptPayload = {
   accepterId: string;
 };
 
+export function normalizeCallAcceptPayload(payload: unknown): CallAcceptPayload | null {
+  const record = asRecord(payload);
+
+  if (!record) {
+    return null;
+  }
+
+  const nested = asRecord(record.payload) ?? asRecord(record.data) ?? record;
+  const callId = readString(nested.callId);
+  const conversationId = readString(nested.conversationId);
+  const accepterId =
+    readString(nested.accepterId) ??
+    readString(nested.accepterUserId) ??
+    readString(nested.acceptedBy);
+
+  if (!callId || !conversationId || !accepterId) {
+    return null;
+  }
+
+  return {
+    callId,
+    conversationId,
+    roomName: readString(nested.roomName) ?? '',
+    video: nested.video === true,
+    accepterId,
+  };
+}
+
 export type CallRejectPayload = {
   callId: string;
   conversationId: string;

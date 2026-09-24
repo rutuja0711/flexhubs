@@ -48,10 +48,13 @@ Use **`FlexHubs-Desktop-Setup.exe`** only — no portable zip builds.
 ### Tester steps
 
 1. Download **`FlexHubs-Desktop-Setup.exe`** from the **Releases** page (best) or the Actions artifact.
-2. Double-click it and wait for install to finish (short splash, then FlexHubs opens).
-3. Re-running the same installer **upgrades** the app in place.
-4. On the blue SmartScreen screen: **More info → Run anyway** (unsigned builds only).
-5. If blocked by antivirus: add an exception for the installer or `%LocalAppData%\FlexHubsDesktop`.
+2. Double-click it and wait for install to finish (FlexHubs-branded splash, then FlexHubs opens).
+3. The installer adds **Start Menu** and **Desktop** shortcuts automatically.
+4. Re-running the same installer **upgrades** the app in place.
+5. On the blue SmartScreen screen: **More info → Run anyway** (unsigned builds only).
+6. If blocked by antivirus: add an exception for the installer or `%LocalAppData%\FlexHubsDesktop`.
+
+**Note:** Squirrel installs per-user to `%LocalAppData%\FlexHubsDesktop`. There is no custom install-path wizard.
 
 ### Chrome says “Dangerous download blocked”
 

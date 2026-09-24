@@ -70,7 +70,7 @@ export function CallRingingView({
         </p>
 
         {notice ? (
-          <p className="mt-4 rounded-xl border border-amber-500/35 bg-amber-500/10 px-4 py-3 text-center text-sm text-amber-100">
+          <p className="mt-3 max-w-xs text-center text-xs text-app-muted" role="status">
             {notice}
           </p>
         ) : null}

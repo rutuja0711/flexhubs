@@ -1,5 +1,4 @@
-import { useLayoutEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect } from 'react';
 import { formatNotificationDisplayBody } from '../../shared/calls';
 import type { NotificationItem, PendingFriendItem } from '../../shared/messages';
 import { formatConversationTimestamp } from './format';
@@ -9,7 +8,7 @@ type NotificationsPanelProps = {
   pendingFriends: PendingFriendItem[];
   loading: boolean;
   error: string;
-  anchorRef: React.RefObject<HTMLElement | null>;
+  containerRef: React.RefObject<HTMLElement | null>;
   onClose: () => void;
   onNotificationClick: (notification: NotificationItem) => void;
 };
@@ -41,14 +40,14 @@ function PanelItem({
 
   if (!onClick) {
     return (
-      <div className="border-b border-app-border px-3.5 py-2.5 last:border-b-0">{content}</div>
+      <div className="border-b border-app-border/60 px-3.5 py-2.5 last:border-b-0">{content}</div>
     );
   }
 
   return (
     <button
       type="button"
-      className="block w-full border-b border-app-border px-3.5 py-2.5 text-left transition-colors hover:bg-app-chat-hover/80 last:border-b-0"
+      className="block w-full border-b border-app-border/60 px-3.5 py-2.5 text-left transition-colors hover:bg-app-chat-hover/80 last:border-b-0"
       onClick={onClick}
     >
       {content}
@@ -61,39 +60,31 @@ export function NotificationsPanel({
   pendingFriends,
   loading,
   error,
-  anchorRef,
+  containerRef,
   onClose,
   onNotificationClick,
 }: NotificationsPanelProps) {
-  const [panelStyle, setPanelStyle] = useState<{ top: number; left: number } | null>(null);
-
-  useLayoutEffect(() => {
-    const anchor = anchorRef.current;
-
-    if (!anchor) {
-      return;
+  useEffect(() => {
+    function handlePointerDown(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        onClose();
+      }
     }
 
-    const updatePosition = () => {
-      const rect = anchor.getBoundingClientRect();
-      const panelWidth = 330;
-      const left = Math.max(12, Math.min(rect.right - panelWidth, window.innerWidth - panelWidth - 12));
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    }
 
-      setPanelStyle({
-        top: rect.bottom + 8,
-        left,
-      });
-    };
-
-    updatePosition();
-    window.addEventListener('resize', updatePosition);
-    window.addEventListener('scroll', updatePosition, true);
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
 
     return () => {
-      window.removeEventListener('resize', updatePosition);
-      window.removeEventListener('scroll', updatePosition, true);
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [anchorRef]);
+  }, [containerRef, onClose]);
 
   const hubInvites = notifications.filter((item) =>
     item.type.toLowerCase().includes('hub') || item.title.toLowerCase().includes('hub invite'),
@@ -101,82 +92,70 @@ export function NotificationsPanel({
 
   const otherNotifications = notifications.filter((item) => !hubInvites.includes(item));
 
-  if (!panelStyle) {
-    return null;
-  }
-
-  return createPortal(
-    <>
-      <button
-        type="button"
-        aria-label="Close notifications"
-        className="fixed inset-0 z-[200] bg-black/5 dark:bg-black/45"
-        onClick={onClose}
-      />
-      <div
-        className="fixed z-[201] w-[330px] overflow-hidden rounded-2xl border border-app-border bg-app-elevated shadow-2xl animate-pop-in origin-top-right dark:bg-app-elevated/95 dark:backdrop-blur-xl"
-        style={{ top: panelStyle.top, left: panelStyle.left }}
-      >
-        <div className="border-b border-app-border bg-app-inset px-4 py-3 dark:bg-white/[0.03]">
-          <h2 className="text-xs font-bold uppercase tracking-wider text-app-text">Notifications</h2>
-        </div>
-
-        <div className="max-h-[420px] overflow-y-auto">
-          {loading ? (
-            <p className="px-4 py-6 text-sm text-app-muted" role="status">
-              Loading notifications...
-            </p>
-          ) : null}
-
-          {!loading && error ? (
-            <p className="px-4 py-6 text-sm text-accent-soft" role="alert">
-              {error}
-            </p>
-          ) : null}
-
-          {!loading && !error ? (
-            <>
-              {pendingFriends.map((item) => (
-                <PanelItem
-                  key={`pending-${item.id}`}
-                  title={item.title}
-                  body={formatNotificationDisplayBody(item.body)}
-                  createdAt={item.createdAt}
-                />
-              ))}
-
-              {hubInvites.map((item) => (
-                <PanelItem
-                  key={`hub-${item.id}`}
-                  title={item.title || 'Hub invite'}
-                  body={formatNotificationDisplayBody(item.body)}
-                  createdAt={item.createdAt}
-                  onClick={() => onNotificationClick(item)}
-                />
-              ))}
-
-              {otherNotifications.map((item) => (
-                <PanelItem
-                  key={item.id}
-                  title={item.title}
-                  body={formatNotificationDisplayBody(item.body)}
-                  createdAt={item.createdAt}
-                  onClick={() => onNotificationClick(item)}
-                />
-              ))}
-
-              {pendingFriends.length === 0 &&
-              hubInvites.length === 0 &&
-              otherNotifications.length === 0 ? (
-                <p className="px-4 py-6 text-sm text-app-muted" role="status">
-                  No notifications right now.
-                </p>
-              ) : null}
-            </>
-          ) : null}
-        </div>
+  return (
+    <div
+      className="absolute left-0 right-0 top-full z-50 mt-2 overflow-hidden rounded-2xl border border-app-border/70 bg-app-chat-sidebar shadow-lg shadow-black/[0.06] dark:shadow-black/30 animate-notification-drop origin-top"
+      role="dialog"
+      aria-label="Notifications"
+    >
+      <div className="border-b border-app-border/60 bg-black/[0.03] px-4 py-3 dark:bg-white/[0.03]">
+        <h2 className="text-xs font-bold uppercase tracking-wider text-app-text">Notifications</h2>
       </div>
-    </>,
-    document.body,
+
+      <div className="max-h-[420px] overflow-y-auto">
+        {loading ? (
+          <p className="px-4 py-6 text-sm text-app-muted" role="status">
+            Loading notifications...
+          </p>
+        ) : null}
+
+        {!loading && error ? (
+          <p className="px-4 py-6 text-sm text-accent-soft" role="alert">
+            {error}
+          </p>
+        ) : null}
+
+        {!loading && !error ? (
+          <>
+            {pendingFriends.map((item) => (
+              <PanelItem
+                key={`pending-${item.id}`}
+                title={item.title}
+                body={formatNotificationDisplayBody(item.body)}
+                createdAt={item.createdAt}
+              />
+            ))}
+
+            {hubInvites.map((item) => (
+              <PanelItem
+                key={`hub-${item.id}`}
+                title={item.title || 'Hub invite'}
+                body={formatNotificationDisplayBody(item.body)}
+                createdAt={item.createdAt}
+                onClick={() => onNotificationClick(item)}
+              />
+            ))}
+
+            {otherNotifications.map((item) => (
+              <PanelItem
+                key={item.id}
+                title={item.title}
+                body={formatNotificationDisplayBody(item.body)}
+                createdAt={item.createdAt}
+                onClick={() => onNotificationClick(item)}
+              />
+            ))}
+
+            {pendingFriends.length === 0 &&
+            hubInvites.length === 0 &&
+            otherNotifications.length === 0 ? (
+              <p className="px-4 py-6 text-sm text-app-muted" role="status">
+                No notifications right now.
+              </p>
+            ) : null}
+          </>
+        ) : null}
+      </div>
+    </div>
   );
 }

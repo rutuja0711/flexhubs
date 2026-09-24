@@ -94,7 +94,7 @@ export function ChatSidebar({
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
   const [globalSearchError, setGlobalSearchError] = useState('');
   const [globalResults, setGlobalResults] = useState<GlobalSearchResult | null>(null);
-  const notificationsButtonRef = useRef<HTMLButtonElement>(null);
+  const notificationsContainerRef = useRef<HTMLDivElement>(null);
   const tabContainerRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Record<ChatTab, HTMLButtonElement | null>>({
     all: null,
@@ -265,37 +265,50 @@ export function ChatSidebar({
   return (
     <aside className="relative z-[40] flex h-full w-[330px] shrink-0 flex-col border-r border-app-border bg-app-chat-sidebar transition-colors">
       <div className="border-b border-app-border px-4 py-3.5">
-        <div className="mb-3.5 flex items-start justify-between gap-3 relative">
-          <button
-            type="button"
-            className={`group min-w-0 flex-1 rounded-xl p-1.5 -m-1.5 text-left transition-colors ${
-              organizationNavEnabled ? 'hover:bg-app-chat-hover/80' : 'cursor-default'
-            }`}
-            disabled={!organizationNavEnabled}
-            onClick={() => {
-              if (organizationNavEnabled) {
-                onNavigate?.('organization');
-              }
-            }}
-          >
-            <div className="flex items-center gap-2">
-              <span className="h-2 w-2 rounded-full bg-accent/80 ring-2 ring-accent/20" />
-              <h1 className="truncate text-sm font-semibold tracking-tight text-app-text">{workspaceName}</h1>
-            </div>
-            <p className="mt-0.5 pl-4 text-[11px] font-medium text-app-muted/80">Workspace</p>
-          </button>
+        <div ref={notificationsContainerRef} className="relative mb-3.5">
+          <div className="flex items-start justify-between gap-3">
+            <button
+              type="button"
+              className={`group min-w-0 flex-1 rounded-xl p-1.5 -m-1.5 text-left transition-colors ${
+                organizationNavEnabled ? 'hover:bg-app-chat-hover/80' : 'cursor-default'
+              }`}
+              disabled={!organizationNavEnabled}
+              onClick={() => {
+                if (organizationNavEnabled) {
+                  onNavigate?.('organization');
+                }
+              }}
+            >
+              <div className="flex items-center gap-2">
+                <span className="h-2 w-2 rounded-full bg-accent/80 ring-2 ring-accent/20" />
+                <h1 className="truncate text-sm font-semibold tracking-tight text-app-text">{workspaceName}</h1>
+              </div>
+              <p className="mt-0.5 pl-4 text-[11px] font-medium text-app-muted/80">Workspace</p>
+            </button>
 
-          <button
-            ref={notificationsButtonRef}
-            type="button"
-            aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
-            aria-expanded={notificationsOpen}
-            className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-visible rounded-xl text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95"
-            onClick={onToggleNotifications}
-          >
-            <BellIcon />
-            <NotificationBadge count={unreadCount} ringClass="ring-app-chat-sidebar" />
-          </button>
+            <button
+              type="button"
+              aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
+              aria-expanded={notificationsOpen}
+              className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-visible rounded-xl text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95"
+              onClick={onToggleNotifications}
+            >
+              <BellIcon />
+              <NotificationBadge count={unreadCount} ringClass="ring-app-chat-sidebar" />
+            </button>
+          </div>
+
+          {notificationsOpen ? (
+            <NotificationsPanel
+              notifications={panelNotifications}
+              pendingFriends={panelPendingFriends}
+              loading={notificationsLoading}
+              error={notificationsError}
+              containerRef={notificationsContainerRef}
+              onClose={onCloseNotifications}
+              onNotificationClick={onNotificationClick}
+            />
+          ) : null}
         </div>
 
         <div className="flex items-center gap-2">
@@ -457,18 +470,6 @@ export function ChatSidebar({
           </>
         ) : null}
       </div>
-
-      {notificationsOpen ? (
-        <NotificationsPanel
-          notifications={panelNotifications}
-          pendingFriends={panelPendingFriends}
-          loading={notificationsLoading}
-          error={notificationsError}
-          anchorRef={notificationsButtonRef}
-          onClose={onCloseNotifications}
-          onNotificationClick={onNotificationClick}
-        />
-      ) : null}
 
       {newConversationOpen ? (
         <NewConversationModal

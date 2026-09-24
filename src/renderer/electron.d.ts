@@ -452,6 +452,26 @@ declare global {
         token: string,
       ) => Promise<ApiResult<import('../shared/realtime').RealtimeClientConfig>>;
       getRealtimeAccessToken: (token: string) => Promise<ApiResult<string>>;
+      initCallSignaling: (
+        config: import('../shared/realtime').RealtimeClientConfig,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      refreshCallSignalingAuth: (
+        config: import('../shared/realtime').RealtimeClientConfig,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      subscribeCallSignalingChannel: (
+        channelName: string,
+        mode: 'direct' | 'hub',
+      ) => Promise<ApiResult<{ ok: true }>>;
+      sendCallSignaling: (
+        channelName: string,
+        event: string,
+        payload: unknown,
+      ) => Promise<ApiResult<{ ok: true }>>;
+      unsubscribeCallSignalingChannel: (channelName: string) => Promise<ApiResult<{ ok: true }>>;
+      disconnectCallSignaling: () => Promise<ApiResult<{ ok: true }>>;
+      onCallSignalingBroadcast: (
+        callback: (payload: { channelName: string; event: string; payload: unknown }) => void,
+      ) => () => void;
       getCallToken: (
         token: string,
         payloadJson: string,

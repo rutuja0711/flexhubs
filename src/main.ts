@@ -14,7 +14,7 @@ import {
 import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import started from 'electron-squirrel-startup';
+import { handleSquirrelStartup } from './main/squirrelStartup';
 import { performLogin } from './main/authLogin';
 import { performGetMe } from './main/authMe';
 import { API_BASE_URL } from './shared/auth';
@@ -163,7 +163,17 @@ import {
   sendOrganizationInvite,
   updateOrganizationRole,
 } from './main/organizationsApi';
-import type { RealtimeConnectionStatus } from '../shared/realtime';
+import type { RealtimeClientConfig, RealtimeConnectionStatus } from '../shared/realtime';
+import {
+  disconnectMainCallSignaling,
+  initMainCallSignaling,
+  isMainCallSignalingReady,
+  refreshMainCallSignalingAuth,
+  sendMainCallSignal,
+  setCallSignalingWindowProvider,
+  subscribeMainCallChannel,
+  unsubscribeMainCallChannel,
+} from './main/callSignalingMain';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
@@ -318,7 +328,7 @@ function notificationOptions(title: string, body: string): Electron.Notification
   return options;
 }
 
-if (started) {
+if (handleSquirrelStartup()) {
   app.quit();
 }
 
@@ -950,6 +960,82 @@ ipcMain.handle('user:organization-members-detailed', (_event, token: string) =>
   fetchOrganizationMembersDetailed(token),
 );
 ipcMain.handle('realtime:config', (_event, token: string) => fetchRealtimeClientConfig(token));
+
+ipcMain.handle('call-signaling:init', async (_event, config: RealtimeClientConfig) => {
+  try {
+    await initMainCallSignaling(config);
+    return { ok: true as const, data: { ok: true as const } };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: error instanceof Error ? error.message : 'Call signaling failed to initialize.',
+    };
+  }
+});
+
+ipcMain.handle('call-signaling:refresh-auth', async (_event, config: RealtimeClientConfig) => {
+  try {
+    await refreshMainCallSignalingAuth(config);
+    return { ok: true as const, data: { ok: true as const } };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: error instanceof Error ? error.message : 'Call signaling auth refresh failed.',
+    };
+  }
+});
+
+ipcMain.handle(
+  'call-signaling:subscribe',
+  async (_event, channelName: string, mode: 'direct' | 'hub') => {
+    try {
+      await subscribeMainCallChannel(channelName, mode);
+      return { ok: true as const, data: { ok: true as const } };
+    } catch (error) {
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : 'Could not subscribe to call channel.',
+      };
+    }
+  },
+);
+
+ipcMain.handle(
+  'call-signaling:send',
+  async (_event, channelName: string, event: string, payload: unknown) => {
+    try {
+      await sendMainCallSignal(channelName, event, payload);
+      return { ok: true as const, data: { ok: true as const } };
+    } catch (error) {
+      return {
+        ok: false as const,
+        error: error instanceof Error ? error.message : 'Could not send call signal.',
+      };
+    }
+  },
+);
+
+ipcMain.handle('call-signaling:unsubscribe', async (_event, channelName: string) => {
+  try {
+    await unsubscribeMainCallChannel(channelName);
+    return { ok: true as const, data: { ok: true as const } };
+  } catch (error) {
+    return {
+      ok: false as const,
+      error: error instanceof Error ? error.message : 'Could not unsubscribe from call channel.',
+    };
+  }
+});
+
+ipcMain.handle('call-signaling:disconnect', async () => {
+  await disconnectMainCallSignaling();
+  return { ok: true as const, data: { ok: true as const } };
+});
+
+ipcMain.handle('call-signaling:is-ready', () => ({
+  ok: true as const,
+  data: isMainCallSignalingReady(),
+}));
 ipcMain.handle('realtime:access-token', (_event, token: string) => fetchRealtimeToken(token));
 ipcMain.handle('realtime:start', async (_event, token: string) => {
   await startRealtimeStream(token);
@@ -1209,6 +1295,8 @@ const createWindow = (): void => {
     );
   }
 
+  setCallSignalingWindowProvider(() => mainWindow);
+
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
   });
@@ -1269,7 +1357,7 @@ async function ensureMacMediaPermissions(
     return {
       ok: false,
       appName,
-      error: `Microphone access is required for calls. Open System Settings → Privacy & Security → Microphone and enable ${appName}.`,
+      error: `Microphone access is required. Enable ${appName} in System Settings → Privacy & Security → Microphone.`,
     };
   }
 
@@ -1288,7 +1376,7 @@ async function ensureMacMediaPermissions(
     return {
       ok: false,
       appName,
-      error: `Camera access is required for video calls. Open System Settings → Privacy & Security → Camera and enable ${appName}.`,
+      error: `Camera access is required. Enable ${appName} in System Settings → Privacy & Security → Camera.`,
     };
   }
 
@@ -1489,8 +1577,23 @@ function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
     return;
   }
 
-  // Call layout (floating / minimized / fullscreen) is handled in-app via CSS overlays.
-  // Never pin or re-focus during active calls so users can switch to other apps freely.
+  // Incoming ring: show the in-app overlay without resizing/unmaximizing the window.
+  if (mode === 'ringing') {
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.setVisibleOnAllWorkspaces(false);
+
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+
+    mainWindow.show();
+    mainWindow.focus();
+    notifyCallWindowPresentation(mode);
+    return;
+  }
+
+  // In-call layout (floating / minimized / fullscreen) is handled in-app via CSS overlays.
+  // Never pin during active calls so users can switch to other apps freely.
   mainWindow.setAlwaysOnTop(false);
   mainWindow.setVisibleOnAllWorkspaces(false);
 
@@ -1501,16 +1604,6 @@ function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
   }
 
   restoreCallWindowBounds();
-
-  if (mode === 'ringing') {
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-
-    mainWindow.show();
-    mainWindow.focus();
-  }
-
   notifyCallWindowPresentation(mode);
 }
 

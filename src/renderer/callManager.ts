@@ -31,7 +31,6 @@ import {
   declineCallMeetingInvite,
   endCallMeeting,
   ensureCallMediaPermissions,
-  describeScreenCaptureFailure,
   listMeetingJoinRequests,
   loadCallToken,
   loadRealtimeConfig,
@@ -188,8 +187,42 @@ function formatCallMediaError(error: unknown): string {
   return 'Could not connect the call. Please try again.';
 }
 
-function formatCallPermissionError(error: string): string {
-  return formatCallMediaError(new Error(error));
+function formatCallPermissionNotice(error: string): string {
+  const normalized = error.toLowerCase();
+
+  if (normalized.includes('camera')) {
+    return 'Allow camera access in System Settings.';
+  }
+
+  if (normalized.includes('microphone') || normalized.includes(' mic')) {
+    return 'Allow microphone access in System Settings.';
+  }
+
+  if (normalized.includes('screen')) {
+    return 'Allow screen recording in System Settings.';
+  }
+
+  if (
+    normalized.includes('denied') ||
+    normalized.includes('notallowed') ||
+    normalized.includes('permission')
+  ) {
+    return 'Allow microphone access in System Settings.';
+  }
+
+  return 'Check call permissions in System Settings.';
+}
+
+function isCallPermissionMessage(message: string): boolean {
+  const normalized = message.toLowerCase();
+
+  return (
+    normalized.includes('permission') ||
+    normalized.includes('microphone') ||
+    normalized.includes('camera') ||
+    normalized.includes('screen recording') ||
+    normalized.includes('system settings')
+  );
 }
 
 function formatCallSignalingError(): string {
@@ -470,13 +503,13 @@ export function useCallManager({
       }
 
       incomingTimeoutRef.current = window.setTimeout(() => {
-        const current = sessionRef.current;
-
-        if (current.callId !== payload.callId || current.phase !== 'incoming') {
-          return;
-        }
-
         void (async () => {
+          const current = sessionRef.current;
+
+          if (current.callId !== payload.callId || current.phase !== 'incoming') {
+            return;
+          }
+
           const rejectPayload = {
             callId: payload.callId,
             conversationId: payload.conversationId,
@@ -490,31 +523,37 @@ export function useCallManager({
             await broadcastDirectCallSignalBurst(channelNames, 'call:reject', rejectPayload, 3);
             await broadcastDirectCallSignalBurst(channelNames, 'call:declined', rejectPayload, 2);
           } catch {
-            // Timeout decline still ends the local session.
+            // Timeout decline still ends the local session when applicable.
           }
-        })();
 
-        seenCallIdsRef.current.add(payload.callId);
-        resetSession();
-        void writeCallLogSnapshot(
-          {
-            session: { ...current },
-            initiatorId: payload.caller.id,
-          },
-          'declined',
-          0,
-        );
+          if (sessionRef.current.callId !== payload.callId || sessionRef.current.phase !== 'incoming') {
+            return;
+          }
+
+          seenCallIdsRef.current.add(payload.callId);
+          resetSession();
+          void writeCallLogSnapshot(
+            {
+              session: { ...current },
+              initiatorId: payload.caller.id,
+            },
+            'declined',
+            0,
+          );
+        })();
       }, INCOMING_RING_MS);
     },
     [currentUserId, resetSession, writeCallLogSnapshot],
   );
 
   const connectLiveKit = useCallback(
-    async (tokenResult: CallTokenResult, video: boolean) => {
-      const permissionResult = await ensureCallMediaPermissions(video);
+    async (tokenResult: CallTokenResult, video: boolean, skipPermissionCheck = false) => {
+      if (!skipPermissionCheck) {
+        const permissionResult = await ensureCallMediaPermissions(video);
 
-      if (!permissionResult.ok) {
-        throw new Error(permissionResult.error);
+        if (!permissionResult.ok) {
+          throw new Error(permissionResult.error);
+        }
       }
 
       setSession((current) => ({
@@ -865,6 +904,12 @@ export function useCallManager({
 
       clearCallSignalTimers();
 
+      setSession((current) =>
+        current.callId === active.callId && current.phase === 'outgoing'
+          ? { ...current, phase: 'connecting' }
+          : current,
+      );
+
       let liveToken = active.liveToken;
 
       if (!liveToken) {
@@ -905,7 +950,7 @@ export function useCallManager({
         (active.conversationId &&
           payload.conversationId &&
           active.conversationId !== payload.conversationId) ||
-        (active.phase !== 'outgoing' && active.phase !== 'connecting')
+        active.phase !== 'outgoing'
       ) {
         return;
       }
@@ -938,8 +983,14 @@ export function useCallManager({
         (active.conversationId &&
           payload.conversationId &&
           active.conversationId !== payload.conversationId) ||
-        (active.phase !== 'incoming' && active.phase !== 'connecting')
+        active.phase === 'active' ||
+        active.phase === 'idle' ||
+        active.phase === 'ending'
       ) {
+        return;
+      }
+
+      if (active.phase === 'connecting') {
         return;
       }
 
@@ -1690,20 +1741,47 @@ export function useCallManager({
     setCallNotice('');
     clearCallSignalTimers();
 
-    const permissionResult = await ensureCallMediaPermissions(active.video);
+    setSession((current) =>
+      current.callId === active.callId && current.phase === 'incoming'
+        ? { ...current, phase: 'connecting' }
+        : current,
+    );
 
-    if (!permissionResult.ok) {
-      setBusy(false);
-      setCallNotice(formatCallPermissionError(permissionResult.error));
+    const revertToIncoming = () => {
+      setSession((current) =>
+        current.callId === active.callId
+          ? {
+              ...current,
+              phase: 'incoming',
+              connectedAt: null,
+            }
+          : current,
+      );
       armIncomingCallTimeout({
         callId: active.callId,
         conversationId: active.conversationId,
         caller: {
-          id: active.peerUserId,
+          id: active.peerUserId!,
           username: active.peerLabel,
           avatar: active.peerAvatar,
         },
       });
+    };
+
+    const signalingReady = await ensureCallSignalingReady();
+
+    if (!signalingReady) {
+      setBusy(false);
+      revertToIncoming();
+      return;
+    }
+
+    const permissionResult = await ensureCallMediaPermissions(active.video);
+
+    if (!permissionResult.ok) {
+      setBusy(false);
+      setCallNotice(formatCallPermissionNotice(permissionResult.error));
+      revertToIncoming();
       return;
     }
 
@@ -1718,15 +1796,7 @@ export function useCallManager({
       if (!tokenResult.ok) {
         setBusy(false);
         setCallNotice(formatCallApiError(tokenResult.error, tokenResult.status));
-        armIncomingCallTimeout({
-          callId: active.callId,
-          conversationId: active.conversationId,
-          caller: {
-            id: active.peerUserId,
-            username: active.peerLabel,
-            avatar: active.peerAvatar,
-          },
-        });
+        revertToIncoming();
         return;
       }
 
@@ -1744,12 +1814,20 @@ export function useCallManager({
       accepterId: currentUserId,
     };
 
+    const acceptChannels = [
+      getUserCallChannelName(active.peerUserId),
+      getUserCallChannelName(currentUserId),
+    ];
+
     const sendAccept = () => {
-      void sendSignalWithRetries(
-        getUserCallChannelName(active.peerUserId!),
-        'call:accept',
-        acceptPayload,
-      ).catch(() => undefined);
+      void broadcastDirectCallSignalBurst(acceptChannels, 'call:accept', acceptPayload, 2).catch(
+        (error) => {
+          logCallDebug(
+            '[Calls] Accept signal failed',
+            error instanceof Error ? error.message : error,
+          );
+        },
+      );
     };
 
     sendAccept();
@@ -1765,14 +1843,16 @@ export function useCallManager({
     }, SIGNAL_REPEAT_MS);
 
     try {
-      await connectLiveKit(liveToken, active.video);
+      await connectLiveKit(liveToken, active.video, true);
       clearCallSignalTimers();
       setCallNotice('');
     } catch (error) {
       clearCallSignalTimers();
       const message = formatCallMediaError(error);
-      setCallNotice(message);
-      reportError(message);
+      setCallNotice(isCallPermissionMessage(message) ? formatCallPermissionNotice(message) : message);
+      if (!isCallPermissionMessage(message)) {
+        reportError(message);
+      }
       await disconnectRoom();
       setSession((current) =>
         current.callId === active.callId
@@ -1788,7 +1868,7 @@ export function useCallManager({
         callId: active.callId,
         conversationId: active.conversationId,
         caller: {
-          id: active.peerUserId,
+          id: active.peerUserId!,
           username: active.peerLabel,
           avatar: active.peerAvatar,
         },
@@ -1802,6 +1882,7 @@ export function useCallManager({
     connectLiveKit,
     currentUserId,
     disconnectRoom,
+    ensureCallSignalingReady,
     reportError,
   ]);
 
@@ -2292,7 +2373,9 @@ export function useCallManager({
           message.includes('denied');
 
         reportError(
-          permissionLike ? await describeScreenCaptureFailure() : 'Could not share your screen. Please try again.',
+          permissionLike
+            ? 'Allow screen recording in System Settings.'
+            : 'Could not share your screen. Please try again.',
         );
         logCallDebug('[Calls] Screen sharing failed', message);
       } finally {

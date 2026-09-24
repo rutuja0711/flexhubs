@@ -607,6 +607,43 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('realtime:config', token),
   getRealtimeAccessToken: (token: string): Promise<ApiResult<string>> =>
     ipcRenderer.invoke('realtime:access-token', token),
+  initCallSignaling: (
+    config: import('../shared/realtime').RealtimeClientConfig,
+  ): Promise<ApiResult<{ ok: true }>> => ipcRenderer.invoke('call-signaling:init', config),
+  refreshCallSignalingAuth: (
+    config: import('../shared/realtime').RealtimeClientConfig,
+  ): Promise<ApiResult<{ ok: true }>> => ipcRenderer.invoke('call-signaling:refresh-auth', config),
+  subscribeCallSignalingChannel: (
+    channelName: string,
+    mode: 'direct' | 'hub',
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('call-signaling:subscribe', channelName, mode),
+  sendCallSignaling: (
+    channelName: string,
+    event: string,
+    payload: unknown,
+  ): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('call-signaling:send', channelName, event, payload),
+  unsubscribeCallSignalingChannel: (channelName: string): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('call-signaling:unsubscribe', channelName),
+  disconnectCallSignaling: (): Promise<ApiResult<{ ok: true }>> =>
+    ipcRenderer.invoke('call-signaling:disconnect'),
+  onCallSignalingBroadcast: (
+    callback: (payload: { channelName: string; event: string; payload: unknown }) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      payload: { channelName: string; event: string; payload: unknown },
+    ) => {
+      callback(payload);
+    };
+
+    ipcRenderer.on('call-signaling:broadcast', handler);
+
+    return () => {
+      ipcRenderer.removeListener('call-signaling:broadcast', handler);
+    };
+  },
   getCallToken: (
     token: string,
     payloadJson: string,

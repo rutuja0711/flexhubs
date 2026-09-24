@@ -21,10 +21,18 @@ const config: ForgeConfig = {
     asar: true,
     appBundleId: 'com.flexodyn.flexhubs',
     appCategoryType: 'public.app-category.business',
+    executableName: 'FlexHubs Desktop',
     extraResource: [path.join(__dirname, 'assets')],
     icon: isWindowsHost
       ? path.join(__dirname, 'assets', 'icon.ico')
       : path.join(__dirname, 'assets', 'logo-symbol.icns'),
+    win32metadata: {
+      CompanyName: 'Flexodyn Solutions',
+      ProductName: 'FlexHubs Desktop',
+      FileDescription: 'FlexHubs Desktop Application',
+      InternalName: 'FlexHubs Desktop',
+      OriginalFilename: 'FlexHubs Desktop.exe',
+    },
     ...(isDarwinHost
       ? {
           arch: 'universal' as const,
@@ -52,8 +60,10 @@ const config: ForgeConfig = {
             name: 'FlexHubsDesktop',
             authors: 'Flexodyn Solutions',
             description: 'FlexHubs Desktop Application',
+            title: 'FlexHubs Desktop',
             setupExe: 'FlexHubs-Desktop-Setup.exe',
             setupIcon: path.join(__dirname, 'assets', 'icon.ico'),
+            loadingGif: path.join(__dirname, 'assets', 'install-loading.gif'),
             noMsi: true,
             ...(windowsSign
               ? {

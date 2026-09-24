@@ -1,4 +1,3 @@
-import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js';
 import type {
   CallAcceptPayload,
   CallCancelPayload,
@@ -13,6 +12,7 @@ import type {
 import {
   buildHubCallChannel,
   buildUserCallChannel,
+  normalizeCallAcceptPayload,
   normalizeCallCancelPayload,
   normalizeCallInvitePayload,
   normalizeCallRejectPayload,
@@ -21,7 +21,6 @@ import {
 } from '../shared/calls';
 import type { RealtimeClientConfig } from '../shared/realtime';
 import { logCallDebug } from './callDebug';
-import { getSupabaseBrowserClient } from './supabaseClient';
 
 export type DirectCallHandlers = {
   onInvite?: (payload: CallInvitePayload) => void;
@@ -40,11 +39,8 @@ export type HubCallHandlers = {
 };
 
 type ChannelEntry = {
-  channel: RealtimeChannel;
-  ready: Promise<RealtimeChannel>;
   handlers: DirectCallHandlers | HubCallHandlers;
   mode: 'direct' | 'hub';
-  listening: boolean;
 };
 
 const CALL_EVENTS = {
@@ -63,11 +59,10 @@ const HUB_EVENTS = {
   joinResponse: 'call:meeting-join-response',
 } as const;
 
-let client: SupabaseClient | null = null;
 let config: RealtimeClientConfig | null = null;
 let userCallChannelSubscribed = false;
 const channels = new Map<string, ChannelEntry>();
-const channelReady = new Map<string, Promise<RealtimeChannel>>();
+let ipcListenerAttached = false;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -81,18 +76,6 @@ function asPayload<T>(value: unknown): T | null {
   }
 
   return value as T;
-}
-
-function buildChannelConfig() {
-  return {
-    broadcast: { self: false },
-  } as const;
-}
-
-async function ensureClient(nextConfig: RealtimeClientConfig): Promise<SupabaseClient> {
-  config = nextConfig;
-  client = await getSupabaseBrowserClient(nextConfig);
-  return client;
 }
 
 function readDirectHandlers(channelName: string): DirectCallHandlers | null {
@@ -115,27 +98,9 @@ function readHubHandlers(channelName: string): HubCallHandlers | null {
   return entry.handlers as HubCallHandlers;
 }
 
-function removeChannelEntry(channelName: string): void {
-  const entry = channels.get(channelName);
-
-  if (!entry) {
-    return;
-  }
-
-  channels.delete(channelName);
-  channelReady.delete(channelName);
-
-  if (client) {
-    void client.removeChannel(entry.channel);
-    return;
-  }
-
-  void entry.channel.unsubscribe();
-}
-
-function attachDirectHandlers(channel: RealtimeChannel, channelName: string): void {
-  channel
-    .on('broadcast', { event: CALL_EVENTS.invite }, ({ payload }) => {
+function dispatchDirectEvent(channelName: string, event: string, payload: unknown): void {
+  switch (event) {
+    case CALL_EVENTS.invite: {
       const parsed = normalizeCallInvitePayload(payload);
 
       if (parsed) {
@@ -145,31 +110,34 @@ function attachDirectHandlers(channel: RealtimeChannel, channelName: string): vo
       }
 
       logCallDebug('[Calls] Ignored invite payload', payload);
-    })
-    .on('broadcast', { event: CALL_EVENTS.accept }, ({ payload }) => {
-      const parsed = asPayload<CallAcceptPayload>(payload);
-      if (parsed) readDirectHandlers(channelName)?.onAccept?.(parsed);
-    })
-    .on('broadcast', { event: CALL_EVENTS.reject }, ({ payload }) => {
+      return;
+    }
+    case CALL_EVENTS.accept: {
+      const parsed = normalizeCallAcceptPayload(payload);
+
+      if (parsed) {
+        logCallDebug('[Calls] Received accept', parsed.callId);
+        readDirectHandlers(channelName)?.onAccept?.(parsed);
+        return;
+      }
+
+      logCallDebug('[Calls] Ignored accept payload', payload);
+      return;
+    }
+    case CALL_EVENTS.reject:
+    case CALL_EVENTS.declined: {
       const parsed = normalizeCallRejectPayload(payload);
 
       if (parsed) {
-        logCallDebug('[Calls] Received reject', parsed.callId);
+        logCallDebug(`[Calls] Received ${event}`, parsed.callId);
         readDirectHandlers(channelName)?.onReject?.(parsed);
         return;
       }
 
-      logCallDebug('[Calls] Ignored reject payload', payload);
-    })
-    .on('broadcast', { event: CALL_EVENTS.declined }, ({ payload }) => {
-      const parsed = normalizeCallRejectPayload(payload);
-
-      if (parsed) {
-        logCallDebug('[Calls] Received declined', parsed.callId);
-        readDirectHandlers(channelName)?.onReject?.(parsed);
-      }
-    })
-    .on('broadcast', { event: CALL_EVENTS.cancel }, ({ payload }) => {
+      logCallDebug(`[Calls] Ignored ${event} payload`, payload);
+      return;
+    }
+    case CALL_EVENTS.cancel: {
       const parsed = normalizeCallCancelPayload(payload);
 
       if (parsed) {
@@ -179,182 +147,164 @@ function attachDirectHandlers(channel: RealtimeChannel, channelName: string): vo
       }
 
       logCallDebug('[Calls] Ignored cancel payload', payload);
-    })
-    .on('broadcast', { event: CALL_EVENTS.end }, ({ payload }) => {
+      return;
+    }
+    case CALL_EVENTS.end: {
       const parsed = asPayload<CallEndPayload>(payload);
-      if (parsed) readDirectHandlers(channelName)?.onEnd?.(parsed);
-    })
-    .on('broadcast', { event: HUB_EVENTS.joinResponse }, ({ payload }) => {
+
+      if (parsed) {
+        readDirectHandlers(channelName)?.onEnd?.(parsed);
+      }
+
+      return;
+    }
+    case HUB_EVENTS.joinResponse: {
       const parsed = normalizeMeetingJoinResponsePayload(payload);
 
       if (parsed) {
         logCallDebug('[Calls] Meeting join response (user channel)', parsed.approved ? 'approved' : 'denied');
         readDirectHandlers(channelName)?.onMeetingJoinResponse?.(parsed);
       }
-    });
+
+      return;
+    }
+    default:
+      return;
+  }
 }
 
-function attachHubHandlers(channel: RealtimeChannel, channelName: string): void {
-  channel
-    .on('broadcast', { event: HUB_EVENTS.started }, ({ payload }) => {
+function dispatchHubEvent(channelName: string, event: string, payload: unknown): void {
+  switch (event) {
+    case HUB_EVENTS.started: {
       const parsed = asPayload<MeetingStartedPayload>(payload);
 
       if (parsed) {
         logCallDebug('[Calls] Group meeting started', parsed.conversationTitle);
         readHubHandlers(channelName)?.onMeetingStarted?.(parsed);
       }
-    })
-    .on('broadcast', { event: HUB_EVENTS.ended }, ({ payload }) => {
+
+      return;
+    }
+    case HUB_EVENTS.ended: {
       const parsed = asPayload<MeetingEndedPayload>(payload);
-      if (parsed) readHubHandlers(channelName)?.onMeetingEnded?.(parsed);
-    })
-    .on('broadcast', { event: HUB_EVENTS.joinRequest }, ({ payload }) => {
+
+      if (parsed) {
+        readHubHandlers(channelName)?.onMeetingEnded?.(parsed);
+      }
+
+      return;
+    }
+    case HUB_EVENTS.joinRequest: {
       const parsed = normalizeMeetingJoinRequestPayload(payload);
 
       if (parsed) {
         logCallDebug('[Calls] Meeting join request', parsed.requester.username);
         readHubHandlers(channelName)?.onMeetingJoinRequest?.(parsed);
       }
-    })
-    .on('broadcast', { event: HUB_EVENTS.joinResponse }, ({ payload }) => {
+
+      return;
+    }
+    case HUB_EVENTS.joinResponse: {
       const parsed = normalizeMeetingJoinResponsePayload(payload);
 
       if (parsed) {
         logCallDebug('[Calls] Meeting join response', parsed.approved ? 'approved' : 'denied');
         readHubHandlers(channelName)?.onMeetingJoinResponse?.(parsed);
       }
-    });
+
+      return;
+    }
+    default:
+      return;
+  }
 }
 
-async function waitForChannelSubscribe(
-  channel: RealtimeChannel,
+function dispatchIncomingEvent(channelName: string, event: string, payload: unknown): void {
+  const entry = channels.get(channelName);
+
+  if (!entry) {
+    return;
+  }
+
+  if (entry.mode === 'hub') {
+    dispatchHubEvent(channelName, event, payload);
+    return;
+  }
+
+  dispatchDirectEvent(channelName, event, payload);
+}
+
+function ensureIpcListener(): void {
+  if (ipcListenerAttached || !window.electronAPI?.onCallSignalingBroadcast) {
+    return;
+  }
+
+  ipcListenerAttached = true;
+
+  window.electronAPI.onCallSignalingBroadcast(({ channelName, event, payload }) => {
+    dispatchIncomingEvent(channelName, event, payload);
+  });
+}
+
+async function subscribeChannel(
   channelName: string,
-  onUnhealthy?: () => void,
+  mode: 'direct' | 'hub',
+  handlers: DirectCallHandlers | HubCallHandlers,
 ): Promise<void> {
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
+  if (!window.electronAPI?.subscribeCallSignalingChannel) {
+    throw new Error('Call signaling is unavailable in this environment.');
+  }
 
-    const timeoutId = window.setTimeout(() => {
-      if (!settled) {
-        settled = true;
-        reject(new Error('Call channel subscribe timeout'));
-      }
-    }, 20_000);
+  channels.set(channelName, { handlers, mode });
 
-    channel.subscribe((status, error) => {
-      logCallDebug(`[Calls] ${channelName} status ${status}`, error?.message ?? '');
+  const result = await window.electronAPI.subscribeCallSignalingChannel(channelName, mode);
 
-      if (!settled && status === 'SUBSCRIBED') {
-        settled = true;
-        window.clearTimeout(timeoutId);
-        resolve();
-        return;
-      }
+  if (!result.ok) {
+    channels.delete(channelName);
+    throw new Error(result.error);
+  }
 
-      if (
-        !settled &&
-        (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED')
-      ) {
-        settled = true;
-        window.clearTimeout(timeoutId);
-        reject(new Error(error?.message ?? `Call channel ${status} (${channelName})`));
-        return;
-      }
-
-      if (
-        settled &&
-        (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED')
-      ) {
-        onUnhealthy?.();
-      }
-    });
-  });
+  logCallDebug(`[Calls] Subscribed to ${channelName}`);
 }
 
-async function getCallChannel(
-  supabase: SupabaseClient,
-  channelName: string,
-  attachHandlers?: (channel: RealtimeChannel) => void,
-  mode: 'direct' | 'hub' = 'direct',
-  handlers: DirectCallHandlers | HubCallHandlers = {},
-  onUnhealthy?: () => void,
-): Promise<RealtimeChannel> {
-  const existing = channels.get(channelName);
+async function unsubscribeChannel(channelName: string): Promise<void> {
+  channels.delete(channelName);
 
-  if (existing) {
-    if (Object.keys(handlers).length > 0) {
-      existing.handlers = handlers;
-    }
-
-    if (attachHandlers && !existing.listening) {
-      attachHandlers(existing.channel);
-      existing.listening = true;
-    }
-
-    return existing.ready;
+  if (!window.electronAPI?.unsubscribeCallSignalingChannel) {
+    return;
   }
 
-  const pending = channelReady.get(channelName);
-
-  if (pending) {
-    const channel = await pending;
-    const entry = channels.get(channelName);
-
-    if (entry) {
-      if (Object.keys(handlers).length > 0) {
-        entry.handlers = handlers;
-      }
-
-      if (attachHandlers && !entry.listening) {
-        attachHandlers(entry.channel);
-        entry.listening = true;
-      }
-    }
-
-    return channel;
-  }
-
-  const channel = supabase.channel(channelName, {
-    config: buildChannelConfig(),
-  });
-
-  if (attachHandlers) {
-    attachHandlers(channel);
-  }
-
-  const subscribed = waitForChannelSubscribe(channel, channelName, onUnhealthy)
-    .then(() => {
-      logCallDebug(`[Calls] Subscribed to ${channelName}`);
-      return channel;
-    })
-    .catch((error) => {
-      removeChannelEntry(channelName);
-      throw error;
-    });
-
-  channels.set(channelName, {
-    channel,
-    ready: subscribed,
-    handlers,
-    mode,
-    listening: Boolean(attachHandlers),
-  });
-
-  channelReady.set(channelName, subscribed);
-
-  try {
-    return await subscribed;
-  } finally {
-    channelReady.delete(channelName);
-  }
+  await window.electronAPI.unsubscribeCallSignalingChannel(channelName);
 }
 
 export async function initCallSignaling(nextConfig: RealtimeClientConfig): Promise<void> {
-  await ensureClient(nextConfig);
+  ensureIpcListener();
+
+  if (!window.electronAPI?.initCallSignaling) {
+    throw new Error('Call signaling is unavailable in this environment.');
+  }
+
+  const result = await window.electronAPI.initCallSignaling(nextConfig);
+
+  if (!result.ok) {
+    throw new Error(result.error);
+  }
+
+  config = nextConfig;
 }
 
 export async function refreshCallSignalingAuth(nextConfig: RealtimeClientConfig): Promise<void> {
-  await ensureClient(nextConfig);
+  if (!window.electronAPI?.refreshCallSignalingAuth) {
+    throw new Error('Call signaling is unavailable in this environment.');
+  }
+
+  const result = await window.electronAPI.refreshCallSignalingAuth(nextConfig);
+
+  if (!result.ok) {
+    throw new Error(result.error);
+  }
+
+  config = nextConfig;
 }
 
 export async function ensureDirectCallPeerChannel(
@@ -362,7 +312,7 @@ export async function ensureDirectCallPeerChannel(
   peerUserId: string,
   handlers: DirectCallHandlers,
 ): Promise<void> {
-  if (!client || !config) {
+  if (!config) {
     throw new Error('Call signaling is not initialized.');
   }
 
@@ -374,14 +324,14 @@ export async function ensureDirectCallPeerChannel(
   }
 
   const channelName = buildUserCallChannel(normalizedPeerUserId);
+  const existing = channels.get(channelName);
 
-  await getCallChannel(
-    client,
-    channelName,
-    (channel) => attachDirectHandlers(channel, channelName),
-    'direct',
-    handlers,
-  );
+  if (existing) {
+    existing.handlers = handlers;
+    return;
+  }
+
+  await subscribeChannel(channelName, 'direct', handlers);
 }
 
 export function releaseDirectCallPeerChannel(ownUserId: string, peerUserId: string | null | undefined): void {
@@ -391,14 +341,14 @@ export function releaseDirectCallPeerChannel(ownUserId: string, peerUserId: stri
     return;
   }
 
-  removeChannelEntry(buildUserCallChannel(normalizedPeerUserId));
+  void unsubscribeChannel(buildUserCallChannel(normalizedPeerUserId));
 }
 
 export async function subscribeUserCallChannel(
   userId: string,
   handlers: DirectCallHandlers,
 ): Promise<void> {
-  if (!client || !config) {
+  if (!config) {
     throw new Error('Call signaling is not initialized.');
   }
 
@@ -406,19 +356,7 @@ export async function subscribeUserCallChannel(
 
   const channelName = buildUserCallChannel(userId);
 
-  await getCallChannel(
-    client,
-    channelName,
-    (channel) => attachDirectHandlers(channel, channelName),
-    'direct',
-    handlers,
-    () => {
-      userCallChannelSubscribed = false;
-      removeChannelEntry(channelName);
-      logCallDebug('[Calls] User call channel dropped', channelName);
-    },
-  );
-
+  await subscribeChannel(channelName, 'direct', handlers);
   userCallChannelSubscribed = true;
 }
 
@@ -426,26 +364,26 @@ export async function subscribeHubCallChannel(
   conversationId: string,
   handlers: HubCallHandlers,
 ): Promise<void> {
-  if (!client || !config) {
+  if (!config) {
     throw new Error('Call signaling is not initialized.');
   }
 
   const channelName = buildHubCallChannel(conversationId);
+  const existing = channels.get(channelName);
 
-  await getCallChannel(
-    client,
-    channelName,
-    (channel) => attachHubHandlers(channel, channelName),
-    'hub',
-    handlers,
-  );
+  if (existing) {
+    existing.handlers = handlers;
+    return;
+  }
+
+  await subscribeChannel(channelName, 'hub', handlers);
 }
 
 export async function syncHubCallChannels(
   conversationIds: string[],
   handlers: HubCallHandlers,
 ): Promise<void> {
-  if (!client || !config) {
+  if (!config) {
     throw new Error('Call signaling is not initialized.');
   }
 
@@ -459,7 +397,7 @@ export async function syncHubCallChannels(
     const conversationId = channelName.replace(/^call:hub:/, '');
 
     if (!desired.has(conversationId)) {
-      removeChannelEntry(channelName);
+      void unsubscribeChannel(channelName);
     }
   }
 
@@ -481,34 +419,24 @@ export async function sendSignalWithRetries(
   payload: unknown,
   retries = 2,
 ): Promise<void> {
-  if (!client || !config) {
+  if (!config || !window.electronAPI?.sendCallSignaling) {
     throw new Error('Call signaling is not initialized.');
   }
 
   let lastError: unknown = null;
 
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      const channel = await getCallChannel(client, channelName);
-      const result = await channel.send({
-        type: 'broadcast',
-        event,
-        payload,
-      });
+    const result = await window.electronAPI.sendCallSignaling(channelName, event, payload);
 
-      if (result === 'error') {
-        throw new Error('Call signal broadcast failed');
-      }
-
+    if (result.ok) {
       logCallDebug(`[Calls] Sent ${event} on ${channelName}`);
       return;
-    } catch (error) {
-      lastError = error;
-      removeChannelEntry(channelName);
+    }
 
-      if (attempt < retries) {
-        await sleep(250 * (attempt + 1));
-      }
+    lastError = new Error(result.error);
+
+    if (attempt < retries) {
+      await sleep(250 * (attempt + 1));
     }
   }
 
@@ -559,17 +487,17 @@ export async function broadcastCallEvent(
 }
 
 export async function disconnectCallSignaling(): Promise<void> {
-  for (const channelName of [...channels.keys()]) {
-    removeChannelEntry(channelName);
-  }
-
+  channels.clear();
   userCallChannelSubscribed = false;
-  client = null;
   config = null;
+
+  if (window.electronAPI?.disconnectCallSignaling) {
+    await window.electronAPI.disconnectCallSignaling();
+  }
 }
 
 export function disconnectUserCallChannel(userId: string): void {
-  removeChannelEntry(buildUserCallChannel(userId));
+  void unsubscribeChannel(buildUserCallChannel(userId));
   userCallChannelSubscribed = false;
 }
 
@@ -582,7 +510,7 @@ export function getHubCallChannelName(conversationId: string): string {
 }
 
 export function isCallSignalingReady(): boolean {
-  return client != null && config != null;
+  return config != null;
 }
 
 export function isUserCallChannelSubscribed(): boolean {

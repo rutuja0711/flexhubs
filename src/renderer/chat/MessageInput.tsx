@@ -168,6 +168,12 @@ export function MessageInput({
   const imageInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const aiMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const actionsMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const [aiMenuStyle, setAiMenuStyle] = useState<{ left: number; top: number } | null>(null);
+  const [actionsMenuStyle, setActionsMenuStyle] = useState<{ left: number; top: number } | null>(
+    null,
+  );
   const [pendingAttachments, setPendingAttachments] = useState<{
     file: File;
     previewUrl: string;
@@ -293,6 +299,32 @@ export function MessageInput({
       width: Math.max(rect.width, 240),
     });
   }, [mentionQuery, mentionSuggestions.length, value]);
+
+  useLayoutEffect(() => {
+    if (!aiMenuOpen || !aiMenuButtonRef.current) {
+      setAiMenuStyle(null);
+      return;
+    }
+
+    const rect = aiMenuButtonRef.current.getBoundingClientRect();
+    setAiMenuStyle({
+      left: Math.max(8, rect.right - 224),
+      top: Math.max(8, rect.top - 8),
+    });
+  }, [aiMenuOpen]);
+
+  useLayoutEffect(() => {
+    if (!actionsMenuOpen || !actionsMenuButtonRef.current) {
+      setActionsMenuStyle(null);
+      return;
+    }
+
+    const rect = actionsMenuButtonRef.current.getBoundingClientRect();
+    setActionsMenuStyle({
+      left: Math.max(8, rect.right - 256),
+      top: Math.max(8, rect.top - 8),
+    });
+  }, [actionsMenuOpen]);
 
   const insertAtCursor = (text: string) => {
     const textarea = textareaRef.current;
@@ -806,7 +838,7 @@ export function MessageInput({
               updateMentionState(target.value, target.selectionStart ?? target.value.length);
             }}
           />
-          <div className="flex shrink-0 items-center gap-0.5 self-end overflow-x-auto pb-0.5">
+          <div className="flex shrink-0 items-center gap-0.5 self-end overflow-visible pb-0.5">
               <button
                 type="button"
                 disabled={fileDisabled}
@@ -843,6 +875,7 @@ export function MessageInput({
 
               <div className="relative">
                 <button
+                  ref={aiMenuButtonRef}
                   type="button"
                   disabled={aiDisabled}
                   aria-label="Flex AI"
@@ -859,61 +892,17 @@ export function MessageInput({
                       return;
                     }
 
+                    setActionsMenuOpen(false);
                     setAiMenuOpen((open) => !open);
                   }}
                 >
                   <FiZap className="h-[18px] w-[18px]" />
                 </button>
-
-                {aiMenuOpen ? (
-                  <>
-                    <button
-                      type="button"
-                      aria-label="Close AI menu"
-                      className="fixed inset-0 z-10 cursor-default"
-                      onClick={() => setAiMenuOpen(false)}
-                    />
-                    <div className="absolute bottom-full right-0 z-20 mb-2 w-56 overflow-hidden rounded-2xl border border-app-border bg-app-elevated/95 backdrop-blur-xl p-1 shadow-2xl animate-pop-in">
-                      <button
-                        type="button"
-                        disabled={!value.trim()}
-                        className="block w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
-                        onClick={() => void handleAiEnhance()}
-                      >
-                        Enhance message
-                      </button>
-                      <button
-                        type="button"
-                        className="block w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
-                        onClick={() => void handleAiGenerate()}
-                      >
-                        Generate message
-                      </button>
-                      <button
-                        type="button"
-                        className="block w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
-                        onClick={() => void handleFlexCommand()}
-                      >
-                        Flex command
-                      </button>
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
-                        onClick={() => {
-                          setAiMenuOpen(false);
-                          audioInputRef.current?.click();
-                        }}
-                      >
-                        <FiMic className="h-3.5 w-3.5" />
-                        Transcribe audio
-                      </button>
-                    </div>
-                  </>
-                ) : null}
               </div>
 
               <div className="relative">
                 <button
+                  ref={actionsMenuButtonRef}
                   type="button"
                   disabled={disabled || isSending || !conversationId}
                   aria-label="More message actions"
@@ -924,95 +913,13 @@ export function MessageInput({
                       ? 'bg-accent/15 text-accent-soft'
                       : ''
                   }`}
-                  onClick={() => setActionsMenuOpen((open) => !open)}
+                  onClick={() => {
+                    setAiMenuOpen(false);
+                    setActionsMenuOpen((open) => !open);
+                  }}
                 >
                   <FiPlus className="h-[18px] w-[18px]" />
                 </button>
-
-                {actionsMenuOpen ? (
-                  <>
-                    <button
-                      type="button"
-                      aria-label="Close actions menu"
-                      className="fixed inset-0 z-10 cursor-default"
-                      onClick={() => setActionsMenuOpen(false)}
-                    />
-                    <div className="absolute bottom-full right-0 z-20 mb-2 w-64 overflow-hidden rounded-2xl border border-app-border bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl animate-pop-in">
-                      <button
-                        type="button"
-                        disabled={disabled || isSending || !conversationId}
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
-                        onClick={() => {
-                          setActionsMenuOpen(false);
-                          fileInputRef.current?.click();
-                        }}
-                      >
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
-                          <FiLink className="h-3.5 w-3.5" />
-                        </span>
-                        <span>
-                          <span className="block font-semibold">Attach a file</span>
-                          <span className="text-[10px] text-app-muted">Upload from your computer</span>
-                        </span>
-                      </button>
-                      {!compact ? (
-                        <>
-                      <button
-                        type="button"
-                        disabled={disabled || isSending || !conversationId}
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
-                        onClick={() => {
-                          setActionsMenuOpen(false);
-                          setPollOpen(true);
-                        }}
-                      >
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
-                          <FiBarChart2 className="h-3.5 w-3.5" />
-                        </span>
-                        <span>
-                          <span className="block font-semibold">Poll</span>
-                          <span className="text-[10px] text-app-muted">Ask a question with options</span>
-                        </span>
-                      </button>
-                      <button
-                        type="button"
-                        disabled={disabled || isSending || !conversationId}
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
-                        onClick={() => {
-                          setActionsMenuOpen(false);
-                          setScheduleOpen(true);
-                        }}
-                      >
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
-                          <FiClock className="h-3.5 w-3.5" />
-                        </span>
-                        <span>
-                          <span className="block font-semibold">Schedule message</span>
-                          <span className="text-[10px] text-app-muted">Send later at a set time</span>
-                        </span>
-                      </button>
-                        </>
-                      ) : null}
-                      <button
-                        type="button"
-                        disabled={aiDisabled}
-                        className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
-                        onClick={() => {
-                          setActionsMenuOpen(false);
-                          audioInputRef.current?.click();
-                        }}
-                      >
-                        <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
-                          <FiMic className="h-3.5 w-3.5" />
-                        </span>
-                        <span>
-                          <span className="block font-semibold">Voice typing</span>
-                          <span className="text-[10px] text-app-muted">Transcribe audio to text</span>
-                        </span>
-                      </button>
-                    </div>
-                  </>
-                ) : null}
               </div>
           </div>
           <button
@@ -1026,6 +933,157 @@ export function MessageInput({
           </button>
         </div>
       </div>
+
+      {aiMenuOpen && aiMenuStyle
+        ? createPortal(
+            <>
+              <button
+                type="button"
+                aria-label="Close AI menu"
+                className="fixed inset-0 z-[9998] cursor-default"
+                onClick={() => setAiMenuOpen(false)}
+              />
+              <div
+                className="fixed z-[9999] w-56 overflow-hidden rounded-2xl border border-app-border bg-app-elevated/95 backdrop-blur-xl p-1 shadow-2xl animate-pop-in"
+                style={{
+                  left: aiMenuStyle.left,
+                  top: aiMenuStyle.top,
+                  transform: 'translateY(-100%)',
+                }}
+              >
+                <button
+                  type="button"
+                  disabled={!value.trim()}
+                  className="block w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => void handleAiEnhance()}
+                >
+                  Enhance message
+                </button>
+                <button
+                  type="button"
+                  className="block w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
+                  onClick={() => void handleAiGenerate()}
+                >
+                  Generate message
+                </button>
+                <button
+                  type="button"
+                  className="block w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
+                  onClick={() => void handleFlexCommand()}
+                >
+                  Flex command
+                </button>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
+                  onClick={() => {
+                    setAiMenuOpen(false);
+                    audioInputRef.current?.click();
+                  }}
+                >
+                  <FiMic className="h-3.5 w-3.5" />
+                  Transcribe audio
+                </button>
+              </div>
+            </>,
+            document.body,
+          )
+        : null}
+
+      {actionsMenuOpen && actionsMenuStyle
+        ? createPortal(
+            <>
+              <button
+                type="button"
+                aria-label="Close actions menu"
+                className="fixed inset-0 z-[9998] cursor-default"
+                onClick={() => setActionsMenuOpen(false)}
+              />
+              <div
+                className="fixed z-[9999] w-64 overflow-hidden rounded-2xl border border-app-border bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl animate-pop-in"
+                style={{
+                  left: actionsMenuStyle.left,
+                  top: actionsMenuStyle.top,
+                  transform: 'translateY(-100%)',
+                }}
+              >
+                <button
+                  type="button"
+                  disabled={disabled || isSending || !conversationId}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => {
+                    setActionsMenuOpen(false);
+                    fileInputRef.current?.click();
+                  }}
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
+                    <FiLink className="h-3.5 w-3.5" />
+                  </span>
+                  <span>
+                    <span className="block font-semibold">Attach a file</span>
+                    <span className="text-[10px] text-app-muted">Upload from your computer</span>
+                  </span>
+                </button>
+                {!compact ? (
+                  <>
+                    <button
+                      type="button"
+                      disabled={disabled || isSending || !conversationId}
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
+                      onClick={() => {
+                        setActionsMenuOpen(false);
+                        setPollOpen(true);
+                      }}
+                    >
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
+                        <FiBarChart2 className="h-3.5 w-3.5" />
+                      </span>
+                      <span>
+                        <span className="block font-semibold">Poll</span>
+                        <span className="text-[10px] text-app-muted">Ask a question with options</span>
+                      </span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={disabled || isSending || !conversationId}
+                      className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
+                      onClick={() => {
+                        setActionsMenuOpen(false);
+                        setScheduleOpen(true);
+                      }}
+                    >
+                      <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
+                        <FiClock className="h-3.5 w-3.5" />
+                      </span>
+                      <span>
+                        <span className="block font-semibold">Schedule message</span>
+                        <span className="text-[10px] text-app-muted">Send later at a set time</span>
+                      </span>
+                    </button>
+                  </>
+                ) : null}
+                <button
+                  type="button"
+                  disabled={aiDisabled}
+                  className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-xs text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={() => {
+                    setActionsMenuOpen(false);
+                    audioInputRef.current?.click();
+                  }}
+                >
+                  <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
+                    <FiMic className="h-3.5 w-3.5" />
+                  </span>
+                  <span>
+                    <span className="block font-semibold">Voice typing</span>
+                    <span className="text-[10px] text-app-muted">Transcribe audio to text</span>
+                  </span>
+                </button>
+              </div>
+            </>,
+            document.body,
+          )
+        : null}
 
       {mentionQuery !== null && mentionMenuStyle
         ? createPortal(
