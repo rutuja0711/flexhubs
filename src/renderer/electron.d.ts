@@ -110,6 +110,18 @@ declare global {
         token: string,
         invoiceId: string,
       ) => Promise<ApiResult<import('../shared/organization').OrgInvoiceItem>>;
+      getSuperAdminStats: (
+        token: string,
+      ) => Promise<ApiResult<import('../shared/superadmin').SuperAdminStats>>;
+      getSuperAdminOrganizations: (
+        token: string,
+        page: number,
+        pageSize?: number,
+      ) => Promise<ApiResult<import('../shared/superadmin').SuperAdminOrganizationsPage>>;
+      suspendSuperAdminOrganization: (
+        token: string,
+        organizationId: string,
+      ) => Promise<ApiResult<{ ok: true }>>;
       getConversations: (
         token: string,
         viewerUserId?: string | null,

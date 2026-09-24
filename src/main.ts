@@ -163,7 +163,12 @@ import {
   sendOrganizationInvite,
   updateOrganizationRole,
 } from './main/organizationsApi';
-import type { RealtimeClientConfig, RealtimeConnectionStatus } from '../shared/realtime';
+import {
+  fetchSuperAdminOrganizations,
+  fetchSuperAdminStats,
+  suspendSuperAdminOrganization,
+} from './main/superadminApi';
+import type { RealtimeClientConfig, RealtimeConnectionStatus } from './shared/realtime';
 import {
   disconnectMainCallSignaling,
   initMainCallSignaling,
@@ -473,6 +478,13 @@ ipcMain.handle('org:seats', (_event, token: string) => fetchOrganizationSeats(to
 ipcMain.handle('org:invoices', (_event, token: string) => fetchOrgInvoices(token));
 ipcMain.handle('org:invoice', (_event, token: string, invoiceId: string) =>
   fetchOrgInvoiceById(token, invoiceId),
+);
+ipcMain.handle('superadmin:stats', (_event, token: string) => fetchSuperAdminStats(token));
+ipcMain.handle('superadmin:organizations', (_event, token: string, page: number, pageSize?: number) =>
+  fetchSuperAdminOrganizations(token, page, pageSize),
+);
+ipcMain.handle('superadmin:suspend', (_event, token: string, organizationId: string) =>
+  suspendSuperAdminOrganization(token, organizationId),
 );
 ipcMain.handle('chat:conversations', (_event, token: string, viewerUserId?: string | null) =>
   fetchConversations(token, viewerUserId),
