@@ -126,6 +126,10 @@ declare global {
         token: string,
         viewerUserId?: string | null,
       ) => Promise<ApiResult<ConversationsPayload>>;
+      summarizeUnreadMessages: (
+        token: string,
+        conversationId: string,
+      ) => Promise<ApiResult<{ summary: string }>>;
       getUnreadCount: (token: string) => Promise<ApiResult<UnreadCountPayload>>;
       getConversationBootstrap: (
         token: string,
@@ -345,6 +349,10 @@ declare global {
         token: string,
       ) => Promise<ApiResult<import('../shared/extras').CalendarMentionableUser[]>>;
       createCalendarEvent: (
+        token: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<import('../shared/extras').CalendarEventItem>>;
+      updateCalendarEvent: (
         token: string,
         payloadJson: string,
       ) => Promise<ApiResult<import('../shared/extras').CalendarEventItem>>;

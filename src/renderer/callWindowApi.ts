@@ -24,5 +24,5 @@ export function moveCallWindowBy(deltaX: number, deltaY: number): void {
 export function subscribeCallWindowPresentation(
   listener: (mode: CallWindowPresentationMode) => void,
 ): () => void {
-  return window.electronAPI?.onCallWindowPresentationChanged?.(listener) ?? (() => {});
+  return window.electronAPI?.onCallWindowPresentationChanged?.((mode: string) => listener(mode as CallWindowPresentationMode)) ?? (() => {});
 }

@@ -15,8 +15,11 @@ type NewEventModalProps = {
   open: boolean;
   onClose: () => void;
   onCreated: () => void;
+  onDelete?: () => void;
   onUnauthorized: (status?: number) => boolean;
   conversationId?: string | null;
+  editEvent?: import('../../shared/features').CalendarEventItem | null;
+  initialDate?: Date | null;
 };
 
 function activeMentionQuery(value: string, cursor: number | null): string | null {
@@ -33,8 +36,11 @@ export function NewEventModal({
   open,
   onClose,
   onCreated,
+  onDelete,
   onUnauthorized,
   conversationId = null,
+  editEvent = null,
+  initialDate = null,
 }: NewEventModalProps) {
   const notesRef = useRef<HTMLTextAreaElement>(null);
   const [title, setTitle] = useState('');
@@ -54,17 +60,36 @@ export function NewEventModal({
       return;
     }
 
-    setTitle('');
-    setStartsAtLocal(defaultEventDateTimeLocal());
-    setDescription('');
-    setSelectedUserIds([]);
+    setTitle(editEvent?.title ?? '');
+    
+    if (editEvent?.startsAt) {
+      try {
+        const d = new Date(editEvent.startsAt);
+        const localIso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+        setStartsAtLocal(localIso);
+      } catch {
+        setStartsAtLocal(defaultEventDateTimeLocal());
+      }
+    } else if (initialDate) {
+      const now = new Date(Date.now() + 60 * 60 * 1000);
+      const target = new Date(initialDate.getFullYear(), initialDate.getMonth(), initialDate.getDate(), now.getHours(), now.getMinutes());
+      const pad = (value: number) => String(value).padStart(2, '0');
+      setStartsAtLocal(`${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}T${pad(target.getHours())}:${pad(target.getMinutes())}`);
+    } else {
+      setStartsAtLocal(defaultEventDateTimeLocal());
+    }
+    
+    setDescription(editEvent?.description ?? '');
+    
+    const inviteeIds = editEvent?.invitees?.map(i => i.userId).filter((id): id is string => id !== null) ?? [];
+    setSelectedUserIds(inviteeIds);
     setPeopleQuery('');
     setMentionQuery(null);
     setError('');
     setMembersError('');
-    setMembersLoading(true);
-
     void loadCalendarMentionableUsers().then(async (result) => {
+      let finalUsers: CalendarMentionableUser[] = [];
+      
       if (!result.ok) {
         if (onUnauthorized(result.status)) {
           setMembersLoading(false);
@@ -72,30 +97,42 @@ export function NewEventModal({
         }
 
         setMembersError(result.error);
+        const fallback = await loadOrganizationMembers();
+        if (fallback.ok) {
+          finalUsers = fallback.data.map((member) => ({
+            id: member.id,
+            username: member.username,
+            name: member.name,
+          }));
+        }
       } else if (result.data.length > 0) {
-        setMentionUsers(result.data);
-        setMembersLoading(false);
-        return;
+        finalUsers = result.data;
+      } else {
+        const fallback = await loadOrganizationMembers();
+        if (fallback.ok) {
+          finalUsers = fallback.data.map((member) => ({
+            id: member.id,
+            username: member.username,
+            name: member.name,
+          }));
+        }
       }
 
-      const fallback = await loadOrganizationMembers();
+      setMentionUsers(finalUsers);
       setMembersLoading(false);
 
-      if (!fallback.ok) {
-        if (onUnauthorized(fallback.status)) {
-          return;
+      if (editEvent?.invitees) {
+        const ids = editEvent.invitees.map(inv => {
+          if (inv.userId) return inv.userId;
+          const found = finalUsers.find(u => u.username === inv.username || u.name === inv.name);
+          return found?.id;
+        }).filter((id): id is string => !!id);
+        
+        // Only set if we found IDs to avoid clearing already selected ones
+        if (ids.length > 0) {
+          setSelectedUserIds(prev => Array.from(new Set([...prev, ...ids])));
         }
-        setMembersError(fallback.error);
-        return;
       }
-
-      setMentionUsers(
-        fallback.data.map((member) => ({
-          id: member.id,
-          username: member.username,
-          name: member.name,
-        })),
-      );
     });
   }, [open, onUnauthorized]);
 
@@ -160,13 +197,27 @@ export function NewEventModal({
     const mentionUserIds = mergeMentionUserIds(description, mentionUsers, selectedUserIds);
 
     setSaving(true);
-    const result = await createCalendarEvent({
-      title: trimmedTitle,
-      startsAt,
-      description: description.trim(),
-      mentionUserIds,
-      conversationId: conversationId ?? undefined,
-    });
+    let result;
+    
+    if (editEvent) {
+      const { updateCalendarEvent } = await import('../extrasApi');
+      result = await updateCalendarEvent({
+        eventId: editEvent.id,
+        title: trimmedTitle,
+        startsAt,
+        description: description.trim(),
+        mentionUserIds,
+      });
+    } else {
+      result = await createCalendarEvent({
+        title: trimmedTitle,
+        startsAt,
+        description: description.trim(),
+        mentionUserIds,
+        conversationId: conversationId ?? undefined,
+      });
+    }
+    
     setSaving(false);
 
     if (!result.ok) {
@@ -216,16 +267,16 @@ export function NewEventModal({
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4 sm:p-6 backdrop-blur-md animate-fade-in">
-      <div className="relative max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-3xl border border-app-border/80 bg-app-surface/95 backdrop-blur-2xl p-6 shadow-2xl animate-pop-in origin-center">
+      <div className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-app-border bg-app-surface backdrop-blur-2xl p-6 sm:p-8 shadow-2xl animate-pop-in origin-center">
         <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-app-border-strong to-transparent pointer-events-none" />
 
         <div className="mb-5 flex items-start justify-between">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-accent to-[#632a38] text-white shadow-md shadow-accent/20">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-accent text-white shadow-md shadow-accent/20">
               <CalendarNavIcon className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-app-text tracking-tight">New event</h2>
+              <h2 className="text-base font-semibold text-app-text tracking-tight">{editEvent ? 'Edit event' : 'New event'}</h2>
               <p className="text-xs text-app-muted">Schedule an event or deadline</p>
             </div>
           </div>
@@ -249,7 +300,7 @@ export function NewEventModal({
               value={title}
               onChange={(event) => setTitle(event.target.value)}
               placeholder="Team sync, deadline, reminder..."
-              className="w-full rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+              className="w-full rounded-xl border border-app-border bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
             />
           </div>
 
@@ -262,7 +313,7 @@ export function NewEventModal({
                 type="datetime-local"
                 value={startsAtLocal}
                 onChange={(event) => setStartsAtLocal(event.target.value)}
-                className="datetime-input w-full rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 pr-10 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+                className="datetime-input w-full rounded-xl border border-app-border bg-app-surface-input px-3.5 py-2.5 pr-10 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
               />
               <CalendarNavIcon className="pointer-events-none absolute top-1/2 right-3.5 h-4 w-4 -translate-y-1/2 text-app-muted" />
             </div>
@@ -273,13 +324,13 @@ export function NewEventModal({
             <label className="mb-1.5 block text-xs font-medium text-app-muted">
               Share with
             </label>
-            <div className="rounded-2xl border border-app-border/60 bg-app-card/50 p-3.5">
+            <div className="rounded-2xl border border-app-border bg-app-card p-3.5">
               {selectedUsers.length > 0 ? (
                 <div className="mb-3 flex flex-wrap gap-2">
                   {selectedUsers.map((user) => (
                     <span
                       key={user.id}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-app-border/60 bg-app-card px-2.5 py-1 text-xs text-app-text font-medium shadow-xs"
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-app-border bg-app-card px-2.5 py-1 text-xs text-app-text font-medium shadow-xs"
                     >
                       {user.name}
                       <button
@@ -306,7 +357,7 @@ export function NewEventModal({
                   value={peopleQuery}
                   onChange={(event) => setPeopleQuery(event.target.value)}
                   placeholder="Search teammates to invite"
-                  className="w-full rounded-xl border border-app-border/70 bg-app-surface-input py-2 pr-3 pl-9 text-xs text-app-text outline-none focus:border-accent transition-all"
+                  className="w-full rounded-xl border border-app-border bg-app-surface-input py-2 pr-3 pl-9 text-xs text-app-text outline-none focus:border-accent transition-all"
                 />
               </div>
 
@@ -317,7 +368,7 @@ export function NewEventModal({
                 <p className="mt-3 text-xs text-accent-soft">{membersError}</p>
               ) : null}
               {!membersLoading && filteredPeople.length > 0 ? (
-                <div className="mt-2 overflow-hidden rounded-xl border border-app-border/60 bg-app-card">
+                <div className="mt-2 overflow-hidden rounded-xl border border-app-border bg-app-card">
                   {filteredPeople.map((user) => (
                     <button
                       key={user.id}
@@ -359,10 +410,10 @@ export function NewEventModal({
               }
               placeholder="Private notes... Use @name to share with a teammate"
               rows={3}
-              className="w-full resize-none rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+              className="w-full resize-none rounded-xl border border-app-border bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
             />
             {mentionSuggestions.length > 0 ? (
-              <div className="absolute right-0 bottom-full left-0 z-10 mb-1 rounded-2xl border border-app-border/80 bg-app-surface/95 backdrop-blur-xl p-1 shadow-xl">
+              <div className="absolute right-0 bottom-full left-0 z-10 mb-1 rounded-2xl border border-app-border bg-app-surface backdrop-blur-xl p-1 shadow-xl">
                 {mentionSuggestions.map((user) => (
                   <button
                     key={user.id}
@@ -383,22 +434,36 @@ export function NewEventModal({
 
           {error ? <p className="text-xs text-accent-soft font-medium">{error}</p> : null}
 
-          <div className="flex justify-end gap-2.5 pt-3">
-            <button
-              type="button"
-              className="rounded-xl border border-app-border/70 bg-app-card px-4 py-2 text-xs font-semibold text-app-text hover:bg-app-inset transition-colors disabled:opacity-50"
-              onClick={onClose}
-              disabled={saving}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={saving}
-              className="rounded-xl bg-gradient-to-r from-accent to-[#632a38] px-4 py-2 text-xs font-semibold text-white shadow-md shadow-accent/20 hover:brightness-110 active:scale-[0.98] disabled:opacity-60 transition-all"
-            >
-              {saving ? 'Saving…' : 'Save event'}
-            </button>
+          <div className="flex justify-between items-center pt-3 w-full">
+            <div>
+              {editEvent && onDelete && (
+                <button
+                  type="button"
+                  className="rounded-xl px-3 py-2 text-xs font-semibold text-accent hover:bg-accent/10 transition-colors"
+                  onClick={onDelete}
+                  disabled={saving}
+                >
+                  Delete event
+                </button>
+              )}
+            </div>
+            <div className="flex gap-2.5">
+              <button
+                type="button"
+                className="rounded-xl border border-app-border bg-app-card px-4 py-2 text-xs font-semibold text-app-text hover:bg-app-inset transition-colors disabled:opacity-50"
+                onClick={onClose}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={saving}
+                className="rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-white shadow-md shadow-accent/20 hover:bg-accent-hover active:scale-[0.98] disabled:opacity-60 transition-all"
+              >
+                {saving ? 'Saving…' : editEvent ? 'Save event' : 'Create event'}
+              </button>
+            </div>
           </div>
         </form>
       </div>

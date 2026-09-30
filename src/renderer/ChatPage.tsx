@@ -11,6 +11,7 @@ import {
   acceptHubInvite,
   acceptHubInviteById,
   addMessageReaction,
+  removeMessageReaction,
   createDirectChat,
   createGroupConversation,
   createHubChannel,
@@ -61,6 +62,7 @@ import {
   respondFriendRequest,
   unsaveChatMessage,
   votePoll,
+  summarizeUnreadMessages,
 } from './chatApi';
 import { ActivityView } from './chat/ActivityView';
 import { CallHistoryView } from './chat/CallHistoryView';
@@ -69,6 +71,7 @@ import { uploadChatFile } from './extrasApi';
 import { ChatSidebar } from './chat/ChatSidebar';
 import { ChatWelcome } from './chat/ChatWelcome';
 import { ConversationThread } from './chat/ConversationThread';
+import { SummaryPanel } from './chat/SummaryPanel';
 import { FilesView } from './chat/FilesView';
 import { HubsView } from './chat/HubsView';
 import { NavRail } from './chat/NavRail';
@@ -460,6 +463,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const [flexAiOpen, setFlexAiOpen] = useState(false);
   const [callPanelLayout, setCallPanelLayout] = useState<CallPanelLayout>('floating');
   const [messageScrollRestoreKey, setMessageScrollRestoreKey] = useState(0);
+  const [summaryPanelOpen, setSummaryPanelOpen] = useState(false);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [summaryContent, setSummaryContent] = useState<string | null>(null);
   const callPhaseRef = useRef<'idle' | 'outgoing' | 'incoming' | 'connecting' | 'active' | 'ending'>('idle');
   const pendingFileRetriesRef = useRef(
     new Map<
@@ -962,6 +968,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           ),
         ),
       );
+      setPanelNotifications((current) => current.filter((n) => resolveNotificationConversationId(n, conversationsRef.current) !== conversationId));
+      setActivityNotifications((current) => current.filter((n) => resolveNotificationConversationId(n, conversationsRef.current) !== conversationId));
     },
     [applyDraftPreviews],
   );
@@ -3011,6 +3019,26 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     [],
   );
 
+  const handleSummarizeUnread = async () => {
+    if (!selectedId) return;
+    setSummaryPanelOpen(true);
+    setSummaryLoading(true);
+    try {
+      const res = await summarizeUnreadMessages(selectedId);
+      if (res.ok) {
+        setSummaryContent(res.data.summary);
+      } else {
+        setSummaryContent(null);
+        toast.error('Failed to summarize unread messages.');
+      }
+    } catch (err) {
+      setSummaryContent(null);
+      toast.error('An error occurred while summarizing messages.');
+    } finally {
+      setSummaryLoading(false);
+    }
+  };
+
   const handleSelectConversation = (
     conversationId: string,
     messageId?: string | null,
@@ -3392,16 +3420,16 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     pendingFileRetriesRef.current.delete(localId);
 
     if (message.threadRootId) {
-      registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? message.threadRootId);
+      registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? message.threadRootId!);
       appendThreadReply(
         conversationId,
-        result.data.threadRootId ?? message.threadRootId,
+        result.data.threadRootId ?? message.threadRootId!,
         result.data,
       );
       setMessages((current) =>
         bumpThreadReplyCount(
           filterMainChatMessages(current),
-          result.data.threadRootId ?? message.threadRootId,
+          result.data.threadRootId ?? message.threadRootId!,
         ),
       );
       return;
@@ -3794,21 +3822,57 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    const result = await addMessageReaction(selectedId, messageId, emoji);
+    const currentUserId = getUserId(user);
+    if (!currentUserId) return;
 
-    if (!result.ok) {
-      if (handleUnauthorized(result.status)) {
+    // Find the message in either main chat or thread cache
+    let targetMessage = messages.find(m => m.id === messageId);
+    if (!targetMessage && threadCacheRef.current[selectedId]) {
+      targetMessage = threadCacheRef.current[selectedId].messages.find(m => m.id === messageId);
+    }
+
+    let finalResult;
+
+    if (targetMessage) {
+      const existingReaction = targetMessage.reactions.find(r => r.userId === currentUserId);
+      if (existingReaction) {
+        if (existingReaction.emoji === emoji) {
+          // Toggle off: remove reaction and return early
+          const removeResult = await removeMessageReaction(selectedId, messageId, emoji);
+          if (!removeResult.ok) {
+            if (handleUnauthorized(removeResult.status)) return;
+            setThreadError(removeResult.error);
+            return;
+          }
+          finalResult = removeResult;
+        } else {
+          // Changed emoji: remove old one, then fall through to add new one
+          const removeResult = await removeMessageReaction(selectedId, messageId, existingReaction.emoji);
+          if (!removeResult.ok) {
+            if (handleUnauthorized(removeResult.status)) return;
+            // Ignore error here and try adding the new one anyway
+          }
+        }
+      }
+    }
+
+    if (!finalResult) {
+      finalResult = await addMessageReaction(selectedId, messageId, emoji);
+      if (!finalResult.ok) {
+        if (handleUnauthorized(finalResult.status)) {
+          return;
+        }
+        setThreadError(finalResult.error);
         return;
       }
-
-      setThreadError(result.error);
-      return;
     }
+
+    const resultData = finalResult.data;
 
     setMessages((current) =>
       current.map((message) =>
         message.id === messageId
-          ? preserveMessageOwnership(mergeMessageUpdates(message, result.data), message, getUserId(user))
+          ? preserveMessageOwnership(mergeMessageUpdates(message, resultData), message, currentUserId)
           : message,
       ),
     );
@@ -3816,7 +3880,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
       current.map((message) =>
         message.id === messageId
-          ? preserveMessageOwnership(mergeMessageUpdates(message, result.data), message, getUserId(user))
+          ? preserveMessageOwnership(mergeMessageUpdates(message, resultData), message, currentUserId)
           : message,
       ),
     );
@@ -3972,13 +4036,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const handleForwardMessage = async (
     messageId: string,
-    targetConversationId: string,
+    targetConversationIds: string[],
   ): Promise<string | null> => {
     if (!selectedId) {
       return 'No conversation selected.';
     }
 
-    const result = await forwardChatMessage(selectedId, messageId, [targetConversationId]);
+    const result = await forwardChatMessage(selectedId, messageId, targetConversationIds);
 
     if (!result.ok) {
       if (handleUnauthorized(result.status)) {
@@ -3998,20 +4062,23 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     setMainView('chat');
 
-    if (selectedId === targetConversationId) {
-      const forwarded = commitMessages(result.data.messages, getUserId(user));
+    const firstTargetId = targetConversationIds[0];
+    if (firstTargetId) {
+      if (selectedId === firstTargetId) {
+        const forwarded = commitMessages(result.data.messages, getUserId(user));
 
-      if (forwarded.length > 0) {
-        setMessages((current) => {
-          const existingIds = new Set(current.map((message) => message.id));
-          const next = forwarded.filter((message) => !existingIds.has(message.id));
-          return next.length > 0 ? [...current, ...next] : current;
-        });
+        if (forwarded.length > 0) {
+          setMessages((current) => {
+            const existingIds = new Set(current.map((message) => message.id));
+            const next = forwarded.filter((message) => !existingIds.has(message.id));
+            return next.length > 0 ? [...current, ...next] : current;
+          });
+        }
+
+        void loadThread(firstTargetId);
+      } else {
+        setSelectedId(firstTargetId);
       }
-
-      void loadThread(targetConversationId);
-    } else {
-      setSelectedId(targetConversationId);
     }
 
     showActionMessage('Message forwarded.');
@@ -4157,8 +4224,38 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           onRetry={() => {
             void loadCallHistoryData();
           }}
-          onSelect={(item) => {
-            handleOpenInChat(item.conversationId, item.messageId ?? null);
+          onDeleteCall={async (item) => {
+            const confirmed = await confirm({
+              title: 'Delete call history',
+              message: 'Are you sure you want to remove this call from your history?'
+            });
+            if (confirmed) {
+              const res = await deleteChatMessage(item.conversationId, item.id, 'me');
+              if (res.ok) {
+                setCallHistoryItems(prev => prev.filter(c => c.id !== item.id));
+              } else {
+                toast.error('Failed to delete call history');
+              }
+            }
+          }}
+          onOpenConversation={(item) => {
+            handleOpenInChat(item.conversationId, null);
+          }}
+          onCall={(item, video) => {
+            const conversation = conversationsRef.current.find(c => c.id === item.conversationId);
+            if (!conversation) return;
+            
+            if (conversation.kind === 'hub') {
+              void callManager.startGroupMeeting(conversation, video);
+            } else {
+              void callManager.startDirectCall(
+                conversation.peerUserId ?? '',
+                conversation.title,
+                conversation.avatarUrl ?? null,
+                conversation.id,
+                video
+              );
+            }
           }}
         />
       );
@@ -4359,6 +4456,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           conversationDetails={activeHubDetails}
           pinnedMessageIds={pinnedMessageIds}
           conversations={conversations}
+          onSummarizeUnread={handleSummarizeUnread}
           messages={messages}
           draft={draft}
           loading={threadLoading}
@@ -4390,8 +4488,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           onDeleteMessage={(messageId, scope) => {
             void handleDeleteMessage(messageId, scope);
           }}
-          onForwardMessage={(messageId, targetConversationId) =>
-            handleForwardMessage(messageId, targetConversationId)
+          onForwardMessage={(messageId, targetConversationIds) =>
+            handleForwardMessage(messageId, targetConversationIds)
           }
           onPinMessage={(messageId, isPinned) => {
             void handlePinMessage(messageId, isPinned);
@@ -4708,6 +4806,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           {renderMainPanel()}
         </div>
       </main>
+      {summaryPanelOpen && (
+        <SummaryPanel
+          summary={summaryContent}
+          loading={summaryLoading}
+          onClose={() => setSummaryPanelOpen(false)}
+        />
+      )}
       </div>
     </div>
   );

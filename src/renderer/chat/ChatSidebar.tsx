@@ -359,7 +359,7 @@ export function ChatSidebar({
                 tabRefs.current.all = el;
               }}
               type="button"
-              className={`relative z-10 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ${
+              className={`flex-1 relative z-10 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ${
                 activeTab === 'all'
                   ? 'text-app-text'
                   : 'text-app-muted hover:text-app-text'
@@ -373,7 +373,7 @@ export function ChatSidebar({
                 tabRefs.current.direct = el;
               }}
               type="button"
-              className={`relative z-10 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ${
+              className={`flex-1 relative z-10 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ${
                 activeTab === 'direct'
                   ? 'text-app-text'
                   : 'text-app-muted hover:text-app-text'
@@ -387,7 +387,7 @@ export function ChatSidebar({
                 tabRefs.current.hub = el;
               }}
               type="button"
-              className={`relative z-10 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ${
+              className={`flex-1 relative z-10 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ${
                 activeTab === 'hub'
                   ? 'text-app-text'
                   : 'text-app-muted hover:text-app-text'

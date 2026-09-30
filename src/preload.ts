@@ -154,6 +154,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     viewerUserId?: string | null,
   ): Promise<ApiResult<ConversationsPayload>> =>
     ipcRenderer.invoke('chat:conversations', token, viewerUserId ?? null),
+  summarizeUnreadMessages: (
+    token: string,
+    conversationId: string,
+  ): Promise<ApiResult<{ summary: string }>> =>
+    ipcRenderer.invoke('chat:summarize-unread', token, conversationId),
   getUnreadCount: (token: string): Promise<ApiResult<UnreadCountPayload>> =>
     ipcRenderer.invoke('chat:unread-count', token),
   getConversationBootstrap: (
@@ -228,6 +233,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     emoji: string,
   ): Promise<ApiResult<MessageItem>> =>
     ipcRenderer.invoke('chat:add-reaction', token, conversationId, messageId, emoji),
+  removeMessageReaction: (
+    token: string,
+    conversationId: string,
+    messageId: string,
+    emoji: string,
+  ): Promise<ApiResult<MessageItem>> =>
+    ipcRenderer.invoke('chat:remove-reaction', token, conversationId, messageId, emoji),
   editMessage: (
     token: string,
     conversationId: string,
@@ -438,6 +450,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     payloadJson: string,
   ): Promise<ApiResult<import('../shared/extras').CalendarEventItem>> =>
     ipcRenderer.invoke('extras:create-calendar-event', token, payloadJson),
+  updateCalendarEvent: (
+    token: string,
+    payloadJson: string,
+  ): Promise<ApiResult<import('../shared/extras').CalendarEventItem>> =>
+    ipcRenderer.invoke('extras:update-calendar-event', token, payloadJson),
   respondToCalendarEvent: (
     token: string,
     eventId: string,
@@ -546,14 +563,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     messageId: string,
   ): Promise<ApiResult<SavedMessageItem[]>> =>
     ipcRenderer.invoke('features:unsave-message', token, conversationId, messageId),
-  getAvatarStyles: (token: string): Promise<ApiResult<import('../shared/profile').AvatarStyleItem[]>> =>
+  getAvatarStyles: (token: string): Promise<ApiResult<import('./shared/profile').AvatarStyleItem[]>> =>
     ipcRenderer.invoke('user:avatar-styles', token),
-  getNotificationSettings: (token: string): Promise<ApiResult<import('../shared/profile').ProfileSettings>> =>
+  getNotificationSettings: (token: string): Promise<ApiResult<import('./shared/profile').ProfileSettings>> =>
     ipcRenderer.invoke('user:notification-settings', token),
   updateNotificationSettings: (
     token: string,
     updatesJson: string,
-  ): Promise<ApiResult<import('../shared/profile').ProfileSettings>> =>
+  ): Promise<ApiResult<import('./shared/profile').ProfileSettings>> =>
     ipcRenderer.invoke('user:update-notification-settings', token, updatesJson),
   updateUserProfile: (token: string, updatesJson: string): Promise<ApiResult<unknown>> =>
     ipcRenderer.invoke('user:update-profile', token, updatesJson),
@@ -578,7 +595,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('shell:open-external', url),
   getOrganizationMembersDetailed: (
     token: string,
-  ): Promise<ApiResult<import('../shared/profile').OrganizationMemberItem[]>> =>
+  ): Promise<ApiResult<import('./shared/profile').OrganizationMemberItem[]>> =>
     ipcRenderer.invoke('user:organization-members-detailed', token),
   startRealtime: (token: string): Promise<{ ok: true }> =>
     ipcRenderer.invoke('realtime:start', token),
@@ -592,7 +609,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getUserPresence: (
     token: string,
     userIds: string[],
-  ): Promise<ApiResult<import('../shared/realtime').PresenceItem[]>> =>
+  ): Promise<ApiResult<import('./shared/realtime').PresenceItem[]>> =>
     ipcRenderer.invoke('realtime:presence', token, JSON.stringify(userIds)),
   onRealtimeEvent: (callback: (event: unknown) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: unknown) => {
@@ -618,15 +635,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   getRealtimeConfig: (
     token: string,
-  ): Promise<ApiResult<import('../shared/realtime').RealtimeClientConfig>> =>
+  ): Promise<ApiResult<import('./shared/realtime').RealtimeClientConfig>> =>
     ipcRenderer.invoke('realtime:config', token),
   getRealtimeAccessToken: (token: string): Promise<ApiResult<string>> =>
     ipcRenderer.invoke('realtime:access-token', token),
   initCallSignaling: (
-    config: import('../shared/realtime').RealtimeClientConfig,
+    config: import('./shared/realtime').RealtimeClientConfig,
   ): Promise<ApiResult<{ ok: true }>> => ipcRenderer.invoke('call-signaling:init', config),
   refreshCallSignalingAuth: (
-    config: import('../shared/realtime').RealtimeClientConfig,
+    config: import('./shared/realtime').RealtimeClientConfig,
   ): Promise<ApiResult<{ ok: true }>> => ipcRenderer.invoke('call-signaling:refresh-auth', config),
   subscribeCallSignalingChannel: (
     channelName: string,
@@ -662,7 +679,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getCallToken: (
     token: string,
     payloadJson: string,
-  ): Promise<ApiResult<import('../shared/calls').CallTokenResult>> =>
+  ): Promise<ApiResult<import('./shared/calls').CallTokenResult>> =>
     ipcRenderer.invoke('calls:token', token, payloadJson),
   ensureCallMediaPermissions: (video: boolean): Promise<ApiResult<{ ok: true }>> =>
     ipcRenderer.invoke('calls:ensure-media-permissions', video),
@@ -723,7 +740,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listMeetingJoinRequests: (
     token: string,
     conversationId: string,
-  ): Promise<ApiResult<import('../shared/calls').MeetingJoinRequestItem[]>> =>
+  ): Promise<ApiResult<import('./shared/calls').MeetingJoinRequestItem[]>> =>
     ipcRenderer.invoke('calls:join-requests', token, conversationId),
   respondMeetingJoinRequest: (
     token: string,

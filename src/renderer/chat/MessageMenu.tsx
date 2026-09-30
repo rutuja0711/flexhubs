@@ -6,6 +6,7 @@ type MessageMenuProps = {
   isOwn: boolean;
   isPinned: boolean;
   isSaved: boolean;
+  isDeleted?: boolean;
   align: 'left' | 'right';
   showReplyInThread?: boolean;
   onReply: () => void;
@@ -31,6 +32,7 @@ export function MessageMenu({
   isOwn,
   isPinned,
   isSaved,
+  isDeleted = false,
   align,
   showReplyInThread = false,
   onReply,
@@ -53,22 +55,26 @@ export function MessageMenu({
     action();
   };
 
-  const items: MenuItem[] = [
-    { label: 'Reply', onClick: () => run(onReply) },
-    ...(showReplyInThread
-      ? [{ label: 'Reply in thread', onClick: () => run(onReplyInThread) }]
-      : []),
-    ...(isOwn ? [{ label: 'Edit', onClick: () => run(onEdit) }] : []),
-    { label: 'Forward', onClick: () => run(onForward) },
-    { label: isPinned ? 'Unpin' : 'Pin', onClick: () => run(onPinToggle) },
-    ...(isSaved
-      ? [{ label: 'Unsave', onClick: () => run(onUnsave) }]
-      : [{ label: 'Save', onClick: () => run(onSave) }]),
-    { label: 'Delete for me', onClick: () => run(onDeleteForMe), tone: 'danger' },
-    ...(isOwn
-      ? [{ label: 'Delete for everyone', onClick: () => run(onDeleteForEveryone), tone: 'danger' }]
-      : []),
-  ];
+  const items: MenuItem[] = isDeleted
+    ? [
+        { label: 'Delete for me', onClick: () => run(onDeleteForMe), tone: 'danger' },
+      ]
+    : ([
+        { label: 'Reply', onClick: () => run(onReply) },
+        ...(showReplyInThread
+          ? [{ label: 'Reply in thread', onClick: () => run(onReplyInThread) }]
+          : []),
+        ...(isOwn ? [{ label: 'Edit', onClick: () => run(onEdit) }] : []),
+        { label: 'Forward', onClick: () => run(onForward) },
+        { label: isPinned ? 'Unpin' : 'Pin', onClick: () => run(onPinToggle) },
+        ...(isSaved
+          ? [{ label: 'Unsave', onClick: () => run(onUnsave) }]
+          : [{ label: 'Save', onClick: () => run(onSave) }]),
+        { label: 'Delete for me', onClick: () => run(onDeleteForMe), tone: 'danger' },
+        ...(isOwn
+          ? [{ label: 'Delete for everyone', onClick: () => run(onDeleteForEveryone), tone: 'danger' }]
+          : []),
+      ] as MenuItem[]);
 
   useLayoutEffect(() => {
     if (!open || !buttonRef.current) {

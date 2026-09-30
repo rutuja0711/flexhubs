@@ -352,6 +352,25 @@ export async function addMessageReaction(
   return { ok: true, data: normalizeMessageResult(result.data) };
 }
 
+export async function removeMessageReaction(
+  token: string,
+  conversationId: string,
+  messageId: string,
+  emoji: string,
+): Promise<ApiResult<MessageItem>> {
+  const result = await apiDelete<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
+    token,
+    'Remove Reaction API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return { ok: true, data: normalizeMessageResult(result.data) };
+}
+
 function normalizeMessageResult(payload: unknown): MessageItem {
   const record = asRecord(payload);
   const messageRecord = extractMessageFromPayload(payload);
@@ -954,4 +973,17 @@ export async function fetchConversationNotificationSettings(
 
   const record = asRecord(result.data) ?? {};
   return { ok: true, data: record };
+}
+
+export async function summarizeUnreadMessages(
+  token: string,
+  conversationId: string,
+): Promise<ApiResult<{ summary: string }>> {
+  const result = await apiGet<{ summary: string }>(
+    `${API_BASE_URL}/conversations/${conversationId}/summarize-unread`,
+    token,
+    'Summarize Unread API',
+  );
+
+  return result;
 }

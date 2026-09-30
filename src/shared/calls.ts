@@ -516,7 +516,7 @@ function normalizeIceServers(value: unknown): CallIceServer[] | undefined {
           urls: urls.trim(),
           username: readString(record.username) ?? undefined,
           credential: readString(record.credential) ?? undefined,
-        };
+        } as CallIceServer;
       }
 
       if (Array.isArray(urls)) {
@@ -530,7 +530,7 @@ function normalizeIceServers(value: unknown): CallIceServer[] | undefined {
           urls: normalizedUrls,
           username: readString(record.username) ?? undefined,
           credential: readString(record.credential) ?? undefined,
-        };
+        } as CallIceServer;
       }
 
       return null;

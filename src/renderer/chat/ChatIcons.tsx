@@ -229,9 +229,9 @@ export function FilesNavIcon() {
   );
 }
 
-export function SparkleIcon() {
+export function SparkleIcon({ className }: { className?: string }) {
   return (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true" className={className}>
       <path
         d="M12 3L13.5 8.5L19 10L13.5 11.5L12 17L10.5 11.5L5 10L10.5 8.5L12 3Z"
         stroke="currentColor"
@@ -269,15 +269,17 @@ export function Avatar({
 }: {
   imageUrl: string | null;
   initials: string;
-  size?: 'sm' | 'md' | 'lg';
+  size?: 'sm' | 'md' | 'lg' | 'xl';
 }) {
   const [failed, setFailed] = useState(false);
   const sizeClass =
     size === 'sm'
       ? 'h-8 w-8 text-xs'
-      : size === 'lg'
-        ? 'h-20 w-20 text-2xl font-bold'
-        : 'h-10 w-10 text-sm font-semibold';
+      : size === 'xl'
+        ? 'h-24 w-24 text-3xl font-bold'
+        : size === 'lg'
+          ? 'h-20 w-20 text-2xl font-bold'
+          : 'h-10 w-10 text-sm font-semibold';
 
   useEffect(() => {
     setFailed(false);

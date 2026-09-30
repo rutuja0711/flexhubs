@@ -185,7 +185,7 @@ export async function enableDesktopPushNotifications(): Promise<{ ok: true } | {
     const subscription = await withTimeout(
       registration.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(keyResult.data.publicKey),
+        applicationServerKey: urlBase64ToUint8Array(keyResult.data.publicKey) as unknown as BufferSource,
       }),
       10_000,
       'Push subscription timed out.',

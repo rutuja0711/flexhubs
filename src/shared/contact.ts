@@ -37,6 +37,10 @@ export type ContactUserProfile = {
   lastSeenAt: string | null;
   status: UserPresenceStatus;
   sharePresence: boolean;
+  email: string | null;
+  role: string | null;
+  tagline: string | null;
+  createdAt: string | null;
 };
 
 export function normalizeContactUser(payload: unknown): ContactUserProfile | null {
@@ -60,6 +64,10 @@ export function normalizeContactUser(payload: unknown): ContactUserProfile | nul
     lastSeenAt: readString(user.lastSeenAt) ?? readString(user.lastSeen),
     status: profile.status,
     sharePresence: readBoolean(user.sharePresence) ?? readBoolean(user.shareOnlineStatus) ?? true,
+    email: readString(user.email) ?? profile.email ?? null,
+    role: readString(user.role) ?? readString(user.organizationRole) ?? profile.organizationRole ?? null,
+    tagline: readString(user.tagline) ?? readString(user.statusMessage) ?? profile.statusMessage ?? null,
+    createdAt: readString(user.createdAt) ?? readString(user.joinedAt) ?? null,
   };
 }
 

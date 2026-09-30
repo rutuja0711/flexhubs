@@ -62,7 +62,7 @@ type ConversationThreadProps = {
   onAddReaction: (messageId: string, emoji: string) => void;
   onEditMessage: (messageId: string, content: string) => void;
   onDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
-  onForwardMessage: (messageId: string, targetConversationId: string) => Promise<string | null>;
+  onForwardMessage: (messageId: string, targetConversationIds: string[]) => Promise<string | null>;
   onPinMessage: (messageId: string, isPinned: boolean) => void;
   onSaveMessage: (messageId: string) => void;
   onUnsaveMessage: (messageId: string) => void;
@@ -84,6 +84,7 @@ type ConversationThreadProps = {
   onOpenFlexAi?: () => void;
   onThreadReplySent?: (threadRootId: string) => void;
   onThreadMessagesRegistered?: () => void;
+  onSummarizeUnread?: () => void;
 };
 
 export function ConversationThread({
@@ -112,6 +113,7 @@ export function ConversationThread({
   onPinMessage,
   onSaveMessage,
   onUnsaveMessage,
+  onSummarizeUnread,
   savedMessageIds = new Set<string>(),
   onVotePoll,
   onConversationUpdated,
@@ -816,6 +818,7 @@ export function ConversationThread({
         }}
         onEditMessage={onEditMessage}
         onDeleteMessage={onDeleteMessage}
+        onSummarizeUnread={onSummarizeUnread}
         onForwardMessage={setForwardMessageId}
         onPinMessage={onPinMessage}
         onSaveMessage={onSaveMessage}
@@ -905,7 +908,7 @@ export function ConversationThread({
             setForwardMessageId(null);
             setForwardError('');
           }}
-          onForward={(targetConversationId) => {
+          onForward={(targetConversationIds) => {
             if (!forwardMessageId || forwardLoading) {
               return;
             }
@@ -913,7 +916,7 @@ export function ConversationThread({
             setForwardLoading(true);
             setForwardError('');
 
-            void onForwardMessage(forwardMessageId, targetConversationId).then((error) => {
+            void onForwardMessage(forwardMessageId, targetConversationIds).then((error) => {
               setForwardLoading(false);
 
               if (!error) {

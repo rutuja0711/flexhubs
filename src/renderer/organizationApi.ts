@@ -177,7 +177,7 @@ export async function loadOrganizationMembersList(canManage: boolean): Promise<{
 
     return {
       members: adminResult.ok ? adminResult.data : [],
-      status: adminResult.status,
+      status: adminResult.ok ? 200 : adminResult.status,
     };
   }
 
@@ -196,7 +196,7 @@ export async function loadOrganizationMembersList(canManage: boolean): Promise<{
 
   return {
     members: normalizeOrganizationMembers(sidebarResult.data),
-    status: sidebarResult.status,
+    status: 200,
   };
 }
 

@@ -10,7 +10,6 @@ import {
   CallsNavIcon,
   FlexLogo,
   NavIconButton,
-  SavedNavIcon,
   SparkleIcon,
 } from './ChatIcons';
 import { getUserAvatarUrl, getUserInitials, getUserDisplayName } from '../../shared/user';
@@ -102,13 +101,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
         >
           <BuildingIcon />
         </NavIconButton>
-        <NavIconButton
-          label="Saved"
-          active={activeView === 'saved'}
-          onClick={() => onNavigate('saved')}
-        >
-          <SavedNavIcon />
-        </NavIconButton>
+
         <NavIconButton
           label="Calendar"
           active={activeView === 'calendar'}

@@ -37,6 +37,13 @@ function unavailable<T>(): ApiResult<T> {
   };
 }
 
+export async function summarizeUnreadMessages(conversationId: string): Promise<ApiResult<{ summary: string }>> {
+  if (!window.electronAPI?.summarizeUnreadMessages) {
+    return unavailable();
+  }
+  return withToken((token) => window.electronAPI.summarizeUnreadMessages(token, conversationId));
+}
+
 export async function loadConversations(): Promise<ApiResult<ConversationsPayload>> {
   if (!window.electronAPI?.getConversations) {
     return unavailable();
@@ -280,6 +287,20 @@ export async function addMessageReaction(
 
   return withToken((token) =>
     window.electronAPI.addMessageReaction(token, conversationId, messageId, emoji),
+  );
+}
+
+export async function removeMessageReaction(
+  conversationId: string,
+  messageId: string,
+  emoji: string,
+): Promise<ApiResult<import('../shared/messages').MessageItem>> {
+  if (!window.electronAPI?.removeMessageReaction) {
+    return unavailable();
+  }
+
+  return withToken((token) =>
+    window.electronAPI.removeMessageReaction(token, conversationId, messageId, emoji),
   );
 }
 

@@ -1,5 +1,14 @@
-import { useEffect, useMemo, useRef, useState, type RefObject } from 'react';
-import { FiCalendar, FiClock, FiTrash2, FiX } from 'react-icons/fi';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import {
+  FiChevronLeft,
+  FiChevronRight,
+  FiSearch,
+  FiCalendar,
+  FiClock,
+  FiMoreHorizontal,
+  FiSliders,
+  FiUser
+} from 'react-icons/fi';
 import type { CalendarEventItem } from '../../shared/features';
 import type { ScheduledMessageItem } from '../../shared/extras';
 import { resolveEventCanDelete, resolveEventCanRespond, resolveMyEventResponse } from '../../shared/extras';
@@ -28,236 +37,6 @@ type CalendarViewProps = {
   onHighlightHandled?: () => void;
 };
 
-type CalendarTab = 'events' | 'scheduled';
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sept', 'Oct', 'Nov', 'Dec'];
-
-const DAY_ORDER = ['TODAY', 'TOMORROW'];
-
-function formatEventDateTime(value: string): string {
-  if (!value) {
-    return '';
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  const day = date.getDate();
-  const month = MONTHS[date.getMonth()] ?? '';
-  const hours = String(date.getHours()).padStart(2, '0');
-  const minutes = String(date.getMinutes()).padStart(2, '0');
-
-  return `${day} ${month}, ${hours}:${minutes}`;
-}
-
-function getDayLabel(value: string): string {
-  if (!value) {
-    return 'UPCOMING';
-  }
-
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return 'UPCOMING';
-  }
-
-  const now = new Date();
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-  const eventDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const diffDays = Math.round((eventDay.getTime() - today.getTime()) / 86_400_000);
-
-  if (diffDays === 0) {
-    return 'TODAY';
-  }
-
-  if (diffDays === 1) {
-    return 'TOMORROW';
-  }
-
-  return date.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }).toUpperCase();
-}
-
-function inviteeStatusClass(status: string): string {
-  const normalized = status.toUpperCase();
-
-  if (normalized === 'ACCEPTED') {
-    return 'text-[#3ecf8e]';
-  }
-
-  if (normalized === 'DECLINED') {
-    return 'text-app-muted';
-  }
-
-  return 'text-[#f5c451]';
-}
-
-function sortEventsWithinGroup(events: CalendarEventItem[]): CalendarEventItem[] {
-  return [...events].sort((left, right) => {
-    const leftCreated = Date.parse(left.createdAt ?? '') || Date.parse(left.startsAt);
-    const rightCreated = Date.parse(right.createdAt ?? '') || Date.parse(right.startsAt);
-
-    if (leftCreated !== rightCreated) {
-      return rightCreated - leftCreated;
-    }
-
-    return Date.parse(right.startsAt) - Date.parse(left.startsAt);
-  });
-}
-
-function groupEventsByDay(events: CalendarEventItem[]): Array<{ label: string; events: CalendarEventItem[] }> {
-  const groups = new Map<string, CalendarEventItem[]>();
-
-  for (const event of events) {
-    const label = getDayLabel(event.startsAt);
-    const current = groups.get(label) ?? [];
-    current.push(event);
-    groups.set(label, current);
-  }
-
-  return [...groups.entries()]
-    .sort(([left], [right]) => {
-      const leftIndex = DAY_ORDER.indexOf(left);
-      const rightIndex = DAY_ORDER.indexOf(right);
-
-      if (leftIndex !== -1 || rightIndex !== -1) {
-        return (leftIndex === -1 ? 99 : leftIndex) - (rightIndex === -1 ? 99 : rightIndex);
-      }
-
-      return left.localeCompare(right);
-    })
-    .map(([label, groupedEvents]) => ({
-      label,
-      events: sortEventsWithinGroup(groupedEvents),
-    }));
-}
-
-function EventCard({
-  event,
-  actingOn,
-  highlighted,
-  cardRef,
-  userId,
-  username,
-  displayName,
-  respondedEventIds,
-  onRespond,
-  onDelete,
-}: {
-  event: CalendarEventItem;
-  actingOn: string | null;
-  highlighted: boolean;
-  cardRef?: RefObject<HTMLDivElement | null>;
-  userId: string | null;
-  username: string | null;
-  displayName: string | null;
-  respondedEventIds: ReadonlySet<string>;
-  onRespond: (event: CalendarEventItem, accept: boolean) => void;
-  onDelete: (event: CalendarEventItem) => void;
-}) {
-  const invitees = event.invitees ?? [];
-  const mentionLine = invitees.map((invitee) => `@${invitee.username || invitee.name}`).join(' ');
-  const extrasEvent = event as import('../../shared/extras').CalendarEventItem;
-  const myResponse = resolveMyEventResponse(extrasEvent, userId, username, displayName);
-  const canRespond =
-    !extrasEvent.isOwner &&
-    !respondedEventIds.has(event.id) &&
-    resolveEventCanRespond(extrasEvent, userId, username, displayName);
-  const canDelete = resolveEventCanDelete(extrasEvent, userId);
-
-  return (
-    <article
-      ref={cardRef}
-      className={`rounded-2xl border p-5 transition-all duration-200 ${
-        highlighted
-          ? 'border-accent/80 bg-accent/10 ring-2 ring-accent/30 shadow-md shadow-accent/10'
-          : 'border-app-border bg-app-card/60 hover:bg-app-card hover:shadow-xs'
-      }`}
-    >
-      <div className="mb-3 flex items-start justify-between gap-4">
-        <h3 className="min-w-0 flex-1 text-base font-semibold text-app-text tracking-tight">{event.title}</h3>
-        <div className="flex shrink-0 items-center gap-2">
-          {event.startsAt ? (
-            <span className="rounded-lg bg-app-inset/80 px-2.5 py-1 text-xs font-medium whitespace-nowrap text-app-muted">
-              {formatEventDateTime(event.startsAt)}
-            </span>
-          ) : null}
-          {canDelete ? (
-            <button
-              type="button"
-              disabled={actingOn === event.id}
-              aria-label="Delete event"
-              className="flex h-7 w-7 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-inset hover:text-accent-soft"
-              onClick={() => void onDelete(event)}
-            >
-              <FiX size={15} />
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      {mentionLine ? <p className="mb-2 text-xs font-medium text-accent-soft">{mentionLine}</p> : null}
-
-      {invitees.length > 0 ? (
-        <div className="mb-3 flex flex-col gap-1.5 rounded-xl bg-app-inset/40 p-3">
-          {invitees.map((invitee) => (
-            <div
-              key={`${event.id}-${invitee.userId ?? invitee.username ?? invitee.name}`}
-              className="flex items-center justify-between gap-3 text-xs"
-            >
-              <span className="truncate text-app-text font-medium">{invitee.name || invitee.username}</span>
-              <span
-                className={`shrink-0 text-[10px] font-semibold uppercase tracking-wider px-2 py-0.5 rounded-md bg-app-card ${inviteeStatusClass(invitee.status)}`}
-              >
-                {invitee.status}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-
-      {event.sharedBy ? (
-        <p className="mb-2 text-xs text-app-muted">Shared by <span className="text-app-text font-medium">{event.sharedBy}</span></p>
-      ) : null}
-
-      {(event.notes || event.description) ? (
-        <p className="mb-3 text-xs text-app-muted leading-relaxed">{event.notes || event.description}</p>
-      ) : null}
-
-      {myResponse && !canRespond ? (
-        <p className={`mb-2 text-xs font-medium ${inviteeStatusClass(myResponse)}`}>
-          Your response: {myResponse}
-        </p>
-      ) : null}
-
-      {canRespond ? (
-        <div className="flex flex-wrap gap-2 pt-1">
-          <button
-            type="button"
-            disabled={actingOn === event.id}
-            className="inline-flex items-center gap-1.5 rounded-xl bg-accent px-4 py-1.5 text-xs font-semibold text-white shadow-xs transition-all hover:bg-accent-hover active:scale-[0.98] disabled:opacity-60"
-            onClick={() => void onRespond(event, true)}
-          >
-            <span aria-hidden="true">✓</span>
-            Accept
-          </button>
-          <button
-            type="button"
-            disabled={actingOn === event.id}
-            className="inline-flex items-center gap-1.5 rounded-xl border border-app-border bg-app-card/80 px-4 py-1.5 text-xs font-semibold text-app-muted transition-all hover:bg-app-inset hover:text-app-text active:scale-[0.98] disabled:opacity-60"
-            onClick={() => void onRespond(event, false)}
-          >
-            <span aria-hidden="true">✕</span>
-            Decline
-          </button>
-        </div>
-      ) : null}
-    </article>
-  );
-}
-
 export function CalendarView({
   events,
   loading,
@@ -270,106 +49,41 @@ export function CalendarView({
   highlightEventId = null,
   onHighlightHandled,
 }: CalendarViewProps) {
+  const [currentDate, setCurrentDate] = useState(new Date());
+  const [selectedDate, setSelectedDate] = useState<number | null>(new Date().getDate());
+  const [view, setView] = useState("Month");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [modalOpen, setModalOpen] = useState(false);
+  const [editEvent, setEditEvent] = useState<CalendarEventItem | null>(null);
+  
   const toast = useToast();
   const confirm = useConfirm();
-  const highlightedEventRef = useRef<HTMLDivElement | null>(null);
-  const [tab, setTab] = useState<CalendarTab>('events');
-  const [modalOpen, setModalOpen] = useState(false);
-  const [scheduled, setScheduled] = useState<ScheduledMessageItem[]>([]);
-  const [scheduledLoading, setScheduledLoading] = useState(false);
-  const [scheduledError, setScheduledError] = useState('');
-  const [actingOn, setActingOn] = useState<string | null>(null);
-  const [respondedEventIds, setRespondedEventIds] = useState<Set<string>>(() => new Set());
 
   const userId = getUserId(user);
   const username = getUserUsername(user);
   const displayName = getUserDisplayName(user);
-  const groupedEvents = useMemo(() => groupEventsByDay(events), [events]);
 
-  useEffect(() => {
-    const alreadyResponded = new Set<string>();
+  const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
+  const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay();
+  const startingEmptyCells = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
 
-    for (const event of events) {
-      const extrasEvent = event as import('../../shared/extras').CalendarEventItem;
-
-      if (extrasEvent.isOwner) {
-        continue;
-      }
-
-      const response = resolveMyEventResponse(extrasEvent, userId, username, displayName);
-
-      if (response === 'ACCEPTED' || response === 'DECLINED') {
-        alreadyResponded.add(event.id);
-      }
-    }
-
-    setRespondedEventIds(alreadyResponded);
-  }, [displayName, events, userId, username]);
-
-  useEffect(() => {
-    if (tab !== 'scheduled') {
-      return;
-    }
-
-    setScheduledLoading(true);
-    setScheduledError('');
-
-    void loadScheduledMessages().then((result) => {
-      setScheduledLoading(false);
-
-      if (!result.ok) {
-        if (onUnauthorized(result.status)) {
-          return;
-        }
-        setScheduledError(result.error);
-        return;
-      }
-
-      setScheduled(result.data);
-    });
-  }, [onUnauthorized, tab]);
-
-  useEffect(() => {
-    if (!highlightEventId || loading) {
-      return;
-    }
-
-    setTab('events');
-
-    const frame = window.requestAnimationFrame(() => {
-      highlightedEventRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      onHighlightHandled?.();
-    });
-
-    return () => window.cancelAnimationFrame(frame);
-  }, [highlightEventId, loading, onHighlightHandled]);
-
-  const handleRespond = async (event: CalendarEventItem, accept: boolean) => {
-    setActingOn(event.id);
-    const result = await respondToCalendarEvent(event.id, accept);
-    setActingOn(null);
-
-    if (!result.ok) {
-      if (onUnauthorized(result.status)) return;
-
-      const alreadyResponded = result.error.toLowerCase().includes('already responded');
-      if (alreadyResponded) {
-        setRespondedEventIds((current) => new Set([...current, event.id]));
-        toast.success(accept ? 'Event accepted.' : 'Event declined.');
-        onRefresh();
-        onNotificationsRefresh?.();
-        return;
-      }
-
-      toast.error(result.error);
-      return;
-    }
-
-    setRespondedEventIds((current) => new Set([...current, event.id]));
-    toast.success(accept ? 'Event accepted.' : 'Event declined.');
-    onRefresh();
-    onNotificationsRefresh?.();
+  const handlePrevMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1));
+    setSelectedDate(null);
   };
+  
+  const handleNextMonth = () => {
+    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1));
+    setSelectedDate(null);
+  };
+  
+  const handleToday = () => {
+    const today = new Date();
+    setCurrentDate(today);
+    setSelectedDate(today.getDate());
+  };
+
+  const monthYearString = currentDate.toLocaleString("default", { month: "long", year: "numeric" });
 
   const handleDelete = async (event: CalendarEventItem) => {
     const confirmed = await confirm({
@@ -378,204 +92,401 @@ export function CalendarView({
       confirmLabel: 'Delete event',
       tone: 'danger',
     });
-
-    if (!confirmed) {
-      return;
-    }
-
-    setActingOn(event.id);
+    if (!confirmed) return;
+    const { deleteCalendarEvent } = await import('../extrasApi');
     const result = await deleteCalendarEvent(event.id);
-    setActingOn(null);
-
     if (!result.ok) {
       if (onUnauthorized(result.status)) return;
       toast.error(result.error);
       return;
     }
-
     toast.success('Event deleted.');
     onRefresh();
+    setModalOpen(false);
   };
 
-  const handleDeleteScheduled = async (item: ScheduledMessageItem) => {
-    const confirmed = await confirm({
-      title: 'Cancel scheduled message',
-      message: 'Remove this scheduled message? It will not be sent.',
-      confirmLabel: 'Remove',
-      tone: 'danger',
+  const getCreatorInitial = (e: CalendarEventItem) => {
+    if (e.isOwner) {
+      const name = displayName || username || 'You';
+      return name[0]?.toUpperCase() || '?';
+    }
+    return e.sharedBy?.[0]?.toUpperCase() || '?';
+  };
+
+  const getEventsForDate = (dateNum: number) => {
+    return events.filter(e => {
+      if (!e.startsAt) return false;
+      const d = new Date(e.startsAt);
+      return d.getFullYear() === currentDate.getFullYear() && 
+             d.getMonth() === currentDate.getMonth() && 
+             d.getDate() === dateNum;
     });
-
-    if (!confirmed) {
-      return;
-    }
-
-    setActingOn(item.id);
-    const result = await deleteConversationScheduledMessage(item.conversationId, item.id);
-    setActingOn(null);
-
-    if (!result.ok) {
-      if (onUnauthorized(result.status)) return;
-      toast.error(result.error);
-      return;
-    }
-
-    toast.success('Scheduled message removed.');
-    setScheduled((current) => current.filter((entry) => entry.id !== item.id));
   };
+
+  const getEventColor = (id?: string) => {
+    const colors = [
+      { bg: 'bg-blue-500/10', border: 'border-blue-500/30', dot: 'bg-blue-500', hover: 'hover:bg-blue-500/20' },
+      { bg: 'bg-green-500/10', border: 'border-green-500/30', dot: 'bg-green-500', hover: 'hover:bg-green-500/20' },
+      { bg: 'bg-purple-500/10', border: 'border-purple-500/30', dot: 'bg-purple-500', hover: 'hover:bg-purple-500/20' },
+      { bg: 'bg-amber-500/10', border: 'border-amber-500/30', dot: 'bg-amber-500', hover: 'hover:bg-amber-500/20' },
+      { bg: 'bg-pink-500/10', border: 'border-pink-500/30', dot: 'bg-pink-500', hover: 'hover:bg-pink-500/20' },
+      { bg: 'bg-cyan-500/10', border: 'border-cyan-500/30', dot: 'bg-cyan-500', hover: 'hover:bg-cyan-500/20' },
+      { bg: 'bg-accent/10', border: 'border-accent/30', dot: 'bg-accent', hover: 'hover:bg-accent/20' },
+    ];
+    if (!id) return colors[0];
+    let hash = 0;
+    for (let i = 0; i < id.length; i++) {
+      hash = id.charCodeAt(i) + ((hash << 5) - hash);
+    }
+    return colors[Math.abs(hash) % colors.length];
+  };
+
+  const selectedEvents = selectedDate !== null ? getEventsForDate(selectedDate) : [];
+  
+  const selectedDateStr = selectedDate !== null 
+    ? new Date(currentDate.getFullYear(), currentDate.getMonth(), selectedDate).toLocaleDateString("default", { weekday: "short", day: "numeric", month: "short" }) 
+    : "";
 
   return (
-    <div className="flex h-full flex-col bg-app-chat-bg">
-      <header className="flex items-center justify-between border-b border-app-border px-8 py-6 bg-app-surface/50 backdrop-blur-sm">
+    <div className="flex flex-col h-full bg-app-chat-bg min-h-0 text-app-text font-sans overflow-hidden">
+      {/* HEADER */}
+      <header className="flex items-center justify-between px-8 py-6 bg-app-surface border-b border-app-border shrink-0 transition-colors">
         <div>
-          <h1 className="text-2xl font-bold text-app-text tracking-tight">Calendar</h1>
-          {tab === 'scheduled' ? (
-            <button
-              type="button"
-              className="mt-1 text-xs font-medium text-accent-soft transition-colors hover:text-accent"
-              onClick={() => setTab('events')}
-            >
-              ← Back to events
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="mt-1 text-xs font-medium text-app-muted transition-colors hover:text-app-text"
-              onClick={() => setTab('scheduled')}
-            >
-              View scheduled messages →
-            </button>
-          )}
+          <h1 className="text-2xl font-bold tracking-tight">Calendar</h1>
+          <p className="text-sm text-app-muted mt-1">
+            Plan your work, meetings and stay in sync with your team.
+          </p>
         </div>
-        {tab === 'events' ? (
-          <button
-            type="button"
-            onClick={() => setModalOpen(true)}
-            className="rounded-xl bg-gradient-to-r from-accent to-[#632a38] px-4 py-2 text-xs font-semibold text-white shadow-md shadow-accent/20 transition-all hover:brightness-110 active:scale-[0.98]"
-          >
-            + New event
+        <div className="flex items-center gap-3">
+          <div className="relative">
+            <FiSearch className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-app-muted" />
+            <input
+              type="text"
+              placeholder="Search events..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-9 pr-4 py-2 w-64 rounded-full border border-app-border text-sm focus:outline-none focus:border-accent focus:ring-1 focus:ring-accent/20 transition-all bg-app-surface-input"
+            />
+          </div>
+          <button className="p-2 border border-app-border rounded-full hover:bg-app-inset transition-colors bg-app-surface">
+            <FiSliders className="h-4 w-4 text-app-muted hover:text-app-text" />
           </button>
-        ) : null}
+          <button 
+            onClick={() => { setEditEvent(null); setModalOpen(true); }}
+            className="flex items-center gap-2 bg-accent text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-accent-hover transition-colors shadow-sm"
+          >
+            <FiCalendar className="h-4 w-4" />
+            New event
+          </button>
+        </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
-        {tab === 'events' ? (
-          <>
-            {loading ? <p className="text-sm text-app-muted">Loading calendar...</p> : null}
-            {!loading && error ? (
-              <div role="alert">
-                <p className="mb-3 text-sm text-accent-soft">{error}</p>
-                <button
-                  type="button"
-                  className="rounded-[10px] border border-app-border px-3 py-2 text-sm"
-                  onClick={onRetry}
-                >
-                  Try again
+      {/* MAIN CONTENT */}
+      <div className="flex flex-1 overflow-hidden p-6 gap-6 max-w-[1600px] mx-auto w-full">
+        {/* LEFT PANE: CALENDAR GRID */}
+        <div className="flex-1 bg-app-surface rounded-2xl shadow-sm border border-app-border flex flex-col overflow-hidden transition-colors">
+          {/* Grid Toolbar */}
+          <div className="flex items-center justify-between p-4 border-b border-app-border shrink-0">
+            <div className="flex items-center gap-4">
+              <div className="flex items-center bg-app-inset rounded-full border border-app-border p-1">
+                <button onClick={handlePrevMonth} className="p-1.5 hover:bg-app-card rounded-full transition-colors text-app-muted hover:text-app-text">
+                  <FiChevronLeft className="h-4 w-4" />
+                </button>
+                <button onClick={handleToday} className="px-3 text-sm font-medium text-app-text hover:text-accent">
+                  Today
+                </button>
+                <button onClick={handleNextMonth} className="p-1.5 hover:bg-app-card rounded-full transition-colors text-app-muted hover:text-app-text">
+                  <FiChevronRight className="h-4 w-4" />
                 </button>
               </div>
-            ) : null}
-            {!loading && !error && events.length === 0 ? (
-              <div className="mx-auto max-w-md text-center">
-                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[16px] border border-app-border bg-app-chat-panel text-app-muted">
-                  <FiCalendar className="text-2xl" />
-                </div>
-                <h2 className="mb-2 text-lg font-semibold text-app-text">Nothing scheduled yet</h2>
-                <p className="text-sm text-app-muted">
-                  Create a private event or schedule a message from chat to see it here.
-                </p>
-              </div>
-            ) : null}
-            {!loading && !error && events.length > 0 ? (
-              <div className="flex w-full flex-col gap-6">
-                {groupedEvents.map((group) => (
-                  <section key={group.label}>
-                    <h2 className="mb-3 text-xs font-semibold tracking-[0.14em] text-app-muted">
-                      {group.label}
-                    </h2>
-                    <div className="flex flex-col gap-3">
-                      {group.events.map((event) => (
-                        <EventCard
-                          key={event.id}
-                          event={event}
-                          actingOn={actingOn}
-                          highlighted={highlightEventId === event.id}
-                          cardRef={highlightEventId === event.id ? highlightedEventRef : undefined}
-                          userId={userId}
-                          username={username}
-                          displayName={displayName}
-                          respondedEventIds={respondedEventIds}
-                          onRespond={handleRespond}
-                          onDelete={handleDelete}
-                        />
-                      ))}
-                    </div>
-                  </section>
-                ))}
-              </div>
-            ) : null}
-          </>
-        ) : (
-          <>
-            {scheduledLoading ? <p className="text-sm text-app-muted">Loading scheduled messages...</p> : null}
-            {!scheduledLoading && scheduledError ? (
-              <div role="alert">
-                <p className="mb-3 text-sm text-accent-soft">{scheduledError}</p>
+              <h2 className="text-lg font-bold">{monthYearString}</h2>
+            </div>
+            
+            <div className="flex items-center bg-app-inset rounded-full border border-app-border p-1 text-sm font-medium">
+              {["Month", "Week", "Day", "Agenda"].map((v) => (
                 <button
-                  type="button"
-                  className="rounded-[10px] border border-app-border px-3 py-2 text-sm"
-                  onClick={() => setTab('scheduled')}
+                  key={v}
+                  onClick={() => setView(v)}
+                  className={`px-4 py-1.5 rounded-full transition-all ${
+                    view === v ? "bg-accent text-white shadow-sm" : "text-app-muted hover:text-app-text"
+                  }`}
                 >
-                  Try again
+                  {v}
                 </button>
-              </div>
-            ) : null}
-            {!scheduledLoading && !scheduledError && scheduled.length === 0 ? (
-              <div className="mx-auto max-w-md text-center">
-                <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-[16px] border border-app-border bg-app-chat-panel text-app-muted">
-                  <FiClock className="text-2xl" />
-                </div>
-                <h2 className="mb-2 text-lg font-semibold text-app-text">No scheduled messages</h2>
-                <p className="text-sm text-app-muted">Messages scheduled from chat will appear here.</p>
-              </div>
-            ) : null}
-            {!scheduledLoading && !scheduledError && scheduled.length > 0 ? (
-              <div className="flex flex-col gap-3">
-                {scheduled.map((item) => (
-                  <div key={item.id} className="flex items-start justify-between gap-4 rounded-[12px] border border-app-border bg-app-surface p-4">
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-app-text">{item.content || 'Scheduled message'}</p>
-                      <p className="text-sm text-app-muted">
-                        {item.conversationName}
-                        {item.scheduledAt ? ` · ${formatConversationTimestamp(item.scheduledAt)}` : ''}
-                      </p>
-                      <p className="mt-1 text-xs uppercase tracking-wide text-accent-soft">{item.status}</p>
+              ))}
+            </div>
+          </div>
+
+          {/* Grid Body */}
+          <div className="flex-1 flex flex-col min-h-0 overflow-y-auto">
+            {view === "Month" && (
+              <>
+                <div className="grid grid-cols-7 border-b border-app-border bg-app-inset/50 shrink-0">
+                  {["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"].map((day) => (
+                    <div key={day} className="py-3 text-center text-xs font-semibold text-app-muted tracking-wider">
+                      {day}
                     </div>
-                    <button
-                      type="button"
-                      disabled={actingOn === item.id}
-                      aria-label="Remove scheduled message"
-                      title="Remove scheduled message"
-                      className="flex shrink-0 items-center gap-1 rounded-lg border border-app-border px-3 py-2 text-xs text-app-muted transition-colors hover:border-accent-soft hover:text-accent-soft disabled:opacity-50"
-                      onClick={() => void handleDeleteScheduled(item)}
-                    >
-                      <FiTrash2 className="h-4 w-4" />
-                      {actingOn === item.id ? 'Removing...' : 'Remove'}
-                    </button>
-                  </div>
-                ))}
+                  ))}
+                </div>
+                <div className="flex-1 grid grid-cols-7 auto-rows-fr">
+                  {Array.from({ length: startingEmptyCells }).map((_, i) => (
+                    <div key={`empty-${i}`} className="border-r border-b border-app-border bg-app-inset/30 p-2" />
+                  ))}
+                  {Array.from({ length: daysInMonth }).map((_, i) => {
+                    const date = i + 1;
+                    const isSelected = selectedDate === date;
+                    const dayEvents = getEventsForDate(date);
+                    const isToday = new Date().getDate() === date && new Date().getMonth() === currentDate.getMonth() && new Date().getFullYear() === currentDate.getFullYear();
+
+                    return (
+                      <div 
+                        key={date} 
+                        onClick={() => setSelectedDate(date)}
+                        className={`border-r border-b border-app-border p-2 transition-colors relative min-h-[100px] cursor-pointer ${isSelected ? 'bg-accent/10' : 'hover:bg-app-inset/50'}`}
+                      >
+                        <span className={`inline-flex items-center justify-center w-7 h-7 text-sm font-medium rounded-full ${isToday ? 'bg-accent text-white shadow-sm' : isSelected ? 'bg-accent/20 text-accent' : 'text-app-text'}`}>
+                          {date}
+                        </span>
+                        <div className="mt-1 flex flex-col gap-1">
+                          {dayEvents.map(e => (
+                             <div 
+                               key={e.id} 
+                               onClick={(ev) => { ev.stopPropagation(); setEditEvent(e); setModalOpen(true); }}
+                               className="px-2 py-1 text-[10px] rounded border border-accent/20 bg-accent/5 text-app-text font-medium truncate flex items-center gap-1 shadow-sm hover:bg-accent/10 transition-colors"
+                             >
+                               <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0"></span>
+                               {e.title}
+                             </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+
+            {/* View Placeholders for Week/Day/Agenda */}
+            {view === "Week" && (
+              <div className="flex-1 flex w-full">
+                 {Array.from({ length: 7 }).map((_, i) => {
+                   // Calculate the days for the current week starting Monday
+                   const currentDay = currentDate.getDay();
+                   const distanceToMonday = currentDay === 0 ? 6 : currentDay - 1;
+                   const date = new Date(currentDate.getFullYear(), currentDate.getMonth(), currentDate.getDate() - distanceToMonday + i);
+                   const isToday = new Date().getDate() === date.getDate() && new Date().getMonth() === date.getMonth();
+                   const dayEvents = events.filter(e => {
+                     const d = new Date(e.startsAt);
+                     return d.getDate() === date.getDate() && d.getMonth() === date.getMonth();
+                   });
+                   const dayStr = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"][i];
+                   
+                   return (
+                     <div key={i} className="flex-1 border-r border-app-border flex flex-col">
+                        <div className="p-3 text-center border-b border-app-border bg-app-surface sticky top-0 z-10">
+                           <div className="text-xs font-semibold text-app-muted">{dayStr}</div>
+                           <div className={`text-lg font-bold mt-1 ${isToday ? 'text-accent' : ''}`}>{date.getDate()}</div>
+                           <button 
+                             onClick={() => { setSelectedDate(date.getDate()); setEditEvent(null); setModalOpen(true); }}
+                             className="text-[11px] font-semibold text-accent mt-2 hover:underline"
+                           >
+                             Add event
+                           </button>
+                        </div>
+                        <div className="flex-1 p-1 flex flex-col gap-1">
+                          {dayEvents.map(e => {
+                            const color = getEventColor(e.id);
+                            return (
+                              <div 
+                                key={e.id}
+                                onClick={() => { setEditEvent(e); setModalOpen(true); }}
+                                className={`px-2 py-1.5 text-xs rounded border ${color.border} ${color.bg} text-app-text font-medium truncate flex items-center gap-1.5 cursor-pointer ${color.hover}`}
+                              >
+                                <span className={`w-1.5 h-1.5 rounded-full ${color.dot} shrink-0`}></span>
+                                {e.title}
+                              </div>
+                            );
+                          })}
+                        </div>
+                     </div>
+                   );
+                 })}
               </div>
-            ) : null}
-          </>
-        )}
+            )}
+            {view === "Day" && (
+               <div className="flex-1 flex flex-col">
+                 <div className="p-4 border-b border-app-border bg-app-surface text-lg font-bold text-app-text">
+                   {selectedDateStr || 'Select a day'}
+                 </div>
+                 <div className="flex-1 p-4 flex flex-col gap-2">
+                 {selectedEvents.length > 0 ? (
+                    selectedEvents.map(e => (
+                      <div 
+                        key={e.id} 
+                        onClick={() => { setEditEvent(e); setModalOpen(true); }}
+                        className="px-4 py-3 border border-accent/30 bg-accent/5 rounded-xl cursor-pointer hover:bg-accent/10 transition-colors flex items-center gap-3"
+                      >
+                         <span className="text-sm font-semibold text-app-text">{new Date(e.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                         <h3 className="font-medium flex-1">{e.title}</h3>
+                         <span className="w-6 h-6 rounded-full bg-app-inset border border-app-border flex items-center justify-center text-[10px] font-bold shrink-0">
+                           {getCreatorInitial(e)}
+                         </span>
+                      </div>
+                    ))
+                 ) : (
+                    <div className="text-app-muted text-sm py-4">No events on this day.</div>
+                 )}
+                 </div>
+               </div>
+            )}
+            {view === "Agenda" && (
+               <div className="flex-1 flex flex-col p-6 overflow-y-auto max-w-4xl">
+                 <div className="flex flex-col gap-6">
+                   {/* Group events by date for Agenda view */}
+                   {Array.from(new Set(events.map(e => new Date(e.startsAt).toDateString()))).sort((a,b) => new Date(a).getTime() - new Date(b).getTime()).map(dateString => {
+                     const dateEvents = events.filter(e => new Date(e.startsAt).toDateString() === dateString);
+                     const d = new Date(dateString);
+                     const title = d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+                     
+                     return (
+                       <div key={dateString}>
+                         <h3 className="text-sm font-semibold text-app-muted mb-3">{title}</h3>
+                         <div className="flex flex-col gap-2">
+                           {dateEvents.map(e => {
+                             const color = getEventColor(e.id);
+                             return (
+                               <div 
+                                 key={e.id} 
+                                 onClick={() => { setEditEvent(e); setModalOpen(true); }}
+                                 className={`px-4 py-3 border ${color.border} ${color.bg} rounded-xl flex items-center justify-between cursor-pointer ${color.hover} transition-colors`}
+                               >
+                                  <div className="flex items-center gap-3">
+                                    <span className={`w-2 h-2 rounded-full ${color.dot} shrink-0`}></span>
+                                    <span className="text-xs font-semibold text-app-text whitespace-nowrap">
+                                      {new Date(e.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
+                                    <h3 className="font-medium text-sm text-app-text">{e.title}</h3>
+                                </div>
+                                <span className="w-6 h-6 rounded-full bg-app-inset border border-app-border flex items-center justify-center text-[10px] font-bold shrink-0">
+                                  {getCreatorInitial(e)}
+                                </span>
+                             </div>
+                           );
+                           })}
+                         </div>
+                       </div>
+                     );
+                   })}
+                 </div>
+               </div>
+            )}
+          </div>
+        </div>
+
+        {/* RIGHT PANE: SIDEBAR */}
+        <div className="w-[320px] flex flex-col gap-6 shrink-0 overflow-y-auto pr-2 pb-6">
+          
+          {/* Mini Calendar */}
+          <div className="bg-app-surface rounded-2xl shadow-sm border border-app-border p-5 shrink-0 transition-colors">
+            <div className="flex items-center justify-between mb-4">
+              <button onClick={handlePrevMonth} className="p-1 hover:bg-app-inset rounded-full text-app-muted"><FiChevronLeft className="w-4 h-4" /></button>
+              <h3 className="font-semibold text-sm">{monthYearString}</h3>
+              <button onClick={handleNextMonth} className="p-1 hover:bg-app-inset rounded-full text-app-muted"><FiChevronRight className="w-4 h-4" /></button>
+            </div>
+            <div className="grid grid-cols-7 gap-y-2 text-center text-xs">
+              {["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"].map(d => (
+                <span key={d} className="font-medium text-app-muted">{d}</span>
+              ))}
+              {Array.from({ length: startingEmptyCells }).map((_, i) => (
+                <span key={`empty-mini-${i}`} className="py-1"></span>
+              ))}
+              {Array.from({ length: daysInMonth }).map((_, i) => {
+                const date = i + 1;
+                const isSelected = selectedDate === date;
+                const isToday = new Date().getDate() === date && new Date().getMonth() === currentDate.getMonth() && new Date().getFullYear() === currentDate.getFullYear();
+                const hasEvent = getEventsForDate(date).length > 0;
+
+                return (
+                  <span key={date} 
+                    onClick={() => setSelectedDate(date)}
+                    className={`py-1 cursor-pointer rounded-full relative transition-colors ${
+                      isToday ? 'bg-accent text-white font-medium shadow-sm' : 
+                      isSelected ? 'bg-accent/20 text-accent font-medium' : 'text-app-text hover:bg-app-inset'
+                    }`}
+                  >
+                    {date}
+                    {hasEvent && !isToday && <span className="absolute bottom-0 left-1/2 -translate-x-1/2 w-1 h-1 bg-accent rounded-full"></span>}
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Events for Selected Date */}
+          <div className="bg-app-surface rounded-2xl shadow-sm border border-app-border p-5 shrink-0 transition-colors flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-bold text-sm uppercase tracking-wider text-app-muted">Events</h3>
+                <p className="text-xs font-semibold mt-1">{selectedDateStr || 'Select a date'}</p>
+              </div>
+              <span className="text-xs font-medium bg-app-inset px-2 py-1 rounded-md">{selectedEvents.length} event{selectedEvents.length !== 1 ? 's' : ''}</span>
+            </div>
+            
+            {selectedEvents.length > 0 ? (
+               selectedEvents.map(e => {
+                 const creatorName = e.sharedBy || 'Unknown';
+                 const avatarUrl = `https://api.dicebear.com/7.x/initials/svg?seed=${creatorName}&backgroundColor=e5e7eb,f3f4f6&textColor=374151`;
+                 const timeStr = new Date(e.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                 const color = getEventColor(e.id);
+
+                 return (
+                   <div 
+                     key={e.id} 
+                     onClick={() => { setEditEvent(e); setModalOpen(true); }}
+                     className="flex items-start gap-3 p-3 rounded-xl bg-app-card hover:bg-app-inset transition-colors border border-transparent hover:border-app-border group cursor-pointer"
+                   >
+                     <div className={`mt-1 w-2 h-2 rounded-full ${color.dot} shrink-0`}></div>
+                     <div className="flex-1 min-w-0">
+                       <h4 className="text-sm font-semibold truncate">{e.title}</h4>
+                       <p className="text-xs text-app-muted mt-0.5">{timeStr} • Private</p>
+                       <div className="flex items-center gap-2 mt-2">
+                         <img src={avatarUrl} alt={creatorName} className="w-5 h-5 rounded-full border border-app-surface bg-app-inset object-cover" />
+                         <span className="text-[10px] font-medium text-app-muted">{creatorName}</span>
+                       </div>
+                     </div>
+                     <button className="opacity-0 group-hover:opacity-100 p-1.5 text-app-muted hover:text-app-text hover:bg-app-card rounded-full transition-all">
+                       <FiMoreHorizontal className="w-4 h-4" />
+                     </button>
+                   </div>
+                 );
+               })
+            ) : (
+               <div className="flex flex-col items-center justify-center p-4 text-center">
+                  <FiCalendar className="w-6 h-6 text-app-muted mb-2" />
+                  <p className="text-sm text-app-muted mb-3">No events on this day</p>
+                  <button 
+                    onClick={() => { setEditEvent(null); setModalOpen(true); }}
+                    className="text-xs font-semibold bg-app-inset text-app-text px-3 py-1.5 rounded-lg hover:bg-app-card transition-colors"
+                  >
+                    Create event
+                  </button>
+               </div>
+            )}
+          </div>
+        </div>
       </div>
 
       <NewEventModal
         open={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={() => { setModalOpen(false); setEditEvent(null); }}
         onCreated={() => {
-          toast.success('Event created.');
+          toast.success('Event saved.');
           onRefresh();
         }}
+        onDelete={() => editEvent && handleDelete(editEvent)}
         onUnauthorized={onUnauthorized}
+        editEvent={editEvent}
+        initialDate={selectedDate ? new Date(currentDate.getFullYear(), currentDate.getMonth(), selectedDate) : null}
       />
     </div>
   );

@@ -230,7 +230,7 @@ export async function ensureNotificationPermission(): Promise<boolean> {
     }
   }
 
-  if (window.electronAPI?.showDesktopNotification && Notification.permission !== 'denied') {
+  if (typeof window.electronAPI?.showDesktopNotification === 'function' && Notification.permission !== 'denied') {
     return true;
   }
 

@@ -110,6 +110,21 @@
     background: transparent;
   }
 
+  .EmojiPickerReact .epr-category-nav::-webkit-scrollbar,
+  .EmojiPickerReact .epr-category-nav *::-webkit-scrollbar,
+  .EmojiPickerReact .epr-header-overlay::-webkit-scrollbar,
+  .EmojiPickerReact .epr-header-overlay *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+  }
+  .EmojiPickerReact .epr-category-nav,
+  .EmojiPickerReact .epr-category-nav *,
+  .EmojiPickerReact .epr-header-overlay,
+  .EmojiPickerReact .epr-header-overlay * {
+    scrollbar-width: none !important;
+  }
+
   html,
   body,
   #root {

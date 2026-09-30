@@ -76,7 +76,7 @@ export function OrganizationInviteModal({ onUnauthorized, onInviteResolved }: Or
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 sm:p-6 backdrop-blur-md animate-fade-in">
-      <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-app-border bg-app-surface/95 backdrop-blur-2xl p-6 shadow-2xl animate-pop-in origin-center">
+      <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-app-border bg-app-surface backdrop-blur-2xl p-6 shadow-2xl animate-pop-in origin-center">
         <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-app-border-strong to-transparent pointer-events-none" />
 
         <h2 className="mb-1 text-base font-semibold text-app-text tracking-tight">Workspace invitation</h2>

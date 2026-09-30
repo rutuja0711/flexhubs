@@ -23,7 +23,7 @@ export type MessageReaction = {
   username: string;
 };
 
-export type MessageMediaKind = 'gif' | 'sticker' | 'image' | 'file';
+export type MessageMediaKind = 'gif' | 'sticker' | 'image' | 'file' | 'video';
 
 export type MessageMedia = {
   kind: MessageMediaKind;
@@ -72,6 +72,7 @@ export type MessageItem = {
   poll: MessagePoll | null;
   threadRootId?: string;
   threadReplyCount?: number;
+  deletedForEveryone?: boolean;
 };
 
 const threadReplyMessageIds = new Set<string>();

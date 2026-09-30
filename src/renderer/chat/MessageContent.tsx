@@ -213,11 +213,11 @@ export function MessageContent({
 
       {visibleText ? (
         compact ? (
-          <span className="whitespace-pre-wrap break-words">
+          <span className="whitespace-pre-wrap break-words break-all">
             {highlightContent(visibleText, highlightTerm)}
           </span>
         ) : (
-          <p className="whitespace-pre-wrap break-words">{highlightContent(visibleText, highlightTerm)}</p>
+          <p className="whitespace-pre-wrap break-words break-all">{highlightContent(visibleText, highlightTerm)}</p>
         )
       ) : null}
     </div>

@@ -1,4 +1,5 @@
 import {
+  summarizeUnreadMessages,
   app,
   BrowserWindow,
   desktopCapturer,
@@ -32,6 +33,7 @@ import {
 import { fetchConversations, fetchUnreadCount } from './main/chatBootstrap';
 import {
   addMessageReaction,
+  removeMessageReaction,
   createDirectConversation,
   deleteMessage,
   editMessage,
@@ -130,6 +132,7 @@ import {
 } from './main/gifsApi';
 import {
   createCalendarEvent,
+  updateCalendarEvent,
   deleteCalendarEvent,
   deletePushSubscriptions,
   enhanceMessageText,
@@ -168,20 +171,12 @@ import {
   fetchSuperAdminStats,
   suspendSuperAdminOrganization,
 } from './main/superadminApi';
-import type { RealtimeClientConfig, RealtimeConnectionStatus } from './shared/realtime';
-import {
-  disconnectMainCallSignaling,
-  initMainCallSignaling,
-  isMainCallSignalingReady,
-  refreshMainCallSignalingAuth,
-  sendMainCallSignal,
-  setCallSignalingWindowProvider,
-  subscribeMainCallChannel,
-  unsubscribeMainCallChannel,
-} from './main/callSignalingMain';
+import type { RealtimeConnectionStatus } from '../shared/realtime';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
+
+import { setCallSignalingWindowProvider } from './main/callSignalingMain';
 
 let mainWindow: BrowserWindow | null = null;
 let callPresentationActive = false;
@@ -486,6 +481,11 @@ ipcMain.handle('superadmin:organizations', (_event, token: string, page: number,
 ipcMain.handle('superadmin:suspend', (_event, token: string, organizationId: string) =>
   suspendSuperAdminOrganization(token, organizationId),
 );
+
+ipcMain.handle('chat:summarize-unread', (_event, token: string, conversationId: string) =>
+  summarizeUnreadMessages(token, conversationId),
+);
+
 ipcMain.handle('chat:conversations', (_event, token: string, viewerUserId?: string | null) =>
   fetchConversations(token, viewerUserId),
 );
@@ -549,6 +549,11 @@ ipcMain.handle(
   'chat:add-reaction',
   (_event, token: string, conversationId: string, messageId: string, emoji: string) =>
     addMessageReaction(token, conversationId, messageId, emoji),
+);
+ipcMain.handle(
+  'chat:remove-reaction',
+  (_event, token: string, conversationId: string, messageId: string, emoji: string) =>
+    removeMessageReaction(token, conversationId, messageId, emoji),
 );
 ipcMain.handle(
   'chat:edit-message',
@@ -774,6 +779,14 @@ ipcMain.handle('extras:create-calendar-event', (_event, token: string, payloadJs
   try {
     const input = JSON.parse(payloadJson) as import('../shared/extras').CreateCalendarEventInput;
     return createCalendarEvent(token, input);
+  } catch {
+    return { ok: false, error: 'Invalid calendar event payload.' };
+  }
+});
+ipcMain.handle('extras:update-calendar-event', (_event, token: string, payloadJson: string) => {
+  try {
+    const input = JSON.parse(payloadJson) as import('../shared/extras').UpdateCalendarEventInput;
+    return updateCalendarEvent(token, input);
   } catch {
     return { ok: false, error: 'Invalid calendar event payload.' };
   }
@@ -1311,6 +1324,7 @@ const createWindow = (): void => {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
+    mainWindow?.center();
   });
 
   mainWindow.on('enter-full-screen', () => {
@@ -1717,6 +1731,10 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow();
+    } else if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+      mainWindow.center();
     }
   });
 });

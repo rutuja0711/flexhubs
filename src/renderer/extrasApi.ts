@@ -4,6 +4,7 @@ import type {
   CalendarEventItem,
   CalendarMentionableUser,
   CreateCalendarEventInput,
+  UpdateCalendarEventInput,
   PushVapidKeyResult,
   ScheduledMessageItem,
 } from '../shared/extras';
@@ -44,6 +45,16 @@ export async function createCalendarEvent(
   }
 
   return withToken((token) => window.electronAPI.createCalendarEvent(token, JSON.stringify(input)));
+}
+
+export async function updateCalendarEvent(
+  input: UpdateCalendarEventInput,
+): Promise<ApiResult<CalendarEventItem>> {
+  if (!window.electronAPI?.updateCalendarEvent) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.updateCalendarEvent(token, JSON.stringify(input)));
 }
 
 export async function respondToCalendarEvent(

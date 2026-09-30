@@ -100,25 +100,25 @@ export function ConversationSharedFiles({
   const hasMore = activeItems.length > previewLimit;
 
   return (
-    <section className="border-b border-app-border/40 p-5">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <span className="text-[10px] font-bold tracking-wider text-app-muted uppercase">
+    <section className="pb-2">
+      <div className="mb-3 flex items-center justify-between gap-2 px-1 mt-1">
+        <span className="text-[10px] font-bold tracking-wider text-[#64748b] uppercase">
           Media, links and docs
         </span>
         {activeItems.length > 0 ? (
-          <span className="text-xs text-app-muted">{activeItems.length}</span>
+          <span className="text-[12px] text-[#64748b]">{activeItems.length}</span>
         ) : null}
       </div>
 
-      <div className="mb-3 flex gap-2">
+      <div className="mb-4 flex gap-2 px-1">
         {(['media', 'docs', 'links'] as const).map((tab) => (
           <button
             key={tab}
             type="button"
-            className={`rounded-lg px-3 py-1.5 text-sm capitalize transition-colors ${
+            className={`rounded-[10px] px-4 py-[5px] text-[13px] capitalize transition-colors ${
               activeTab === tab
-                ? 'border border-accent/40 bg-accent/10 font-medium text-accent-soft'
-                : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
+                ? 'border border-[#e2d5d8] bg-[#f4e8e8] text-[#4b5563]'
+                : 'text-[#64748b] hover:bg-[#f0f4f8] hover:text-[#4b5563]'
             }`}
             onClick={() => setActiveTab(tab)}
           >
@@ -127,63 +127,65 @@ export function ConversationSharedFiles({
         ))}
       </div>
 
-      {loadingTab === activeTab ? (
-        <p className="py-6 text-center text-sm text-app-muted">Loading...</p>
-      ) : error ? (
-        <p className="py-4 text-sm text-accent-soft" role="alert">
-          {error}
-        </p>
-      ) : visibleItems.length === 0 ? (
-        <p className="rounded-xl border border-dashed border-app-border px-3 py-6 text-center text-sm text-app-muted">
-          No {activeTab} shared yet.
-        </p>
-      ) : activeTab === 'media' ? (
-        <div className="grid grid-cols-4 gap-2">
-          {visibleItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className="aspect-square overflow-hidden rounded-lg bg-app-elevated transition-opacity hover:opacity-80"
-              onClick={() => openSharedItem(item)}
-              aria-label={item.name}
-            >
-              {item.url && isImageFile(item) ? (
-                <RemoteImage
-                  src={item.url}
-                  alt={item.name}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-app-muted">
-                  <FiFile />
+      <div className="px-1">
+        {loadingTab === activeTab ? (
+          <p className="py-6 text-center text-[13px] text-app-muted">Loading...</p>
+        ) : error ? (
+          <p className="py-4 text-[13px] text-accent-soft" role="alert">
+            {error}
+          </p>
+        ) : visibleItems.length === 0 ? (
+          <div className="rounded-[12px] border border-dashed border-[#e2d5d8] py-8 flex flex-col items-center justify-center">
+            <span className="text-[13px] text-[#64748b]">No {activeTab} shared yet.</span>
+          </div>
+        ) : activeTab === 'media' ? (
+          <div className="grid grid-cols-4 gap-2 max-h-[300px] overflow-y-auto">
+            {visibleItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="aspect-square overflow-hidden rounded-[10px] bg-app-elevated transition-opacity hover:opacity-80"
+                onClick={() => openSharedItem(item)}
+                aria-label={item.name}
+              >
+                {item.url && isImageFile(item) ? (
+                  <RemoteImage
+                    src={item.url}
+                    alt={item.name}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-app-muted">
+                    <FiFile />
+                  </div>
+                )}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="space-y-[10px] max-h-[300px] overflow-y-auto pr-1">
+            {visibleItems.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                className="flex w-full items-center gap-3 rounded-[12px] border border-[#e2d5d8] bg-[#f8f9fa] px-3 py-2.5 text-left transition-colors hover:bg-[#f0f4f8]"
+                onClick={() => openSharedItem(item)}
+              >
+                <div className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px] bg-[#f4e8e8] text-[#972c44]">
+                  {activeTab === 'links' ? <FiLink className="text-[15px]" /> : <FiFile className="text-[15px]" />}
                 </div>
-              )}
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="space-y-2">
-          {visibleItems.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className="flex w-full items-center gap-3 rounded-xl border border-app-border bg-app-elevated px-3 py-2.5 text-left transition-colors hover:bg-app-chat-hover"
-              onClick={() => openSharedItem(item)}
-            >
-              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent-soft">
-                {activeTab === 'links' ? <FiLink /> : <FiFile />}
-              </div>
-              <span className="min-w-0 flex-1 truncate text-sm text-app-text">{item.name}</span>
-              <FiChevronRight className="shrink-0 text-app-muted" />
-            </button>
-          ))}
-        </div>
-      )}
+                <span className="min-w-0 flex-1 truncate text-[13px] text-[#1e293b]">{item.name}</span>
+                <FiChevronRight className="shrink-0 text-app-muted text-sm" />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
 
       {onViewAll && activeItems.length > 0 ? (
         <button
           type="button"
-          className="mt-3 flex items-center gap-1 text-sm font-medium text-accent-soft transition-colors hover:text-accent"
+          className="mt-3 ml-1 flex items-center gap-1 text-[13px] font-medium text-accent-soft transition-colors hover:text-accent"
           onClick={() => onViewAll(activeTab)}
         >
           View all {activeItems.length}

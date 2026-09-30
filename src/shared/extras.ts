@@ -46,6 +46,14 @@ export type CreateCalendarEventInput = {
   conversationId?: string;
 };
 
+export type UpdateCalendarEventInput = {
+  eventId: string;
+  title?: string;
+  startsAt?: string;
+  description?: string;
+  mentionUserIds?: string[];
+};
+
 export type CalendarEventInvitee = {
   userId: string | null;
   username: string;
@@ -335,7 +343,7 @@ export function isEventCreator(
 
   const sharedBy = event.sharedBy.toLowerCase();
 
-  return (
+  return Boolean(
     (username && sharedBy === username.toLowerCase()) ||
     (displayName && sharedBy === displayName.toLowerCase()) ||
     (username && sharedBy.includes(username.toLowerCase()) && !event.invitees?.length)

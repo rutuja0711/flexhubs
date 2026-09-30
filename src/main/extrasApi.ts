@@ -5,6 +5,7 @@ import type {
   CalendarEventItem,
   CalendarMentionableUser,
   CreateCalendarEventInput,
+  UpdateCalendarEventInput,
   PushVapidKeyResult,
   ScheduledMessageItem,
 } from '../shared/extras';
@@ -16,7 +17,7 @@ import {
   normalizeVapidPublicKey,
   sanitizeAiApiError,
 } from '../shared/extras';
-import { apiDelete, apiGet, apiPost } from './apiRequest';
+import { apiDelete, apiGet, apiPost, apiPatch } from './apiRequest';
 
 async function apiDeleteWithBody<T>(
   url: string,
@@ -129,6 +130,42 @@ export async function createCalendarEvent(
 
   if (!event) {
     return { ok: false, error: 'Event created but response was empty.' };
+  }
+
+  return { ok: true, data: event };
+}
+
+export async function updateCalendarEvent(
+  token: string,
+  input: UpdateCalendarEventInput,
+): Promise<ApiResult<CalendarEventItem>> {
+  const payload: Record<string, unknown> = {};
+  if (input.title !== undefined) payload.title = input.title;
+  if (input.startsAt !== undefined) payload.startsAt = input.startsAt;
+  if (input.description !== undefined) payload.description = input.description.trim();
+  if (input.mentionUserIds !== undefined) {
+    payload.mentionUserIds = input.mentionUserIds;
+    payload.inviteeIds = input.mentionUserIds;
+    payload.mentions = input.mentionUserIds;
+    payload.invitees = input.mentionUserIds;
+  }
+
+  const result = await apiPatch<unknown>(
+    `${API_BASE_URL}/calendar/events/${input.eventId}`,
+    token,
+    'Update Calendar Event API',
+    payload,
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const events = normalizeCalendarEventsDetailed(result.data);
+  const event = events[0] ?? normalizeCalendarEventsDetailed([result.data])[0];
+
+  if (!event) {
+    return { ok: false, error: 'Event updated but response was empty.' };
   }
 
   return { ok: true, data: event };

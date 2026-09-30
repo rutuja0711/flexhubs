@@ -15,7 +15,7 @@ import {
 } from '../../shared/messages';
 import { loadMessageById } from '../chatApi';
 import { formatConversationTimestamp, formatMessageDayDivider, messageDayKey } from './format';
-import { Avatar } from './ChatIcons';
+import { Avatar, SparkleIcon } from './ChatIcons';
 import { MessageMenu } from './MessageMenu';
 import { ReactionChip } from './ReactionChip';
 import { ReactionPicker } from './ReactionPicker';
@@ -29,7 +29,7 @@ function MessageListSurface({
   className?: string;
 }) {
   return (
-    <div className={`flex min-h-0 flex-1 flex-col ${className}`.trim()}>
+    <div className={`flex min-h-0 flex-1 flex-col relative ${className}`.trim()}>
       {children}
     </div>
   );
@@ -240,16 +240,8 @@ function MessageSeenBy({
     return null;
   }
 
-  const detail = formatMessageSeenByDetail(readers);
-
-  return (
-    <span
-      className="max-w-[12rem] truncate text-[0.6875rem] leading-none text-app-message-out-text/70"
-      title={detail}
-    >
-      {formatMessageSeenByLabel(readers)}
-    </span>
-  );
+  // The user requested not to show "Seen by" and the person's name, just the double ticks
+  return null;
 }
 
 function isLocalMessageId(id: string): boolean {
@@ -428,24 +420,30 @@ const MessageRow = memo(function MessageRow({
           })()
         ) : null}
         {isEditing ? (
-          <div className="space-y-2">
-            <textarea
-              value={editDraft}
-              onChange={(event) => onEditDraftChange(event.target.value)}
-              rows={3}
-              className="w-full rounded-xl border border-app-border bg-app-surface px-3 py-2 text-sm text-app-text outline-none focus:border-accent"
-            />
+          <div className="flex flex-col gap-1 items-end">
+            <div className={bubbleClassName + " p-0 overflow-hidden grid"}>
+              {/* Invisible div to perfectly size the parent bubble */}
+              <div className="invisible col-start-1 row-start-1 min-w-[200px] whitespace-pre-wrap break-words px-3.5 py-2 text-sm leading-relaxed">
+                {editDraft + ' '}
+              </div>
+              <textarea
+                value={editDraft}
+                onChange={(event) => onEditDraftChange(event.target.value)}
+                className="col-start-1 row-start-1 h-full w-full resize-none bg-transparent px-3.5 py-2 text-sm leading-relaxed text-inherit outline-none overflow-hidden"
+                autoFocus
+              />
+            </div>
             <div className="flex justify-end gap-2">
               <button
                 type="button"
-                className="rounded-lg px-3 py-1.5 text-xs text-app-muted hover:bg-app-chat-hover"
+                className="rounded-lg px-3 py-1.5 text-xs text-app-muted hover:bg-app-chat-hover transition-colors"
                 onClick={onCancelEdit}
               >
                 Cancel
               </button>
               <button
                 type="button"
-                className="rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white"
+                className="rounded-lg bg-accent/80 hover:bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors"
                 onClick={onSaveEdit}
               >
                 Save
@@ -492,7 +490,7 @@ const MessageRow = memo(function MessageRow({
                       </>
                     ) : (
                       <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-1.5">
-                        <span className="min-w-0 whitespace-pre-wrap break-words text-left">
+                        <span className="min-w-0 whitespace-pre-wrap break-words break-all text-left">
                           <MessageContent
                             message={message}
                             highlightTerm={highlightTerm}
@@ -557,6 +555,7 @@ const MessageRow = memo(function MessageRow({
                 isOwn={message.isOwn}
                 isPinned={isPinned}
                 isSaved={savedMessageIds.has(message.id)}
+                isDeleted={message.content.trim() === 'This message was deleted.'}
                 align={message.isOwn ? 'right' : 'left'}
                 showReplyInThread={threadsEnabled}
                 onReply={() => onReplyMessage(message.id)}
@@ -629,6 +628,7 @@ type MessageListProps = {
   showReactionAuthors?: boolean;
   conversationDetails?: Record<string, unknown> | null;
   conversationKind?: string;
+  onSummarizeUnread?: () => void;
 };
 
 export function MessageList({
@@ -663,6 +663,7 @@ export function MessageList({
   showReactionAuthors = false,
   conversationDetails = null,
   conversationKind,
+  onSummarizeUnread,
 }: MessageListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
@@ -887,6 +888,16 @@ export function MessageList({
 
   return (
     <MessageListSurface>
+      {onSummarizeUnread && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[20] flex justify-center w-full pointer-events-none">
+          <button
+            onClick={onSummarizeUnread}
+            className="pointer-events-auto flex items-center gap-2 rounded-full bg-[#8c2a44] hover:bg-[#7a243a] px-4 py-2 text-[13px] font-semibold text-white shadow-md transition-colors"
+          >
+            <SparkleIcon className="h-4 w-4" /> Summarize recent messages
+          </button>
+        </div>
+      )}
       {showRefreshing ? (
         <div
           className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden bg-app-border"

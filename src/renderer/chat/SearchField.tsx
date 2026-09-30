@@ -48,7 +48,7 @@ export function SearchField({
                     ? 'border-accent ring-2 ring-accent'
                     : 'border-app-border focus:border-accent focus:ring-2 focus:ring-accent/20 focus:bg-app-surface'
                 }`
-              : `rounded-xl border bg-app-surface-input/80 py-2 pr-3 pl-9 text-xs shadow-inner shadow-black/5 ${
+              : `rounded-xl border bg-app-surface-input/80 h-9 pr-3 pl-9 text-xs shadow-inner shadow-black/5 ${
                   error
                     ? 'border-accent ring-2 ring-accent'
                     : 'border-app-border focus:border-accent/70 focus:ring-1 focus:ring-accent/20 focus:bg-app-surface-input'

@@ -12,6 +12,11 @@ import {
   FiTrash2,
   FiVideo,
   FiX,
+  FiClock,
+  FiUser,
+  FiLogOut,
+  FiMoreHorizontal,
+  FiMessageSquare,
 } from 'react-icons/fi';
 import type { ConversationItem } from '../../shared/chat';
 import { mapApiPresenceToStatus, type PresenceStatus } from '../../shared/chat';
@@ -48,39 +53,36 @@ type ContactInfoPanelProps = {
   snoozeOptions: ReadonlyArray<{ value: string; label: string }>;
 };
 
-type ActionRowProps = {
-  icon: ReactNode;
+type AccordionProps = {
   title: string;
-  subtitle?: string;
-  onClick?: () => void;
-  disabled?: boolean;
-  danger?: boolean;
+  children: ReactNode;
+  defaultOpen?: boolean;
   trailing?: ReactNode;
+  badge?: string | number;
 };
 
-function ActionRow({ icon, title, subtitle, onClick, disabled, danger, trailing }: ActionRowProps) {
+function Accordion({ title, children, defaultOpen = false, trailing, badge }: AccordionProps) {
+  const [isOpen, setIsOpen] = useState(defaultOpen);
   return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={onClick}
-      className={`group flex w-full items-center gap-3 rounded-2xl border border-app-border/60 bg-app-card/50 px-3.5 py-3 text-left transition-all duration-150 hover:bg-app-card hover:border-app-border hover:shadow-xs disabled:opacity-50 ${
-        danger ? 'border-red-500/20 hover:border-red-500/40 hover:bg-red-500/5' : ''
-      }`}
-    >
-      <div
-        className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition-transform group-hover:scale-105 ${
-          danger ? 'bg-red-500/10 text-red-400' : 'bg-app-inset text-app-muted'
-        }`}
+    <div className="border-b border-app-border/40">
+      <button 
+        type="button"
+        className="flex w-full items-center justify-between p-4 py-3.5 hover:bg-app-inset/30 transition-colors"
+        onClick={() => setIsOpen(!isOpen)}
       >
-        {icon}
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className={`text-sm font-medium ${danger ? 'text-red-400' : 'text-app-text'}`}>{title}</p>
-        {subtitle ? <p className="mt-0.5 text-xs text-app-muted">{subtitle}</p> : null}
-      </div>
-      {trailing ?? <FiChevronRight className="shrink-0 text-app-muted/70 group-hover:text-app-text group-hover:translate-x-0.5 transition-all text-xs" />}
-    </button>
+        <span className="text-[14px] font-semibold text-app-text">{title}</span>
+        <div className="flex items-center gap-3">
+           {badge != null && <span className="bg-app-inset/80 text-app-muted text-xs px-2.5 py-0.5 rounded-full font-medium">{badge}</span>}
+           {trailing}
+           <FiChevronDown className={`text-app-muted transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+        </div>
+      </button>
+      {isOpen && (
+        <div className="px-4 pb-4">
+          {children}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -115,35 +117,26 @@ export function ContactInfoPanel({
   const loadProfile = useCallback(async () => {
     setLoading(true);
     setError('');
-
     const result = await loadUserProfile(peerUserId);
-
     setLoading(false);
-
     if (!result.ok) {
       setError(result.error);
       return;
     }
-
     const normalized = normalizeContactUser(result.data);
-
     if (!normalized) {
       setError('Could not load contact profile.');
       return;
     }
-
     setProfile(normalized);
   }, [peerUserId]);
 
   const refreshPresence = useCallback(async () => {
     const result = await loadUserPresence([peerUserId]);
-
     if (!result.ok) {
       return;
     }
-
     const item = result.data.find((entry) => entry.userId === peerUserId);
-
     if (item) {
       setLiveStatus(mapApiPresenceToStatus(item.status));
     }
@@ -155,11 +148,9 @@ export function ContactInfoPanel({
 
   useEffect(() => {
     void refreshPresence();
-
     const intervalId = window.setInterval(() => {
       void refreshPresence();
     }, 30_000);
-
     return () => window.clearInterval(intervalId);
   }, [refreshPresence]);
 
@@ -179,203 +170,128 @@ export function ContactInfoPanel({
       confirmLabel: 'Block user',
       tone: 'danger',
     });
-
     if (!confirmed) {
       return;
     }
-
     setBlocking(true);
     const result = await blockUser(peerUserId);
     setBlocking(false);
-
     if (!result.ok) {
       toast.error(result.error);
       return;
     }
-
     toast.success(`${displayName} blocked.`);
     onClose();
   };
 
   return (
     <div className="flex h-full w-[360px] shrink-0 flex-col border-l border-app-border/70 bg-app-surface/95 backdrop-blur-xl font-sans text-app-text shadow-2xl">
-      <header className="flex items-center justify-between border-b border-app-border/50 px-5 py-4">
-        <div className="min-w-0 flex-1">
-          <span className="block text-[10px] font-bold tracking-wider text-app-muted uppercase">
-            Contact Details
-          </span>
-          <h2 className="truncate text-base font-semibold text-app-text tracking-tight">{displayName}</h2>
-        </div>
+      <header className="flex items-center justify-between border-b border-app-border/40 px-4 py-4">
+        <h2 className="text-[17px] font-bold text-app-text tracking-tight">Conversation details</h2>
         <button
           type="button"
           onClick={onClose}
           className="flex h-8 w-8 items-center justify-center rounded-xl text-app-muted transition-colors hover:bg-app-inset hover:text-app-text"
           aria-label="Close contact panel"
         >
-          <FiX className="text-base" />
+          <FiX className="text-xl" />
         </button>
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <section className="flex flex-col items-center border-b border-app-border/50 px-5 py-6 bg-gradient-to-b from-accent/5 to-transparent">
-          <div className="relative mb-3.5">
+        <div className="flex flex-col items-center pt-8 pb-6 px-4">
+          <div className="relative mb-3 flex items-center justify-center h-[88px] w-[88px]">
             <Avatar
               imageUrl={profile?.avatarUrl ?? null}
               initials={profile?.avatarInitials ?? displayName.slice(0, 2).toUpperCase()}
-              size="lg"
-            />
-            <span
-              className={`absolute right-1 bottom-1 h-3.5 w-3.5 rounded-full ring-2 ring-app-surface ${presenceDotClass(presenceStatus)}`}
-              aria-hidden="true"
+              size="xl"
             />
           </div>
-          <h3 className="text-base font-semibold text-app-text tracking-tight">{displayName}</h3>
-          <p className="mt-1 text-xs text-app-muted">
-            {loading ? 'Loading...' : presenceLabel}
-          </p>
-          {error ? (
-            <p className="mt-2 text-xs text-accent-soft" role="alert">
-              {error}
-            </p>
-          ) : null}
-        </section>
+          <div className="flex items-center gap-1 mb-1">
+            <h3 className="text-[17px] font-bold text-app-text">{displayName}</h3>
+          </div>
+          <div className="flex items-center gap-1.5 text-[13px] mb-1">
+            <span className={`w-2 h-2 rounded-full ${presenceStatus === 'online' ? 'bg-emerald-500' : 'bg-app-muted'}`}></span>
+            <span className="text-app-text font-medium">{presenceStatus === 'online' ? 'Online' : presenceLabel}</span>
+          </div>
+          {profile?.role && <p className="text-[13px] text-app-muted mb-1">{profile.role}</p>}
+          {profile?.tagline && <p className="text-[13px] text-app-muted">"{profile.tagline}"</p>}
+        </div>
 
-        <section className="border-b border-app-border/50 p-5">
-          <span className="mb-1.5 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Bio</span>
-          <p className="text-xs leading-relaxed text-app-muted">
-            {profile?.bio?.trim() || 'No bio added yet'}
-          </p>
-        </section>
+        <div className="flex items-center justify-center gap-6 pb-6 border-b border-app-border/40 px-4">
+          <button className="flex flex-col items-center gap-2 group">
+            <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-app-border bg-transparent text-[#972c44] transition-colors group-hover:bg-[#972c44]/5">
+              <FiMessageSquare className="text-lg" />
+            </div>
+            <span className="text-[11px] font-medium text-app-text">Message</span>
+          </button>
+          <button className="flex flex-col items-center gap-2 group" onClick={onStartVoiceCall} disabled={!canCall || callBusy}>
+            <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-app-border bg-transparent text-[#972c44] transition-colors group-hover:bg-[#972c44]/5">
+              <FiPhone className="text-lg" />
+            </div>
+            <span className="text-[11px] font-medium text-app-text">Call</span>
+          </button>
+          <button className="flex flex-col items-center gap-2 group" onClick={onStartVideoCall} disabled={!canCall || callBusy}>
+            <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-app-border bg-transparent text-[#972c44] transition-colors group-hover:bg-[#972c44]/5">
+              <FiVideo className="text-lg" />
+            </div>
+            <span className="text-[11px] font-medium text-app-text">Video</span>
+          </button>
+        </div>
 
-        <ConversationSharedFiles conversationId={conversation.id} />
-
-        <section className="space-y-2 p-5">
-          {canCall ? (
-            <>
-              <ActionRow
-                icon={<FiPhone />}
-                title="Audio call"
-                subtitle="Start a voice call"
-                disabled={callBusy}
-                onClick={onStartVoiceCall}
-              />
-              <ActionRow
-                icon={<FiVideo />}
-                title="Video call"
-                subtitle="Start a video call"
-                disabled={callBusy}
-                onClick={onStartVideoCall}
-              />
-            </>
-          ) : null}
-
-          <ActionRow
-            icon={<FiSearch />}
-            title="Search messages"
-            subtitle="Find text in this chat"
-            onClick={() => {
-              onClose();
-              onOpenSearch();
-            }}
-          />
-
-          <ActionRow
-            icon={<PinIcon size={16} />}
-            title="Pinned messages"
-            subtitle={pinnedCount > 0 ? `${pinnedCount} pinned` : 'No pinned messages yet'}
-            onClick={() => {
-              onClose();
-              onOpenPinned();
-            }}
-          />
-
-          <div className="relative">
-            <ActionRow
-              icon={<FiBell />}
-              title="Notifications"
-              subtitle={notificationsSnoozed ? 'Notifications snoozed' : 'Notifications on'}
-              trailing={
-                <FiChevronDown
-                  className={`shrink-0 text-app-muted transition-transform ${snoozeMenuOpen ? 'rotate-180' : ''}`}
-                />
-              }
-              onClick={() => setSnoozeMenuOpen((open) => !open)}
-            />
-            {snoozeMenuOpen ? (
-              <div className="mt-2 rounded-2xl border border-app-border/80 bg-app-surface/95 backdrop-blur-xl p-1.5 shadow-xl">
-                {notificationsSnoozed ? (
-                  <button
-                    type="button"
-                    className="block w-full rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-app-inset transition-colors"
-                    onClick={() => {
-                      setSnoozeMenuOpen(false);
-                      onSnooze('off');
-                    }}
-                  >
-                    Turn notifications back on
-                  </button>
-                ) : null}
-                {snoozeOptions.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    className="block w-full rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-app-inset transition-colors"
-                    onClick={() => {
-                      setSnoozeMenuOpen(false);
-                      onSnooze(option.value);
-                    }}
-                  >
-                    {option.label}
-                  </button>
-                ))}
+        <Accordion title="About" defaultOpen>
+          <div className="space-y-4 pt-2">
+            <div className="flex items-center">
+              <div className="flex items-center gap-3 w-[120px] text-app-muted">
+                <FiClock className="text-base" />
+                <span className="text-[13px]">Local time</span>
               </div>
-            ) : null}
+              <span className="text-[13px] text-app-text font-medium">{new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+            </div>
+            {profile?.email && (
+              <div className="flex items-center">
+                <div className="flex items-center gap-3 w-[120px] text-app-muted">
+                  <FiMail className="text-base" />
+                  <span className="text-[13px]">Email</span>
+                </div>
+                <span className="text-[13px] text-[#972c44] font-medium truncate">{profile.email}</span>
+              </div>
+            )}
+            {profile?.createdAt && (
+              <div className="flex items-center">
+                <div className="flex items-center gap-3 w-[120px] text-app-muted">
+                  <FiUser className="text-base" />
+                  <span className="text-[13px]">Member since</span>
+                </div>
+                <span className="text-[13px] text-app-text font-medium">
+                  {new Date(profile.createdAt).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}
+                </span>
+              </div>
+            )}
           </div>
+        </Accordion>
 
-          <ActionRow
-            icon={<FiCalendar />}
-            title="Schedule event"
-            subtitle="Add a calendar reminder for this chat"
-            onClick={() => {
-              onClose();
-              onScheduleEvent();
-            }}
-          />
+        <Accordion title="Shared files" defaultOpen trailing={<span className="text-[12px] font-medium text-[#972c44]">See all</span>}>
+          <div className="pt-2">
+            <ConversationSharedFiles conversationId={conversation.id} />
+          </div>
+        </Accordion>
 
-          <ActionRow
-            icon={<FiMail />}
-            title="Mark as unread"
-            subtitle="Show this chat as unread in your list"
-            onClick={onMarkUnread}
-          />
+        <Accordion title="Pinned messages" badge={pinnedCount > 0 ? pinnedCount : undefined}>
+          <div className="pt-2 text-[13px] text-app-muted">Pinned messages will appear here...</div>
+        </Accordion>
 
-          <ActionRow
-            icon={<FiMapPin />}
-            title={conversation.isPinned ? 'Unpin chat' : 'Pin chat'}
-            subtitle="Pin this chat to the top of your list"
-            onClick={onTogglePinChat}
-          />
-
-          <ActionRow
-            icon={<FiTrash2 />}
-            title="Clear chat history"
-            subtitle="Hide messages on your device only"
-            danger
-            onClick={onClearHistory}
-          />
-
-          <ActionRow
-            icon={<FiSlash />}
-            title="Block user"
-            subtitle="Stop messages and requests"
-            danger
-            disabled={blocking}
-            onClick={() => {
-              void handleBlockUser();
-            }}
-          />
-        </section>
+        <div className="p-4 mt-2 mb-6">
+          <button 
+            onClick={() => { onClose(); }}
+            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-red-500/20 bg-red-500/5 py-3 text-[#c42c44] transition-colors hover:bg-red-500/10 hover:border-red-500/30"
+          >
+            <FiLogOut className="text-base" />
+            <span className="text-[13px] font-semibold">Leave conversation</span>
+          </button>
+        </div>
       </div>
     </div>
   );
 }
+
