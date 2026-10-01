@@ -2,18 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import {
   FiBell,
   FiBellOff,
+  FiCheck,
   FiChevronDown,
   FiClock,
   FiEye,
   FiLogOut,
-  FiMail,
   FiMoon,
-  FiRefreshCw,
   FiStar,
   FiSun,
   FiUpload,
   FiUser,
   FiVolume2,
+  FiShield,
+  FiSmartphone,
 } from 'react-icons/fi';
 import { RemoteImage } from '../RemoteImage';
 import {
@@ -21,6 +22,8 @@ import {
   applyNotificationPreferenceUpdate,
   buildGeneratedAvatarUrl,
   normalizeUserProfile,
+  resolveDndSelectValue,
+  resolveSnoozeSelectValue,
   uiStatusToApi,
   type AvatarStyleItem,
   type ProfileSettings,
@@ -45,7 +48,6 @@ import {
   unblockUser,
   uploadUserProfileImage,
 } from '../chatApi';
-// import { ColorThemePicker } from '../theme/ColorThemePicker';
 import { useTheme } from '../theme/ThemeProvider';
 import { useToast } from '../ui/Toast';
 import {
@@ -117,13 +119,6 @@ function getDeviceTimezone(): string {
   }
 }
 
-function snoozeValueFromUntil(until: string | null): string {
-  if (!until) return 'off';
-  const target = new Date(until).getTime();
-  if (Number.isNaN(target) || target <= Date.now()) return 'off';
-  return 'custom';
-}
-
 function dndLabel(settings: ProfileSettings): string {
   if (!settings.dndEnabled) {
     return 'Off';
@@ -142,26 +137,28 @@ function statusDotClass(statusUi: string): string {
 
 function SectionCard({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
-    <div className={`rounded-2xl border border-app-border bg-app-card/60 shadow-xs backdrop-blur-sm ${className}`}>{children}</div>
+    <div className={`rounded-xl border border-app-border bg-app-surface shadow-xs ${className}`}>
+      {children}
+    </div>
   );
 }
 
-function SectionGroup({
-  title,
-  children,
-  className = '',
-}: {
-  title: string;
-  children: ReactNode;
-  className?: string;
-}) {
+function NavButton({ icon, label, active, onClick, danger }: { icon: ReactNode, label: string, active?: boolean, onClick: () => void, danger?: boolean }) {
   return (
-    <div className={className}>
-      <h2 className="mb-8 border-b border-app-border pb-3 text-sm font-bold tracking-wide text-app-muted uppercase">
-        {title}
-      </h2>
-      <div className="space-y-12">{children}</div>
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
+        danger 
+          ? 'text-red-500 hover:bg-red-500/10 font-semibold'
+          : active 
+            ? 'bg-app-chat-hover text-app-text font-bold' 
+            : 'text-app-muted hover:bg-app-chat-hover/50 hover:text-app-text font-medium'
+      }`}
+    >
+      <span className="text-[1.1rem] shrink-0">{icon}</span>
+      {label}
+    </button>
   );
 }
 
@@ -173,6 +170,7 @@ export function ProfileSettingsView({
 }: ProfileSettingsViewProps) {
   const { theme, setTheme } = useTheme();
   const toast = useToast();
+  const [activeTab, setActiveTab] = useState<'profile' | 'appearance' | 'notifications' | 'privacy'>('profile');
   const [profile, setProfile] = useState<UserProfileState | null>(null);
   const [settings, setSettings] = useState<ProfileSettings | null>(null);
   const [avatarStyles, setAvatarStyles] = useState<AvatarStyleItem[]>([]);
@@ -182,6 +180,8 @@ export function ProfileSettingsView({
   const [saving, setSaving] = useState(false);
   const [statusUi, setStatusUi] = useState('Available');
   const [statusMessage, setStatusMessage] = useState('');
+  const [savedStatusMessage, setSavedStatusMessage] = useState('');
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [timezone, setTimezone] = useState('UTC');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarTab, setAvatarTab] = useState<AvatarTab>('avatar');
@@ -189,13 +189,10 @@ export function ProfileSettingsView({
   const [avatarSeed, setAvatarSeed] = useState('');
   const [usernameDraft, setUsernameDraft] = useState('');
   const [savedUsername, setSavedUsername] = useState('');
-  const [snoozeOpen, setSnoozeOpen] = useState(false);
   const [snoozeValue, setSnoozeValue] = useState('off');
-  const [dndOpen, setDndOpen] = useState(false);
   const [dndValue, setDndValue] = useState('off');
   const [pushEnabled, setPushEnabled] = useState(() => shouldDeliverDesktopNotifications());
   const [pushBusy, setPushBusy] = useState(false);
-  const [pushMessage, setPushMessage] = useState('');
   const [blockedUsers, setBlockedUsers] = useState<import('../../shared/features').BlockedUserItem[]>([]);
   const [blockedLoading, setBlockedLoading] = useState(false);
   const [unblockingId, setUnblockingId] = useState<string | null>(null);
@@ -239,6 +236,7 @@ export function ProfileSettingsView({
       setSettings(nextSettings);
       setStatusUi(apiStatusToUi(nextProfile.status));
       setStatusMessage(nextProfile.statusMessage);
+      setSavedStatusMessage(nextProfile.statusMessage);
       setManualPresenceStatus(nextProfile.status, nextProfile.statusMessage);
       setTimezone(nextProfile.timezone);
       setAvatarUrl(nextProfile.avatarUrl);
@@ -247,10 +245,8 @@ export function ProfileSettingsView({
       setAvatarSeed(nextProfile.avatarSeed ?? nextProfile.username ?? nextProfile.id ?? 'flexhubs');
       setUsernameDraft(nextProfile.username);
       setSavedUsername(nextProfile.username);
-      setSnoozeValue(snoozeValueFromUntil(nextSettings.snoozeUntil));
-      if (!nextSettings.dndEnabled) {
-        setDndValue('off');
-      }
+      setSnoozeValue(resolveSnoozeSelectValue(nextSettings));
+      setDndValue(resolveDndSelectValue(nextSettings));
       if (nextStyles.length > 0) {
         setAvatarStyles(nextStyles);
       }
@@ -374,7 +370,7 @@ export function ProfileSettingsView({
     setStatusUi(nextStatus);
     setManualPresenceStatus(uiStatusToApi(nextStatus), statusMessage);
     setActionError('');
-    const result = await saveUserStatus(uiStatusToApi(nextStatus), statusMessage);
+    const result = await saveUserStatus(uiStatusToApi(nextStatus));
 
     if (!result.ok) {
       setStatusUi(previousStatus);
@@ -394,26 +390,27 @@ export function ProfileSettingsView({
 
   const handleStatusMessageChange = (message: string) => {
     setStatusMessage(message);
-    setPresenceStatusMessage(message);
-    if (saveTimeoutRef.current) window.clearTimeout(saveTimeoutRef.current);
-    saveTimeoutRef.current = window.setTimeout(() => {
-      void (async () => {
-        setSaving(true);
-        const result = await saveUserStatus(uiStatusToApi(statusUi), message);
-        setSaving(false);
-        if (!result.ok) {
-          if (!onUnauthorized(result.status)) {
-            setActionError(result.error);
-            toast.error(result.error);
-          }
-          return;
-        }
+  };
 
-        persistLocalStatus(uiStatusToApi(statusUi), message);
-        toast.success('Status message saved.');
-        onUserUpdated?.();
-      })();
-    }, 800);
+  const handleSaveStatusMessage = async () => {
+    if (statusMessage === savedStatusMessage) return;
+    setSaving(true);
+    setActionError('');
+    const result = await saveUserProfile({ statusMessage, bio: statusMessage });
+    setSaving(false);
+    if (!result.ok) {
+      if (!onUnauthorized(result.status)) {
+        setActionError(result.error);
+        toast.error(result.error);
+      }
+      return;
+    }
+
+    persistLocalStatus(uiStatusToApi(statusUi), statusMessage);
+    setPresenceStatusMessage(statusMessage);
+    setSavedStatusMessage(statusMessage);
+    toast.success('Status message saved.');
+    onUserUpdated?.();
   };
 
   const patchSettings = async (
@@ -448,9 +445,16 @@ export function ProfileSettingsView({
         avatarStyles,
       });
     }
-    setSnoozeValue(snoozeValueFromUntil(result.data.snoozeUntil));
-    if (!result.data.dndEnabled) {
-      setDndValue('off');
+    if (updates.snoozeValue !== undefined) {
+      setSnoozeValue(updates.snoozeValue);
+    } else {
+      setSnoozeValue(resolveSnoozeSelectValue(result.data));
+    }
+
+    if (updates.dndValue !== undefined) {
+      setDndValue(updates.dndValue);
+    } else {
+      setDndValue(resolveDndSelectValue(result.data));
     }
     if (successMessage) {
       toast.success(successMessage);
@@ -480,25 +484,20 @@ export function ProfileSettingsView({
   const handleSnoozeChange = async (value: string) => {
     setSnoozeValue(value);
     const label = SNOOZE_OPTIONS.find((option) => option.value === value)?.label ?? 'Snooze updated';
-    const ok = await patchSettings(
+    await patchSettings(
       { snoozeValue: value },
       value === 'off' ? 'Snooze turned off.' : `${label}.`,
     );
-    if (ok) setSnoozeOpen(false);
   };
 
   const handleDndChange = async (value: string) => {
     if (!settings) return;
     setDndValue(value);
     const label = DND_OPTIONS.find((option) => option.value === value)?.label ?? 'Do Not Disturb updated';
-    const ok = await patchSettings(
+    await patchSettings(
       { dndValue: value },
       value === 'off' ? 'Do Not Disturb turned off.' : `${label} enabled.`,
     );
-    if (ok) {
-      setDndOpen(false);
-      setDndValue(value);
-    }
   };
 
   const handleMessageSoundToggle = async () => {
@@ -535,41 +534,17 @@ export function ProfileSettingsView({
 
   const handleEnablePush = async () => {
     setPushBusy(true);
-    setPushMessage('');
 
     try {
       const result = await enableDesktopPushNotifications();
 
       if (!result.ok) {
-        setPushMessage(result.error);
         toast.error(result.error);
         return;
       }
 
       setPushEnabled(true);
-      setPushMessage('Desktop notifications enabled.');
       toast.success('Desktop notifications enabled.');
-    } finally {
-      setPushBusy(false);
-    }
-  };
-
-  const handleRefreshPush = async () => {
-    setPushBusy(true);
-    setPushMessage('');
-
-    try {
-      const result = await enableDesktopPushNotifications();
-
-      if (!result.ok) {
-        setPushMessage(result.error);
-        toast.error(result.error);
-        return;
-      }
-
-      setPushEnabled(true);
-      setPushMessage('Notification subscription refreshed.');
-      toast.success('Notification subscription refreshed.');
     } finally {
       setPushBusy(false);
     }
@@ -577,19 +552,16 @@ export function ProfileSettingsView({
 
   const handleDisablePush = async () => {
     setPushBusy(true);
-    setPushMessage('');
 
     try {
       const result = await disableDesktopPushNotifications();
 
       if (!result.ok) {
-        setPushMessage(result.error);
         toast.error(result.error);
         return;
       }
 
       setPushEnabled(false);
-      setPushMessage('Desktop notifications turned off.');
       toast.success('Desktop notifications turned off.');
     } finally {
       setPushBusy(false);
@@ -856,602 +828,527 @@ export function ProfileSettingsView({
 
     return buildGeneratedAvatarUrl(selectedStyle, avatarSeed);
   })();
-  const selectedStyleName =
-    avatarStyles.find((style) => style.id === selectedStyle)?.name ?? selectedStyle;
   const usernameChanged = usernameDraft.trim() !== savedUsername;
+  const statusMessageChanged = statusMessage !== savedStatusMessage;
 
   return (
-    <div className="flex h-full w-full flex-col overflow-y-auto bg-app-chat-bg px-12 py-8 text-app-text">
-      <div className="mx-auto w-full max-w-7xl">
-        <div className="mb-6 flex items-center justify-between">
-          <h1 className="text-2xl font-bold text-app-text tracking-tight">Profile & Settings</h1>
-          {saving ? <span className="text-xs text-app-muted font-medium animate-pulse">Saving changes...</span> : null}
+    <div className="flex h-full w-full bg-app-chat-bg text-app-text">
+      {/* Sidebar Navigation */}
+      <div className="w-64 shrink-0 border-r border-app-border overflow-y-auto bg-app-surface/30 px-4 py-8">
+        <h1 className="mb-8 px-3 text-xl font-bold text-app-text tracking-tight">Profile & Settings</h1>
+        
+        <div className="space-y-6">
+          <div>
+            <p className="mb-2 px-3 text-[10px] font-bold tracking-wider text-app-muted uppercase">Account</p>
+            <NavButton icon={<FiUser />} label="Profile" active={activeTab === 'profile'} onClick={() => setActiveTab('profile')} />
+          </div>
+          
+          <div>
+            <p className="mb-2 px-3 text-[10px] font-bold tracking-wider text-app-muted uppercase">Preferences</p>
+            <NavButton icon={<FiSun />} label="Appearance" active={activeTab === 'appearance'} onClick={() => setActiveTab('appearance')} />
+            <NavButton icon={<FiBell />} label="Notifications" active={activeTab === 'notifications'} onClick={() => setActiveTab('notifications')} />
+          </div>
+
+          <div>
+            <p className="mb-2 px-3 text-[10px] font-bold tracking-wider text-app-muted uppercase">Privacy & Security</p>
+            <NavButton icon={<FiShield />} label="Privacy" active={activeTab === 'privacy'} onClick={() => setActiveTab('privacy')} />
+          </div>
+
+          <div className="pt-4 mt-6 border-t border-app-border">
+            <NavButton danger icon={<FiLogOut />} label="Sign out" onClick={() => void onLogout()} />
+          </div>
         </div>
-
-        {actionError ? (
-          <p className="mb-4 text-xs font-medium text-accent-soft" role="alert">{actionError}</p>
-        ) : null}
-
-        {/* Profile hero card */}
-        <SectionCard className="mb-10 flex items-start gap-5 p-6 border-app-border/70 bg-gradient-to-br from-accent/10 via-app-card/70 to-app-card/50 shadow-md">
-          <div className="relative shrink-0">
-            <div className="relative flex h-[72px] w-[72px] items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-accent to-[#632a38] text-white shadow-md shadow-accent/20 ring-1 ring-white/10">
-              <span className="absolute inset-0 flex items-center justify-center text-xl font-bold">
-                {initials}
-              </span>
-              {previewAvatarUrl ? (
-                <RemoteImage
-                  src={previewAvatarUrl}
-                  alt=""
-                  loading="eager"
-                  className="relative z-10 h-full w-full object-cover"
-                />
-              ) : null}
-            </div>
-            <div className={`absolute -right-0.5 -bottom-0.5 h-4 w-4 rounded-full ring-2 ring-app-surface shadow-xs ${statusDotClass(statusUi)}`} />
+      </div>
+      
+      {/* Main Content Area */}
+      <div className="flex-1 overflow-y-auto px-8 py-8 md:px-12 lg:px-20">
+        <div className="w-full max-w-4xl">
+          <div className="mb-8 flex items-center justify-between">
+            <h2 className="text-2xl font-bold tracking-tight text-app-text capitalize">{activeTab}</h2>
+            {saving ? <span className="text-xs font-medium text-accent-soft animate-pulse">Saving...</span> : null}
           </div>
-          <div className="min-w-0 flex-1">
-            <h2 className="text-lg font-bold text-app-text tracking-tight">{displayName}</h2>
-            {profile.email ? (
-              <p className="mt-1 flex items-center gap-2 text-sm text-app-muted">
-                <FiMail className="shrink-0" />
-                {profile.email}
-              </p>
-            ) : null}
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              {profile.inOrganization ? (
-                <span className="rounded-md bg-app-chat-hover px-2 py-1 text-[11px] font-semibold text-app-text">In organization</span>
-              ) : null}
-              {profile.organizationRole ? (
-                <span className="rounded-md bg-accent-soft/20 px-2 py-1 text-[11px] font-semibold text-accent-soft">{profile.organizationRole}</span>
-              ) : null}
-            </div>
-            <div className="mt-4 flex flex-wrap items-start gap-4 text-xs font-semibold">
-              <div className="min-w-0">
-                <span
-                  className={`inline-flex items-center gap-1.5 ${
-                    statusUi === 'Busy'
-                      ? 'text-orange-500'
-                      : statusUi === 'Do not disturb'
-                        ? 'text-red-500'
-                        : statusUi === 'Away'
-                          ? 'text-yellow-500'
-                          : 'text-green-500'
-                  }`}
-                >
-                  <span className={`h-2 w-2 rounded-full ${statusDotClass(statusUi)}`} />
-                  {statusUi}
-                </span>
-                {statusMessage.trim() ? (
-                  <p className="mt-1 max-w-md text-xs font-normal text-app-muted">{statusMessage.trim()}</p>
-                ) : null}
-              </div>
-              <span className="inline-flex items-center gap-1.5 text-app-muted">
-                <FiClock /> {formatLocalTime(timezone)}
-              </span>
-            </div>
-          </div>
-        </SectionCard>
 
-        <div className="grid grid-cols-1 items-start gap-x-16 gap-y-12 xl:grid-cols-2">
-          <SectionGroup title="Profile">
-            {/* Profile photo */}
-            <section>
-              <h3 className="text-base font-bold text-app-text">Profile photo</h3>
-              <p className="mt-1 mb-4 text-sm text-app-muted">Pick a generated avatar, upload a photo, or use your initials.</p>
-              <div className="mb-4 flex items-center gap-2 rounded-xl border border-app-border bg-app-surface p-2">
-                {(['avatar', 'upload', 'initials'] as const).map((tab) => (
-                  <button
-                    key={tab}
-                    type="button"
-                    onClick={() => setAvatarTab(tab)}
-                    className={`flex flex-1 items-center justify-center gap-2 rounded-lg py-2 text-sm font-semibold transition-colors ${
-                      avatarTab === tab ? 'bg-app-chat-hover text-app-text' : 'text-app-muted hover:bg-app-chat-hover/60'
-                    }`}
-                  >
-                    {tab === 'avatar' ? <FiStar className="text-lg" /> : tab === 'upload' ? <FiUpload className="text-lg" /> : <FiUser className="text-lg" />}
-                    {tab === 'avatar' ? 'Avatar' : tab === 'upload' ? 'Upload' : 'Initials'}
-                  </button>
-                ))}
-              </div>
+          {actionError ? (
+            <p className="mb-4 text-xs font-medium text-accent-soft" role="alert">{actionError}</p>
+          ) : null}
 
-              {avatarTab === 'avatar' ? (
-                <>
-                  <p className="mb-3 text-[10px] font-bold tracking-wider text-app-muted uppercase">Choose a style</p>
-                  <div className="mb-4 grid grid-cols-3 gap-3 sm:grid-cols-6">
-                    {avatarStyles.map((style) => (
-                      <button
-                        key={style.id}
-                        type="button"
-                        onClick={() => void handleSelectAvatarStyle(style.id)}
-                        className={`overflow-hidden rounded-xl border transition-colors ${
-                          selectedStyle === style.id ? 'border-accent ring-2 ring-accent/30' : 'border-app-border hover:border-app-muted'
-                        }`}
-                      >
-                        <img src={style.previewUrl} alt={style.name} className="aspect-square w-full object-cover" />
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mb-3 text-sm text-app-muted">Selected: {selectedStyleName}</p>
-                  <label className="mb-2 block text-sm font-semibold text-app-text">Avatar seed</label>
-                  <div className="flex flex-wrap gap-3">
-                    <input
-                      type="text"
-                      value={avatarSeed}
-                      onChange={(event) => setAvatarSeed(event.target.value)}
-                      className="min-w-[12rem] flex-1 rounded-xl border border-app-border bg-app-surface px-4 py-3 text-sm text-app-text focus:border-accent focus:outline-none"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => void handleRandomizeSeed()}
-                      className="inline-flex items-center gap-2 rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
-                    >
-                      <FiRefreshCw /> Randomize
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => void handleApplyAvatar()}
-                      className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
-                    >
-                      Apply
-                    </button>
-                  </div>
-                </>
-              ) : null}
-
-              {avatarTab === 'upload' ? (
-                <div className="space-y-4">
-                  {avatarUrl ? (
-                    <div className="flex items-center gap-4">
-                      <div className="relative h-20 w-20 overflow-hidden rounded-full bg-blue-400">
-                        <span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-app-text">
-                          {initials}
-                        </span>
+          <div className="space-y-8 pb-12 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            {activeTab === 'profile' && (
+              <>
+                {/* Profile Hero */}
+                <SectionCard className="flex items-start gap-5 p-6 border-app-border/70 bg-gradient-to-br from-app-card/80 to-app-surface">
+                  <div className="relative shrink-0">
+                    <div className="relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-accent to-[#632a38] text-white shadow-sm ring-1 ring-white/10">
+                      <span className="absolute inset-0 flex items-center justify-center text-lg font-bold">
+                        {initials}
+                      </span>
+                      {previewAvatarUrl ? (
                         <RemoteImage
-                          src={avatarUrl}
+                          src={previewAvatarUrl}
                           alt=""
                           loading="eager"
                           className="relative z-10 h-full w-full object-cover"
                         />
-                      </div>
-                      <p className="text-sm text-app-muted">Current uploaded photo</p>
+                      ) : null}
                     </div>
-                  ) : null}
+                    <div className={`absolute -right-0.5 -bottom-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-app-surface shadow-sm ${statusDotClass(statusUi)}`} />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <h3 className="text-lg font-bold text-app-text tracking-tight">{displayName}</h3>
+                    {profile.email ? (
+                      <p className="text-sm text-app-muted">{profile.email}</p>
+                    ) : null}
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {profile.inOrganization ? (
+                        <span className="rounded bg-app-chat-hover px-2 py-0.5 text-[11px] font-medium text-app-text">In organization</span>
+                      ) : null}
+                      {profile.organizationRole ? (
+                        <span className="rounded bg-accent-soft/20 px-2 py-0.5 text-[11px] font-medium text-accent-soft">{profile.organizationRole}</span>
+                      ) : null}
+                    </div>
+                  </div>
+                </SectionCard>
+
+                {/* Basic Information */}
+                <section>
+                  <h4 className="mb-3 text-sm font-semibold text-app-text">Basic information</h4>
+                  <SectionCard className="p-5">
+                    <label className="mb-1 block text-xs font-semibold text-app-text">Username</label>
+                    <input
+                      type="text"
+                      value={usernameDraft}
+                      onChange={(event) => setUsernameDraft(event.target.value)}
+                      className="w-full rounded-lg border border-app-border bg-app-chat-bg px-3 py-2 text-sm text-app-text focus:border-accent focus:outline-none"
+                    />
+                    
+                    <div className="mt-4 flex justify-end">
+                      <button
+                        type="button"
+                        disabled={!usernameChanged || saving || !usernameDraft.trim()}
+                        onClick={() => void handleSaveUsername()}
+                        className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Save changes
+                      </button>
+                    </div>
+                  </SectionCard>
+                </section>
+
+                {/* Profile Photo */}
+                <section>
+                  <h4 className="mb-3 text-sm font-semibold text-app-text">Profile photo</h4>
+                  <SectionCard className="p-5">
+                    <div className="mb-4 flex items-center border-b border-app-border">
+                      {(['avatar', 'upload', 'initials'] as const).map((tab) => (
+                        <button
+                          key={tab}
+                          type="button"
+                          onClick={() => setAvatarTab(tab)}
+                          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
+                            avatarTab === tab ? 'border-accent text-accent-soft' : 'border-transparent text-app-muted hover:text-app-text hover:border-app-muted/50'
+                          }`}
+                        >
+                          {tab === 'avatar' ? 'Avatar' : tab === 'upload' ? 'Upload' : 'Initials'}
+                        </button>
+                      ))}
+                    </div>
+
+                    {avatarTab === 'avatar' ? (
+                      <>
+                        <div className="mb-4 grid grid-cols-4 gap-3 sm:grid-cols-6">
+                          {avatarStyles.map((style) => (
+                            <button
+                              key={style.id}
+                              type="button"
+                              onClick={() => void handleSelectAvatarStyle(style.id)}
+                              className={`overflow-hidden rounded-lg border transition-colors ${
+                                selectedStyle === style.id ? 'border-accent ring-1 ring-accent/30' : 'border-app-border hover:border-app-muted'
+                              }`}
+                            >
+                              <img src={style.previewUrl} alt={style.name} className="aspect-square w-full object-cover" />
+                            </button>
+                          ))}
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <input
+                            type="text"
+                            value={avatarSeed}
+                            onChange={(event) => setAvatarSeed(event.target.value)}
+                            className="flex-1 rounded-lg border border-app-border bg-app-chat-bg px-3 py-2 text-sm text-app-text focus:border-accent focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => void handleRandomizeSeed()}
+                            className="rounded-lg border border-app-border px-3 py-2 text-sm font-medium hover:bg-app-chat-hover"
+                          >
+                            Randomize
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void handleApplyAvatar()}
+                            className="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
+                          >
+                            Apply
+                          </button>
+                        </div>
+                      </>
+                    ) : null}
+
+                    {avatarTab === 'upload' ? (
+                      <div className="flex items-center gap-4">
+                        {avatarUrl ? (
+                          <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full bg-blue-400">
+                            <span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-app-text">
+                              {initials}
+                            </span>
+                            <RemoteImage src={avatarUrl} alt="" className="relative z-10 h-full w-full object-cover" />
+                          </div>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={handleUploadAvatar}
+                          className="rounded-lg border border-app-border px-4 py-2 text-sm font-medium hover:bg-app-chat-hover"
+                        >
+                          {avatarUrl ? 'Replace photo' : 'Choose photo'}
+                        </button>
+                      </div>
+                    ) : null}
+
+                    {avatarTab === 'initials' ? (
+                      <div>
+                        <button
+                          type="button"
+                          onClick={() => void handleUseInitials()}
+                          className="rounded-lg border border-app-border px-4 py-2 text-sm font-medium hover:bg-app-chat-hover"
+                        >
+                          Use initials
+                        </button>
+                      </div>
+                    ) : null}
+                  </SectionCard>
+                </section>
+
+                {/* Status & Presence */}
+                <section>
+                  <h4 className="mb-3 text-sm font-semibold text-app-text">Status & presence</h4>
+                  <SectionCard className="p-5">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-app-text">Online status</label>
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
+                            className="w-full flex items-center justify-between rounded-lg border border-app-border bg-app-chat-bg px-3 py-2 text-sm text-app-text focus:border-accent focus:outline-none"
+                          >
+                            <div className="flex items-center gap-2">
+                              <span className={`h-2 w-2 rounded-full ${statusDotClass(statusUi)}`} />
+                              {statusUi}
+                            </div>
+                            <FiChevronDown className="text-app-muted" />
+                          </button>
+                          
+                          {statusDropdownOpen && (
+                            <>
+                              <div className="fixed inset-0 z-40" onClick={() => setStatusDropdownOpen(false)} />
+                              <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-app-border bg-app-surface shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-100">
+                                {STATUS_OPTIONS.map((option) => (
+                                  <button
+                                    key={option.label}
+                                    type="button"
+                                    className="flex w-full items-center gap-2 px-3 py-2.5 text-sm font-medium text-app-text hover:bg-app-chat-hover"
+                                    onClick={() => {
+                                      setStatusDropdownOpen(false);
+                                      if (option.label !== statusUi) {
+                                        void handleStatusChange(option.label);
+                                      }
+                                    }}
+                                  >
+                                    <span className={`h-2 w-2 rounded-full ${option.dot}`} />
+                                    {option.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-app-text">Status message</label>
+                        <div className="relative">
+                          <input
+                            type="text"
+                            placeholder="What's on your mind?"
+                            value={statusMessage}
+                            onChange={(event) => handleStatusMessageChange(event.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && statusMessageChanged) {
+                                void handleSaveStatusMessage();
+                              }
+                            }}
+                            className="w-full rounded-lg border border-app-border bg-app-chat-bg px-3 py-2 pr-10 text-sm text-app-text focus:border-accent focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            disabled={!statusMessageChanged || saving}
+                            onClick={() => void handleSaveStatusMessage()}
+                            className={`absolute right-2 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1 focus:ring-offset-app-chat-bg ${
+                              statusMessageChanged ? 'bg-accent text-white hover:bg-accent-hover' : 'bg-app-border text-app-muted cursor-not-allowed'
+                            }`}
+                            aria-label="Save status message"
+                          >
+                            <FiCheck className="text-sm" />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </SectionCard>
+                </section>
+
+                {/* Local time & time zone */}
+                <section>
+                  <h4 className="mb-3 text-sm font-semibold text-app-text">Local time & time zone</h4>
+                  <SectionCard className="p-5">
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="mb-1 block text-xs font-semibold text-app-text">Local time</label>
+                        <div className="flex h-[38px] items-center gap-2 rounded-lg border border-app-border bg-app-chat-bg/50 px-3 text-sm text-app-text">
+                          <FiClock className="text-app-muted" />
+                          {formatLocalTime(timezone)}
+                        </div>
+                      </div>
+                      <div>
+                        <label className="mb-1 flex items-center justify-between text-xs font-semibold text-app-text">
+                          Time zone
+                          <button type="button" onClick={handleUseDeviceTime} className="text-[10px] text-accent-soft hover:underline">Use device time</button>
+                        </label>
+                        <div className="relative">
+                          <select
+                            value={timezone}
+                            onChange={(event) => void handleTimezoneChange(event.target.value)}
+                            className="w-full appearance-none rounded-lg border border-app-border bg-app-chat-bg px-3 py-2 text-sm text-app-text focus:border-accent focus:outline-none"
+                          >
+                            {!timezoneOptions.some((option) => option.value === timezone) ? (
+                              <option value={timezone}>{formatTimezoneLabel(timezone)}</option>
+                            ) : null}
+                            {timezoneOptions.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <FiChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-app-muted" />
+                        </div>
+                      </div>
+                    </div>
+                  </SectionCard>
+                </section>
+              </>
+            )}
+
+            {activeTab === 'appearance' && (
+              <section>
+                <h4 className="mb-3 text-sm font-semibold text-app-text">Theme</h4>
+                <div className="grid grid-cols-2 gap-4">
                   <button
                     type="button"
-                    onClick={handleUploadAvatar}
-                    className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
-                  >
-                    {avatarUrl ? 'Replace image' : 'Choose image to upload'}
-                  </button>
-                </div>
-              ) : null}
-
-              {avatarTab === 'initials' ? (
-                <div>
-                  <p className="mb-4 text-sm text-app-muted">Your initials are shown when no photo is set.</p>
-                  <button
-                    type="button"
-                    onClick={() => void handleUseInitials()}
-                    className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
-                  >
-                    Use initials
-                  </button>
-                </div>
-              ) : null}
-            </section>
-
-            {/* Account details */}
-            <section>
-              <h3 className="text-base font-bold text-app-text">Account details</h3>
-              <p className="mt-1 mb-4 text-sm text-app-muted">Your username is visible to others in chats and search.</p>
-              <label className="mb-2 block text-sm font-semibold text-app-text">Username</label>
-              <input
-                type="text"
-                value={usernameDraft}
-                onChange={(event) => setUsernameDraft(event.target.value)}
-                className="w-full rounded-xl border border-app-border bg-app-surface px-4 py-3 text-sm text-app-text focus:border-accent focus:outline-none"
-              />
-            </section>
-
-            {/* Status */}
-            <section>
-              <h3 className="text-base font-bold text-app-text">Status</h3>
-              <p className="mt-1 mb-4 text-sm text-app-muted">
-                Shown under your name in chats. Status saves automatically when you pick an option or edit the message below.
-              </p>
-              <div className="mb-4 grid grid-cols-2 gap-3">
-                {STATUS_OPTIONS.map((option) => (
-                  <button
-                    key={option.label}
-                    type="button"
-                    onClick={() => void handleStatusChange(option.label)}
-                    className={`flex items-center justify-between rounded-xl border p-4 transition-colors ${
-                      statusUi === option.label ? option.activeBorder : 'border-app-border bg-app-surface hover:border-app-muted'
+                    onClick={() => { setTheme('light'); toast.success('Light theme applied.'); }}
+                    className={`flex items-center gap-3 rounded-xl border p-4 text-left transition-colors ${
+                      theme === 'light' ? 'border-accent bg-accent/5' : 'border-app-border bg-app-surface hover:border-app-muted'
                     }`}
                   >
-                    <span className="flex items-center gap-2 text-sm font-semibold text-app-text">
-                      <span className={`h-2 w-2 rounded-full ${option.dot}`} />
-                      {option.label}
-                    </span>
-                    {statusUi === option.label ? <span className="text-[10px] font-bold text-accent">ACTIVE</span> : null}
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white border border-gray-200 text-gray-800">
+                      <FiSun className="text-lg" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-app-text">Light mode</p>
+                    </div>
                   </button>
-                ))}
-              </div>
-              <label className="mb-2 block text-sm font-semibold text-app-text">Status message</label>
-              <input
-                type="text"
-                placeholder="What's on your mind?"
-                value={statusMessage}
-                onChange={(event) => handleStatusMessageChange(event.target.value)}
-                className="w-full rounded-xl border border-app-border bg-app-surface px-4 py-3 text-sm text-app-text placeholder-app-muted focus:border-accent focus:outline-none"
-              />
-            </section>
-
-            {/* Online status */}
-            <section>
-              <h3 className="text-base font-bold text-app-text">Online status</h3>
-              <p className="mt-1 mb-4 text-sm text-app-muted">
-                Control whether teammates and friends can see when you are online, when you were last active, and when you read messages.
-              </p>
-              <SectionCard className="p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-app-text">Share online status & read receipts</p>
-                    <p className="mt-1 mb-4 text-xs text-app-muted">
-                      When off, others cannot see when you are online or when you read messages — and you will not see their status or read receipts either.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => void handleOnlineStatusToggle()}
-                      className={`rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
-                        settings.shareOnlineStatus ? 'bg-accent text-white' : 'bg-app-chat-hover text-app-text'
-                      }`}
-                    >
-                      {settings.shareOnlineStatus ? 'On' : 'Off'}
-                    </button>
-                  </div>
-                  <FiEye className="mt-1 shrink-0 text-lg text-accent-soft" />
-                </div>
-              </SectionCard>
-            </section>
-
-            {/* Local time */}
-            <section>
-              <h3 className="text-base font-bold text-app-text">Local time</h3>
-              <p className="mt-1 mb-4 text-sm text-app-muted">
-                When you share online status, others can see your current local time while you are connected.
-              </p>
-              <SectionCard className="mb-3 p-4">
-                <div className="mb-2 flex items-center gap-2">
-                  <FiClock className="text-app-muted" />
-                  <span className="text-sm font-semibold text-app-text">{formatLocalTime(timezone)}</span>
-                </div>
-                <p className="text-xs text-app-muted">Others in your workspace and friends list see this local time.</p>
-              </SectionCard>
-              <button
-                type="button"
-                onClick={handleUseDeviceTime}
-                className="mb-6 rounded-xl border border-app-border bg-transparent px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
-              >
-                Use device time ({formatTimezoneLabel(getDeviceTimezone())})
-              </button>
-              <label className="mb-2 block text-sm font-semibold text-app-text">Time zone</label>
-              <div className="relative">
-                <select
-                  value={timezone}
-                  onChange={(event) => void handleTimezoneChange(event.target.value)}
-                  className="w-full appearance-none rounded-xl border border-app-border bg-app-surface px-4 py-3 text-sm text-app-text focus:border-accent focus:outline-none"
-                >
-                  {!timezoneOptions.some((option) => option.value === timezone) ? (
-                    <option value={timezone}>{formatTimezoneLabel(timezone)}</option>
-                  ) : null}
-                  {timezoneOptions.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-                <FiChevronDown className="pointer-events-none absolute top-1/2 right-4 -translate-y-1/2 text-app-muted" />
-              </div>
-            </section>
-          </SectionGroup>
-
-          <SectionGroup title="Settings">
-            {/* Appearance */}
-            <section>
-              <h3 className="text-base font-bold text-app-text">Appearance</h3>
-              <p className="mt-1 mb-4 text-sm text-app-muted">Choose light or dark mode for the app.</p>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTheme('light');
-                    toast.success('Light theme applied.');
-                  }}
-                  className={`flex items-center gap-4 rounded-xl border p-4 text-left transition-colors ${
-                    theme === 'light' ? 'border-accent bg-accent/10' : 'border-app-border bg-app-surface hover:border-app-muted'
-                  }`}
-                >
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-app-chat-bg text-app-text">
-                    <FiSun className="text-lg" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-app-text">Light theme</p>
-                    <p className="text-xs text-app-muted">Bright background and dark text</p>
-                  </div>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setTheme('dark');
-                    toast.success('Dark theme applied.');
-                  }}
-                  className={`flex items-center gap-4 rounded-xl border p-4 text-left transition-colors ${
-                    theme === 'dark' ? 'border-accent bg-accent/10' : 'border-app-border bg-app-surface hover:border-app-muted'
-                  }`}
-                >
-                  <div className="flex h-10 w-10 items-center justify-center rounded-full border border-app-border bg-app-surface-input text-app-text">
-                    <FiMoon className="text-lg" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold text-app-text">Dark theme</p>
-                    <p className="text-xs text-app-muted">Dark background and light text</p>
-                  </div>
-                </button>
-              </div>
-            </section>
-
-            {/* App snooze */}
-            <section>
-          <h3 className="text-base font-bold text-app-text">App snooze</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">
-            Pause all notifications app-wide. Snooze individual hubs and groups from their chat header.
-          </p>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setSnoozeOpen((open) => !open)}
-              className="flex w-full items-center justify-between rounded-xl border border-app-border bg-app-surface p-4 transition-colors hover:border-app-muted"
-            >
-              <div className="flex items-center gap-3">
-                <FiBellOff className="text-lg text-app-muted" />
-                <div className="text-left">
-                  <p className="text-sm font-semibold text-app-text">Snooze all notifications</p>
-                  <p className="text-xs text-app-muted">
-                    {settings.snoozeUntil && new Date(settings.snoozeUntil).getTime() > Date.now()
-                      ? `Snoozed until ${new Date(settings.snoozeUntil).toLocaleString()}`
-                      : 'Notifications on'}
-                  </p>
-                </div>
-              </div>
-              <FiChevronDown className={`text-app-muted transition-transform ${snoozeOpen ? 'rotate-180' : ''}`} />
-            </button>
-            {snoozeOpen ? (
-              <div className="absolute z-10 mt-2 w-full rounded-xl border border-app-border bg-app-elevated py-2 shadow-lg">
-                {SNOOZE_OPTIONS.map((option) => (
                   <button
-                    key={option.label}
                     type="button"
-                    onClick={() => void handleSnoozeChange(option.value)}
-                    className={`block w-full px-4 py-2 text-left text-sm hover:bg-app-chat-hover ${
-                      snoozeValue === option.value ? 'text-accent-soft' : 'text-app-text'
+                    onClick={() => { setTheme('dark'); toast.success('Dark theme applied.'); }}
+                    className={`flex items-center gap-3 rounded-xl border p-4 text-left transition-colors ${
+                      theme === 'dark' ? 'border-accent bg-accent/5' : 'border-app-border bg-app-surface hover:border-app-muted'
                     }`}
                   >
-                    {option.label}
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#111111] border border-gray-700 text-gray-200">
+                      <FiMoon className="text-lg" />
+                    </div>
+                    <div>
+                      <p className="text-sm font-semibold text-app-text">Dark mode</p>
+                    </div>
                   </button>
-                ))}
-              </div>
-            ) : null}
+                </div>
+              </section>
+            )}
+
+            {activeTab === 'notifications' && (
+              <>
+                <section>
+                  <h4 className="mb-3 text-sm font-semibold text-app-text">Snooze & Do Not Disturb</h4>
+                  <SectionCard className="divide-y divide-app-border">
+                    <div className="flex items-center justify-between p-4 hover:bg-app-chat-hover/30 transition-colors rounded-t-xl">
+                      <div className="flex items-center gap-3">
+                        <FiBellOff className="text-app-muted text-lg" />
+                        <div>
+                          <p className="text-sm font-semibold text-app-text">App snooze</p>
+                          <p className="text-xs text-app-muted">
+                            {settings.snoozeUntil && new Date(settings.snoozeUntil).getTime() > Date.now()
+                              ? `Snoozed until ${new Date(settings.snoozeUntil).toLocaleString()}`
+                              : 'Notifications on'}
+                          </p>
+                        </div>
+                      </div>
+                      <div className="relative">
+                        <select
+                          value={snoozeValue}
+                          onChange={(e) => void handleSnoozeChange(e.target.value)}
+                          className="appearance-none rounded-lg border border-app-border bg-app-chat-bg px-3 py-1.5 pr-8 text-sm text-app-text focus:outline-none focus:border-accent"
+                        >
+                          {SNOOZE_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        <FiChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-app-muted" />
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between p-4 hover:bg-app-chat-hover/30 transition-colors rounded-b-xl">
+                      <div className="flex items-center gap-3">
+                        <FiMoon className="text-app-muted text-lg" />
+                        <div>
+                          <p className="text-sm font-semibold text-app-text">Do Not Disturb</p>
+                          <p className="text-xs text-app-muted">{dndLabel(settings)}</p>
+                        </div>
+                      </div>
+                      <div className="relative">
+                        <select
+                          value={dndValue}
+                          onChange={(e) => void handleDndChange(e.target.value)}
+                          className="appearance-none rounded-lg border border-app-border bg-app-chat-bg px-3 py-1.5 pr-8 text-sm text-app-text focus:outline-none focus:border-accent"
+                        >
+                          {DND_OPTIONS.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                        <FiChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-app-muted" />
+                      </div>
+                    </div>
+                  </SectionCard>
+                </section>
+
+                <section>
+                  <h4 className="mb-3 text-sm font-semibold text-app-text">Sounds & Desktop</h4>
+                  <SectionCard className="divide-y divide-app-border">
+                    <div className="flex items-center justify-between p-4 hover:bg-app-chat-hover/30 transition-colors rounded-t-xl">
+                      <div className="flex items-center gap-3">
+                        <FiVolume2 className="text-app-muted text-lg" />
+                        <div>
+                          <p className="text-sm font-semibold text-app-text">Message sounds</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button type="button" onClick={() => void handlePreviewMessageSound()} className="text-[11px] font-semibold text-app-text border border-app-border rounded px-2 py-1 hover:bg-app-chat-hover">Preview</button>
+                        <button
+                          type="button"
+                          onClick={() => void handleMessageSoundToggle()}
+                          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 ${settings.messageSoundEnabled ? 'bg-accent' : 'bg-app-border'}`}
+                        >
+                          <span className="sr-only">Toggle message sounds</span>
+                          <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition duration-200 ease-in-out ${settings.messageSoundEnabled ? 'translate-x-2' : '-translate-x-2'}`} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="flex items-start justify-between p-4 hover:bg-app-chat-hover/30 transition-colors rounded-b-xl">
+                      <div className="flex gap-3">
+                        <FiSmartphone className="text-app-muted text-lg mt-0.5" />
+                        <div>
+                          <p className="text-sm font-semibold text-app-text">Desktop notifications</p>
+                          <p className="text-xs text-app-muted mt-0.5">Alerts when away from FlexHubs</p>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        {pushEnabled ? (
+                          <button
+                            type="button"
+                            disabled={pushBusy}
+                            onClick={() => void handleDisablePush()}
+                            className="rounded border border-app-border px-2 py-1 text-[11px] font-semibold hover:bg-app-chat-hover disabled:opacity-50"
+                          >
+                            Disable
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            disabled={pushBusy}
+                            onClick={() => void handleEnablePush()}
+                            className="rounded border border-app-border px-2 py-1 text-[11px] font-semibold hover:bg-app-chat-hover disabled:opacity-50"
+                          >
+                            Enable
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </SectionCard>
+                </section>
+              </>
+            )}
+
+            {activeTab === 'privacy' && (
+              <>
+                <section>
+                  <h4 className="mb-3 text-sm font-semibold text-app-text">Visibility</h4>
+                  <SectionCard className="p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <FiEye className="text-app-muted text-lg" />
+                        <div>
+                          <p className="text-sm font-semibold text-app-text">Online status & read receipts</p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void handleOnlineStatusToggle()}
+                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 ${settings.shareOnlineStatus ? 'bg-accent' : 'bg-app-border'}`}
+                      >
+                        <span className="sr-only">Toggle online status</span>
+                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition duration-200 ease-in-out ${settings.shareOnlineStatus ? 'translate-x-2' : '-translate-x-2'}`} />
+                      </button>
+                    </div>
+                  </SectionCard>
+                </section>
+
+                <section>
+                  <h4 className="mb-3 text-sm font-semibold text-app-text">Blocked users</h4>
+                  <SectionCard className="p-4">
+                    {blockedLoading ? (
+                      <p className="text-sm text-app-muted text-center py-2">Loading blocked users...</p>
+                    ) : blockedUsers.length === 0 ? (
+                      <p className="text-sm text-app-muted text-center py-2">No blocked users.</p>
+                    ) : (
+                      <div className="space-y-3">
+                        {blockedUsers.map((user) => (
+                          <div key={user.id} className="flex items-center justify-between bg-app-chat-bg p-3 rounded-lg border border-app-border/50">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-app-text">{user.username}</p>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={unblockingId === user.id}
+                              className="shrink-0 rounded border border-app-border px-3 py-1.5 text-xs font-semibold hover:bg-app-chat-hover disabled:opacity-50"
+                              onClick={() => void handleUnblockUser(user.id, user.username)}
+                            >
+                              {unblockingId === user.id ? 'Unblocking...' : 'Unblock'}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </SectionCard>
+                </section>
+              </>
+            )}
           </div>
-        </section>
-
-        {/* Do Not Disturb */}
-        <section>
-          <h3 className="text-base font-bold text-app-text">Do Not Disturb</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">Block all alerts until you turn it off or the timer ends.</p>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setDndOpen((open) => !open)}
-              className="flex w-full items-center justify-between rounded-xl border border-app-border bg-app-surface p-4 transition-colors hover:border-app-muted"
-            >
-              <div className="flex items-center gap-3">
-                <FiMoon className="text-lg text-app-muted" />
-                <div className="text-left">
-                  <p className="text-sm font-semibold text-app-text">Do Not Disturb</p>
-                  <p className="text-xs text-app-muted">{dndLabel(settings)}</p>
-                </div>
-              </div>
-              <FiChevronDown className={`text-app-muted transition-transform ${dndOpen ? 'rotate-180' : ''}`} />
-            </button>
-            {dndOpen ? (
-              <div className="absolute z-10 mt-2 w-full rounded-xl border border-app-border bg-app-elevated py-2 shadow-lg">
-                {DND_OPTIONS.map((option) => (
-                  <button
-                    key={option.label}
-                    type="button"
-                    onClick={() => void handleDndChange(option.value)}
-                    className={`block w-full px-4 py-2 text-left text-sm hover:bg-app-chat-hover ${
-                      (option.value === 'off' && !settings.dndEnabled) ||
-                      (option.value !== 'off' && settings.dndEnabled && dndValue === option.value)
-                        ? 'text-accent-soft'
-                        : 'text-app-text'
-                    }`}
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </section>
-
-        {/* Message sounds */}
-        <section>
-          <h3 className="text-base font-bold text-app-text">Message sounds</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">Discord-style ping when new messages arrive in other chats.</p>
-          <SectionCard className="p-4">
-            <p className="text-sm font-semibold text-app-text">Message notification sound</p>
-            <p className="mt-1 mb-4 text-xs text-app-muted">
-              Plays when someone else messages you in another chat. Your own messages never play a sound — just like Discord.
-            </p>
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => void handleMessageSoundToggle()}
-                className={`flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition-colors ${
-                  settings.messageSoundEnabled ? 'bg-accent text-white hover:bg-accent-hover' : 'bg-app-chat-hover text-app-text'
-                }`}
-              >
-                <FiVolume2 className="text-lg" />
-                {settings.messageSoundEnabled ? 'On' : 'Off'}
-              </button>
-              <button
-                type="button"
-                onClick={() => void handlePreviewMessageSound()}
-                className="rounded-xl border border-app-border bg-transparent px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
-              >
-                Preview sound
-              </button>
-            </div>
-          </SectionCard>
-        </section>
-
-        {/* Push notifications */}
-        <section>
-          <h3 className="text-base font-bold text-app-text">Push notifications</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">Receive alerts when you are away from Flexhubs.</p>
-          <SectionCard className="p-4">
-            <div className="mb-1 flex items-center justify-between">
-              <p className="text-sm font-semibold text-app-text">Desktop notifications</p>
-              {pushEnabled ? (
-                <FiBell className="text-lg text-accent-soft" />
-              ) : (
-                <FiBellOff className="text-lg text-app-muted" />
-              )}
-            </div>
-            <p className="mb-4 text-xs text-app-muted">
-              {pushEnabled
-                ? 'You will receive alerts for new messages and activity while Flexhubs is open.'
-                : 'Enable notifications to get alerts when Flexhubs is in the background.'}
-            </p>
-            <div className="flex flex-wrap items-center gap-3">
-              {pushEnabled ? (
-                <>
-                  <button
-                    type="button"
-                    disabled={pushBusy}
-                    onClick={() => void handleRefreshPush()}
-                    className="inline-flex items-center gap-2 rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <FiRefreshCw className="text-base" />
-                    {pushBusy ? 'Refreshing…' : 'Refresh subscription'}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={pushBusy}
-                    onClick={() => void handleDisablePush()}
-                    className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    Turn off
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  disabled={pushBusy}
-                  onClick={() => void handleEnablePush()}
-                  className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  {pushBusy ? 'Enabling…' : 'Enable notifications'}
-                </button>
-              )}
-            </div>
-            {pushMessage ? (
-              <p className="mt-3 text-xs text-app-muted">{pushMessage}</p>
-            ) : null}
-          </SectionCard>
-        </section>
-          </SectionGroup>
         </div>
-
-        <section className="mt-12 border-t border-app-border pt-8">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h3 className="text-base font-bold text-app-text">Save profile changes</h3>
-              <p className="mt-1 text-sm text-app-muted">
-                Username changes are saved here. Status, timezone, avatar, and notification settings save automatically when you update them.
-              </p>
-            </div>
-            <div className="flex shrink-0 justify-end gap-3">
-              <button
-                type="button"
-                disabled={!usernameChanged || saving}
-                onClick={() => setUsernameDraft(savedUsername)}
-                className="rounded-xl border border-app-border px-4 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={!usernameChanged || saving || !usernameDraft.trim()}
-                onClick={() => void handleSaveUsername()}
-                className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Save changes
-              </button>
-            </div>
-          </div>
-        </section>
-
-        {/* Blocked users */}
-        <section className="mt-12">
-          <h3 className="text-base font-bold text-app-text">Blocked users</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">People you have blocked cannot message you.</p>
-          {blockedLoading ? (
-            <p className="text-sm text-app-muted">Loading blocked users...</p>
-          ) : blockedUsers.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-app-border px-4 py-6 text-sm text-app-muted">
-              No blocked users.
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {blockedUsers.map((user) => (
-                <div
-                  key={user.id}
-                  className="flex items-center justify-between rounded-xl border border-app-border bg-app-surface px-4 py-3"
-                >
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-app-text">{user.username}</p>
-                    {user.email ? <p className="truncate text-xs text-app-muted">{user.email}</p> : null}
-                  </div>
-                  <button
-                    type="button"
-                    disabled={unblockingId === user.id}
-                    className="shrink-0 rounded-lg border border-app-border px-3 py-1.5 text-xs font-semibold text-app-text hover:bg-app-chat-hover disabled:opacity-50"
-                    onClick={() => void handleUnblockUser(user.id, user.username)}
-                  >
-                    {unblockingId === user.id ? 'Unblocking...' : 'Unblock'}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* Session */}
-        <section className="mt-12 pb-4">
-          <h3 className="text-base font-bold text-app-text">Session</h3>
-          <p className="mt-1 mb-4 text-sm text-app-muted">Sign out of Flexhubs on this device.</p>
-          <button
-            type="button"
-            onClick={() => void onLogout()}
-            className="inline-flex items-center gap-2 rounded-xl border border-red-500/40 px-4 py-2 text-sm font-semibold text-red-400 hover:bg-red-500/10"
-          >
-            <FiLogOut /> Sign out
-          </button>
-        </section>
       </div>
     </div>
   );

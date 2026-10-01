@@ -130,6 +130,10 @@ declare global {
         token: string,
         conversationId: string,
       ) => Promise<ApiResult<{ summary: string }>>;
+      translateUnreadMessages: (
+        token: string,
+        conversationId: string,
+      ) => Promise<ApiResult<{ translation: string }>>;
       getUnreadCount: (token: string) => Promise<ApiResult<UnreadCountPayload>>;
       getConversationBootstrap: (
         token: string,

@@ -7,6 +7,8 @@ type MessageMenuProps = {
   isPinned: boolean;
   isSaved: boolean;
   isDeleted?: boolean;
+  isSending?: boolean;
+  hasDownloadableMedia?: boolean;
   align: 'left' | 'right';
   showReplyInThread?: boolean;
   onReply: () => void;
@@ -18,6 +20,7 @@ type MessageMenuProps = {
   onPinToggle: () => void;
   onSave: () => void;
   onUnsave: () => void;
+  onDownload?: () => void;
 };
 
 type MenuItem = {
@@ -33,6 +36,8 @@ export function MessageMenu({
   isPinned,
   isSaved,
   isDeleted = false,
+  isSending = false,
+  hasDownloadableMedia = false,
   align,
   showReplyInThread = false,
   onReply,
@@ -44,6 +49,7 @@ export function MessageMenu({
   onPinToggle,
   onSave,
   onUnsave,
+  onDownload,
 }: MessageMenuProps) {
   const [open, setOpen] = useState(false);
   const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 });
@@ -59,6 +65,22 @@ export function MessageMenu({
     ? [
         { label: 'Delete for me', onClick: () => run(onDeleteForMe), tone: 'danger' },
       ]
+    : isSending
+      ? ([
+          ...(hasDownloadableMedia && onDownload
+            ? [{ label: 'Download', onClick: () => run(onDownload) }]
+            : []),
+          { label: 'Delete for me', onClick: () => run(onDeleteForMe), tone: 'danger' },
+          ...(isOwn
+            ? [
+                {
+                  label: 'Delete for everyone',
+                  onClick: () => run(onDeleteForEveryone),
+                  tone: 'danger' as const,
+                },
+              ]
+            : []),
+        ] as MenuItem[])
     : ([
         { label: 'Reply', onClick: () => run(onReply) },
         ...(showReplyInThread

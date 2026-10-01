@@ -159,6 +159,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     conversationId: string,
   ): Promise<ApiResult<{ summary: string }>> =>
     ipcRenderer.invoke('chat:summarize-unread', token, conversationId),
+  translateUnreadMessages: (
+    token: string,
+    conversationId: string,
+  ): Promise<ApiResult<{ translation: string }>> =>
+    ipcRenderer.invoke('chat:translate-unread', token, conversationId),
   getUnreadCount: (token: string): Promise<ApiResult<UnreadCountPayload>> =>
     ipcRenderer.invoke('chat:unread-count', token),
   getConversationBootstrap: (
@@ -202,29 +207,29 @@ contextBridge.exposeInMainWorld('electronAPI', {
     mediaJson?: string,
   ): Promise<ApiResult<MessageItem>> =>
     ipcRenderer.invoke('chat:send-message', token, conversationId, content, replyToId, threadRootId, mediaJson),
-  getTrendingGifs: (token: string, limit?: number): Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>> =>
+  getTrendingGifs: (token: string, limit?: number): Promise<ApiResult<import('./shared/gifs').GifPickerItem[]>> =>
     ipcRenderer.invoke('gifs:trending', token, limit),
   searchGifs: (
     token: string,
     query: string,
     limit?: number,
-  ): Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>> =>
+  ): Promise<ApiResult<import('./shared/gifs').GifPickerItem[]>> =>
     ipcRenderer.invoke('gifs:search', token, query, limit),
   getTrendingStickers: (
     token: string,
     limit?: number,
-  ): Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>> =>
+  ): Promise<ApiResult<import('./shared/gifs').GifPickerItem[]>> =>
     ipcRenderer.invoke('gifs:stickers-trending', token, limit),
   searchStickers: (
     token: string,
     query: string,
     limit?: number,
-  ): Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>> =>
+  ): Promise<ApiResult<import('./shared/gifs').GifPickerItem[]>> =>
     ipcRenderer.invoke('gifs:stickers-search', token, query, limit),
   createDirectConversation: (
     token: string,
     userId: string,
-  ): Promise<ApiResult<{ conversationId: string; conversation: import('../shared/chat').ConversationItem | null }>> =>
+  ): Promise<ApiResult<{ conversationId: string; conversation: import('./shared/chat').ConversationItem | null }>> =>
     ipcRenderer.invoke('chat:create-direct', token, userId),
   addMessageReaction: (
     token: string,
@@ -443,17 +448,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('features:calendar', token),
   getCalendarMentionableUsers: (
     token: string,
-  ): Promise<ApiResult<import('../shared/extras').CalendarMentionableUser[]>> =>
+  ): Promise<ApiResult<import('./shared/extras').CalendarMentionableUser[]>> =>
     ipcRenderer.invoke('extras:calendar-mentionable-users', token),
   createCalendarEvent: (
     token: string,
     payloadJson: string,
-  ): Promise<ApiResult<import('../shared/extras').CalendarEventItem>> =>
+  ): Promise<ApiResult<import('./shared/extras').CalendarEventItem>> =>
     ipcRenderer.invoke('extras:create-calendar-event', token, payloadJson),
   updateCalendarEvent: (
     token: string,
     payloadJson: string,
-  ): Promise<ApiResult<import('../shared/extras').CalendarEventItem>> =>
+  ): Promise<ApiResult<import('./shared/extras').CalendarEventItem>> =>
     ipcRenderer.invoke('extras:update-calendar-event', token, payloadJson),
   respondToCalendarEvent: (
     token: string,
@@ -465,31 +470,31 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('extras:delete-calendar-event', token, eventId),
   getScheduledMessages: (
     token: string,
-  ): Promise<ApiResult<import('../shared/extras').ScheduledMessageItem[]>> =>
+  ): Promise<ApiResult<import('./shared/extras').ScheduledMessageItem[]>> =>
     ipcRenderer.invoke('extras:scheduled-messages', token),
-  enhanceMessageText: (token: string, text: string): Promise<ApiResult<import('../shared/extras').AiTextResult>> =>
+  enhanceMessageText: (token: string, text: string): Promise<ApiResult<import('./shared/extras').AiTextResult>> =>
     ipcRenderer.invoke('extras:ai-enhance', token, text),
   generateMessageText: (
     token: string,
     description: string,
-  ): Promise<ApiResult<import('../shared/extras').AiTextResult>> =>
+  ): Promise<ApiResult<import('./shared/extras').AiTextResult>> =>
     ipcRenderer.invoke('extras:ai-generate', token, description),
   parseFlexCommand: (
     token: string,
     input: string,
     conversationId?: string,
-  ): Promise<ApiResult<import('../shared/extras').AiTextResult>> =>
+  ): Promise<ApiResult<import('./shared/extras').AiTextResult>> =>
     ipcRenderer.invoke('extras:ai-flex-command', token, input, conversationId),
   transcribeAudioFile: (
     token: string,
     fileName: string,
     mimeType: string,
     base64Data: string,
-  ): Promise<ApiResult<import('../shared/extras').AiTextResult>> =>
+  ): Promise<ApiResult<import('./shared/extras').AiTextResult>> =>
     ipcRenderer.invoke('extras:ai-transcribe', token, fileName, mimeType, base64Data),
   getPushVapidPublicKey: (
     token: string,
-  ): Promise<ApiResult<import('../shared/extras').PushVapidKeyResult>> =>
+  ): Promise<ApiResult<import('./shared/extras').PushVapidKeyResult>> =>
     ipcRenderer.invoke('extras:push-vapid-key', token),
   subscribePushNotifications: (
     token: string,

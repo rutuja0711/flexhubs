@@ -10,7 +10,7 @@ import type {
   PaymentPlanItem,
   PlanComplianceInfo,
 } from '../shared/payments';
-import { normalizeOrganizationMembers, type OrganizationMemberItem } from '../shared/profile';
+import type { OrganizationMemberItem } from '../shared/profile';
 import type {
   CreateOrgOrderInput,
   OrgOrderResult,
@@ -181,21 +181,23 @@ export async function loadOrganizationMembersList(canManage: boolean): Promise<{
     };
   }
 
-  if (!window.electronAPI?.getOrganizationMembers) {
+  if (!window.electronAPI?.getOrganizationMembersDetailed) {
     return { members: [], status: undefined };
   }
 
-  const sidebarResult = await withToken((token) => window.electronAPI.getOrganizationMembers(token));
+  const detailedResult = await withToken((token) =>
+    window.electronAPI.getOrganizationMembersDetailed(token),
+  );
 
-  if (!sidebarResult.ok) {
+  if (!detailedResult.ok) {
     return {
       members: [],
-      status: sidebarResult.status,
+      status: detailedResult.status,
     };
   }
 
   return {
-    members: normalizeOrganizationMembers(sidebarResult.data),
+    members: detailedResult.data,
     status: 200,
   };
 }

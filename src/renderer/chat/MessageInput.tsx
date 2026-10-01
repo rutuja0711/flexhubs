@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FiBarChart2, FiClock, FiImage, FiLink, FiMic, FiPaperclip, FiPlus, FiSend, FiSmile, FiZap } from 'react-icons/fi';
+import { FiBarChart2, FiClock, FiImage, FiLink, FiMic, FiPaperclip, FiPlus, FiSend, FiSmile } from 'react-icons/fi';
+import { EnhanceSparkleIcon } from './ChatIcons';
 import type { GifPickerItem } from '../../shared/gifs';
 import type { MessageItem } from '../../shared/messages';
 import { buildScheduleMessageBody, validateMessageDraft } from '../../shared/messages';
@@ -143,6 +144,8 @@ export function MessageInput({
 }: MessageInputProps) {
   const toast = useToast();
   const [draftError, setDraftError] = useState('');
+  const [isEnhanced, setIsEnhanced] = useState(false);
+  const [previousDraft, setPreviousDraft] = useState('');
   const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerTab, setPickerTab] = useState<MediaPickerTab>('emoji');
   const [aiMenuOpen, setAiMenuOpen] = useState(false);
@@ -217,8 +220,12 @@ export function MessageInput({
     clearPendingAttachments();
   }, [conversationId]);
 
-  const handleChange = (nextValue: string) => {
+  const handleChange = (nextValue: string, fromAi = false) => {
     const validation = validateMessageDraft(nextValue);
+
+    if (!fromAi && isEnhanced) {
+      setIsEnhanced(false);
+    }
 
     if (!validation.ok) {
       setDraftError(validation.error);
@@ -524,7 +531,9 @@ export function MessageInput({
       return;
     }
 
-    handleChange(result.data.text);
+    setPreviousDraft(value);
+    setIsEnhanced(true);
+    handleChange(result.data.text, true);
     toast.success('Message enhanced.');
   };
 
@@ -553,7 +562,7 @@ export function MessageInput({
       return;
     }
 
-    handleChange(result.data.text);
+    handleChange(result.data.text, true);
     toast.success('Message generated.');
   };
 
@@ -582,7 +591,7 @@ export function MessageInput({
       return;
     }
 
-    handleChange(result.data.text);
+    handleChange(result.data.text, true);
     toast.success('Flex command applied.');
   };
 
@@ -737,8 +746,24 @@ export function MessageInput({
         </div>
       ) : null}
 
+      {isEnhanced ? (
+        <div className="flex items-center justify-between rounded-full bg-accent/10 dark:bg-[#38262a] border border-accent/20 px-4 py-2 mb-2 shadow-sm">
+          <span className="text-[13px] text-app-text dark:text-app-muted font-medium tracking-wide">Message enhanced with AI</span>
+          <button
+            type="button"
+            className="text-[13px] font-bold text-accent dark:text-[#e05374] hover:text-accent-hover dark:hover:text-[#ff7494] transition-colors"
+            onClick={() => {
+              handleChange(previousDraft, true);
+              setIsEnhanced(false);
+            }}
+          >
+            Undo
+          </button>
+        </div>
+      ) : null}
+
       <div
-        className={`relative flex flex-col rounded-2xl border bg-app-surface-input/90 backdrop-blur-md transition-all duration-200 shadow-composer focus-within:shadow-composer-focus ${
+        className={`relative flex flex-col rounded-[24px] border bg-app-surface-input/90 backdrop-blur-md transition-all duration-200 shadow-composer focus-within:shadow-composer-focus ${
           replyingToMessage ? 'rounded-t-none border-t-0' : ''
         } ${
           displayError ? 'border-accent ring-2 ring-accent' : 'border-app-border focus-within:border-accent/60'
@@ -774,6 +799,8 @@ export function MessageInput({
           onSelectEmoji={handleEmojiSelect}
           initialTab={pickerTab}
         />
+
+
 
         <div className={`flex items-end gap-1 ${compact ? 'px-1 py-1' : 'px-2 py-2'}`}>
           <textarea
@@ -868,25 +895,15 @@ export function MessageInput({
                   ref={aiMenuButtonRef}
                   type="button"
                   disabled={aiDisabled}
-                  aria-label="Flex AI"
-                  title="Flex AI"
-                  aria-expanded={aiMenuOpen}
-                  className={`${iconButtonClass} ${
-                    aiMenuOpen
-                      ? 'bg-accent/15 text-accent-soft'
-                      : ''
-                  }`}
+                  aria-label="Enhance message"
+                  title="Enhance message"
+                  aria-expanded={false}
+                  className={iconButtonClass}
                   onClick={() => {
-                    if (onOpenFlexAi) {
-                      onOpenFlexAi();
-                      return;
-                    }
-
-                    setActionsMenuOpen(false);
-                    setAiMenuOpen((open) => !open);
+                    void handleAiEnhance();
                   }}
                 >
-                  <FiZap className="h-[18px] w-[18px]" />
+                  <EnhanceSparkleIcon className="h-[18px] w-[18px]" />
                 </button>
               </div>
 
@@ -934,62 +951,6 @@ export function MessageInput({
           </button>
         </div>
       </div>
-
-      {aiMenuOpen && aiMenuStyle
-        ? createPortal(
-            <>
-              <button
-                type="button"
-                aria-label="Close AI menu"
-                className="fixed inset-0 z-[9998] cursor-default"
-                onClick={() => setAiMenuOpen(false)}
-              />
-              <div
-                className="fixed z-[9999] w-56 overflow-hidden rounded-2xl border border-app-border bg-app-elevated/95 backdrop-blur-xl p-1 shadow-2xl animate-pop-in"
-                style={{
-                  left: aiMenuStyle.left,
-                  top: aiMenuStyle.top,
-                  transform: 'translateY(-100%)',
-                }}
-              >
-                <button
-                  type="button"
-                  disabled={!value.trim()}
-                  className="block w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
-                  onClick={() => void handleAiEnhance()}
-                >
-                  Enhance message
-                </button>
-                <button
-                  type="button"
-                  className="block w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
-                  onClick={() => void handleAiGenerate()}
-                >
-                  Generate message
-                </button>
-                <button
-                  type="button"
-                  className="block w-full rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
-                  onClick={() => void handleFlexCommand()}
-                >
-                  Flex command
-                </button>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
-                  onClick={() => {
-                    setAiMenuOpen(false);
-                    audioInputRef.current?.click();
-                  }}
-                >
-                  <FiMic className="h-3.5 w-3.5" />
-                  Transcribe audio
-                </button>
-              </div>
-            </>,
-            document.body,
-          )
-        : null}
 
       {actionsMenuOpen && actionsMenuStyle
         ? createPortal(

@@ -292,39 +292,43 @@ export function FlexAiPanel({
             </button>
           </div>
 
-          <div ref={listRef} className="min-h-0 flex-1 space-y-3 overflow-y-auto px-4 py-3.5">
-            {messages.map((message) => (
-              <div
-                key={message.id}
-                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
+          <div className="relative min-h-0 flex-1 overflow-hidden">
+            <div className="absolute -left-20 top-20 h-64 w-64 rounded-full bg-cyan-400/10 blur-3xl" />
+            <div className="absolute -left-20 bottom-20 h-64 w-64 rounded-full bg-accent/10 blur-3xl" />
+            <div ref={listRef} className="relative z-10 flex h-full flex-col space-y-4 overflow-y-auto px-4 py-4 scrollbar-thin">
+              {messages.map((message) => (
                 <div
-                  className={`max-w-[90%] rounded-[18px] px-3.5 py-2.5 text-xs leading-relaxed whitespace-pre-wrap shadow-sm ${
-                    message.role === 'user'
-                      ? 'bg-gradient-to-br from-accent via-accent to-[#632a38] text-white shadow-accent/20'
-                      : 'border border-app-border bg-app-inset/90 text-app-text'
-                  }`}
+                  key={message.id}
+                  className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
-                  {message.text}
+                  <div
+                    className={`max-w-[85%] rounded-[20px] px-4 py-2.5 text-[13px] leading-relaxed shadow-sm ${
+                      message.role === 'user'
+                        ? 'bg-accent dark:bg-[#89384b] text-white shadow-black/10'
+                        : 'border border-app-border bg-app-surface shadow-sm text-app-text'
+                    }`}
+                  >
+                    {message.text}
+                  </div>
                 </div>
-              </div>
-            ))}
-            {busy ? (
-              <div className="flex items-center gap-2 text-xs text-accent-soft">
-                <div className="h-2 w-2 animate-ping rounded-full bg-accent" />
-                <span>Flex is thinking…</span>
-              </div>
-            ) : null}
+              ))}
+              {busy ? (
+                <div className="flex items-center gap-2 px-2 text-xs text-accent-soft">
+                  <div className="h-1.5 w-1.5 animate-ping rounded-full bg-accent" />
+                  <span>Flex is thinking…</span>
+                </div>
+              ) : null}
+            </div>
           </div>
 
-          <div className="border-t border-app-border bg-app-chat-panel/50 px-3.5 py-3">
-            <div className="flex items-center gap-1.5">
+          <div className="relative z-10 border-t border-app-border bg-app-surface px-4 py-3.5">
+            <div className="flex items-center gap-1 rounded-[18px] border border-app-border bg-app-inset px-1.5 py-1.5 focus-within:border-accent/40 focus-within:ring-1 focus-within:ring-accent/20 transition-all">
               <input
                 ref={inputRef}
                 value={input}
                 placeholder="Ask Flex or dictate a message..."
                 disabled={busy}
-                className="h-9 min-w-0 flex-1 rounded-xl border border-app-border bg-app-surface-input px-3 text-xs text-app-text outline-none transition-all placeholder:text-app-placeholder/70 focus:border-accent focus:ring-1 focus:ring-accent/30 disabled:opacity-50"
+                className="h-8 min-w-0 flex-1 bg-transparent px-3 text-[13px] text-app-text outline-none placeholder:text-app-placeholder disabled:opacity-50"
                 onChange={(event) => setInput(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
@@ -338,7 +342,7 @@ export function FlexAiPanel({
                 aria-label="Enhance with Flex"
                 title="Enhance or generate"
                 disabled={busy}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-app-muted hover:bg-app-chat-hover hover:text-app-text transition-all active:scale-95 disabled:opacity-40"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-app-muted hover:bg-app-chat-hover hover:text-app-text transition-all active:scale-95 disabled:opacity-40"
                 onClick={() => void runEnhanceOrGenerate()}
               >
                 <EnhanceIcon />
@@ -348,21 +352,25 @@ export function FlexAiPanel({
                 aria-label={recording ? 'Stop dictation' : 'Dictate a message'}
                 title={recording ? 'Stop dictation' : 'Dictate a message'}
                 disabled={busy && !recording}
-                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-xl transition-all active:scale-95 hover:bg-app-chat-hover disabled:opacity-40 ${
-                  recording ? 'text-accent font-bold ring-1 ring-accent animate-pulse' : 'text-app-muted hover:text-app-text'
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full transition-all active:scale-95 disabled:opacity-40 ${
+                  recording
+                    ? 'text-accent animate-pulse bg-accent/15'
+                    : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
                 }`}
                 onClick={() => void toggleRecording()}
               >
-                <FiMic className="text-base" />
+                <FiMic className="text-[15px]" />
               </button>
               <button
                 type="button"
-                aria-label="Send to Flex"
-                disabled={busy || !input.trim()}
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-[#5c2431] text-white shadow-sm shadow-accent/30 transition-all hover:scale-105 active:scale-95 disabled:opacity-40 disabled:hover:scale-100"
-                onClick={() => void runCommand()}
+                disabled={busy || (!input.trim() && !recording)}
+                className="ml-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-[14px] bg-accent dark:bg-[#8a4253] text-white transition-all hover:bg-accent-hover dark:hover:bg-[#7a394a] active:scale-95 disabled:opacity-40"
+                onClick={() => {
+                  if (recording) void toggleRecording();
+                  else void runCommand();
+                }}
               >
-                <FiSend className="text-sm" />
+                <FiSend className="text-[13px]" />
               </button>
             </div>
           </div>

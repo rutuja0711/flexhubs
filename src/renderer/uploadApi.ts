@@ -1,10 +1,22 @@
 import type { ApiResult } from '../shared/api';
 import { extractUploadUrl, normalizeUploadUrl } from '../shared/profile';
 import { clearAuth, getStoredToken } from './authApi';
+import { estimateUploadDurationMs, runSimulatedProgress } from './uploadProgress';
 
-function readFileAsBase64(file: File): Promise<string> {
+function readFileAsBase64(
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
+    reader.onprogress = (event) => {
+      if (!onProgress || !event.lengthComputable || file.size <= 0) {
+        return;
+      }
+
+      const readRatio = event.loaded / file.size;
+      onProgress(Math.round(readRatio * 38));
+    };
     reader.onload = () => {
       const result = reader.result;
 
@@ -13,14 +25,19 @@ function readFileAsBase64(file: File): Promise<string> {
         return;
       }
 
+      onProgress?.(40);
       resolve(result.includes(',') ? result.split(',')[1] : result);
     };
     reader.onerror = () => reject(new Error('Unable to read file.'));
+    onProgress?.(1);
     reader.readAsDataURL(file);
   });
 }
 
-export async function uploadFileToApi(file: File): Promise<ApiResult<{ url: string }>> {
+export async function uploadFileToApi(
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<ApiResult<{ url: string }>> {
   const token = getStoredToken();
 
   if (!token) {
@@ -39,13 +56,28 @@ export async function uploadFileToApi(file: File): Promise<ApiResult<{ url: stri
   }
 
   try {
-    const base64Data = await readFileAsBase64(file);
-    const result = await window.electronAPI.uploadProfileImage(
-      token,
-      file.name,
-      file.type || 'application/octet-stream',
-      base64Data,
+    const base64Data = await readFileAsBase64(file, onProgress);
+    const stopUploadSimulation = runSimulatedProgress(
+      42,
+      88,
+      estimateUploadDurationMs(file.size),
+      (value) => onProgress?.(value),
     );
+
+    let result: Awaited<ReturnType<NonNullable<typeof window.electronAPI>['uploadProfileImage']>>;
+
+    try {
+      result = await window.electronAPI.uploadProfileImage(
+        token,
+        file.name,
+        file.type || 'application/octet-stream',
+        base64Data,
+      );
+    } finally {
+      stopUploadSimulation();
+    }
+
+    onProgress?.(90);
 
     if (!result.ok) {
       if (result.status === 401) {

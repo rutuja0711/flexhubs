@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FiDownload, FiExternalLink, FiRotateCw, FiX, FiZoomIn, FiZoomOut } from 'react-icons/fi';
+import { FiDownload, FiExternalLink, FiRotateCw, FiX, FiZoomIn, FiZoomOut, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 import { normalizeUploadUrl } from '../../shared/profile';
-import { getStoredToken } from '../authApi';
 import { RemoteImage } from '../RemoteImage';
+import { fetchMediaBlob, isFlexHubsHostedMediaUrl } from '../mediaBlob';
 
 export type MediaPreviewItem = {
   url: string;
@@ -11,45 +11,29 @@ export type MediaPreviewItem = {
   kind: 'image' | 'video';
 };
 
-let openPreviewHandler: ((item: MediaPreviewItem) => void) | null = null;
+let openPreviewHandler: ((playlist: MediaPreviewItem[], index: number) => void) | null = null;
 
 export function openMediaPreview(item: MediaPreviewItem): void {
-  openPreviewHandler?.(item);
-}
+  const elements = document.querySelectorAll('.js-media-preview-item');
+  const playlist: MediaPreviewItem[] = [];
+  
+  elements.forEach((el) => {
+    const url = el.getAttribute('data-media-url');
+    if (!url) return;
+    playlist.push({
+      url,
+      name: el.getAttribute('data-media-name') || undefined,
+      kind: el.getAttribute('data-media-kind') === 'video' ? 'video' : 'image',
+    });
+  });
 
-function isFlexHubsHostedUrl(url: string): boolean {
-  return /^https:\/\/flexhubs\.in\//i.test(normalizeUploadUrl(url.trim()));
-}
-
-async function fetchMediaBlob(url: string): Promise<Blob> {
-  const normalized = normalizeUploadUrl(url.trim());
-
-  if (isFlexHubsHostedUrl(normalized)) {
-    const token = getStoredToken();
-    if (!token || !window.electronAPI?.fetchAuthenticatedMedia) {
-      throw new Error('Unable to download this file.');
-    }
-
-    const result = await window.electronAPI.fetchAuthenticatedMedia(token, normalized);
-    if (!result.ok) {
-      throw new Error(result.error);
-    }
-
-    const binary = atob(result.data.base64);
-    const bytes = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index += 1) {
-      bytes[index] = binary.charCodeAt(index);
-    }
-
-    return new Blob([bytes], { type: result.data.mimeType || 'application/octet-stream' });
+  let index = playlist.findIndex((p) => p.url === item.url);
+  if (index === -1) {
+    playlist.push(item);
+    index = playlist.length - 1;
   }
 
-  const response = await fetch(normalized);
-  if (!response.ok) {
-    throw new Error('Unable to download this file.');
-  }
-
-  return response.blob();
+  openPreviewHandler?.(playlist, index);
 }
 
 function triggerDownload(blob: Blob, fileName: string): void {
@@ -64,17 +48,26 @@ function triggerDownload(blob: Blob, fileName: string): void {
 function MediaPreviewModal({
   item,
   onClose,
+  onNext,
+  onPrev,
 }: {
   item: MediaPreviewItem;
   onClose: () => void;
+  onNext?: () => void;
+  onPrev?: () => void;
 }) {
   const [zoom, setZoom] = useState(1);
   const [rotation, setRotation] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [resolvedVideoUrl, setResolvedVideoUrl] = useState<string | null>(
-    item.kind === 'video' && !isFlexHubsHostedUrl(item.url) ? item.url : null,
-  );
+  const [resolvedVideoUrl, setResolvedVideoUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    setZoom(1);
+    setRotation(0);
+    setError('');
+    setResolvedVideoUrl(item.kind === 'video' && !isFlexHubsHostedMediaUrl(item.url) ? item.url : null);
+  }, [item.url, item.kind]);
 
   const fileName = item.name?.trim() || (item.kind === 'video' ? 'video.mp4' : 'image.png');
   const label = item.kind === 'video' ? 'Video preview' : 'Image preview';
@@ -117,7 +110,7 @@ function MediaPreviewModal({
   }, [item.url]);
 
   useEffect(() => {
-    if (item.kind !== 'video' || !isFlexHubsHostedUrl(item.url)) {
+    if (item.kind !== 'video' || !isFlexHubsHostedMediaUrl(item.url)) {
       return;
     }
 
@@ -154,6 +147,14 @@ function MediaPreviewModal({
         return;
       }
 
+      if (event.key === 'ArrowRight' && onNext) {
+        onNext();
+      }
+
+      if (event.key === 'ArrowLeft' && onPrev) {
+        onPrev();
+      }
+
       if (event.key === '+' || event.key === '=') {
         event.preventDefault();
         setZoom((current) => Math.min(current + 0.25, 4));
@@ -167,7 +168,7 @@ function MediaPreviewModal({
 
     document.addEventListener('keydown', onKeyDown);
     return () => document.removeEventListener('keydown', onKeyDown);
-  }, [onClose]);
+  }, [onClose, onNext, onPrev]);
 
   return createPortal(
     <div className="fixed inset-0 z-[300] flex flex-col bg-[#0b0b0c] text-white">
@@ -240,11 +241,22 @@ function MediaPreviewModal({
         </div>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-auto bg-[#0b0b0c] px-6 py-6">
-        <div className="flex min-h-full min-w-full items-center justify-center">
+      <div className="relative min-h-0 flex-1 bg-[#0b0b0c] flex items-center justify-center overflow-hidden">
+        <button
+          type="button"
+          disabled={!onPrev}
+          className="absolute left-6 z-10 flex h-14 w-14 items-center justify-center rounded-full bg-black/40 text-white/70 transition-all hover:bg-black/70 hover:text-white disabled:opacity-30 disabled:pointer-events-none"
+          onClick={onPrev}
+          aria-label="Previous image"
+        >
+          <FiChevronLeft className="text-3xl" />
+        </button>
+
+        <div className="flex h-full w-full items-center justify-center overflow-auto px-16 py-6">
           {item.kind === 'video' ? (
             resolvedVideoUrl ? (
               <video
+                key={item.url}
                 src={resolvedVideoUrl}
                 controls
                 autoPlay
@@ -255,6 +267,7 @@ function MediaPreviewModal({
             )
           ) : (
             <div
+              key={item.url}
               className="origin-center transition-transform duration-150"
               style={{ transform: `scale(${zoom}) rotate(${rotation}deg)` }}
             >
@@ -267,6 +280,16 @@ function MediaPreviewModal({
             </div>
           )}
         </div>
+
+        <button
+          type="button"
+          disabled={!onNext}
+          className="absolute right-6 z-10 flex h-14 w-14 items-center justify-center rounded-full bg-black/40 text-white/70 transition-all hover:bg-black/70 hover:text-white disabled:opacity-30 disabled:pointer-events-none"
+          onClick={onNext}
+          aria-label="Next image"
+        >
+          <FiChevronRight className="text-3xl" />
+        </button>
       </div>
 
       <footer className="shrink-0 border-t border-white/10 bg-[#0b0b0c] px-5 py-2 text-center text-xs text-white/50">
@@ -279,18 +302,38 @@ function MediaPreviewModal({
 }
 
 export function MediaPreviewHost() {
-  const [item, setItem] = useState<MediaPreviewItem | null>(null);
+  const [playlist, setPlaylist] = useState<MediaPreviewItem[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(-1);
 
   useEffect(() => {
-    openPreviewHandler = setItem;
+    openPreviewHandler = (newPlaylist, index) => {
+      setPlaylist(newPlaylist);
+      setCurrentIndex(index);
+    };
     return () => {
       openPreviewHandler = null;
     };
   }, []);
 
-  if (!item) {
+  if (currentIndex === -1 || !playlist[currentIndex]) {
     return null;
   }
 
-  return <MediaPreviewModal item={item} onClose={() => setItem(null)} />;
+  const handleNext = () => {
+    setCurrentIndex((current) => (current + 1) % playlist.length);
+  };
+
+  const handlePrev = () => {
+    setCurrentIndex((current) => (current - 1 + playlist.length) % playlist.length);
+  };
+
+  return (
+    <MediaPreviewModal
+      key={playlist[currentIndex].url}
+      item={playlist[currentIndex]}
+      onClose={() => setCurrentIndex(-1)}
+      onNext={playlist.length > 1 ? handleNext : undefined}
+      onPrev={playlist.length > 1 ? handlePrev : undefined}
+    />
+  );
 }

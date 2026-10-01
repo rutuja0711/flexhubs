@@ -75,8 +75,14 @@ export function OrganizationInviteModal({ onUnauthorized, onInviteResolved }: Or
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 sm:p-6 backdrop-blur-md animate-fade-in">
-      <div className="relative w-full max-w-md overflow-hidden rounded-3xl border border-app-border bg-app-surface backdrop-blur-2xl p-6 shadow-2xl animate-pop-in origin-center">
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 sm:p-6 backdrop-blur-md animate-fade-in"
+      onClick={() => setInvites([])}
+    >
+      <div 
+        className="relative w-full max-w-md overflow-hidden rounded-3xl border border-app-border bg-app-surface backdrop-blur-2xl p-6 shadow-2xl animate-pop-in origin-center"
+        onClick={(e) => e.stopPropagation()}
+      >
         <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-app-border-strong to-transparent pointer-events-none" />
 
         <h2 className="mb-1 text-base font-semibold text-app-text tracking-tight">Workspace invitation</h2>
@@ -114,6 +120,15 @@ export function OrganizationInviteModal({ onUnauthorized, onInviteResolved }: Or
               </div>
             </div>
           ))}
+        </div>
+        <div className="mt-5 text-center">
+          <button 
+            type="button"
+            onClick={() => setInvites([])} 
+            className="text-xs font-medium text-app-muted hover:text-app-text transition-colors"
+          >
+            Skip for now
+          </button>
         </div>
       </div>
     </div>

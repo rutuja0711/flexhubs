@@ -1,4 +1,5 @@
 import { normalizeCalendarEventsDetailed } from './extras';
+import { normalizeMessage, extractMessageMedia } from './messages';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
@@ -49,6 +50,7 @@ export type SavedMessageItem = {
   senderName: string;
   conversationId: string | null;
   messageId: string | null;
+  mediaUrl?: string;
 };
 
 export type FileItem = {
@@ -159,6 +161,7 @@ export function slugifyChannelName(name: string): string {
 }
 
 export function normalizeSavedMessages(payload: unknown): SavedMessageItem[] {
+  console.log('normalizeSavedMessages payload:', JSON.stringify(payload, null, 2));
   return extractArray(payload, ['saved', 'items', 'messages', 'data'])
     .map(asRecord)
     .filter((item): item is Record<string, unknown> => item !== null)
@@ -192,14 +195,39 @@ export function normalizeSavedMessages(payload: unknown): SavedMessageItem[] {
         readString(record.messageAt) ??
         '';
 
+      let mediaUrl: string | undefined = undefined;
+      let contentText = '';
+      
+      if (message) {
+        const normalized = normalizeMessage(message, index);
+        if (normalized.media && normalized.media.length > 0) {
+           mediaUrl = normalized.media[0].url;
+           // If content is just empty, give it a default so it doesn't look completely empty
+           if (!normalized.content.trim()) {
+              contentText = normalized.media[0].kind === 'image' || normalized.media[0].kind === 'gif' ? 'Photo' : 'Attachment';
+           }
+        }
+        if (!contentText) contentText = normalized.content;
+      }
+      
+      const rawContent = readString(record.content) ?? readString(record.text) ?? readString(record.preview) ?? '';
+      
+      if (!mediaUrl) {
+         // Fallback to outer record
+         const recordMedia = extractMessageMedia(record, rawContent);
+         if (recordMedia.length > 0) {
+            mediaUrl = recordMedia[0].url;
+            if (!contentText.trim()) {
+               contentText = recordMedia[0].kind === 'image' || recordMedia[0].kind === 'gif' ? 'Photo' : 'Attachment';
+            }
+         }
+      }
+
+      if (!contentText) contentText = rawContent;
+
       return {
         id: readString(record.id) ?? `saved-${index}`,
-        content:
-          (message ? readString(message.content) : null) ??
-          readString(record.content) ??
-          readString(record.text) ??
-          readString(record.preview) ??
-          '',
+        content: contentText,
         source,
         createdAt: savedAt,
         savedAt,
@@ -210,6 +238,7 @@ export function normalizeSavedMessages(payload: unknown): SavedMessageItem[] {
           readString(record.conversationId) ??
           (message ? readString(message.conversationId) : null),
         messageId: message ? readString(message.id) : null,
+        mediaUrl,
       };
     });
 }

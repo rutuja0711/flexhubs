@@ -63,11 +63,13 @@ import {
   unsaveChatMessage,
   votePoll,
   summarizeUnreadMessages,
+  translateUnreadMessages,
 } from './chatApi';
 import { ActivityView } from './chat/ActivityView';
 import { CallHistoryView } from './chat/CallHistoryView';
 import { CalendarView } from './chat/CalendarView';
 import { uploadChatFile } from './extrasApi';
+import { estimateSendDurationMs, runSimulatedProgress } from './uploadProgress';
 import { ChatSidebar } from './chat/ChatSidebar';
 import { ChatWelcome } from './chat/ChatWelcome';
 import { ConversationThread } from './chat/ConversationThread';
@@ -375,7 +377,12 @@ function mergeIncomingMessage(
   current: MessageItem[],
   incoming: MessageItem,
   userId: string | null,
+  shouldIgnore?: (message: MessageItem) => boolean,
 ): MessageItem[] {
+  if (shouldIgnore?.(incoming)) {
+    return current;
+  }
+
   const threadRootId = resolveThreadRootId(incoming, userId);
   if (threadRootId) {
     return bumpThreadReplyCount(
@@ -467,6 +474,31 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryContent, setSummaryContent] = useState<string | null>(null);
   const callPhaseRef = useRef<'idle' | 'outgoing' | 'incoming' | 'connecting' | 'active' | 'ending'>('idle');
+  const cancelledLocalMessageIdsRef = useRef<Set<string>>(new Set());
+  const abortOutboundSendRef = useRef(
+    new Map<
+      string,
+      {
+        conversationId: string;
+        fileName: string | null;
+        caption: string;
+      }
+    >(),
+  );
+  const hiddenOutboundSendRef = useRef(
+    new Map<
+      string,
+      {
+        conversationId: string;
+        fileName: string | null;
+        caption: string;
+      }
+    >(),
+  );
+  const suppressedMessageIdsRef = useRef<Set<string>>(new Set());
+  const locallyHiddenMessageIdsRef = useRef<Set<string>>(new Set());
+  const [locallyHiddenRevision, setLocallyHiddenRevision] = useState(0);
+  const [outboundSendProgress, setOutboundSendProgress] = useState<Record<string, number>>({});
   const pendingFileRetriesRef = useRef(
     new Map<
       string,
@@ -479,6 +511,50 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       }
     >(),
   );
+
+  const outboundSendProgressCeilingRef = useRef<Record<string, number>>({});
+
+  const patchOutboundSendProgress = (messageId: string, progress: number | null) => {
+    setOutboundSendProgress((current) => {
+      if (progress == null) {
+        delete outboundSendProgressCeilingRef.current[messageId];
+        if (!(messageId in current)) {
+          return current;
+        }
+
+        const next = { ...current };
+        delete next[messageId];
+        return next;
+      }
+
+      const previous = outboundSendProgressCeilingRef.current[messageId] ?? 0;
+      const nextValue = Math.max(previous, progress);
+      outboundSendProgressCeilingRef.current[messageId] = nextValue;
+
+      return { ...current, [messageId]: nextValue };
+    });
+  };
+
+  const finishOutboundSendProgress = async (messageId: string) => {
+    patchOutboundSendProgress(messageId, 100);
+    await new Promise((resolve) => window.setTimeout(resolve, 320));
+    patchOutboundSendProgress(messageId, null);
+  };
+
+  const isLocalSendCancelled = (localId: string) =>
+    cancelledLocalMessageIdsRef.current.has(localId);
+
+  const isHiddenOutboundSend = (localId: string) =>
+    hiddenOutboundSendRef.current.has(localId);
+
+  const cleanupCancelledOutboundSend = (localId: string, previewUrl?: string) => {
+    pendingFileRetriesRef.current.delete(localId);
+    patchOutboundSendProgress(localId, null);
+
+    if (previewUrl?.startsWith('blob:')) {
+      URL.revokeObjectURL(previewUrl);
+    }
+  };
 
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [notificationsLoading, setNotificationsLoading] = useState(false);
@@ -684,6 +760,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     return Array.from(ids);
   }, [conversations, selectedConversation?.id, selectedConversation?.kind]);
+
+  const visibleMessages = useMemo(
+    () =>
+      messages.filter((message) => !locallyHiddenMessageIdsRef.current.has(message.id)),
+    [messages, locallyHiddenRevision],
+  );
 
   const typingPreviews = useMemo(() => {
     const previews: Record<string, string> = {};
@@ -1037,6 +1119,133 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     },
     [onSessionExpired],
   );
+
+  const purgeCancelledServerMessage = async (
+    conversationId: string,
+    serverMessageId: string,
+    scope: 'me' | 'everyone',
+  ) => {
+    suppressedMessageIdsRef.current.add(serverMessageId);
+    const result = await deleteChatMessage(conversationId, serverMessageId, scope);
+    if (!result.ok && !handleUnauthorized(result.status)) {
+      suppressedMessageIdsRef.current.delete(serverMessageId);
+    }
+  };
+
+  const finalizeCancelledOutboundSend = async (
+    localId: string,
+    conversationId: string,
+    serverMessage?: MessageItem,
+  ) => {
+    cleanupCancelledOutboundSend(localId);
+    cancelledLocalMessageIdsRef.current.delete(localId);
+    abortOutboundSendRef.current.delete(localId);
+
+    if (serverMessage?.id) {
+      await purgeCancelledServerMessage(conversationId, serverMessage.id, 'everyone');
+    }
+  };
+
+  const rememberLocallyHiddenMessage = (messageId: string) => {
+    if (!messageId) {
+      return;
+    }
+
+    locallyHiddenMessageIdsRef.current.add(messageId);
+    setLocallyHiddenRevision((value) => value + 1);
+  };
+
+  const scheduledDeleteForMeIdsRef = useRef<Set<string>>(new Set());
+
+  const scheduleDeleteForMeAfterSend = (conversationId: string, messageId: string) => {
+    if (scheduledDeleteForMeIdsRef.current.has(messageId)) {
+      return;
+    }
+
+    scheduledDeleteForMeIdsRef.current.add(messageId);
+    window.setTimeout(() => {
+      void deleteChatMessage(conversationId, messageId, 'me');
+    }, 3000);
+  };
+
+  const finalizeHiddenOutboundSend = (
+    localId: string,
+    conversationId: string,
+    serverMessage?: MessageItem,
+  ) => {
+    hiddenOutboundSendRef.current.delete(localId);
+    patchOutboundSendProgress(localId, null);
+
+    if (serverMessage?.id) {
+      rememberLocallyHiddenMessage(serverMessage.id);
+      scheduleDeleteForMeAfterSend(conversationId, serverMessage.id);
+    }
+  };
+
+  const matchesOutboundSendRecord = (
+    incoming: MessageItem,
+    record: { fileName: string | null; caption: string },
+  ) => {
+    const incomingFileName = incoming.media[0]?.name ?? null;
+    const captionMatches =
+      record.caption === incoming.content.trim() ||
+      (!record.caption && !incoming.content.trim());
+
+    if (record.fileName && incomingFileName === record.fileName && captionMatches) {
+      return true;
+    }
+
+    if (!record.fileName && captionMatches && incoming.content.trim() === record.caption) {
+      return true;
+    }
+
+    return false;
+  };
+
+  const shouldIgnoreCancelledInboundMessage = (
+    incoming: MessageItem,
+    conversationId: string,
+    userId: string | null,
+  ) => {
+    if (suppressedMessageIdsRef.current.has(incoming.id)) {
+      return true;
+    }
+
+    if (!userId || (!incoming.isOwn && incoming.senderId !== userId)) {
+      return false;
+    }
+
+    for (const [localId, record] of abortOutboundSendRef.current.entries()) {
+      if (record.conversationId !== conversationId) {
+        continue;
+      }
+
+      if (matchesOutboundSendRecord(incoming, record)) {
+        void finalizeCancelledOutboundSend(localId, conversationId, incoming);
+        return true;
+      }
+    }
+
+    for (const [localId, record] of hiddenOutboundSendRef.current.entries()) {
+      if (record.conversationId !== conversationId) {
+        continue;
+      }
+
+      if (matchesOutboundSendRecord(incoming, record)) {
+        if (incoming.id) {
+          rememberLocallyHiddenMessage(incoming.id);
+          scheduleDeleteForMeAfterSend(conversationId, incoming.id);
+        }
+        return true;
+      }
+    }
+
+    if (locallyHiddenMessageIdsRef.current.has(incoming.id)) {
+      return true;
+    }
+
+    return false;
+  };
 
   const handleSignOut = useCallback(async () => {
     const confirmed = await confirm({
@@ -1426,7 +1635,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   );
 
   const loadActivityData = useCallback(async () => {
-    await syncNotifications({ withLoading: true, markAllRead: true });
+    await syncNotifications({ withLoading: true });
   }, [syncNotifications]);
 
   const refreshPresence = useCallback(
@@ -2347,7 +2556,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             appendThreadReply(resolvedConversationId, incomingThreadRootId, message);
           }
 
-          setMessages((current) => mergeIncomingMessage(current, message, userId));
+          setMessages((current) =>
+            mergeIncomingMessage(current, message, userId, (incoming) =>
+              shouldIgnoreCancelledInboundMessage(incoming, resolvedConversationId, userId),
+            ),
+          );
 
           if (!message.isOwn && message.senderId !== userId) {
             void markConversationRead(resolvedConversationId).then((result) => {
@@ -2361,7 +2574,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             appendThreadReply(resolvedConversationId, incomingThreadRootId, message);
           }
 
-          setMessages((current) => mergeIncomingMessage(current, message, userId));
+          setMessages((current) =>
+            mergeIncomingMessage(current, message, userId, (incoming) =>
+              shouldIgnoreCancelledInboundMessage(incoming, resolvedConversationId, userId),
+            ),
+          );
 
           if (incrementUnread) {
             setUnreadCount((count) => count + 1);
@@ -2374,7 +2591,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }
         } else {
           patchThreadCacheMessages(threadCacheRef.current, resolvedConversationId, (current) =>
-            mergeIncomingMessage(current, message, userId),
+            mergeIncomingMessage(current, message, userId, (incoming) =>
+              shouldIgnoreCancelledInboundMessage(incoming, resolvedConversationId, userId),
+            ),
           );
 
           if (incrementUnread) {
@@ -2476,6 +2695,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           } else {
             patchThreadCacheMessages(threadCacheRef.current, conversationId, applyDelete);
           }
+          
+          setSavedItems((current) => current.filter((item) => item.messageId !== messageId));
         }
 
         scheduleConversationsRefresh();
@@ -2568,10 +2789,16 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
 
         if (conversationId === activeConversationId) {
-          setMessages((current) => mergeIncomingMessage(current, message, userId));
+          setMessages((current) =>
+            mergeIncomingMessage(current, message, userId, (incoming) =>
+              shouldIgnoreCancelledInboundMessage(incoming, resolvedConversationId, userId),
+            ),
+          );
         } else {
           patchThreadCacheMessages(threadCacheRef.current, conversationId, (current) =>
-            mergeIncomingMessage(current, message, userId),
+            mergeIncomingMessage(current, message, userId, (incoming) =>
+              shouldIgnoreCancelledInboundMessage(incoming, resolvedConversationId, userId),
+            ),
           );
 
           if (incrementUnread) {
@@ -3312,8 +3539,18 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
+    if (isHiddenOutboundSend(localId)) {
+      finalizeHiddenOutboundSend(localId, conversationId, result.data);
+      return;
+    }
+
     setMessages((current) => replaceLocalMessage(current, localId, result.data, userId));
     touchConversationWithMessage(conversationId, withDeliveredStatus(result.data), false);
+
+    if (cancelledLocalMessageIdsRef.current.has(localId)) {
+      cancelledLocalMessageIdsRef.current.delete(localId);
+      void deleteChatMessage(conversationId, result.data.id, 'everyone');
+    }
   };
 
   const handleRetryMessage = async (messageId: string) => {
@@ -3336,7 +3573,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     const media = message.media[0];
     const isGifOrSticker = media?.kind === 'gif' || media?.kind === 'sticker';
     const isUploadedFile =
-      media && (media.kind === 'image' || media.kind === 'file') && !isGifOrSticker;
+      media &&
+      (media.kind === 'image' || media.kind === 'file' || media.kind === 'video') &&
+      !isGifOrSticker;
 
     let result: Awaited<ReturnType<typeof sendChatMessage>>;
 
@@ -3437,6 +3676,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     setMessages((current) => replaceLocalMessage(current, localId, result.data, userId));
     touchConversationWithMessage(conversationId, withDeliveredStatus(result.data), false);
+
+    if (cancelledLocalMessageIdsRef.current.has(localId)) {
+      cancelledLocalMessageIdsRef.current.delete(localId);
+      void deleteChatMessage(conversationId, result.data.id, 'everyone');
+    }
   };
 
   const findConversationForFlex = (conversationId: string | null, conversationName: string | null) => {
@@ -3472,6 +3716,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       action.includes('snooze_notification') ||
       action.includes('dnd');
     const isSnoozeChat = !isSnoozeMe && (action === 'snooze' || action.includes('snooze'));
+    const isSummarizeUnread = action === 'summarize_unread' || action.includes('summarize');
+    const isTranslateUnread = action === 'translate_unread' || action.includes('translate');
 
     if (isOpen) {
       if (!conversation) {
@@ -3568,6 +3814,34 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return command.text || `Snoozed ${conversation.title}.`;
     }
 
+    if (isSummarizeUnread) {
+      if (!conversation) {
+        return command.text || `I couldn't find ${command.conversationName ?? 'that chat'} to summarize.`;
+      }
+      const summaryRes = await summarizeUnreadMessages(conversation.id);
+      if (handleUnauthorized(summaryRes.status)) {
+        return 'Please sign in again.';
+      }
+      if (!summaryRes.ok) {
+        return summaryRes.error;
+      }
+      return command.text ? `${command.text}\n\n${summaryRes.data.summary}` : summaryRes.data.summary;
+    }
+
+    if (isTranslateUnread) {
+      if (!conversation) {
+        return command.text || `I couldn't find ${command.conversationName ?? 'that chat'} to translate.`;
+      }
+      const translateRes = await translateUnreadMessages(conversation.id);
+      if (handleUnauthorized(translateRes.status)) {
+        return 'Please sign in again.';
+      }
+      if (!translateRes.ok) {
+        return translateRes.error;
+      }
+      return command.text ? `${command.text}\n\n${translateRes.data.translation}` : translateRes.data.translation;
+    }
+
     if (command.text.trim()) {
       return command.text;
     }
@@ -3627,6 +3901,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     const result = await sendChatMediaMessage(conversationId, item, kind, replyToId, threadRootId);
 
+    if (isLocalSendCancelled(localId)) {
+      if (result.ok) {
+        void deleteChatMessage(conversationId, result.data.id, 'everyone');
+      }
+      return;
+    }
+
     if (handleUnauthorized(result.status)) {
       if (!threadRootId) {
         setMessages((current) => current.filter((message) => message.id !== localId));
@@ -3639,6 +3920,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       if (!threadRootId) {
         setMessages((current) => markMessageStatus(current, localId, 'failed'));
       }
+      return;
+    }
+
+    if (isHiddenOutboundSend(localId)) {
+      finalizeHiddenOutboundSend(localId, conversationId, result.data);
       return;
     }
 
@@ -3660,6 +3946,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     setMessages((current) => replaceLocalMessage(current, localId, result.data, userId));
     touchConversationWithMessage(conversationId, withDeliveredStatus(result.data), false);
+
+    if (cancelledLocalMessageIdsRef.current.has(localId)) {
+      cancelledLocalMessageIdsRef.current.delete(localId);
+      void deleteChatMessage(conversationId, result.data.id, 'everyone');
+    }
   };
 
   const handleSendFile = async (
@@ -3678,6 +3969,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     const mimeType = file.type || 'application/octet-stream';
     const previewUrl = URL.createObjectURL(file);
     const isImage = mimeType.startsWith('image/');
+    const isVideo = mimeType.startsWith('video/');
+    const mediaKind = isVideo ? 'video' : isImage ? 'image' : 'file';
     const messageCaption = caption?.trim() ?? '';
     const optimistic: MessageItem = {
       id: localId,
@@ -3697,7 +3990,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       messageType: isImage ? 'IMAGE' : 'FILE',
       media: [
         {
-          kind: isImage ? 'image' : 'file',
+          kind: mediaKind,
           url: previewUrl,
           previewUrl,
           name: file.name,
@@ -3729,9 +4022,21 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       touchConversationWithMessage(conversationId, optimistic, false);
     }
 
-    const uploadResult = await uploadChatFile(file);
+    patchOutboundSendProgress(localId, 1);
+
+    const uploadResult = await uploadChatFile(file, (progress) => {
+      if (!isLocalSendCancelled(localId)) {
+        patchOutboundSendProgress(localId, progress);
+      }
+    });
+
+    if (isLocalSendCancelled(localId)) {
+      cleanupCancelledOutboundSend(localId, previewUrl);
+      return;
+    }
 
     if (handleUnauthorized(uploadResult.status) || !uploadResult.ok) {
+      patchOutboundSendProgress(localId, null);
       if (!threadRootId) {
         setMessages((current) => markMessageStatus(current, localId, 'failed'));
       } else {
@@ -3745,6 +4050,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     const uploadedUrl = uploadResult.data.url;
+    if (isLocalSendCancelled(localId)) {
+      cleanupCancelledOutboundSend(localId, previewUrl);
+      return;
+    }
+
     pendingFileRetriesRef.current.set(localId, {
       file,
       caption: messageCaption,
@@ -3753,14 +4063,18 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       uploadedUrl,
     });
     if (!threadRootId) {
-      setMessages((current) =>
-        current.map((message) =>
+      setMessages((current) => {
+        if (!current.some((message) => message.id === localId)) {
+          return current;
+        }
+
+        return current.map((message) =>
           message.id === localId
             ? {
                 ...message,
                 media: [
                   {
-                    kind: isImage ? 'image' : 'file',
+                    kind: mediaKind,
                     url: uploadedUrl,
                     previewUrl: uploadedUrl,
                     name: file.name,
@@ -3768,10 +4082,23 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
                 ],
               }
             : message,
-        ),
-      );
+        );
+      });
     }
     URL.revokeObjectURL(previewUrl);
+
+    patchOutboundSendProgress(localId, 90);
+
+    if (isLocalSendCancelled(localId)) {
+      cleanupCancelledOutboundSend(localId);
+      return;
+    }
+
+    const stopSendProgress = runSimulatedProgress(91, 97, estimateSendDurationMs(), (value) => {
+      if (!isLocalSendCancelled(localId)) {
+        patchOutboundSendProgress(localId, value);
+      }
+    });
 
     const result = await sendChatFileMessage(
       conversationId,
@@ -3782,8 +4109,19 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       threadRootId,
       messageCaption || undefined,
     );
+    stopSendProgress();
+
+    if (isLocalSendCancelled(localId)) {
+      await finalizeCancelledOutboundSend(
+        localId,
+        conversationId,
+        result.ok ? result.data : undefined,
+      );
+      return;
+    }
 
     if (handleUnauthorized(result.status) || !result.ok) {
+      patchOutboundSendProgress(localId, null);
       if (!threadRootId) {
         setMessages((current) => markMessageStatus(current, localId, 'failed'));
       } else {
@@ -3797,7 +4135,21 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     pendingFileRetriesRef.current.delete(localId);
 
+    if (isLocalSendCancelled(localId)) {
+      await finalizeCancelledOutboundSend(localId, conversationId, result.data);
+      return;
+    }
+
     if (threadRootId) {
+      await finishOutboundSendProgress(localId);
+      if (isLocalSendCancelled(localId)) {
+        await finalizeCancelledOutboundSend(localId, conversationId, result.data);
+        return;
+      }
+      if (isHiddenOutboundSend(localId)) {
+        finalizeHiddenOutboundSend(localId, conversationId, result.data);
+        return;
+      }
       registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
       appendThreadReply(
         conversationId,
@@ -3810,6 +4162,18 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           result.data.threadRootId ?? threadRootId,
         ),
       );
+      return;
+    }
+
+    await finishOutboundSendProgress(localId);
+
+    if (isLocalSendCancelled(localId)) {
+      await finalizeCancelledOutboundSend(localId, conversationId, result.data);
+      return;
+    }
+
+    if (isHiddenOutboundSend(localId)) {
+      finalizeHiddenOutboundSend(localId, conversationId, result.data);
       return;
     }
 
@@ -3985,18 +4349,88 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    const confirmed = await confirm({
-      title: scope === 'everyone' ? 'Delete for everyone' : 'Delete message',
-      message:
-        scope === 'everyone'
-          ? 'This message will be removed for all members. This cannot be undone.'
-          : 'Delete this message from your view?',
-      confirmLabel: 'Delete',
-      tone: 'danger',
-    });
+    const messageToDelete = messagesRef.current.find((m) => m.id === messageId);
+    if (!messageToDelete) return;
 
-    if (!confirmed) {
+    if (messageToDelete.status === 'sending') {
+      const confirmed = await confirm({
+        title: scope === 'everyone' ? 'Cancel sending' : 'Delete message',
+        message:
+          scope === 'everyone'
+            ? 'This attachment is still sending. Stop the upload and remove it for everyone?'
+            : 'Remove this from your view while it finishes sending? It will still be delivered to the chat.',
+        confirmLabel: scope === 'everyone' ? 'Remove for everyone' : 'Delete for me',
+        tone: 'danger',
+      });
+      if (!confirmed) {
+        return;
+      }
+
+      const sendRecord = {
+        conversationId: selectedId,
+        fileName: messageToDelete.media[0]?.name ?? null,
+        caption: messageToDelete.content.trim(),
+      };
+
+      if (scope === 'everyone') {
+        cancelledLocalMessageIdsRef.current.add(messageId);
+        abortOutboundSendRef.current.set(messageId, sendRecord);
+        cleanupCancelledOutboundSend(messageId, messageToDelete.media[0]?.url);
+      } else {
+        hiddenOutboundSendRef.current.set(messageId, sendRecord);
+        patchOutboundSendProgress(messageId, null);
+      }
+
+      setMessages((current) => current.filter((message) => message.id !== messageId));
+      setSavedItems((current) => current.filter((item) => item.messageId !== messageId));
+      showActionMessage(
+        scope === 'everyone' ? 'Send cancelled.' : 'Hidden while sending. The message will still be delivered.',
+      );
       return;
+    }
+
+    if (scope === 'me') {
+      const confirmed = await confirm({
+        title: 'Delete message',
+        message: 'Delete this message from your view?',
+        confirmLabel: 'Delete',
+        tone: 'danger',
+      });
+      if (!confirmed) return;
+    }
+
+    const originalMessages = [...messages];
+    const originalSaved = [...savedItems];
+
+    if (scope === 'everyone') {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === messageId ? markMessageDeletedForEveryone(message) : message,
+        ),
+      );
+    } else {
+      setMessages((current) => current.filter((message) => message.id !== messageId));
+    }
+    setSavedItems((current) => current.filter((item) => item.messageId !== messageId));
+
+    if (scope === 'everyone') {
+      let isUndone = false;
+      toast.success('Message deleted for everyone', {
+        action: {
+          label: 'Undo',
+          onClick: () => {
+            isUndone = true;
+            setMessages(originalMessages);
+            setSavedItems(originalSaved);
+          },
+        },
+      });
+
+      await new Promise((resolve) => setTimeout(resolve, 5000));
+
+      if (isUndone) {
+        return;
+      }
     }
 
     const result = await deleteChatMessage(selectedId, messageId, scope);
@@ -4007,31 +4441,19 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       }
 
       if (scope === 'everyone' && isAlreadyDeletedForEveryoneError(result.error)) {
-        setMessages((current) =>
-          current.map((message) =>
-            message.id === messageId ? markMessageDeletedForEveryone(message) : message,
-          ),
-        );
-        showActionMessage('Message deleted for everyone.');
         return;
       }
 
+      setMessages(originalMessages);
+      setSavedItems(originalSaved);
       setThreadError(result.error);
       toast.error(result.error);
       return;
     }
 
-    if (result.data.scope === 'everyone') {
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === messageId ? markMessageDeletedForEveryone(message) : message,
-        ),
-      );
-    } else {
-      setMessages((current) => current.filter((message) => message.id !== messageId));
+    if (savedMessageIds.has(messageId)) {
+      void unsaveChatMessage(selectedId, messageId);
     }
-
-    showActionMessage(scope === 'everyone' ? 'Message deleted for everyone.' : 'Message deleted.');
   };
 
   const handleForwardMessage = async (
@@ -4206,6 +4628,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           onRespondFriend={(userId, status) => {
             void handleRespondFriendRequest(userId, status);
           }}
+          onMarkAllRead={() => {
+            void syncNotifications({ withLoading: true, markAllRead: true });
+          }}
         />
       );
     }
@@ -4248,13 +4673,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             if (conversation.kind === 'hub') {
               void callManager.startGroupMeeting(conversation, video);
             } else {
-              void callManager.startDirectCall(
-                conversation.peerUserId ?? '',
-                conversation.title,
-                conversation.avatarUrl ?? null,
-                conversation.id,
-                video
-              );
+              void callManager.startDirectCall(conversation, video);
             }
           }}
         />
@@ -4272,6 +4691,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }}
           onSelect={(item) => {
             handleOpenInChat(item.conversationId, item.messageId);
+          }}
+          onUnsave={async (item) => {
+            if (!item.conversationId || !item.messageId) return;
+            setSavedItems((current) => current.filter((i) => i.id !== item.id));
+            await unsaveChatMessage(item.conversationId, item.messageId);
+            void loadSavedData();
           }}
         />
       );
@@ -4457,7 +4882,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           pinnedMessageIds={pinnedMessageIds}
           conversations={conversations}
           onSummarizeUnread={handleSummarizeUnread}
-          messages={messages}
+          sendProgressByMessageId={outboundSendProgress}
+          messages={visibleMessages}
           draft={draft}
           loading={threadLoading}
           error={threadError}

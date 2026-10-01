@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef } from 'react';
+import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import { FiBell, FiCalendar, FiMapPin, FiMoreVertical, FiPhone, FiUsers, FiVideo } from 'react-icons/fi';
 import type { ConversationItem, PresenceStatus } from '../../shared/chat';
 import {
@@ -85,6 +85,7 @@ type ConversationThreadProps = {
   onThreadReplySent?: (threadRootId: string) => void;
   onThreadMessagesRegistered?: () => void;
   onSummarizeUnread?: () => void;
+  sendProgressByMessageId?: Record<string, number>;
 };
 
 export function ConversationThread({
@@ -114,6 +115,7 @@ export function ConversationThread({
   onSaveMessage,
   onUnsaveMessage,
   onSummarizeUnread,
+  sendProgressByMessageId = {},
   savedMessageIds = new Set<string>(),
   onVotePoll,
   onConversationUpdated,
@@ -310,7 +312,7 @@ export function ConversationThread({
     setNotificationsSnoozed(notificationsSnoozedFromProps);
   }, [conversation.id, notificationsSnoozedFromProps]);
 
-  const jumpToMessage = (messageId: string) => {
+  const jumpToMessage = useCallback((messageId: string) => {
     setBannerScrollTargetId(messageId);
     setScrollRequestKey((current) => current + 1);
     setHighlightedMessageIds((current) => [...new Set([...current, messageId])]);
@@ -321,7 +323,14 @@ export function ConversationThread({
     }, 2200);
 
     highlightTimeoutsRef.current.push(timeoutId);
-  };
+  }, []);
+
+  useEffect(() => {
+    if (focusMessageId) {
+      jumpToMessage(focusMessageId);
+      onFocusMessageHandled?.();
+    }
+  }, [focusMessageId, jumpToMessage, onFocusMessageHandled]);
 
   const handlePinnedBannerJump = () => {
     if (!featuredPinnedMessage) {
@@ -785,19 +794,14 @@ export function ConversationThread({
         loading={loading}
         error={error}
         highlightTerm={searchOpen && searchQuery.trim() ? searchQuery : ''}
-        highlightedMessageIds={
-          focusMessageId
-            ? [...new Set([...highlightedMessageIds, focusMessageId])]
-            : highlightedMessageIds
-        }
-        scrollToMessageId={focusMessageId ?? bannerScrollTargetId}
+        highlightedMessageIds={highlightedMessageIds}
+        scrollToMessageId={bannerScrollTargetId}
         scrollRequestKey={scrollRequestKey}
         scrollRestoreKey={scrollRestoreKey}
-        unreadAnchorMessageId={focusMessageId ? null : unreadAnchorMessageId}
+        unreadAnchorMessageId={unreadAnchorMessageId}
         onJumpToMessage={jumpToMessage}
         onScrollToMessageComplete={() => {
           setBannerScrollTargetId(null);
-          onFocusMessageHandled?.();
         }}
         currentUserId={currentUserId}
         onAddReaction={onAddReaction}
@@ -819,6 +823,7 @@ export function ConversationThread({
         onEditMessage={onEditMessage}
         onDeleteMessage={onDeleteMessage}
         onSummarizeUnread={onSummarizeUnread}
+        sendProgressByMessageId={sendProgressByMessageId}
         onForwardMessage={setForwardMessageId}
         onPinMessage={onPinMessage}
         onSaveMessage={onSaveMessage}

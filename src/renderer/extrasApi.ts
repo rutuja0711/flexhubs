@@ -8,6 +8,7 @@ import type {
   PushVapidKeyResult,
   ScheduledMessageItem,
 } from '../shared/extras';
+import type { SavedMessageItem } from '../shared/features';
 import { getStoredToken } from './authApi';
 import { uploadFileToApi } from './uploadApi';
 
@@ -84,8 +85,11 @@ export async function loadScheduledMessages(): Promise<ApiResult<ScheduledMessag
   return withToken((token) => window.electronAPI.getScheduledMessages(token));
 }
 
-export async function uploadChatFile(file: File): Promise<ApiResult<{ url: string }>> {
-  return uploadFileToApi(file);
+export async function uploadChatFile(
+  file: File,
+  onProgress?: (progress: number) => void,
+): Promise<ApiResult<{ url: string }>> {
+  return uploadFileToApi(file, onProgress);
 }
 
 export async function enhanceMessageText(text: string): Promise<ApiResult<AiTextResult>> {
@@ -163,6 +167,14 @@ export async function deletePushSubscriptions(): Promise<ApiResult<{ ok: true }>
   }
 
   return withToken((token) => window.electronAPI.deletePushSubscriptions(token));
+}
+
+export async function loadSavedMessages(): Promise<ApiResult<SavedMessageItem[]>> {
+  if (!window.electronAPI?.getSavedMessages) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getSavedMessages(token));
 }
 
 export type { CalendarMentionableUser, CreateCalendarEventInput, ScheduledMessageItem };

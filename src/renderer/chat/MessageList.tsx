@@ -12,8 +12,10 @@ import {
   isPollMessage,
   resolveMessageReadBy,
   resolveReplyTarget,
+  shouldShowUploadProgress,
 } from '../../shared/messages';
 import { loadMessageById } from '../chatApi';
+import { fetchMediaBlob } from '../mediaBlob';
 import { formatConversationTimestamp, formatMessageDayDivider, messageDayKey } from './format';
 import { Avatar, SparkleIcon } from './ChatIcons';
 import { MessageMenu } from './MessageMenu';
@@ -156,6 +158,7 @@ type MessageRowProps = {
   allowMessageAppear?: boolean;
   conversationDetails?: Record<string, unknown> | null;
   conversationKind?: string;
+  sendProgressByMessageId?: Record<string, number>;
 };
 
 function DoubleCheckIcon() {
@@ -350,8 +353,17 @@ const MessageRow = memo(function MessageRow({
   allowMessageAppear = false,
   conversationDetails = null,
   conversationKind,
+  sendProgressByMessageId = {},
 }: MessageRowProps) {
   const reactionGroups = groupMessageReactions(message.reactions, currentUserId);
+  const outboundMediaSending = shouldShowUploadProgress(message);
+  const sendProgress = sendProgressByMessageId[message.id];
+  const mediaSendProps = outboundMediaSending
+    ? {
+        isSending: true as const,
+        sendProgress: sendProgress ?? null,
+      }
+    : {};
   const timeInlineProps = {
     message,
     messages,
@@ -362,12 +374,45 @@ const MessageRow = memo(function MessageRow({
     onRetryMessage,
   };
   const isPinned = Boolean(message.pinnedAt);
+  const isSending = message.status === 'sending';
+  const hasDownloadableMedia =
+    isSending &&
+    (message.media?.some((item) => Boolean(item.url || item.previewUrl)) ?? false);
   const isEditing = editingId === message.id;
   const isPoll = isPollMessage(message);
   const isCallLog = isCallLogMessage(message);
   const isMediaOnly = !isPoll && !isCallLog && isMediaOnlyMessage(message);
   const hasMedia = (message.media?.length ?? 0) > 0;
   const isTextOnly = !isPoll && !isCallLog && !isMediaOnly && !hasMedia;
+
+  const handleDownloadSendingMedia = async () => {
+    const item = message.media?.[0];
+    if (!item) {
+      return;
+    }
+
+    const url = item.previewUrl ?? item.url;
+    const fileName = item.name ?? 'download';
+
+    try {
+      let blob: Blob;
+      if (url.startsWith('blob:') || url.startsWith('data:')) {
+        const response = await fetch(url);
+        blob = await response.blob();
+      } else {
+        blob = await fetchMediaBlob(url);
+      }
+
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement('a');
+      anchor.href = objectUrl;
+      anchor.download = fileName;
+      anchor.click();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+    } catch {
+      // Download unavailable until upload completes.
+    }
+  };
 
   const bubbleClassName = `inline-block w-fit max-w-full rounded-[18px] px-3.5 py-2 text-sm leading-relaxed ${
     message.isOwn
@@ -463,6 +508,7 @@ const MessageRow = memo(function MessageRow({
                     message={message}
                     highlightTerm={highlightTerm}
                     currentUserId={currentUserId}
+                    {...mediaSendProps}
                     onVotePoll={
                       onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
                     }
@@ -480,6 +526,7 @@ const MessageRow = memo(function MessageRow({
                           message={message}
                           highlightTerm={highlightTerm}
                           currentUserId={currentUserId}
+                          {...mediaSendProps}
                           onVotePoll={
                             onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
                           }
@@ -496,6 +543,7 @@ const MessageRow = memo(function MessageRow({
                             highlightTerm={highlightTerm}
                             compact
                             currentUserId={currentUserId}
+                            {...mediaSendProps}
                             onVotePoll={
                               onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
                             }
@@ -510,6 +558,7 @@ const MessageRow = memo(function MessageRow({
                         message={message}
                         highlightTerm={highlightTerm}
                         currentUserId={currentUserId}
+                        {...mediaSendProps}
                         onVotePoll={
                           onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
                         }
@@ -547,15 +596,19 @@ const MessageRow = memo(function MessageRow({
                 message.isOwn ? 'flex-row-reverse' : 'flex-row'
               }`}
             >
-              <ReactionPicker
-                align={message.isOwn ? 'right' : 'left'}
-                onSelect={(emoji) => onAddReaction(message.id, emoji)}
-              />
+              {!isSending ? (
+                <ReactionPicker
+                  align={message.isOwn ? 'right' : 'left'}
+                  onSelect={(emoji) => onAddReaction(message.id, emoji)}
+                />
+              ) : null}
               <MessageMenu
                 isOwn={message.isOwn}
                 isPinned={isPinned}
                 isSaved={savedMessageIds.has(message.id)}
                 isDeleted={message.content.trim() === 'This message was deleted.'}
+                isSending={isSending}
+                hasDownloadableMedia={hasDownloadableMedia}
                 align={message.isOwn ? 'right' : 'left'}
                 showReplyInThread={threadsEnabled}
                 onReply={() => onReplyMessage(message.id)}
@@ -567,6 +620,9 @@ const MessageRow = memo(function MessageRow({
                 onPinToggle={() => onPinMessage(message.id, isPinned)}
                 onSave={() => onSaveMessage(message.id)}
                 onUnsave={() => onUnsaveMessage(message.id)}
+                onDownload={() => {
+                  void handleDownloadSendingMedia();
+                }}
               />
             </div>
           </div>
@@ -629,6 +685,7 @@ type MessageListProps = {
   conversationDetails?: Record<string, unknown> | null;
   conversationKind?: string;
   onSummarizeUnread?: () => void;
+  sendProgressByMessageId?: Record<string, number>;
 };
 
 export function MessageList({
@@ -664,6 +721,7 @@ export function MessageList({
   conversationDetails = null,
   conversationKind,
   onSummarizeUnread,
+  sendProgressByMessageId = {},
 }: MessageListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
@@ -958,6 +1016,7 @@ export function MessageList({
               allowMessageAppear={allowMessageAppear}
               conversationDetails={conversationDetails}
               conversationKind={conversationKind}
+              sendProgressByMessageId={sendProgressByMessageId}
             />
           );
         })}

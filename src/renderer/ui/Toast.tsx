@@ -3,16 +3,27 @@ import { FiAlertCircle, FiCheckCircle, FiInfo, FiX } from 'react-icons/fi';
 
 type ToastTone = 'success' | 'error' | 'info';
 
+type ToastAction = {
+  label: string;
+  onClick: () => void;
+};
+
 type ToastItem = {
   id: string;
   message: string;
   tone: ToastTone;
+  action?: ToastAction;
+};
+
+type ToastOptions = {
+  action?: ToastAction;
 };
 
 type ToastApi = {
-  success: (message: string) => void;
-  error: (message: string) => void;
-  info: (message: string) => void;
+  success: (message: string, options?: ToastOptions) => void;
+  error: (message: string, options?: ToastOptions) => void;
+  info: (message: string, options?: ToastOptions) => void;
+  dismiss: (id: string) => void;
 };
 
 const ToastContext = createContext<ToastApi | null>(null);
@@ -46,25 +57,29 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const push = useCallback(
-    (message: string, tone: ToastTone) => {
+    (message: string, tone: ToastTone, options?: ToastOptions) => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-      setToasts((current) => [{ id, message, tone }, ...current]);
+      setToasts((current) => [{ id, message, tone, action: options?.action }, ...current]);
 
+      const timeout = options?.action ? 5000 : 3500;
       window.setTimeout(() => {
         dismiss(id);
-      }, 3500);
+      }, timeout);
+
+      return id;
     },
     [dismiss],
   );
 
   const toast = useMemo<ToastApi>(
     () => ({
-      success: (message) => push(message, 'success'),
-      error: (message) => push(message, 'error'),
-      info: (message) => push(message, 'info'),
+      success: (message, options) => { push(message, 'success', options); },
+      error: (message, options) => { push(message, 'error', options); },
+      info: (message, options) => { push(message, 'info', options); },
+      dismiss,
     }),
-    [push],
+    [push, dismiss],
   );
 
   return (
@@ -85,7 +100,21 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               className={`pointer-events-auto flex items-start gap-3 rounded-2xl border px-4 py-3 shadow-xl animate-pop-in ${styles.container}`}
             >
               {styles.icon}
-              <p className="min-w-0 flex-1 text-xs font-medium text-app-text leading-relaxed">{item.message}</p>
+              <div className="min-w-0 flex-1 flex flex-col items-start">
+                <p className="text-xs font-medium text-app-text leading-relaxed">{item.message}</p>
+                {item.action && (
+                  <button
+                    type="button"
+                    className="mt-2 rounded bg-app-inset px-2.5 py-1 text-[11px] font-semibold text-app-text hover:bg-app-hover transition-colors"
+                    onClick={() => {
+                      item.action?.onClick();
+                      dismiss(item.id);
+                    }}
+                  >
+                    {item.action.label}
+                  </button>
+                )}
+              </div>
               <button
                 type="button"
                 aria-label="Dismiss notification"

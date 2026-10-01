@@ -32,6 +32,43 @@ export type MessageMedia = {
   name: string | null;
 };
 
+const VIDEO_FILE_PATTERN = /\.(mp4|webm|mov|mkv|avi|m4v)(\?|#|$)/i;
+
+export function isVideoMediaItem(
+  item: Pick<MessageMedia, 'kind' | 'url' | 'name'>,
+  mimeType?: string | null,
+): boolean {
+  if (item.kind === 'video') {
+    return true;
+  }
+
+  const normalizedMime = mimeType?.toLowerCase() ?? '';
+  if (normalizedMime.startsWith('video/')) {
+    return true;
+  }
+
+  if (item.name && VIDEO_FILE_PATTERN.test(item.name)) {
+    return true;
+  }
+
+  if (item.url && VIDEO_FILE_PATTERN.test(item.url)) {
+    return true;
+  }
+
+  return false;
+}
+
+export function withResolvedAttachmentKind(
+  item: MessageMedia,
+  mimeType?: string | null,
+): MessageMedia {
+  if (isVideoMediaItem(item, mimeType) && item.kind !== 'video') {
+    return { ...item, kind: 'video' };
+  }
+
+  return item;
+}
+
 export type PollOptionItem = {
   id: string;
   text: string;
@@ -644,9 +681,24 @@ function normalizeMediaKind(value: unknown, fallback: MessageMediaKind = 'image'
   }
 
   if (
+    normalized.includes('video') ||
+    normalized.includes('mp4') ||
+    normalized.includes('mov') ||
+    normalized.includes('avi') ||
+    normalized.includes('webm')
+  ) {
+    return 'video';
+  }
+
+  if (
     normalized.includes('file') ||
     normalized.includes('document') ||
-    normalized.includes('attachment')
+    normalized.includes('attachment') ||
+    normalized.includes('pdf') ||
+    normalized.includes('zip') ||
+    normalized.includes('audio') ||
+    normalized.includes('text') ||
+    normalized.includes('application/')
   ) {
     return 'file';
   }
@@ -689,7 +741,7 @@ function isLikelyAttachmentUrl(url: string): boolean {
     return true;
   }
 
-  return /\.(zip|txt|pdf|doc|docx|xls|xlsx|ppt|pptx|csv|json|xml|md|rar|7z|tar|gz|mp3|wav|mp4|mov|avi)(\?|$)/i.test(
+  return /\.(zip|txt|pdf|doc|docx|xls|xlsx|ppt|pptx|csv|json|xml|md|rar|7z|tar|gz|mp3|wav|mp4|mov|avi|webm|mkv)(\?|$)/i.test(
     normalized,
   );
 }
@@ -714,16 +766,34 @@ function readMediaFromObject(
 
   const url = normalizeMediaUrl(rawUrl);
 
-  const kind = normalizeMediaKind(
+  let kind = normalizeMediaKind(
     record.type ?? record.kind ?? record.mediaType ?? record.mimeType ?? record.contentType,
     fallbackKind,
   );
 
-  if (!isLikelyAttachmentUrl(url) && kind !== 'file') {
+  const attachmentName =
+    readString(record.name) ?? readString(record.fileName) ?? readString(record.title);
+
+  if (kind === 'image' || kind === 'file') {
+    const mimeHint = String(record.mimeType ?? record.contentType ?? '').toLowerCase();
+    if (mimeHint.startsWith('video/')) {
+      kind = 'video';
+    } else if (attachmentName && VIDEO_FILE_PATTERN.test(attachmentName)) {
+      kind = 'video';
+    } else if (VIDEO_FILE_PATTERN.test(url)) {
+      kind = 'video';
+    } else if (kind === 'image' && /\.(zip|txt|pdf|doc|docx|xls|xlsx|ppt|pptx|csv|json|xml|md|rar|7z|tar|gz|mp3|wav)(\?|$)/i.test(url)) {
+      kind = 'file';
+    } else if (kind === 'file' && /\.(gif|webp|png|jpe?g|bmp|svg|avif)(\?|$)/i.test(url)) {
+      kind = 'image';
+    }
+  }
+
+  if (!isLikelyAttachmentUrl(url) && kind !== 'file' && kind !== 'video') {
     return null;
   }
 
-  if (kind !== 'file' && !isLikelyMediaUrl(url)) {
+  if (kind !== 'file' && kind !== 'video' && !isLikelyMediaUrl(url)) {
     return null;
   }
 
@@ -742,7 +812,7 @@ function readMediaFromObject(
   };
 }
 
-function extractMessageMedia(record: Record<string, unknown>, content: string): MessageMedia[] {
+export function extractMessageMedia(record: Record<string, unknown>, content: string): MessageMedia[] {
   if (readString(record.deletedForEveryoneAt)) {
     return [];
   }
@@ -877,16 +947,45 @@ function extractMessageMedia(record: Record<string, unknown>, content: string): 
     const mimeType = readString(record.mimeType)?.toLowerCase() ?? '';
     const messageType = String(record.type ?? record.messageType ?? '').toUpperCase();
     const fileName = readString(record.fileName) ?? readString(record.name);
-    const isFileMessage = messageType === 'FILE' || normalizeMediaKind(messageType, 'file') === 'file';
+    const isAttachmentMessage =
+      messageType === 'FILE' ||
+      messageType === 'VIDEO' ||
+      normalizeMediaKind(messageType, 'file') === 'file' ||
+      normalizeMediaKind(messageType, 'video') === 'video';
 
-    if (isFileMessage || isLikelyAttachmentUrl(url)) {
-      if (isFileMessage) {
-        pushMedia({
-          kind: 'file',
-          url,
-          previewUrl: null,
-          name: fileName,
-        });
+    if (isAttachmentMessage || isLikelyAttachmentUrl(url)) {
+      let finalKind: MessageMediaKind = 'file';
+
+      if (isAttachmentMessage) {
+        if (
+          mimeType.startsWith('video/') ||
+          messageType === 'VIDEO' ||
+          (fileName && VIDEO_FILE_PATTERN.test(fileName))
+        ) {
+          finalKind = 'video';
+        } else if (mimeType.startsWith('image/')) {
+          finalKind = 'image';
+        } else if (VIDEO_FILE_PATTERN.test(url)) {
+          finalKind = 'video';
+        } else if (/\.(gif|webp|png|jpe?g|bmp|svg|avif)(\?|$)/i.test(url)) {
+          finalKind = 'image';
+        }
+
+        if (finalKind === 'file') {
+          pushMedia({
+            kind: 'file',
+            url,
+            previewUrl: null,
+            name: fileName,
+          });
+        } else {
+          pushMedia({
+            kind: finalKind,
+            url,
+            previewUrl: null,
+            name: fileName,
+          });
+        }
       } else if (isLikelyMediaUrl(url)) {
         const isStickerMarker = trimmedContent === 'sticker';
         const isSticker =
@@ -1560,6 +1659,36 @@ export function isStickerMessage(
   return message.media.length > 0 && message.media.every((item) => item.kind === 'sticker');
 }
 
+export function shouldShowUploadProgress(
+  message: Pick<MessageItem, 'isOwn' | 'status' | 'media' | 'messageType' | 'content'>,
+): boolean {
+  if (!message.isOwn || message.status !== 'sending') {
+    return false;
+  }
+
+  const media = message.media ?? [];
+  if (media.length === 0) {
+    return false;
+  }
+
+  if (isStickerMessage(message)) {
+    return false;
+  }
+
+  const messageType = String(message.messageType ?? '').toUpperCase();
+  if (messageType === 'GIF' || messageType === 'STICKER' || messageType === 'TEXT') {
+    return false;
+  }
+
+  if (media.some((item) => item.kind === 'gif' || item.kind === 'sticker')) {
+    return false;
+  }
+
+  return media.some(
+    (item) => item.kind === 'image' || item.kind === 'video' || item.kind === 'file',
+  );
+}
+
 function messageContentMatchesMediaUrl(
   content: string,
   media: MessageMedia[],
@@ -1596,7 +1725,11 @@ export function isMediaOnlyMessage(
   }
 
   return message.media.every(
-    (item) => item.kind === 'gif' || item.kind === 'sticker' || item.kind === 'image',
+    (item) =>
+      item.kind === 'gif' ||
+      item.kind === 'sticker' ||
+      item.kind === 'image' ||
+      item.kind === 'video',
   );
 }
 
@@ -1797,14 +1930,16 @@ export function normalizeMessage(record: Record<string, unknown>, index: number)
       null;
 
   const rawMedia = deletedForEveryone ? [] : extractMessageMedia(record, content);
+  const attachmentMimeType = readString(record.mimeType) ?? readString(record.contentType);
   const stickerMessage =
     String(messageType ?? '').toUpperCase() === 'STICKER' ||
     content.trim().toLowerCase() === 'sticker';
-  const media = stickerMessage
+  const media = (stickerMessage
     ? rawMedia.map((item) =>
         item.kind === 'file' ? item : { ...item, kind: 'sticker' as const },
       )
-    : rawMedia;
+    : rawMedia
+  ).map((item) => withResolvedAttachmentKind(item, attachmentMimeType));
 
   const statusRaw = String(record.status ?? record.deliveryStatus ?? record.readStatus ?? '').toLowerCase();
   let status: MessageItem['status'] = null;

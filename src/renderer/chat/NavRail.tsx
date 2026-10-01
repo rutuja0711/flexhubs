@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { FiBell, FiLogOut, FiSettings, FiShield, FiSun } from 'react-icons/fi';
+import { FiBell, FiLogOut, FiSettings, FiShield, FiSun, FiBookmark } from 'react-icons/fi';
 import type { MainView } from '../../shared/nav';
 import { apiStatusToUi, userPresenceDotClass, type UserPresenceStatus } from '../../shared/profile';
 import { userIsSuperAdmin } from '../../shared/superadmin';
@@ -100,6 +100,13 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
           onClick={() => onNavigate('hubs')}
         >
           <BuildingIcon />
+        </NavIconButton>
+        <NavIconButton
+          label="Saved"
+          active={activeView === 'saved'}
+          onClick={() => onNavigate('saved')}
+        >
+          <FiBookmark className="h-5 w-5" strokeWidth={1.75} aria-hidden="true" />
         </NavIconButton>
 
         <NavIconButton

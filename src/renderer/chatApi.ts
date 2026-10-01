@@ -44,6 +44,13 @@ export async function summarizeUnreadMessages(conversationId: string): Promise<A
   return withToken((token) => window.electronAPI.summarizeUnreadMessages(token, conversationId));
 }
 
+export async function translateUnreadMessages(conversationId: string): Promise<ApiResult<{ translation: string }>> {
+  if (!window.electronAPI?.translateUnreadMessages) {
+    return unavailable();
+  }
+  return withToken((token) => window.electronAPI.translateUnreadMessages(token, conversationId));
+}
+
 export async function loadConversations(): Promise<ApiResult<ConversationsPayload>> {
   if (!window.electronAPI?.getConversations) {
     return unavailable();

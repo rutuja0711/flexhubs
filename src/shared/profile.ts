@@ -130,8 +130,11 @@ export type ProfileSettings = {
   messageSoundEnabled: boolean;
   dndEnabled: boolean;
   dndUntil: string | null;
+  dndDuration: string | null;
   pushEnabled: boolean;
   snoozeUntil: string | null;
+  snoozeDuration: string | null;
+  snoozedForever: boolean;
 };
 
 export type AvatarStyleItem = {
@@ -241,8 +244,11 @@ export function normalizeNotificationSettings(payload: unknown): ProfileSettings
       true,
     dndEnabled,
     dndUntil: readString(record.dndUntil),
+    dndDuration: readString(record.duration) ?? readString(record.dndDuration),
     pushEnabled: readBoolean(record.pushEnabled) ?? readBoolean(record.push) ?? false,
     snoozeUntil: snoozedUntil,
+    snoozeDuration: readString(record.snoozeDuration),
+    snoozedForever: readBoolean(record.snoozedForever) ?? false,
   };
 }
 
@@ -608,7 +614,11 @@ export function normalizeOrganizationMembers(payload: unknown): OrganizationMemb
     .filter((item): item is Record<string, unknown> => item !== null)
     .map((record, index) => {
       const userRecord = asRecord(record.user) ?? record;
-      const roleRecord = asRecord(record.role) ?? asRecord(userRecord.organizationRole);
+      const membership = asRecord(record.membership) ?? asRecord(record.organizationMembership);
+      const roleRecord =
+        asRecord(record.role) ??
+        asRecord(userRecord.organizationRole) ??
+        asRecord(membership?.role);
 
       const name =
         readString(userRecord.name) ??
@@ -617,12 +627,26 @@ export function normalizeOrganizationMembers(payload: unknown): OrganizationMemb
         readString(record.name) ??
         'Member';
 
+      const organizationRoleString =
+        typeof record.organizationRole === 'string'
+          ? readString(record.organizationRole)
+          : typeof userRecord.organizationRole === 'string'
+            ? readString(userRecord.organizationRole)
+            : null;
+
       const role =
         readString(roleRecord?.name) ??
+        readString(roleRecord?.title) ??
         readString(record.roleName) ??
-        readString(record.organizationRole) ??
-        readString(record.role) ??
-        'Member';
+        readString(record.jobTitle) ??
+        readString(record.organizationRoleName) ??
+        organizationRoleString ??
+        readString(userRecord.organizationRoleName) ??
+        readString(userRecord.orgRole) ??
+        readString(asRecord(membership?.role)?.name) ??
+        readString(membership?.roleName) ??
+        readString(typeof membership?.role === 'string' ? membership.role : null) ??
+        '';
 
       const normalizedRole = role.toLowerCase();
       const memberType = readString(record.memberType) ?? readString(record.type);
@@ -907,6 +931,100 @@ const SNOOZE_DURATION_MS: Record<string, number> = {
   '24h': 24 * 60 * 60_000,
 };
 
+const DND_DURATION_MS: Record<string, number> = {
+  '1h': 60 * 60_000,
+  '4h': 4 * 60 * 60_000,
+  '8h': 8 * 60 * 60_000,
+  '24h': 24 * 60 * 60_000,
+};
+
+function closestDurationPreset(
+  remainingMs: number,
+  presets: Record<string, number>,
+): string | null {
+  let closest: string | null = null;
+  let closestDelta = Infinity;
+
+  for (const [preset, ms] of Object.entries(presets)) {
+    const delta = Math.abs(remainingMs - ms);
+    if (delta < closestDelta) {
+      closestDelta = delta;
+      closest = preset;
+    }
+  }
+
+  return closest;
+}
+
+export function resolveSnoozeSelectValue(settings: ProfileSettings): string {
+  const untilMs = settings.snoozeUntil ? new Date(settings.snoozeUntil).getTime() : NaN;
+  const hasFutureUntil = !Number.isNaN(untilMs) && untilMs > Date.now();
+  const forever = settings.snoozedForever === true;
+
+  if (!forever && !hasFutureUntil) {
+    return 'off';
+  }
+
+  if (forever || settings.snoozeDuration === 'forever') {
+    return 'forever';
+  }
+
+  const duration = settings.snoozeDuration?.trim();
+  if (
+    duration &&
+    SNOOZE_PRESET_VALUES.includes(duration as (typeof SNOOZE_PRESET_VALUES)[number]) &&
+    duration !== 'off'
+  ) {
+    return duration;
+  }
+
+  if (hasFutureUntil) {
+    const remaining = untilMs - Date.now();
+    const tomorrowTarget = new Date(buildTomorrowUntil()).getTime();
+    if (Math.abs(untilMs - tomorrowTarget) < 2 * 60 * 60_000) {
+      return 'tomorrow';
+    }
+
+    if (remaining > 50 * 365 * 24 * 60 * 60_000) {
+      return 'forever';
+    }
+
+    return closestDurationPreset(remaining, SNOOZE_DURATION_MS) ?? '1h';
+  }
+
+  return 'off';
+}
+
+export function resolveDndSelectValue(settings: ProfileSettings): string {
+  if (!settings.dndEnabled) {
+    return 'off';
+  }
+
+  const duration = settings.dndDuration?.trim();
+  if (
+    duration &&
+    DND_PRESET_VALUES.includes(duration as (typeof DND_PRESET_VALUES)[number]) &&
+    duration !== 'off'
+  ) {
+    return duration;
+  }
+
+  const untilMs = settings.dndUntil ? new Date(settings.dndUntil).getTime() : NaN;
+  if (!Number.isNaN(untilMs) && untilMs > Date.now()) {
+    const remaining = untilMs - Date.now();
+    const tomorrowTarget = new Date(buildTomorrowUntil()).getTime();
+    if (Math.abs(untilMs - tomorrowTarget) < 2 * 60 * 60_000) {
+      return 'tomorrow';
+    }
+
+    return closestDurationPreset(remaining, DND_DURATION_MS) ?? '1h';
+  }
+
+  return duration && DND_PRESET_VALUES.includes(duration as (typeof DND_PRESET_VALUES)[number])
+    ? duration
+    : '1h';
+}
+
 function snoozeUntilFromPayload(payload: Record<string, unknown>): string | null {
   if (payload.snoozeDuration === 'off') {
     return null;
@@ -938,9 +1056,13 @@ export function applyNotificationPreferenceUpdate(
   let next = { ...settings };
 
   if (updates.snoozeValue !== undefined) {
+    const snoozePayload = buildSnoozePayload(updates.snoozeValue || 'off');
+    const snoozeDuration = readString(snoozePayload.snoozeDuration) ?? updates.snoozeValue;
     next = {
       ...next,
-      snoozeUntil: snoozeUntilFromPayload(buildSnoozePayload(updates.snoozeValue || 'off')),
+      snoozeUntil: snoozeUntilFromPayload(snoozePayload),
+      snoozeDuration,
+      snoozedForever: snoozePayload.snoozedForever === true,
     };
   }
 
@@ -950,6 +1072,9 @@ export function applyNotificationPreferenceUpdate(
       ...next,
       dndEnabled: payload.dndEnabled === true,
       dndUntil: readString(payload.dndUntil),
+      dndDuration:
+        readString(payload.duration) ??
+        (updates.dndValue === 'off' ? 'off' : updates.dndValue),
     };
   }
 

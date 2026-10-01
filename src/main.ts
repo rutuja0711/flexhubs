@@ -1,5 +1,4 @@
 import {
-  summarizeUnreadMessages,
   app,
   BrowserWindow,
   desktopCapturer,
@@ -47,6 +46,8 @@ import {
   saveMessageDraft,
   sendMessage,
   unpinMessage,
+  summarizeUnreadMessages,
+  translateUnreadMessages,
 } from './main/conversationApi';
 import {
   acceptHubInvite,
@@ -171,12 +172,21 @@ import {
   fetchSuperAdminStats,
   suspendSuperAdminOrganization,
 } from './main/superadminApi';
-import type { RealtimeConnectionStatus } from '../shared/realtime';
+import type { RealtimeClientConfig, RealtimeConnectionStatus } from './shared/realtime';
 
 declare const MAIN_WINDOW_VITE_DEV_SERVER_URL: string | undefined;
 declare const MAIN_WINDOW_VITE_NAME: string;
 
-import { setCallSignalingWindowProvider } from './main/callSignalingMain';
+import {
+  disconnectMainCallSignaling,
+  initMainCallSignaling,
+  isMainCallSignalingReady,
+  refreshMainCallSignalingAuth,
+  sendMainCallSignal,
+  setCallSignalingWindowProvider,
+  subscribeMainCallChannel,
+  unsubscribeMainCallChannel,
+} from './main/callSignalingMain';
 
 let mainWindow: BrowserWindow | null = null;
 let callPresentationActive = false;
@@ -484,6 +494,9 @@ ipcMain.handle('superadmin:suspend', (_event, token: string, organizationId: str
 
 ipcMain.handle('chat:summarize-unread', (_event, token: string, conversationId: string) =>
   summarizeUnreadMessages(token, conversationId),
+);
+ipcMain.handle('chat:translate-unread', (_event, token: string, conversationId: string) =>
+  translateUnreadMessages(token, conversationId),
 );
 
 ipcMain.handle('chat:conversations', (_event, token: string, viewerUserId?: string | null) =>

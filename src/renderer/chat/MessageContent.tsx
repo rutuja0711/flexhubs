@@ -8,9 +8,12 @@ import {
   isDeletedMessage,
   isPollMessage,
   isStickerMessage,
+  isVideoMediaItem,
   parseCallLogContent,
 } from '../../shared/messages';
 import { RemoteImage } from '../RemoteImage';
+import { RemoteVideo } from '../RemoteVideo';
+import { SendingProgressRing } from '../ui/SendingProgressRing';
 import { openMediaPreview } from './MediaPreviewHost';
 import { PollMessage } from './PollMessage';
 import { CallMessage } from './CallMessage';
@@ -22,7 +25,30 @@ type MessageContentProps = {
   pollDisabled?: boolean;
   compact?: boolean;
   currentUserId?: string | null;
+  isSending?: boolean;
+  sendProgress?: number | null;
 };
+
+function SendingMediaOverlay({ progress }: { progress?: number | null }) {
+  return (
+    <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-2xl bg-black/30 backdrop-blur-[1px]">
+      <SendingProgressRing progress={progress ?? null} showLabel />
+    </div>
+  );
+}
+
+function wrapWithSendOverlay(node: ReactNode, isSending: boolean, sendProgress?: number | null) {
+  if (!isSending) {
+    return node;
+  }
+
+  return (
+    <div className="relative inline-block max-w-full">
+      {node}
+      <SendingMediaOverlay progress={sendProgress} />
+    </div>
+  );
+}
 
 function renderMentionText(content: string): ReactNode {
   const parts = content.split(/(@[a-zA-Z0-9._-]+)/g);
@@ -66,6 +92,7 @@ function mediaLabel(kind: string): string {
   if (kind === 'sticker') return 'Sticker';
   if (kind === 'gif') return 'GIF';
   if (kind === 'image') return 'Image';
+  if (kind === 'video') return 'Video';
   if (kind === 'file') return 'File';
   return 'Attachment';
 }
@@ -77,6 +104,8 @@ export function MessageContent({
   pollDisabled = false,
   compact = false,
   currentUserId = null,
+  isSending = false,
+  sendProgress = null,
 }: MessageContentProps) {
   if (isDeletedMessage(message)) {
     if (compact) {
@@ -127,77 +156,114 @@ export function MessageContent({
   return (
     <div className="space-y-2">
       {media.map((item) => {
-        if (item.kind === 'file') {
-          return (
+        if (item.kind === 'file' && !isVideoMediaItem(item)) {
+          const fileNode = (
             <a
-              key={item.url}
-              href={item.url}
+              href={isSending ? undefined : item.url}
               target="_blank"
               rel="noopener noreferrer"
               download={item.name ?? undefined}
-              className="flex max-w-sm items-center gap-3 rounded-2xl border border-app-border/60 bg-app-surface/90 backdrop-blur-sm px-3.5 py-2.5 text-inherit shadow-sm transition-all hover:bg-app-chat-hover hover:border-app-border-strong/60"
+              className={`flex max-w-sm items-center gap-3 rounded-2xl border border-app-border/60 bg-app-surface/90 backdrop-blur-sm px-3.5 py-2.5 text-inherit shadow-sm transition-all ${
+                isSending ? 'pointer-events-none opacity-95' : 'hover:bg-app-chat-hover hover:border-app-border-strong/60'
+              }`}
+              onClick={isSending ? (event) => event.preventDefault() : undefined}
             >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
-                <FiFile className="h-5 w-5" />
+              <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
+                {isSending ? (
+                  <SendingProgressRing
+                    progress={sendProgress}
+                    size={28}
+                    showLabel={false}
+                    className="text-accent-soft"
+                  />
+                ) : (
+                  <FiFile className="h-5 w-5" />
+                )}
               </span>
               <span className="min-w-0">
                 <span className="block truncate text-sm font-semibold tracking-tight">{item.name ?? 'File'}</span>
-                <span className="text-[11px] font-medium text-app-muted">Tap to download</span>
+                <span className="text-[11px] font-medium text-app-muted">
+                  {isSending ? 'Sending…' : 'Tap to download'}
+                </span>
               </span>
             </a>
           );
+
+          return <div key={item.url}>{fileNode}</div>;
         }
 
         const isSticker = stickerMessage || item.kind === 'sticker';
-        const isVideo =
-          item.kind === 'video' ||
-          item.name?.toLowerCase().endsWith('.mp4') ||
-          item.url?.toLowerCase().endsWith('.mp4');
+        const isVideo = isVideoMediaItem(item);
         const isPreviewable = !isSticker && (isVideo || item.kind === 'image');
         const previewUrl = item.previewUrl ?? item.url;
 
         if (isSticker) {
-          return (
+          return wrapWithSendOverlay(
             <RemoteImage
               key={item.url}
               src={item.kind === 'gif' ? item.url : previewUrl}
               alt={item.name ?? 'Sticker'}
               loading="lazy"
               className="max-h-40 max-w-full bg-transparent object-contain"
-            />
+            />,
+            isSending,
+            sendProgress,
           );
         }
 
-        return (
-          <div key={item.url} className="overflow-hidden rounded-2xl ring-1 ring-black/10 dark:ring-white/10 shadow-sm">
-            {isPreviewable ? (
+        const mediaBody = (
+          <div className="overflow-hidden rounded-2xl ring-1 ring-black/10 dark:ring-white/10 shadow-sm">
+            {isVideo ? (
+              <div
+                className="js-media-preview-item block max-w-full"
+                data-media-url={item.url}
+                data-media-name={item.name ?? ''}
+                data-media-kind="video"
+                onDoubleClick={() => {
+                  if (isSending) {
+                    return;
+                  }
+
+                  openMediaPreview({
+                    url: item.url,
+                    name: item.name ?? undefined,
+                    kind: 'video',
+                  });
+                }}
+              >
+                <RemoteVideo
+                  src={previewUrl}
+                  controls={!isSending}
+                  playsInline
+                  muted={isSending}
+                  preload="metadata"
+                  className="block max-h-72 max-w-full rounded-2xl bg-app-chat-hover object-contain"
+                />
+              </div>
+            ) : isPreviewable ? (
               <button
                 type="button"
-                className="block max-w-full cursor-zoom-in text-left transition-transform hover:scale-[1.01]"
+                disabled={isSending}
+                className={`block max-w-full text-left transition-transform js-media-preview-item ${
+                  isSending ? 'cursor-default' : 'cursor-zoom-in hover:scale-[1.01]'
+                }`}
+                data-media-url={item.url}
+                data-media-name={item.name ?? ''}
+                data-media-kind="image"
                 onClick={() =>
                   openMediaPreview({
                     url: item.url,
-                    name: item.name,
-                    kind: isVideo ? 'video' : 'image',
+                    name: item.name ?? undefined,
+                    kind: 'image',
                   })
                 }
               >
-                {isVideo ? (
-                  <video
-                    src={previewUrl}
-                    muted
-                    playsInline
-                    preload="metadata"
-                    className="pointer-events-none max-h-72 max-w-full rounded-2xl bg-app-chat-hover object-contain"
-                  />
-                ) : (
-                  <RemoteImage
-                    src={item.kind === 'gif' ? item.url : previewUrl}
-                    alt={item.name ?? mediaLabel(item.kind)}
-                    loading="lazy"
-                    className="max-h-72 max-w-full rounded-2xl bg-transparent object-contain"
-                  />
-                )}
+                <RemoteImage
+                  src={item.kind === 'gif' ? item.url : previewUrl}
+                  alt={item.name ?? mediaLabel(item.kind)}
+                  loading="lazy"
+                  className="max-h-72 max-w-full rounded-2xl bg-transparent object-contain"
+                />
               </button>
             ) : (
               <RemoteImage
@@ -207,6 +273,12 @@ export function MessageContent({
                 className="max-h-72 max-w-full rounded-2xl bg-transparent object-contain"
               />
             )}
+          </div>
+        );
+
+        return (
+          <div key={item.url}>
+            {wrapWithSendOverlay(mediaBody, isSending, sendProgress)}
           </div>
         );
       })}
@@ -258,7 +330,7 @@ export function MessageReplyPreview({
   const media = message.media ?? [];
   const primaryMedia =
     media.find((item) => item.kind === 'gif' || item.kind === 'sticker') ??
-    media.find((item) => item.kind === 'image') ??
+    media.find((item) => item.kind === 'image' || item.kind === 'video') ??
     media.find((item) => item.kind === 'file') ??
     media[0];
   const normalizedContent = message.content.trim() === 'sticker' ? '' : message.content.trim();

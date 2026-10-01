@@ -135,6 +135,7 @@ export function buildFileMessagePayload(
 ): Record<string, unknown> {
   const isImage = mimeType.startsWith('image/');
   const payload: Record<string, unknown> = {
+    // API accepts FILE for video attachments (not VIDEO).
     type: isImage ? 'IMAGE' : 'FILE',
     content: caption?.trim() ?? '',
     fileUrl: url,

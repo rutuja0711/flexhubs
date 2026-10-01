@@ -987,3 +987,16 @@ export async function summarizeUnreadMessages(
 
   return result;
 }
+
+export async function translateUnreadMessages(
+  token: string,
+  conversationId: string,
+): Promise<ApiResult<{ translation: string }>> {
+  const result = await apiPost<{ translation: string }>(
+    `${API_BASE_URL}/conversations/${conversationId}/translate-unread`,
+    token,
+    'Translate Unread API',
+  );
+
+  return result;
+}

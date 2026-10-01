@@ -630,10 +630,13 @@ export function OrganizationView({
     );
   }
 
-  if (!canManageOrganization) {
-    const currentUserMember = members.find((m) => m.id === currentUserId);
-    const currentUserRole = currentUserMember?.role || 'Intern';
+  const formatMemberRoleAndEmail = (member: OrganizationMemberItem) => {
+    const roleLabel = member.role?.trim() || 'No role';
+    const email = member.email?.trim();
+    return email ? `${roleLabel} · ${email}` : roleLabel;
+  };
 
+  if (!canManageOrganization) {
     return (
       <div className="flex h-full flex-col bg-app-chat-bg text-app-text overflow-hidden">
         {/* Top Header Bar */}
@@ -657,7 +660,7 @@ export function OrganizationView({
               </div>
               <h2 className="text-base font-bold text-app-text tracking-tight">You're in the team</h2>
               <p className="mt-1 text-xs text-app-muted">
-                Your role is {currentUserRole}. Only admins can send invites and manage roles.
+                You belong to this organization. Only admins can send invites and manage roles.
               </p>
             </div>
 
@@ -693,7 +696,7 @@ export function OrganizationView({
                         ) : null}
                       </div>
                       <p className="mt-0.5 truncate text-xs text-app-muted">
-                        {member.role || 'No role'} · {member.email}
+                        {formatMemberRoleAndEmail(member)}
                       </p>
                     </div>
                   </div>
@@ -1171,8 +1174,7 @@ export function OrganizationView({
                       ) : null}
                     </div>
                     <p className="mt-0.5 truncate text-xs text-app-muted">
-                      {member.role || 'No role'}
-                      {member.email ? ` · ${member.email}` : ''}
+                      {formatMemberRoleAndEmail(member)}
                     </p>
                   </div>
                 </div>
