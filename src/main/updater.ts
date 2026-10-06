@@ -25,6 +25,13 @@ function sendToRenderer(channel: string, ...args: unknown[]): void {
 function ensureAutoUpdaterConfigured(): void {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
+
+  // Configure the GitHub repository where updates will be published
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'rutuja0711',
+    repo: 'flexhubs',
+  });
 }
 
 function attachAutoUpdaterListeners(): void {

@@ -2,6 +2,7 @@ import path from 'node:path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerDMG } from '@electron-forge/maker-dmg';
 import { MakerSquirrel } from '@electron-forge/maker-squirrel';
+import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import {
   getMacOsNotarizeConfig,
@@ -84,6 +85,7 @@ const config: ForgeConfig = {
           }),
         ]
       : []),
+    new MakerZIP({}, ['win32']),
   ],
   plugins: [
     new VitePlugin({

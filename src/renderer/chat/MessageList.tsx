@@ -678,7 +678,7 @@ type MessageListProps = {
   scrollRequestKey?: number;
   scrollRestoreKey?: number;
   unreadAnchorMessageId?: string | null;
-  onScrollToMessageComplete?: () => void;
+  onScrollToMessageComplete?: (messageId: string) => void;
   currentUserId: string | null;
   onAddReaction: (messageId: string, emoji: string) => void;
   onReplyMessage: (messageId: string) => void;
@@ -804,7 +804,7 @@ export function MessageList({
 
       if (element instanceof HTMLElement) {
         element.scrollIntoView({ behavior: 'smooth', block: 'center' });
-        onScrollToMessageComplete?.();
+        onScrollToMessageComplete?.(scrollToMessageId);
       }
     });
 

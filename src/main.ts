@@ -1324,6 +1324,7 @@ const createWindow = (): void => {
     fullscreenable: true,
     backgroundColor: resolveWindowBackgroundColor(),
     show: false,
+    autoHideMenuBar: true,
     ...(appIcon ? { icon: appIcon } : {}),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

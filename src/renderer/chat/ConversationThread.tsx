@@ -370,13 +370,6 @@ export function ConversationThread({
   const jumpToMessage = useCallback((messageId: string) => {
     scrollToMessageInThread(messageId);
     setHighlightedMessageIds((current) => [...new Set([...current, messageId])]);
-
-    const timeoutId = window.setTimeout(() => {
-      setHighlightedMessageIds((current) => current.filter((id) => id !== messageId));
-      highlightTimeoutsRef.current = highlightTimeoutsRef.current.filter((id) => id !== timeoutId);
-    }, 2200);
-
-    highlightTimeoutsRef.current.push(timeoutId);
   }, [scrollToMessageInThread]);
 
   const navigateSearchMatch = useCallback(
@@ -909,8 +902,15 @@ export function ConversationThread({
         scrollRestoreKey={scrollRestoreKey}
         unreadAnchorMessageId={unreadAnchorMessageId}
         onJumpToMessage={jumpToMessage}
-        onScrollToMessageComplete={() => {
+        onScrollToMessageComplete={(messageId) => {
           setBannerScrollTargetId(null);
+          if (messageId) {
+            const timeoutId = window.setTimeout(() => {
+              setHighlightedMessageIds((current) => current.filter((id) => id !== messageId));
+              highlightTimeoutsRef.current = highlightTimeoutsRef.current.filter((id) => id !== timeoutId);
+            }, 2200);
+            highlightTimeoutsRef.current.push(timeoutId);
+          }
         }}
         currentUserId={currentUserId}
         onAddReaction={onAddReaction}
