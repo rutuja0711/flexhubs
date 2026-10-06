@@ -114,6 +114,20 @@ export async function createCalendarEvent(
     payload.conversationId = input.conversationId;
   }
 
+  if (input.conversationIds?.length) {
+    payload.conversationIds = input.conversationIds;
+    payload.taggedConversationIds = input.conversationIds;
+  }
+
+  if (input.mentionChannelIds?.length) {
+    payload.mentionChannelIds = input.mentionChannelIds;
+    payload.channelIds = input.mentionChannelIds;
+    payload.taggedChannelIds = input.mentionChannelIds;
+  } else if (input.channelIds?.length) {
+    payload.channelIds = input.channelIds;
+    payload.taggedChannelIds = input.channelIds;
+  }
+
   const result = await apiPost<unknown>(
     `${API_BASE_URL}/calendar/events`,
     token,
@@ -148,6 +162,24 @@ export async function updateCalendarEvent(
     payload.inviteeIds = input.mentionUserIds;
     payload.mentions = input.mentionUserIds;
     payload.invitees = input.mentionUserIds;
+  }
+
+  if (input.conversationId !== undefined) {
+    payload.conversationId = input.conversationId;
+  }
+
+  if (input.conversationIds !== undefined) {
+    payload.conversationIds = input.conversationIds;
+    payload.taggedConversationIds = input.conversationIds;
+  }
+
+  if (input.mentionChannelIds !== undefined) {
+    payload.mentionChannelIds = input.mentionChannelIds;
+    payload.channelIds = input.mentionChannelIds;
+    payload.taggedChannelIds = input.mentionChannelIds;
+  } else if (input.channelIds !== undefined) {
+    payload.channelIds = input.channelIds;
+    payload.taggedChannelIds = input.channelIds;
   }
 
   const result = await apiPatch<unknown>(
@@ -313,14 +345,29 @@ export async function transcribeAudioFile(
     console.log('[AI Transcribe API] response:', data);
 
     if (!response.ok) {
+      const message =
+        typeof data.error === 'string'
+          ? data.error
+          : typeof data.message === 'string'
+            ? data.message
+            : 'Transcription failed. Please try again.';
       return {
         ok: false,
-        error: data.error ?? 'Transcription failed. Please try again.',
+        error: sanitizeAiApiError(message),
         status: response.status,
       };
     }
 
-    return { ok: true, data: normalizeAiTextResult(data) };
+    const normalized = normalizeAiTextResult(data.data ?? data.result ?? data);
+    if (!normalized.text.trim()) {
+      return {
+        ok: false,
+        error: 'No transcription returned.',
+        status: response.status,
+      };
+    }
+
+    return { ok: true, data: normalized };
   } catch (error) {
     console.error('[AI Transcribe API] request failed:', error);
     return {

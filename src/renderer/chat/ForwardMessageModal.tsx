@@ -32,10 +32,6 @@ export function ForwardMessageModal({
     }
   }, [open]);
 
-  if (!open) {
-    return null;
-  }
-
   const filteredTargets = useMemo(() => {
     return (conversations || []).filter(
       (conversation) =>
@@ -45,6 +41,10 @@ export function ForwardMessageModal({
         (conversation?.title || '').toLowerCase().includes(searchQuery.toLowerCase())
     );
   }, [conversations, currentConversationId, searchQuery]);
+
+  if (!open) {
+    return null;
+  }
 
   const toggleSelection = (id: string) => {
     setSelectedIds(current => {

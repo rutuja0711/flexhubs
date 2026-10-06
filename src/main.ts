@@ -15,6 +15,7 @@ import { execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { handleSquirrelStartup } from './main/squirrelStartup';
+import { initUpdater, setUpdaterMainWindow } from './main/updater';
 import { performLogin } from './main/authLogin';
 import { performGetMe } from './main/authMe';
 import { API_BASE_URL } from './shared/auth';
@@ -88,6 +89,7 @@ import {
   fetchMessageSearch,
   fetchUserSearch,
 } from './main/searchApi';
+import { showCustomDesktopNotification } from './main/notifications/notificationWindow';
 import {
   setRealtimeHandlers,
   startRealtimeStream,
@@ -322,6 +324,13 @@ function notificationOptions(title: string, body: string): Electron.Notification
     body,
     silent: false,
   };
+
+  if (process.platform === 'darwin') {
+    options.timeoutType = 'never';
+  } else if (process.platform === 'win32') {
+    (options as Electron.NotificationConstructorOptions & { requireInteraction?: boolean }).requireInteraction =
+      true;
+  }
 
   // macOS uses the app bundle icon on the left; setting `icon` adds a right-side thumbnail.
   if (process.platform !== 'darwin') {
@@ -1334,6 +1343,15 @@ const createWindow = (): void => {
   }
 
   setCallSignalingWindowProvider(() => mainWindow);
+  setUpdaterMainWindow(mainWindow);
+
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error('[FlexHubs] Main window render process gone:', details);
+  });
+
+  mainWindow.on('unresponsive', () => {
+    console.warn('[FlexHubs] Main window became unresponsive.');
+  });
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
@@ -1360,6 +1378,7 @@ const createWindow = (): void => {
   });
 
   mainWindow.on('closed', () => {
+    setUpdaterMainWindow(null);
     mainWindow = null;
     stopRealtimeStream();
   });
@@ -1428,21 +1447,8 @@ function readMediaAppName(): string {
 
 function buildMacScreenCaptureHint(): string {
   const appName = readMediaAppName();
-  const execPath = process.execPath;
-  const reportedStatus = systemPreferences.getMediaAccessStatus('screen');
 
-  let message =
-    `Enable Screen Recording for this app in System Settings → Privacy & Security → Screen & System Audio Recording.\n\n` +
-    `Add and enable:\n${execPath}\n\n` +
-    `Then fully quit the app (Cmd+Q) and relaunch.\n\n` +
-    `(macOS currently reports "${reportedStatus}" for ${appName}.)`;
-
-  if (!app.isPackaged) {
-    message +=
-      `\n\nDev note: npm start runs Electron, not the packaged FlexHubs app. If you already enabled "FlexHubs", also enable Electron at the path above. If you launch from Cursor or Terminal, enable those too.`;
-  }
-
-  return message;
+  return `Enable Screen Recording for ${appName} in System Settings → Privacy & Security, then quit and reopen the app.`;
 }
 
 async function probeMacScreenCaptureSources(): Promise<number> {
@@ -1650,27 +1656,45 @@ if (process.platform === 'win32') {
   app.setAppUserModelId(app.name);
 }
 
-function setupAutoUpdater(): void {
-  if (app.isPackaged) {
-    try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { updateElectronApp } = require('update-electron-app');
-      updateElectronApp({
-        updateInterval: '1 hour',
-        notifyUser: true,
-      });
-      console.log('[FlexHubs] Auto updater initialized successfully.');
-    } catch (error) {
-      console.warn('[FlexHubs] Auto updater could not be initialized:', error);
+const hardwareConfigPath = path.join(app.getPath('userData'), 'flexhubs-hardware.json');
+try {
+  if (fs.existsSync(hardwareConfigPath)) {
+    const config = JSON.parse(fs.readFileSync(hardwareConfigPath, 'utf8'));
+    if (config.disableHardwareAcceleration === true) {
+      app.disableHardwareAcceleration();
     }
   }
+} catch (e) {
+  // Ignore config errors
 }
+
+ipcMain.handle('app:get-hardware-acceleration-disabled', () => {
+  try {
+    if (fs.existsSync(hardwareConfigPath)) {
+      const config = JSON.parse(fs.readFileSync(hardwareConfigPath, 'utf8'));
+      return config.disableHardwareAcceleration === true;
+    }
+  } catch (e) {}
+  return false;
+});
+
+ipcMain.handle('app:set-hardware-acceleration-disabled', (_event, disabled: boolean) => {
+  try {
+    fs.writeFileSync(hardwareConfigPath, JSON.stringify({ disableHardwareAcceleration: disabled }));
+  } catch (e) {}
+});
+
+ipcMain.handle('app:relaunch', () => {
+  app.relaunch();
+  app.quit();
+});
 
 app.whenReady().then(() => {
   console.log('[FlexHubs] API base URL:', API_BASE_URL);
   console.log('[FlexHubs] Call debug: lines starting with [Calls] appear here after login.');
 
-  setupAutoUpdater();
+  initUpdater();
+
   patchDevElectronNotificationIcon();
   applyApplicationIcon();
 
@@ -1697,44 +1721,23 @@ app.whenReady().then(() => {
 
   ipcMain.handle(
     'desktop:notify',
-    (_event, payload: { title?: string; body?: string; tag?: string }) =>
+    (_event, payload: any) =>
       new Promise<{ ok: boolean; error?: string }>((resolve) => {
-        if (!Notification.isSupported()) {
-          resolve({ ok: false, error: 'Notifications are not supported on this device.' });
-          return;
-        }
-
-        const notification = new Notification(
-          notificationOptions(payload.title?.trim() || 'FlexHubs', payload.body ?? ''),
-        );
-
-        notification.on('failed', (_event, error) => {
-          console.warn('[FlexHubs] Native notification failed:', error);
-        });
-
-        notification.on('click', () => {
-          if (!mainWindow) {
-            return;
-          }
-
-          if (mainWindow.isMinimized()) {
-            mainWindow.restore();
-          }
-
-          mainWindow.show();
-          mainWindow.focus();
-          mainWindow.webContents.send('desktop:notify-click', payload.tag ?? '');
-        });
-
         try {
-          notification.show();
+          showCustomDesktopNotification(payload, () => {
+            if (mainWindow) {
+              if (mainWindow.isMinimized()) {
+                mainWindow.restore();
+              }
+              mainWindow.show();
+              mainWindow.focus();
+              mainWindow.webContents.send('desktop:notify-click', payload.tag ?? '');
+            }
+          });
           resolve({ ok: true });
         } catch (error) {
-          console.warn('[FlexHubs] Native notification show() threw:', error);
-          resolve({
-            ok: false,
-            error: `Notification was blocked. ${buildNotificationBlockedMessage()}`,
-          });
+          console.warn('[FlexHubs] Custom notification failed:', error);
+          resolve({ ok: false, error: 'Failed to show custom notification' });
         }
       }),
   );
@@ -1752,7 +1755,12 @@ app.whenReady().then(() => {
   });
 });
 
+app.on('before-quit', () => {
+  console.log('[FlexHubs] Application before-quit.');
+});
+
 app.on('window-all-closed', () => {
+  console.log('[FlexHubs] All windows closed.');
   stopRealtimeStream();
 
   if (process.platform !== 'darwin') {

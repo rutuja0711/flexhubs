@@ -71,20 +71,35 @@ export type CalendarEventInvitee = {
   username: string;
   name: string;
   status: string;
+  avatarUrl?: string | null;
+};
+
+export type CalendarTaggedHub = {
+  conversationId?: string | null;
+  channelId?: string | null;
+  name: string;
+  slug?: string;
 };
 
 export type CalendarEventItem = {
   id: string;
   title: string;
   startsAt: string;
+  endsAt?: string | null;
+  mentionUserIds?: string[];
   createdAt?: string;
   createdById?: string | null;
+  createdByAvatarUrl?: string | null;
   description: string;
   notes?: string;
   status?: string | null;
   myResponseStatus?: string | null;
   sharedBy?: string;
   invitees?: CalendarEventInvitee[];
+  conversationId?: string | null;
+  conversationName?: string;
+  channelId?: string | null;
+  taggedHubs?: CalendarTaggedHub[];
   isOwner?: boolean;
   canRespond?: boolean;
   canDelete?: boolean;
@@ -129,7 +144,12 @@ export type FriendRelationship = {
   requestSent: boolean;
   requestReceived: boolean;
   requestId: string | null;
+  /** Viewer has blocked this user (or block is active on viewer side). */
   isBlocked: boolean;
+  /** This user blocked the viewer. */
+  isBlockedByUser: boolean;
+  blockedYou: boolean;
+  blockedByMe: boolean;
 };
 
 export type ChannelInviteItem = {
@@ -313,12 +333,18 @@ export function normalizeCalendarEvents(payload: unknown): CalendarEventItem[] {
     startsAt: event.startsAt,
     createdAt: event.createdAt,
     createdById: event.createdById,
+    createdByAvatarUrl: event.createdByAvatarUrl,
     description: event.description || event.notes,
     notes: event.notes,
     status: event.status,
     myResponseStatus: event.myResponseStatus,
     sharedBy: event.sharedBy,
     invitees: event.invitees,
+    mentionUserIds: event.mentionUserIds,
+    conversationId: event.conversationId,
+    conversationName: event.conversationName,
+    channelId: event.channelId,
+    taggedHubs: event.taggedHubs,
     isOwner: event.isOwner,
     canRespond: event.canRespond,
     canDelete: event.canDelete,
@@ -367,16 +393,42 @@ export function normalizeBlockedUsers(payload: unknown): BlockedUserItem[] {
   return extractArray(payload, ['users', 'blocks', 'items', 'data'])
     .map(asRecord)
     .filter((item): item is Record<string, unknown> => item !== null)
-    .map((record, index) => ({
-      id: readString(record.id) ?? `blocked-${index}`,
-      username: readString(record.username) ?? '',
-      email: readString(record.email) ?? '',
-      avatar: readString(record.avatar),
-    }));
+    .map((record, index) => {
+      const nestedUser = asRecord(record.user) ?? asRecord(record.blockedUser);
+      const userId =
+        readString(record.userId) ??
+        readString(record.blockedUserId) ??
+        readString(record.blockedId) ??
+        readString(nestedUser?.id) ??
+        readString(record.id) ??
+        `blocked-${index}`;
+
+      return {
+        id: userId,
+        username:
+          readString(record.username) ??
+          readString(nestedUser?.username) ??
+          readString(nestedUser?.name) ??
+          '',
+        email: readString(record.email) ?? readString(nestedUser?.email) ?? '',
+        avatar: readString(record.avatar) ?? readString(nestedUser?.avatar),
+      };
+    });
 }
 
 export function normalizeFriendRelationship(payload: unknown): FriendRelationship {
   const record = asRecord(payload) ?? {};
+  const isBlockedByUser =
+    record.isBlockedByUser === true ||
+    record.blockedByUser === true ||
+    record.hasBlockedYou === true ||
+    record.blockedYou === true;
+  const blockedByMe =
+    record.blockedByMe === true ||
+    record.viewerBlocked === true ||
+    record.hasBlocked === true ||
+    (record.isBlocked === true && !isBlockedByUser);
+  const isBlocked = record.isBlocked === true || blockedByMe || isBlockedByUser;
 
   return {
     isFriend: record.isFriend === true,
@@ -385,7 +437,10 @@ export function normalizeFriendRelationship(payload: unknown): FriendRelationshi
     requestSent: record.requestSent === true,
     requestReceived: record.requestReceived === true,
     requestId: readString(record.requestId),
-    isBlocked: record.isBlocked === true,
+    isBlocked,
+    isBlockedByUser,
+    blockedYou: isBlockedByUser,
+    blockedByMe,
   };
 }
 

@@ -6,10 +6,30 @@ import type {
 } from '../shared/features';
 import type { MainView } from '../shared/nav';
 import type { SearchPerson } from '../shared/search';
+import {
+  filterMessagesForBlockPolicy,
+  isBlockedByViewer,
+  redactDirectConversationForPeerBlock,
+} from '../shared/blocking';
+import { buildCalendarHubOptions, enrichCalendarEventsWithTeammateAvatars } from '../shared/extras';
+import {
+  getBlockedByPeerIds,
+  getBlockedUserIds,
+  markUserBlocked,
+  markUserUnblocked,
+  refreshBlockedUsersFromApi,
+  setBlockedUserIdsFromList,
+  subscribeBlockedUsers,
+  syncPeerBlockFromRelationship,
+} from './blockedUsersSync';
 import { getCurrentUser, getStoredUser } from './authApi';
 import {
   acceptHubInvite,
   acceptHubInviteById,
+  blockUser,
+  loadBlockedUsers,
+  loadFriendRelationship,
+  unblockUser,
   addMessageReaction,
   removeMessageReaction,
   createDirectChat,
@@ -52,6 +72,7 @@ import {
   saveNotificationSettings,
   scheduleConversationMessage,
   sendChatMessage,
+  sendChatVoiceMessage,
   sendChatMediaMessage,
   sendChatFileMessage,
   sendTypingUpdate,
@@ -60,6 +81,7 @@ import {
   unpinChatMessage,
   updateConversationNotificationSettings,
   respondFriendRequest,
+  sendFriendRequest,
   unsaveChatMessage,
   votePoll,
   summarizeUnreadMessages,
@@ -79,6 +101,7 @@ import { HubsView } from './chat/HubsView';
 import { NavRail } from './chat/NavRail';
 import { SavedView } from './chat/SavedView';
 import { ProfileSettingsView } from './chat/ProfileSettingsView';
+import { MeetingStartedBanner } from './call/MeetingStartedBanner';
 import { OrganizationView } from './chat/OrganizationView';
 import { SuperAdminView } from './chat/SuperAdminView';
 import { OrganizationInviteModal } from './chat/OrganizationInviteModal';
@@ -99,8 +122,8 @@ import { clearProfileCache, readPeerProfile, writePeerProfile } from './profileC
 import { useConfirm } from './ui/ConfirmDialog';
 import { useToast } from './ui/Toast';
 import type { ConversationItem, DirectChatMetadata } from '../shared/chat';
-import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationByAnyId, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, readConversationSnoozeState, sanitizeDirectDisplayName, withConversationSnoozed, buildConversationSnoozePayload, resolveConversationForMessage, resolveTypingConversationId, buildConversationListPreview } from '../shared/chat';
-import type { CallHistoryItem } from '../shared/calls';
+import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationByAnyId, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, readConversationSnoozeState, sanitizeDirectDisplayName, withConversationSnoozed, buildConversationSnoozePayload, formatConversationSnoozeUntil, resolveConversationForMessage, resolveTypingConversationId, buildConversationListPreview } from '../shared/chat';
+import { enrichCallHistoryItems, type CallHistoryItem } from '../shared/calls';
 import type {
   MessageItem,
   NotificationItem,
@@ -123,6 +146,7 @@ import {
   showCalendarEventReminder,
   showIncomingMessageDesktopNotification,
 } from './desktopNotifications';
+import { FlexHubsDesktopNotification, mapMessageToNotificationData } from './ui/notifications/FlexHubsDesktopNotification';
 import {
   ensureDesktopNotificationsReady,
   shouldDeliverDesktopNotifications,
@@ -226,6 +250,19 @@ function resolveTyperDisplayName(
     teammates.find((member) => member.id === typing.userId)?.name ||
     conversations.find((item) => item.peerUserId === typing.userId)?.title ||
     'Someone'
+  );
+}
+
+function shouldDropHubMessageFromBlockedSender(
+  message: MessageItem,
+  conversation: ConversationItem | null | undefined,
+  blockedUserIds: ReadonlySet<string>,
+): boolean {
+  return (
+    conversation?.kind === 'hub' &&
+    !message.isOwn &&
+    Boolean(message.senderId) &&
+    blockedUserIds.has(message.senderId as string)
   );
 }
 
@@ -466,6 +503,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const [activeHubDetails, setActiveHubDetails] = useState<Record<string, unknown> | null>(null);
   const [pinnedMessageIds, setPinnedMessageIds] = useState<string[]>([]);
   const [pinningConversationId, setPinningConversationId] = useState<string | null>(null);
+  const [conversationMenuBusyId, setConversationMenuBusyId] = useState<string | null>(null);
+  const [blockedUserIds, setBlockedUserIds] = useState<ReadonlySet<string>>(() => getBlockedUserIds());
+  const [blockedByPeerIds, setBlockedByPeerIds] = useState<ReadonlySet<string>>(() => getBlockedByPeerIds());
+  const blockedUserIdsRef = useRef(blockedUserIds);
   const [isSending, setIsSending] = useState(false);
   const [flexAiOpen, setFlexAiOpen] = useState(false);
   const [callPanelLayout, setCallPanelLayout] = useState<CallPanelLayout>('floating');
@@ -556,11 +597,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
   };
 
-  const [notificationsOpen, setNotificationsOpen] = useState(false);
-  const [notificationsLoading, setNotificationsLoading] = useState(false);
-  const [notificationsError, setNotificationsError] = useState('');
-  const [panelNotifications, setPanelNotifications] = useState<NotificationItem[]>([]);
-  const [panelPendingFriends, setPanelPendingFriends] = useState<PendingFriendItem[]>([]);
 
   const [activityNotifications, setActivityNotifications] = useState<NotificationItem[]>([]);
   const [activityPendingFriends, setActivityPendingFriends] = useState<PendingFriendItem[]>([]);
@@ -595,6 +631,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const [calendarEvents, setCalendarEvents] = useState<CalendarEventItem[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [calendarError, setCalendarError] = useState('');
+  const calendarHubOptions = useMemo(() => buildCalendarHubOptions(conversations), [conversations]);
   const [highlightCalendarEventId, setHighlightCalendarEventId] = useState<string | null>(null);
   const [openingTeammateId, setOpeningTeammateId] = useState<string | null>(null);
   const [directChatMetadata, setDirectChatMetadata] = useState<Record<string, DirectChatMetadata>>(
@@ -602,6 +639,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   );
   const directChatMetadataRef = useRef<Record<string, DirectChatMetadata>>({});
   const [notificationSettings, setNotificationSettings] = useState<ProfileSettings | null>(null);
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [updateViewed, setUpdateViewed] = useState(false);
   const [planComplianceRules, setPlanComplianceRules] = useState<string[]>([]);
   const [planComplianceDismissed, setPlanComplianceDismissed] = useState(() =>
     readPlanComplianceDismissed(),
@@ -727,6 +766,36 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     writePersistedDirectChatMetadata(directChatMetadata);
   }, [directChatMetadata]);
 
+  useEffect(() => {
+    if (!window.electronAPI) return;
+
+    // Check for updates shortly after startup
+    const timer = setTimeout(() => {
+      void window.electronAPI?.checkForUpdates().catch(() => undefined);
+    }, 5000);
+
+    const unsubAvailable = window.electronAPI.onUpdaterEvent('update-available', (info: any) => {
+      setUpdateAvailable(true);
+      setUpdateViewed(false);
+      
+      toast.info(`Version ${info?.version || "new"} is ready to download.`, {
+        action: { label: "View Update", onClick: () => handleNavigate("profile") }
+      });
+
+    });
+
+    // Remind user / check for updates every hour (3600000 ms)
+    const interval = setInterval(() => {
+      void window.electronAPI?.checkForUpdates().catch(() => undefined);
+    }, 60 * 60 * 1000);
+
+    return () => {
+      clearTimeout(timer);
+      clearInterval(interval);
+      unsubAvailable();
+    };
+  }, []);
+
   const isOrgAdmin = useMemo(() => userCanManageOrganization(user), [user]);
 
   selectedIdRef.current = selectedId;
@@ -761,18 +830,67 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     return Array.from(ids);
   }, [conversations, selectedConversation?.id, selectedConversation?.kind]);
 
-  const visibleMessages = useMemo(
+  const viewerUserId = getUserId(user);
+
+  const visibleMessages = useMemo(() => {
+    const conversationKind = selectedConversation?.kind ?? 'direct';
+    const filtered = filterMessagesForBlockPolicy(
+      messages,
+      conversationKind,
+      blockedUserIds,
+      viewerUserId,
+    );
+
+    return filtered.filter((message) => !locallyHiddenMessageIdsRef.current.has(message.id));
+  }, [
+    messages,
+    locallyHiddenRevision,
+    blockedUserIds,
+    selectedConversation?.kind,
+    viewerUserId,
+  ]);
+
+  const conversationsForSidebar = useMemo(
     () =>
-      messages.filter((message) => !locallyHiddenMessageIdsRef.current.has(message.id)),
-    [messages, locallyHiddenRevision],
+      conversations.map((conversation) =>
+        redactDirectConversationForPeerBlock(conversation, blockedByPeerIds),
+      ),
+    [blockedByPeerIds, conversations],
   );
+
+  const selectedConversationForDisplay = useMemo(() => {
+    if (!selectedConversation) {
+      return null;
+    }
+
+    return redactDirectConversationForPeerBlock(selectedConversation, blockedByPeerIds);
+  }, [blockedByPeerIds, selectedConversation]);
 
   const typingPreviews = useMemo(() => {
     const previews: Record<string, string> = {};
 
     for (const [conversationId, state] of Object.entries(typingByConversation)) {
+      const conversation =
+        conversations.find((item) => item.id === conversationId) ??
+        (selectedConversation?.id === conversationId ? selectedConversation : null);
+      const visibleTypers = state.userIds.filter((id) => {
+        if (isBlockedByViewer(id, blockedUserIds)) {
+          return false;
+        }
+
+        if (
+          conversation?.kind === 'direct' &&
+          conversation.peerUserId &&
+          blockedByPeerIds.has(conversation.peerUserId)
+        ) {
+          return false;
+        }
+
+        return true;
+      });
+
       const label = formatTypingIndicatorLabel(
-        state.userIds.map((id) => state.namesByUserId[id] ?? 'Someone'),
+        visibleTypers.map((id) => state.namesByUserId[id] ?? 'Someone'),
       );
 
       if (label) {
@@ -781,7 +899,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     return previews;
-  }, [typingByConversation]);
+  }, [blockedByPeerIds, blockedUserIds, conversations, selectedConversation, typingByConversation]);
 
   const typingLabel = selectedId ? typingPreviews[selectedId] ?? '' : '';
 
@@ -871,7 +989,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const upsertConversation = useCallback(
     (items: ConversationItem[], conversation: ConversationItem) => {
       const without = items.filter((item) => item.id !== conversation.id);
-      return commitConversationList([conversation, ...without], { seedFromApi: false });
+      const bumped = {
+        ...conversation,
+        timestamp: new Date().toISOString(),
+      };
+      return commitConversationList([bumped, ...without], { seedFromApi: false });
     },
     [commitConversationList],
   );
@@ -1050,7 +1172,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           ),
         ),
       );
-      setPanelNotifications((current) => current.filter((n) => resolveNotificationConversationId(n, conversationsRef.current) !== conversationId));
       setActivityNotifications((current) => current.filter((n) => resolveNotificationConversationId(n, conversationsRef.current) !== conversationId));
     },
     [applyDraftPreviews],
@@ -1263,25 +1384,112 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     onSessionExpired();
   }, [confirm, onSessionExpired]);
 
+  const activityNotificationsRef = useRef<NotificationItem[]>([]);
+
+  useEffect(() => {
+    activityNotificationsRef.current = activityNotifications;
+  }, [activityNotifications]);
+
   const refreshUnreadCount = useCallback(
     async (notificationItems?: NotificationItem[]) => {
-      const [countResult, pendingResult] = await Promise.all([
-        loadUnreadCount(),
-        loadPendingFriends(),
-      ]);
+      const pendingResult = await loadPendingFriends();
 
-      if (handleUnauthorized(countResult.status ?? pendingResult.status)) {
+      if (handleUnauthorized(pendingResult.status)) {
+        return;
+      }
+
+      const pendingCount = pendingResult.ok ? pendingResult.data.length : 0;
+      const listSource =
+        notificationItems ??
+        (activityNotificationsRef.current.length > 0 ? activityNotificationsRef.current : null);
+
+      if (listSource) {
+        const unreadFromNotifications = listSource.filter((item) => !item.isRead).length;
+        setUnreadCount(unreadFromNotifications + pendingCount);
+        return;
+      }
+
+      const countResult = await loadUnreadCount();
+
+      if (handleUnauthorized(countResult.status)) {
         return;
       }
 
       const apiCount = countResult.ok ? countResult.data.count : 0;
-      const pendingCount = pendingResult.ok ? pendingResult.data.length : 0;
-      const unreadFromNotifications = (notificationItems ?? []).filter((item) => !item.isRead).length;
-
-      setUnreadCount(Math.max(apiCount, unreadFromNotifications) + pendingCount);
+      setUnreadCount(apiCount + pendingCount);
     },
     [handleUnauthorized],
   );
+
+  const refreshBlockedUserIds = useCallback(async () => {
+    const result = await loadBlockedUsers();
+
+    if (handleUnauthorized(result.status)) {
+      return;
+    }
+
+    if (result.ok) {
+      setBlockedUserIdsFromList(result.data);
+    } else {
+      await refreshBlockedUsersFromApi();
+    }
+  }, [handleUnauthorized]);
+
+  useEffect(() => {
+    blockedUserIdsRef.current = blockedUserIds;
+  }, [blockedUserIds]);
+
+  useEffect(() => {
+    return subscribeBlockedUsers(() => {
+      setBlockedUserIds(new Set(getBlockedUserIds()));
+      setBlockedByPeerIds(new Set(getBlockedByPeerIds()));
+    });
+  }, []);
+
+  const syncDirectPeerBlockRelationships = useCallback(async () => {
+    const peerIds = [
+      ...new Set(
+        conversationsRef.current
+          .filter(
+            (conversation) =>
+              conversation.kind === 'direct' &&
+              !conversation.isSelf &&
+              Boolean(conversation.peerUserId),
+          )
+          .map((conversation) => conversation.peerUserId as string),
+      ),
+    ];
+
+    if (peerIds.length === 0) {
+      return;
+    }
+
+    await Promise.all(
+      peerIds.map(async (peerUserId) => {
+        const result = await loadFriendRelationship(peerUserId);
+
+        if (result.ok) {
+          syncPeerBlockFromRelationship(peerUserId, result.data);
+        }
+      }),
+    );
+  }, []);
+
+  useEffect(() => {
+    void syncDirectPeerBlockRelationships();
+  }, [conversations, syncDirectPeerBlockRelationships]);
+
+  useEffect(() => {
+    if (!selectedConversation?.peerUserId || selectedConversation.kind !== 'direct') {
+      return;
+    }
+
+    void loadFriendRelationship(selectedConversation.peerUserId).then((result) => {
+      if (result.ok) {
+        syncPeerBlockFromRelationship(selectedConversation.peerUserId as string, result.data);
+      }
+    });
+  }, [selectedConversation?.id, selectedConversation?.kind, selectedConversation?.peerUserId]);
 
   const shouldSuppressNotificationAlerts = useCallback((): boolean => {
     const settings = notificationSettingsRef.current;
@@ -1566,8 +1774,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const syncNotifications = useCallback(
     async (options?: { seedSnapshot?: boolean; withLoading?: boolean; markAllRead?: boolean }) => {
       if (options?.withLoading) {
-        setNotificationsLoading(true);
-        setNotificationsError('');
         setActivityLoading(true);
         setActivityError('');
       }
@@ -1577,7 +1783,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
         if (handleUnauthorized(markReadResult.status)) {
           if (options?.withLoading) {
-            setNotificationsLoading(false);
+            setActivityLoading(false);
+          }
+          return;
+        }
+
+        if (!markReadResult.ok) {
+          if (options?.withLoading) {
             setActivityLoading(false);
           }
           return;
@@ -1588,7 +1800,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
       if (handleUnauthorized(notifications.status)) {
         if (options?.withLoading) {
-          setNotificationsLoading(false);
           setActivityLoading(false);
         }
         return;
@@ -1596,24 +1807,48 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
       if (!notifications.ok) {
         if (options?.withLoading) {
-          setNotificationsError(notifications.error);
           setActivityError(notifications.error);
-          setNotificationsLoading(false);
           setActivityLoading(false);
         }
         return;
       }
 
-      setPanelNotifications(notifications.data);
-      setActivityNotifications(notifications.data);
+      let notificationList = notifications.data;
+      const hasUnreadNotifications = notificationList.some((item) => !item.isRead);
+      const shouldAcknowledgeOnActivityView =
+        mainViewRef.current === 'activity' && hasUnreadNotifications && !options?.markAllRead;
 
-      if (options?.seedSnapshot) {
-        seedNotificationSnapshot(notifications.data);
-      } else {
-        void processNotificationAlerts(notifications.data);
+      if (shouldAcknowledgeOnActivityView) {
+        const markReadResult = await markAllNotificationsRead();
+
+        if (handleUnauthorized(markReadResult.status)) {
+          if (options?.withLoading) {
+            setActivityLoading(false);
+          }
+          return;
+        }
+
+        if (!markReadResult.ok) {
+          if (options?.withLoading) {
+            setActivityLoading(false);
+          }
+          return;
+        }
       }
 
-      void refreshUnreadCount(notifications.data);
+      if (options?.markAllRead || shouldAcknowledgeOnActivityView) {
+        notificationList = notificationList.map((item) => ({ ...item, isRead: true }));
+      }
+
+      setActivityNotifications(notificationList);
+
+      if (options?.seedSnapshot) {
+        seedNotificationSnapshot(notificationList);
+      } else {
+        void processNotificationAlerts(notificationList);
+      }
+
+      void refreshUnreadCount(notificationList);
 
       void loadPendingFriends().then((pending) => {
         if (handleUnauthorized(pending.status)) {
@@ -1621,13 +1856,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
 
         if (pending.ok) {
-          setPanelPendingFriends(pending.data);
           setActivityPendingFriends(pending.data);
         }
       });
 
       if (options?.withLoading) {
-        setNotificationsLoading(false);
         setActivityLoading(false);
       }
     },
@@ -2250,7 +2483,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    setCalendarEvents(result.data);
+    setCalendarEvents(
+      enrichCalendarEventsWithTeammateAvatars(result.data, teammatesRef.current),
+    );
     setCalendarLoading(false);
   }, [handleUnauthorized]);
 
@@ -2271,7 +2506,19 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    setCallHistoryItems(result.data);
+    setCallHistoryItems(
+      enrichCallHistoryItems(result.data, {
+        currentUserId: getUserId(userRef.current),
+        currentUserName: getUserDisplayName(userRef.current),
+        conversations: conversationsRef.current,
+        teammateNamesById: Object.fromEntries(
+          teammatesRef.current.map((member) => [
+            member.id,
+            member.name?.trim() || member.username?.trim() || '',
+          ]),
+        ),
+      }),
+    );
     setCallHistoryLoading(false);
   }, [callHistoryFilter, handleUnauthorized]);
 
@@ -2281,7 +2528,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const openCalendarFromNotification = useCallback(
     (eventId?: string | null) => {
-      setNotificationsOpen(false);
       setMainView('calendar');
       setHighlightCalendarEventId(eventId ?? null);
       void loadCalendarData();
@@ -2331,8 +2577,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const openHubFromNotification = useCallback(
     async (channelId: string | null, inviteId: string | null) => {
-      setNotificationsOpen(false);
-
       if (channelId) {
         const existing = findConversationByAnyId(conversationsRef.current, channelId);
 
@@ -2492,11 +2736,22 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       resolvedConversationId: string,
       conversation: ConversationItem | null,
     ) => {
+      // Only trigger the IPC desktop notification, since it will now spawn the custom BrowserWindow overlay
+      // in all cases (whether the app is focused or not).
+
+
+      let avatarUrl = conversation?.avatarUrl || null;
+      if (message.senderId && teammatesRef.current) {
+        const sender = teammatesRef.current.find((t) => t.id === message.senderId);
+        if (sender?.avatarUrl) avatarUrl = sender.avatarUrl;
+      }
+
       void showIncomingMessageDesktopNotification(
         message,
         conversation,
         () => handleSelectConversationRef.current(resolvedConversationId, message.id),
         resolvedConversationId,
+        avatarUrl
       );
       void refreshUnreadCount();
     },
@@ -2535,12 +2790,21 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           mainViewRef.current,
           activeConversationId,
         );
+        const senderIsBlocked = Boolean(
+          message.senderId && blockedUserIdsRef.current.has(message.senderId),
+        );
+
+        if (shouldDropHubMessageFromBlockedSender(message, conversation, blockedUserIdsRef.current)) {
+          return;
+        }
+
         const incrementUnread =
-          !isActivelyViewing && !message.isOwn && message.senderId !== userId;
+          !isActivelyViewing && !message.isOwn && message.senderId !== userId && !senderIsBlocked;
         const shouldNotifyIncoming =
           !isActivelyViewing &&
           !message.isOwn &&
           message.senderId !== userId &&
+          !senderIsBlocked &&
           !isConversationSnoozed(resolvedConversationId) &&
           !shouldSuppressNotificationAlerts() &&
           shouldDeliverDesktopNotifications();
@@ -2774,12 +3038,21 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           mainViewRef.current,
           activeConversationId,
         );
+        const senderIsBlocked = Boolean(
+          message.senderId && blockedUserIdsRef.current.has(message.senderId),
+        );
+
+        if (shouldDropHubMessageFromBlockedSender(message, conversation, blockedUserIdsRef.current)) {
+          return;
+        }
+
         const incrementUnread =
-          !isActivelyViewing && !message.isOwn && message.senderId !== userId;
+          !isActivelyViewing && !message.isOwn && message.senderId !== userId && !senderIsBlocked;
         const shouldNotifyIncoming =
           !isActivelyViewing &&
           !message.isOwn &&
           message.senderId !== userId &&
+          !senderIsBlocked &&
           !isConversationSnoozed(resolvedConversationId) &&
           !shouldSuppressNotificationAlerts() &&
           shouldDeliverDesktopNotifications();
@@ -3080,6 +3353,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     void loadData();
     void loadCalendarData();
+    void refreshBlockedUserIds();
     void refreshUnreadCount();
     void loadNotificationSettings().then((result) => {
       if (result.ok) {
@@ -3092,7 +3366,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       () => notificationSettingsRef.current?.messageSoundEnabled ?? false,
     );
     void syncNotifications({ seedSnapshot: true });
-  }, [loadCalendarData, loadData, refreshUnreadCount, syncNotifications]);
+  }, [loadCalendarData, loadData, refreshBlockedUserIds, refreshUnreadCount, syncNotifications]);
 
   useEffect(() => {
     if (mainView !== 'chat') {
@@ -3131,6 +3405,16 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   }, [loadCalendarData]);
 
   useEffect(() => {
+    if (!teammates.length) {
+      return;
+    }
+
+    setCalendarEvents((current) =>
+      current.length ? enrichCalendarEventsWithTeammateAvatars(current, teammates) : current,
+    );
+  }, [teammates]);
+
+  useEffect(() => {
     return scheduleCalendarReminders(calendarEvents, (event) => {
       void showCalendarEventReminder(
         event.title || 'Calendar event',
@@ -3147,20 +3431,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     return () => window.clearInterval(intervalId);
   }, [refreshUnreadCount]);
-
-  useEffect(() => {
-    if (!notificationsOpen) {
-      return;
-    }
-
-    void syncNotifications({ withLoading: true, markAllRead: true });
-
-    const intervalId = window.setInterval(() => {
-      void syncNotifications();
-    }, BELL_POLL_MS);
-
-    return () => window.clearInterval(intervalId);
-  }, [notificationsOpen, syncNotifications]);
 
   useEffect(() => {
     if (mainView !== 'activity') {
@@ -3306,10 +3576,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       allowSuperAdminAutoLandingRef.current = false;
     }
 
-    if (view === 'organization' || view === 'superadmin') {
-      setNotificationsOpen(false);
-    }
-
     startTransition(() => {
       setMainView(view);
     });
@@ -3452,6 +3718,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
   };
 
+  const handleTeammateAddFriend = async (memberId: string) => {
+    const result = await sendFriendRequest(memberId);
+
+    if (!result.ok) {
+      toast.error(result.error);
+      throw new Error(result.error);
+    }
+
+    toast.success('Friend request sent.');
+  };
+
   const handleNotificationClick = (notification: NotificationItem) => {
     markNotificationSeen(notification);
     const action = resolveNotificationAction(notification, conversations);
@@ -3462,12 +3739,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
 
-      setPanelNotifications((current) => current.filter((item) => item.id !== notification.id));
       setActivityNotifications((current) => current.filter((item) => item.id !== notification.id));
       void refreshUnreadCount();
     });
-
-    setNotificationsOpen(false);
 
     if (action.kind === 'calendar') {
       openCalendarFromNotification(action.eventId);
@@ -4181,6 +4455,143 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     touchConversationWithMessage(conversationId, withDeliveredStatus(result.data), false);
   };
 
+  const handleSendVoice = async (
+    file: File,
+    caption?: string,
+    replyToId?: string,
+    threadRootId?: string,
+  ) => {
+    if (!selectedId) {
+      return;
+    }
+
+    const conversationId = selectedId;
+    const localId = createLocalMessageId();
+    const userId = getUserId(user);
+    const mimeType = file.type || 'audio/webm';
+    const previewUrl = URL.createObjectURL(file);
+    const trimmedCaption = caption?.trim() ?? '';
+    const optimistic: MessageItem = {
+      id: localId,
+      content: trimmedCaption,
+      senderId: userId,
+      senderName: getUserDisplayName(user),
+      senderInitials: getUserInitials(user),
+      createdAt: new Date().toISOString(),
+      editedAt: null,
+      pinnedAt: null,
+      isOwn: true,
+      status: 'sending',
+      readBy: [],
+      reactions: [],
+      replyToMessageId: replyToId,
+      threadRootId,
+      messageType: 'VOICE',
+      media: [
+        {
+          kind: 'file',
+          url: previewUrl,
+          previewUrl,
+          name: file.name || 'voice-note.webm',
+        },
+      ],
+      deletedForEveryone: false,
+      poll: null,
+    };
+
+    setDraftError('');
+    if (!threadRootId) {
+      stopTyping(conversationId);
+      setMessages((current) => appendMessage(current, optimistic, userId));
+      touchConversationWithMessage(conversationId, optimistic, false);
+    } else {
+      setMessages((current) => bumpThreadReplyCount(current, threadRootId));
+    }
+
+    const uploadResult = await uploadChatFile(file);
+
+    if (isLocalSendCancelled(localId)) {
+      cleanupCancelledOutboundSend(localId, previewUrl);
+      return;
+    }
+
+    if (handleUnauthorized(uploadResult.status) || !uploadResult.ok) {
+      if (!threadRootId) {
+        setMessages((current) => markMessageStatus(current, localId, 'failed'));
+      }
+      URL.revokeObjectURL(previewUrl);
+      if (!uploadResult.ok && !handleUnauthorized(uploadResult.status)) {
+        setDraftError(uploadResult.error);
+      }
+      return;
+    }
+
+    const uploadedUrl = uploadResult.data.url;
+    URL.revokeObjectURL(previewUrl);
+
+    if (!threadRootId) {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === localId
+            ? {
+                ...message,
+                media: [
+                  {
+                    kind: 'file',
+                    url: uploadedUrl,
+                    previewUrl: uploadedUrl,
+                    name: file.name || 'voice-note.webm',
+                  },
+                ],
+              }
+            : message,
+        ),
+      );
+    }
+
+    const result = await sendChatVoiceMessage(
+      conversationId,
+      uploadedUrl,
+      file.name || 'voice-note.webm',
+      mimeType,
+      file.size,
+      replyToId,
+      threadRootId,
+      trimmedCaption || undefined,
+    );
+
+    if (handleUnauthorized(result.status) || !result.ok) {
+      if (!threadRootId) {
+        setMessages((current) => markMessageStatus(current, localId, 'failed'));
+      }
+      if (!result.ok && !handleUnauthorized(result.status)) {
+        setDraftError(result.error);
+      }
+      return;
+    }
+
+    if (threadRootId) {
+      await finishOutboundSendProgress(localId);
+      registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
+      appendThreadReply(
+        conversationId,
+        result.data.threadRootId ?? threadRootId,
+        result.data,
+      );
+      setMessages((current) =>
+        bumpThreadReplyCount(
+          filterMainChatMessages(current),
+          result.data.threadRootId ?? threadRootId,
+        ),
+      );
+      return;
+    }
+
+    await finishOutboundSendProgress(localId);
+    setMessages((current) => replaceLocalMessage(current, localId, result.data, userId));
+    touchConversationWithMessage(conversationId, withDeliveredStatus(result.data), false);
+  };
+
   const handleAddReaction = async (messageId: string, emoji: string) => {
     if (!selectedId) {
       return;
@@ -4197,25 +4608,44 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     let finalResult;
 
+    const existingReactions = targetMessage ? targetMessage.reactions.filter(r => r.userId === currentUserId) : [];
+    const exactMatch = existingReactions.find(r => r.emoji === emoji);
+
+    // OPTIMISTIC UPDATE: Prevents rapid double-clicks from causing race conditions
+    setMessages((current) =>
+      current.map((message) => {
+        if (message.id === messageId) {
+          const isToggleOff = existingReactions.length === 1 && exactMatch;
+          const newReactions = message.reactions.filter((r) => r.userId !== currentUserId);
+          if (!isToggleOff) {
+            newReactions.push({ emoji, userId: currentUserId, username: user?.name || '' });
+          }
+          return { ...message, reactions: newReactions };
+        }
+        return message;
+      }),
+    );
+
     if (targetMessage) {
-      const existingReaction = targetMessage.reactions.find(r => r.userId === currentUserId);
-      if (existingReaction) {
-        if (existingReaction.emoji === emoji) {
-          // Toggle off: remove reaction and return early
-          const removeResult = await removeMessageReaction(selectedId, messageId, emoji);
-          if (!removeResult.ok) {
+
+      if (exactMatch) {
+        // Toggle off exact match. Also clear any other rogue reactions.
+        for (const reaction of existingReactions) {
+          const removeResult = await removeMessageReaction(selectedId, messageId, reaction.emoji);
+          if (reaction.emoji === emoji && !removeResult.ok) {
             if (handleUnauthorized(removeResult.status)) return;
             setThreadError(removeResult.error);
             return;
           }
-          finalResult = removeResult;
-        } else {
-          // Changed emoji: remove old one, then fall through to add new one
-          const removeResult = await removeMessageReaction(selectedId, messageId, existingReaction.emoji);
-          if (!removeResult.ok) {
-            if (handleUnauthorized(removeResult.status)) return;
-            // Ignore error here and try adding the new one anyway
+          if (reaction.emoji === emoji) {
+            finalResult = removeResult;
           }
+        }
+      } else if (existingReactions.length > 0) {
+        // Changed emoji: remove all old ones, then fall through to add new one
+        for (const reaction of existingReactions) {
+          const removeResult = await removeMessageReaction(selectedId, messageId, reaction.emoji);
+          if (!removeResult.ok && handleUnauthorized(removeResult.status)) return;
         }
       }
     }
@@ -4279,6 +4709,184 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     toast.success(message);
   };
 
+  const handleSidebarMarkUnread = useCallback(
+    async (conversation: ConversationItem) => {
+      setConversationMenuBusyId(conversation.id);
+      const result = await markConversationUnread(conversation.id);
+      setConversationMenuBusyId(null);
+
+      if (!result.ok) {
+        if (handleUnauthorized(result.status)) {
+          return;
+        }
+
+        toast.error(result.error);
+        return;
+      }
+
+      setConversations((current) =>
+        applyDraftPreviews(
+          current.map((item) =>
+            item.id === conversation.id
+              ? { ...item, unreadCount: Math.max(1, item.unreadCount) }
+              : item,
+          ),
+        ),
+      );
+      void refreshUnreadCount();
+      toast.success('Marked as unread.');
+    },
+    [applyDraftPreviews, handleUnauthorized, refreshUnreadCount],
+  );
+
+  const handleSidebarToggleMute = useCallback(
+    async (conversation: ConversationItem) => {
+      const nextMuted = conversation.notificationsSnoozed !== true;
+      applyConversationSnoozed(conversation.id, nextMuted);
+      setConversationMenuBusyId(conversation.id);
+
+      const result = await updateConversationNotificationSettings(
+        conversation.id,
+        buildConversationSnoozePayload(nextMuted ? 'forever' : 'off'),
+      );
+
+      setConversationMenuBusyId(null);
+
+      if (!result.ok) {
+        applyConversationSnoozed(conversation.id, !nextMuted);
+        if (handleUnauthorized(result.status)) {
+          return;
+        }
+
+        toast.error(result.error);
+        return;
+      }
+
+      toast.success(
+        nextMuted
+          ? formatConversationSnoozeUntil(null, true)
+          : 'Notifications enabled for this chat.',
+      );
+    },
+    [applyConversationSnoozed, handleUnauthorized],
+  );
+
+  const handleSidebarClearHistory = useCallback(
+    async (conversation: ConversationItem) => {
+      const confirmed = await confirm({
+        title: 'Clear chat history',
+        message: `Clear all messages in "${conversation.title}"?`,
+        confirmLabel: 'Clear history',
+        tone: 'danger',
+      });
+
+      if (!confirmed) {
+        return;
+      }
+
+      setConversationMenuBusyId(conversation.id);
+      const result = await clearConversationHistory(conversation.id);
+      setConversationMenuBusyId(null);
+
+      if (!result.ok) {
+        if (handleUnauthorized(result.status)) {
+          return;
+        }
+
+        toast.error(result.error);
+        return;
+      }
+
+      if (selectedIdRef.current === conversation.id) {
+        setMessages([]);
+        void loadThread(conversation.id);
+      }
+
+      toast.success('Chat history cleared.');
+      void refreshConversations();
+    },
+    [confirm, handleUnauthorized, loadThread, refreshConversations],
+  );
+
+  const handleSidebarBlockUser = useCallback(
+    async (conversation: ConversationItem) => {
+      const peerUserId = conversation.peerUserId;
+
+      if (!peerUserId) {
+        return;
+      }
+
+      const confirmed = await confirm({
+        title: 'Block user',
+        message: `Block ${conversation.title}? They will no longer be able to message you.`,
+        confirmLabel: 'Block user',
+        tone: 'danger',
+      });
+
+      if (!confirmed) {
+        return;
+      }
+
+      setConversationMenuBusyId(conversation.id);
+      const result = await blockUser(peerUserId);
+      setConversationMenuBusyId(null);
+
+      if (!result.ok) {
+        if (handleUnauthorized(result.status)) {
+          return;
+        }
+
+        toast.error(result.error);
+        return;
+      }
+
+      markUserBlocked(peerUserId);
+      toast.success(`${conversation.title} blocked.`);
+      void refreshBlockedUserIds();
+      void refreshConversations();
+    },
+    [confirm, handleUnauthorized, refreshBlockedUserIds, refreshConversations],
+  );
+
+  const handleSidebarUnblockUser = useCallback(
+    async (conversation: ConversationItem) => {
+      const peerUserId = conversation.peerUserId;
+
+      if (!peerUserId) {
+        return;
+      }
+
+      const confirmed = await confirm({
+        title: 'Unblock user',
+        message: `Unblock ${conversation.title}? They will be able to message you again.`,
+        confirmLabel: 'Unblock user',
+      });
+
+      if (!confirmed) {
+        return;
+      }
+
+      setConversationMenuBusyId(conversation.id);
+      const result = await unblockUser(peerUserId);
+      setConversationMenuBusyId(null);
+
+      if (!result.ok) {
+        if (handleUnauthorized(result.status)) {
+          return;
+        }
+
+        toast.error(result.error);
+        return;
+      }
+
+      markUserUnblocked(peerUserId);
+      toast.success(`${conversation.title} unblocked.`);
+      void refreshBlockedUserIds();
+      void refreshConversations();
+    },
+    [confirm, handleUnauthorized, refreshBlockedUserIds, refreshConversations],
+  );
+
   const handleToggleConversationPin = async (conversationId: string, isPinned: boolean) => {
     if (pinningConversationId) {
       return;
@@ -4317,6 +4925,36 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     showActionMessage(nextPinned ? 'Chat pinned.' : 'Chat unpinned.');
   };
+
+  const sidebarConversationMenuActions = useMemo(
+    () => ({
+      onMarkUnread: (conversation: ConversationItem) => {
+        void handleSidebarMarkUnread(conversation);
+      },
+      onTogglePin: (conversation: ConversationItem) => {
+        void handleToggleConversationPin(conversation.id, conversation.isPinned);
+      },
+      onToggleMute: (conversation: ConversationItem) => {
+        void handleSidebarToggleMute(conversation);
+      },
+      onClearHistory: (conversation: ConversationItem) => {
+        void handleSidebarClearHistory(conversation);
+      },
+      onBlockUser: (conversation: ConversationItem) => {
+        void handleSidebarBlockUser(conversation);
+      },
+      onUnblockUser: (conversation: ConversationItem) => {
+        void handleSidebarUnblockUser(conversation);
+      },
+    }),
+    [
+      handleSidebarBlockUser,
+      handleSidebarClearHistory,
+      handleSidebarMarkUnread,
+      handleSidebarToggleMute,
+      handleSidebarUnblockUser,
+    ],
+  );
 
   const handleEditMessage = async (messageId: string, content: string) => {
     if (!selectedId) {
@@ -4726,6 +5364,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return (
         <CalendarView
           events={calendarEvents}
+          hubOptions={calendarHubOptions}
           loading={calendarLoading}
           error={calendarError}
           user={user}
@@ -4831,6 +5470,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
               }
             });
           }}
+          hasUpdateBadge={updateAvailable && !updateViewed}
+          onUpdateViewed={() => setUpdateViewed(true)}
         />
       );
     }
@@ -4876,13 +5517,18 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     if (selectedConversation) {
       return (
         <ConversationThread
-          conversation={selectedConversation}
+          conversation={selectedConversationForDisplay ?? selectedConversation}
+          blockedByPeerIds={blockedByPeerIds}
           hubDetails={selectedConversation.kind === 'hub' ? activeHubDetails : null}
           conversationDetails={activeHubDetails}
           pinnedMessageIds={pinnedMessageIds}
           conversations={conversations}
           onSummarizeUnread={handleSummarizeUnread}
           sendProgressByMessageId={outboundSendProgress}
+          blockedUserIds={blockedUserIds}
+          onBlockedUsersChanged={() => {
+            void refreshBlockedUserIds();
+          }}
           messages={visibleMessages}
           draft={draft}
           loading={threadLoading}
@@ -4902,6 +5548,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }}
           onSendFile={(file, caption, replyToId, threadRootId) => {
             void handleSendFile(file, caption, replyToId, threadRootId);
+          }}
+          onSendVoice={(file, caption, replyToId, threadRootId) => {
+            void handleSendVoice(file, caption, replyToId, threadRootId);
           }}
           onUnauthorized={handleUnauthorized}
           currentUserId={getUserId(user)}
@@ -5055,26 +5704,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         onToggleMic={() => void callManager.toggleMic()}
         onToggleCamera={() => void callManager.toggleCamera()}
         onToggleScreenShare={() => void callManager.toggleScreenShare()}
-        onJoinMeeting={() => {
-          const meeting = callManager.session.meetingBanner;
-
-          if (!meeting) {
-            return;
-          }
-
-          const targetConversation =
-            conversations.find((conversation) => conversation.id === meeting.conversationId) ??
-            (selectedConversation?.id === meeting.conversationId ? selectedConversation : null);
-
-          if (!targetConversation) {
-            toast.error('Open the hub for this meeting, then tap Join again.');
-            void handleSelectConversation(meeting.conversationId);
-            return;
-          }
-
-          void callManager.joinGroupMeeting(targetConversation, meeting);
-        }}
-        onDismissMeetingBanner={callManager.dismissMeetingBanner}
         onApproveJoinRequest={(requestId) =>
           void callManager.respondToJoinRequest(requestId, true)
         }
@@ -5119,6 +5748,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         onNavigate={handleNavigate}
         onOpenFlexAi={() => setFlexAiOpen((current) => !current)}
         onLogout={() => void handleSignOut()}
+        hasUpdateBadge={updateAvailable && !updateViewed}
       />
       ) : null}
 
@@ -5129,37 +5759,30 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         selfLabel={selfLabel}
         openingTeammateId={openingTeammateId}
         directChatMetadata={directChatMetadata}
-        conversations={conversations}
+        conversations={conversationsForSidebar}
         typingPreviews={typingPreviews}
         teammates={teammates}
-        unreadCount={unreadCount}
+        blockedByPeerIds={blockedByPeerIds}
         loading={loading}
         error={error}
         selectedId={selectedId}
-        notificationsOpen={notificationsOpen}
-        notificationsLoading={notificationsLoading}
-        notificationsError={notificationsError}
-        panelNotifications={panelNotifications}
-        panelPendingFriends={panelPendingFriends}
         onSelect={handleSelectConversation}
         onPrefetch={prefetchThread}
-        onTogglePin={(conversationId, isPinned) => {
-          void handleToggleConversationPin(conversationId, isPinned);
+        conversationMenuActions={sidebarConversationMenuActions}
+        conversationMenuBusy={conversationMenuBusyId !== null}
+        blockedUserIds={blockedUserIds}
+        onPrepareConversationContextMenu={() => {
+          void refreshBlockedUserIds();
         }}
-        pinningConversationId={pinningConversationId}
         onRetry={() => {
           void loadData();
         }}
-        onToggleNotifications={() => {
-          setNotificationsOpen((current) => !current);
-        }}
-        onCloseNotifications={() => setNotificationsOpen(false)}
         onTeammateSelect={handleTeammateSelect}
+        onTeammateAddFriend={handleTeammateAddFriend}
         onSelectPerson={(person) => {
           void handleSelectPerson(person);
         }}
         onMessageSelf={handleMessageSelf}
-        onNotificationClick={handleNotificationClick}
         newConversationOpen={newConversationOpen}
         onNewConversationOpenChange={setNewConversationOpen}
         onMessageUser={(userId) => {
@@ -5206,9 +5829,32 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       />
       ) : null}
 
-      <main
-        className={`relative flex min-w-0 flex-1 flex-col ${showMeetingBanner ? 'pt-[4.25rem] sm:pt-20' : ''}`}
-      >
+      <main className="relative flex min-w-0 flex-1 flex-col">
+        {showMeetingBanner && callManager.session.meetingBanner ? (
+          <MeetingStartedBanner
+            meeting={callManager.session.meetingBanner}
+            onJoin={() => {
+              const meeting = callManager.session.meetingBanner;
+
+              if (!meeting) {
+                return;
+              }
+
+              const targetConversation =
+                conversations.find((conversation) => conversation.id === meeting.conversationId) ??
+                (selectedConversation?.id === meeting.conversationId ? selectedConversation : null);
+
+              if (!targetConversation) {
+                toast.error('Open the hub for this meeting, then tap Join again.');
+                void handleSelectConversation(meeting.conversationId);
+                return;
+              }
+
+              void callManager.joinGroupMeeting(targetConversation, meeting);
+            }}
+            onDismiss={callManager.dismissMeetingBanner}
+          />
+        ) : null}
         {mainView === 'chat' && notificationSettings ? (
           <NotificationStatusBanner
             settings={notificationSettings}

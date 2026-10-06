@@ -146,6 +146,23 @@ export function buildFileMessagePayload(
   return payload;
 }
 
+export function buildVoiceMessagePayload(
+  fileUrl: string,
+  fileName: string,
+  mimeType: string,
+  fileSize?: number,
+  caption?: string,
+): Record<string, unknown> {
+  return {
+    type: 'VOICE',
+    content: caption?.trim() ?? '',
+    fileUrl,
+    fileName,
+    mimeType: mimeType || 'audio/webm',
+    ...(typeof fileSize === 'number' && Number.isFinite(fileSize) ? { fileSize } : {}),
+  };
+}
+
 export function buildMediaMessagePayload(
   item: GifPickerItem,
   kind: 'gif' | 'sticker',

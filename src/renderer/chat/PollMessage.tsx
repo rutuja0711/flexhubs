@@ -8,6 +8,8 @@ type PollMessageProps = {
 
 export function PollMessage({ poll, disabled = false, onVote }: PollMessageProps) {
   const totalVotes = poll.totalVotes || poll.options.reduce((sum, option) => sum + option.voteCount, 0);
+  const userVoted = poll.options.some((option) => option.votedByMe);
+  const singleChoiceLocked = !poll.allowMultiple && userVoted;
 
   return (
     <div className="min-w-[220px] space-y-3">
@@ -28,7 +30,7 @@ export function PollMessage({ poll, disabled = false, onVote }: PollMessageProps
         ) : (
           poll.options.map((option) => {
           const percent = totalVotes > 0 ? Math.round((option.voteCount / totalVotes) * 100) : 0;
-          const isInteractive = !disabled && Boolean(onVote);
+          const isInteractive = !disabled && Boolean(onVote) && !singleChoiceLocked;
 
           return (
             <button

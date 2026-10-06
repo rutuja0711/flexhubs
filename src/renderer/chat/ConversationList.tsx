@@ -1,7 +1,12 @@
-import { memo } from 'react';
+import { memo, useCallback, useRef, useState } from 'react';
+import { FiMoreHorizontal } from 'react-icons/fi';
 import type { ConversationItem } from '../../shared/chat';
 import { formatConversationTimestamp } from './format';
 import { Avatar, PinIcon, PresenceDot } from './ChatIcons';
+import {
+  ConversationContextMenu,
+  type ConversationContextMenuActions,
+} from './ConversationContextMenu';
 
 type ConversationRowProps = {
   conversation: ConversationItem;
@@ -9,8 +14,10 @@ type ConversationRowProps = {
   selected: boolean;
   onSelect: (id: string) => void;
   onPrefetch?: (id: string) => void;
-  onTogglePin?: (conversationId: string, isPinned: boolean) => void;
-  pinBusy?: boolean;
+  menuOpen?: boolean;
+  onOpenMenu?: (position: { top: number; left: number }) => void;
+  onCloseMenu?: () => void;
+  menuBusy?: boolean;
 };
 
 export const ConversationRow = memo(function ConversationRow({
@@ -19,20 +26,47 @@ export const ConversationRow = memo(function ConversationRow({
   selected,
   onSelect,
   onPrefetch,
-  onTogglePin,
-  pinBusy = false,
+  menuOpen = false,
+  onOpenMenu,
+  onCloseMenu,
+  menuBusy = false,
   index = 0,
 }: ConversationRowProps & { index?: number }) {
   const displayTitle = conversation.isSelf ? `${conversation.title} (Yourself)` : conversation.title;
+  const rowRef = useRef<HTMLDivElement>(null);
+
+  const openContextMenu = useCallback(
+    (clientX: number, clientY: number) => {
+      if (!onOpenMenu) {
+        return;
+      }
+
+      const rect = rowRef.current?.getBoundingClientRect();
+      onOpenMenu({
+        top: rect ? rect.top + 6 : clientY,
+        left: rect ? rect.left + 52 : clientX,
+      });
+    },
+    [onOpenMenu],
+  );
 
   return (
     <div
+      ref={rowRef}
       className={`group relative flex w-full items-center gap-3 rounded-[16px] px-3 py-2.5 transition-all duration-200 animate-slide-in stagger-${(index % 5) + 1} opacity-0 ${
         selected
           ? 'bg-app-elevated border border-accent/25 shadow-sm'
           : 'border border-transparent hover:bg-app-chat-hover/70'
       }`}
       onMouseEnter={() => onPrefetch?.(conversation.id)}
+      onContextMenu={(event) => {
+        if (!onOpenMenu) {
+          return;
+        }
+
+        event.preventDefault();
+        openContextMenu(event.clientX, event.clientY);
+      }}
     >
       <button
         type="button"
@@ -43,10 +77,25 @@ export const ConversationRow = memo(function ConversationRow({
         <div className="relative shrink-0">
           <Avatar imageUrl={conversation.avatarUrl} initials={conversation.avatarInitials} />
           <PresenceDot status={conversation.status} />
+          {conversation.unreadCount > 0 ? (
+            <span
+              className={`absolute -right-1 -top-1 z-10 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[0.625rem] font-bold leading-none text-white shadow-sm shadow-accent/40 ring-2 ${
+                selected ? 'ring-app-elevated' : 'ring-app-chat-sidebar'
+              }`}
+            >
+              {conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}
+            </span>
+          ) : null}
         </div>
 
         <div className="min-w-0 flex-1">
-          <span className={`block truncate text-sm tracking-tight ${selected ? 'font-semibold text-app-text' : 'font-medium text-app-text/90'}`}>
+          <span
+            className={`block truncate text-sm tracking-tight ${
+              selected || conversation.unreadCount > 0
+                ? 'font-semibold text-app-text'
+                : 'font-medium text-app-text/90'
+            }`}
+          >
             {displayTitle}
           </span>
           {typingPreview ? (
@@ -69,55 +118,49 @@ export const ConversationRow = memo(function ConversationRow({
         </div>
       </button>
 
-      <div className="flex shrink-0 flex-col items-end gap-1.5">
-        <div className="flex items-center gap-1">
-          {conversation.isPinned ? (
-            <button
-              type="button"
-              aria-label="Unpin chat"
-              aria-pressed={true}
-              disabled={pinBusy}
-              className={`flex shrink-0 items-center justify-center p-0.5 transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                selected ? 'text-accent hover:text-accent-hover' : 'text-accent hover:text-accent-hover'
-              }`}
-              onClick={(event) => {
-                event.stopPropagation();
-                onTogglePin?.(conversation.id, conversation.isPinned);
-              }}
-            >
-              <PinIcon size={13} />
-            </button>
-          ) : onTogglePin ? (
-            <button
-              type="button"
-              aria-label="Pin chat"
-              aria-pressed={false}
-              disabled={pinBusy}
-              className="hidden shrink-0 items-center justify-center p-0.5 text-app-muted transition-colors group-hover:flex hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
-              onClick={(event) => {
-                event.stopPropagation();
-                onTogglePin(conversation.id, conversation.isPinned);
-              }}
-            >
-              <PinIcon size={13} />
-            </button>
-          ) : null}
-          {conversation.timestamp ? (
-            <span
-              className={`whitespace-nowrap text-[0.6875rem] font-medium text-app-muted ${
-                conversation.isPinned ? '' : 'group-hover:hidden'
-              }`}
-            >
-              {formatConversationTimestamp(conversation.timestamp)}
-            </span>
-          ) : null}
-        </div>
-        {conversation.unreadCount > 0 ? (
-          <span className="rounded-full bg-accent px-1.5 py-0.5 text-[0.625rem] font-bold text-white shadow-sm shadow-accent/40">
-            {conversation.unreadCount > 99 ? '99+' : conversation.unreadCount}
+      <div className="flex h-8 shrink-0 items-center justify-end gap-0.5 pl-1">
+        {conversation.timestamp ? (
+          <span
+            className={`whitespace-nowrap text-[0.6875rem] font-medium text-app-muted ${
+              onOpenMenu ? 'group-hover:hidden' : ''
+            } ${menuOpen && onOpenMenu ? 'hidden' : ''}`}
+          >
+            {formatConversationTimestamp(conversation.timestamp)}
           </span>
         ) : null}
+        {conversation.isPinned ? (
+          <span
+            className="flex h-7 w-7 shrink-0 items-center justify-center text-accent"
+            aria-label="Pinned chat"
+            title="Pinned chat"
+          >
+            <PinIcon size={13} />
+          </span>
+        ) : null}
+        {onOpenMenu ? (
+          <button
+            type="button"
+            aria-label="Chat options"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-black/[0.06] hover:text-app-text dark:hover:bg-white/10 ${
+              menuOpen ? '' : 'hidden group-hover:flex'
+            }`}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (menuOpen) {
+                onCloseMenu?.();
+                return;
+              }
+
+              openContextMenu(event.clientX, event.clientY);
+            }}
+          >
+            <FiMoreHorizontal className="h-[18px] w-[18px]" strokeWidth={1.75} />
+          </button>
+        ) : null}
       </div>
+
     </div>
   );
 });
@@ -128,9 +171,11 @@ type ConversationListProps = {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onPrefetch?: (id: string) => void;
-  onTogglePin?: (conversationId: string, isPinned: boolean) => void;
-  pinningConversationId?: string | null;
   emptyMessage: string;
+  menuActions?: ConversationContextMenuActions;
+  menuBusy?: boolean;
+  blockedUserIds?: ReadonlySet<string>;
+  onPrepareContextMenu?: () => void;
 };
 
 export function ConversationList({
@@ -139,10 +184,30 @@ export function ConversationList({
   selectedId,
   onSelect,
   onPrefetch,
-  onTogglePin,
-  pinningConversationId = null,
   emptyMessage,
+  menuActions,
+  menuBusy = false,
+  blockedUserIds,
+  onPrepareContextMenu,
 }: ConversationListProps) {
+  const [contextMenuConversationId, setContextMenuConversationId] = useState<string | null>(null);
+  const [contextMenuPosition, setContextMenuPosition] = useState({ top: 0, left: 0 });
+
+  const contextMenuConversation = conversations.find((item) => item.id === contextMenuConversationId) ?? null;
+
+  const closeContextMenu = useCallback(() => {
+    setContextMenuConversationId(null);
+  }, []);
+
+  const openContextMenuForConversation = useCallback(
+    (conversationId: string, position: { top: number; left: number }) => {
+      onPrepareContextMenu?.();
+      setContextMenuConversationId(conversationId);
+      setContextMenuPosition(position);
+    },
+    [onPrepareContextMenu],
+  );
+
   if (conversations.length === 0) {
     return (
       <div className="px-4 py-8 text-center text-sm text-app-muted" role="status">
@@ -152,20 +217,45 @@ export function ConversationList({
   }
 
   return (
-    <div className="flex flex-col gap-0.5 px-2 pb-4">
-      {conversations.map((conversation, index) => (
-        <ConversationRow
-          key={conversation.id}
-          index={index}
-          conversation={conversation}
-          typingPreview={typingPreviews[conversation.id]}
-          selected={selectedId === conversation.id}
-          onSelect={onSelect}
-          onPrefetch={onPrefetch}
-          onTogglePin={onTogglePin}
-          pinBusy={pinningConversationId === conversation.id}
+    <>
+      <div className="flex flex-col gap-0.5 px-2 pb-4">
+        {conversations.map((conversation, index) => (
+          <ConversationRow
+            key={conversation.id}
+            index={index}
+            conversation={conversation}
+            typingPreview={typingPreviews[conversation.id]}
+            selected={selectedId === conversation.id}
+            onSelect={onSelect}
+            onPrefetch={onPrefetch}
+            menuOpen={contextMenuConversationId === conversation.id}
+            menuBusy={menuBusy}
+            onCloseMenu={closeContextMenu}
+            onOpenMenu={
+              menuActions
+                ? (position) => {
+                    openContextMenuForConversation(conversation.id, position);
+                  }
+                : undefined
+            }
+          />
+        ))}
+      </div>
+
+      {contextMenuConversation && menuActions ? (
+        <ConversationContextMenu
+          conversation={contextMenuConversation}
+          position={contextMenuPosition}
+          busy={menuBusy}
+          isPeerBlocked={
+            contextMenuConversation.peerUserId
+              ? blockedUserIds?.has(contextMenuConversation.peerUserId) === true
+              : false
+          }
+          onClose={closeContextMenu}
+          {...menuActions}
         />
-      ))}
-    </div>
+      ) : null}
+    </>
   );
 }

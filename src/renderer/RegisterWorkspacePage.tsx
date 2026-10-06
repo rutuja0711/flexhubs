@@ -15,6 +15,7 @@ import {
 import { storeAuth } from './authApi';
 import { createWorkspaceOrder, loadPaymentPlans, loadSignupPlanCompliance, verifyWorkspaceSubscription } from './organizationApi';
 import { AppLogoHorizontal } from './brand/AppLogo';
+import { AppShellBackground } from './AuthFlowPages';
 import { useTheme } from './theme/ThemeProvider';
 import { useToast } from './ui/Toast';
 
@@ -433,8 +434,9 @@ export default function RegisterWorkspacePage({
     'w-full rounded-xl border border-app-border bg-app-surface-input px-4 py-3 text-sm text-app-text focus:border-accent focus:outline-none';
 
   return (
-    <div className="flex h-screen w-full flex-col bg-app-bg text-app-text">
-      <header className="grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-8 py-4">
+    <div className="relative flex h-screen w-full flex-col overflow-hidden bg-app-bg-login text-app-text">
+      <AppShellBackground />
+      <header className="relative z-[1] grid grid-cols-[1fr_auto_1fr] items-center gap-4 px-8 py-4">
         <button
           type="button"
           onClick={step === 1 ? onBackToLogin : () => setStep(1)}
@@ -442,7 +444,7 @@ export default function RegisterWorkspacePage({
         >
           ← {step === 1 ? 'Back to sign in' : 'Back to plans'}
         </button>
-        <AppLogoHorizontal className="h-9 justify-self-center" />
+        <AppLogoHorizontal className="h-9 justify-self-center" theme={theme === 'dark' ? 'dark' : 'light'} />
         <button
           type="button"
           aria-label="Toggle theme"
@@ -453,7 +455,7 @@ export default function RegisterWorkspacePage({
         </button>
       </header>
 
-      <main className="flex flex-1 flex-col items-center overflow-y-auto px-6 py-10">
+      <main className="relative z-[1] flex flex-1 flex-col items-center overflow-y-auto px-6 py-10">
         {step === 1 ? (
           <div className="w-full max-w-4xl space-y-6">
             <div className="text-center">

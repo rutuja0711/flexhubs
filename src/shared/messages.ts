@@ -33,6 +33,23 @@ export type MessageMedia = {
 };
 
 const VIDEO_FILE_PATTERN = /\.(mp4|webm|mov|mkv|avi|m4v)(\?|#|$)/i;
+const DOCUMENT_FILE_PATTERN =
+  /\.(zip|txt|pdf|doc|docx|xls|xlsx|ppt|pptx|csv|json|xml|md|rar|7z|tar|gz|mp3|wav)(\?|#|$)/i;
+
+function looksLikeDocumentAttachment(item: Pick<MessageMedia, 'kind' | 'url' | 'name'>): boolean {
+  if (item.kind === 'file') {
+    return true;
+  }
+
+  const name = item.name ?? '';
+  const url = item.url ?? '';
+
+  if (DOCUMENT_FILE_PATTERN.test(name) || DOCUMENT_FILE_PATTERN.test(url)) {
+    return true;
+  }
+
+  return false;
+}
 
 export function isVideoMediaItem(
   item: Pick<MessageMedia, 'kind' | 'url' | 'name'>,
@@ -58,12 +75,22 @@ export function isVideoMediaItem(
   return false;
 }
 
+export function isDownloadableFileMedia(
+  item: Pick<MessageMedia, 'kind' | 'url' | 'name'>,
+): boolean {
+  return looksLikeDocumentAttachment(item) && !isVideoMediaItem(item);
+}
+
 export function withResolvedAttachmentKind(
   item: MessageMedia,
   mimeType?: string | null,
 ): MessageMedia {
   if (isVideoMediaItem(item, mimeType) && item.kind !== 'video') {
     return { ...item, kind: 'video' };
+  }
+
+  if (isDownloadableFileMedia(item) && item.kind !== 'file') {
+    return { ...item, kind: 'file' };
   }
 
   return item;
@@ -95,6 +122,7 @@ export type MessageItem = {
   senderId: string | null;
   senderName: string;
   senderInitials: string;
+  senderAvatarUrl: string | null;
   createdAt: string;
   editedAt: string | null;
   pinnedAt: string | null;
@@ -266,6 +294,8 @@ export type NotificationItem = {
   scheduledMessageId: string | null;
   inviteId: string | null;
   link: string | null;
+  /** User who triggered the notification (e.g. friend-request sender). */
+  actorUserId: string | null;
 };
 
 export type NotificationAction =
@@ -276,6 +306,7 @@ export type NotificationAction =
 
 export type PendingFriendItem = {
   id: string;
+  userId: string;
   title: string;
   body: string;
   createdAt: string;
@@ -672,6 +703,10 @@ export function groupMessageReactions(
 function normalizeMediaKind(value: unknown, fallback: MessageMediaKind = 'image'): MessageMediaKind {
   const normalized = String(value ?? '').toLowerCase();
 
+  if (normalized.includes('voice')) {
+    return 'file';
+  }
+
   if (normalized.includes('sticker')) {
     return 'sticker';
   }
@@ -782,7 +817,11 @@ function readMediaFromObject(
       kind = 'video';
     } else if (VIDEO_FILE_PATTERN.test(url)) {
       kind = 'video';
-    } else if (kind === 'image' && /\.(zip|txt|pdf|doc|docx|xls|xlsx|ppt|pptx|csv|json|xml|md|rar|7z|tar|gz|mp3|wav)(\?|$)/i.test(url)) {
+    } else if (
+      kind === 'image' &&
+      (DOCUMENT_FILE_PATTERN.test(url) ||
+        (attachmentName ? DOCUMENT_FILE_PATTERN.test(attachmentName) : false))
+    ) {
       kind = 'file';
     } else if (kind === 'file' && /\.(gif|webp|png|jpe?g|bmp|svg|avif)(\?|$)/i.test(url)) {
       kind = 'image';
@@ -1676,7 +1715,12 @@ export function shouldShowUploadProgress(
   }
 
   const messageType = String(message.messageType ?? '').toUpperCase();
-  if (messageType === 'GIF' || messageType === 'STICKER' || messageType === 'TEXT') {
+  if (
+    messageType === 'GIF' ||
+    messageType === 'STICKER' ||
+    messageType === 'TEXT' ||
+    messageType === 'VOICE'
+  ) {
     return false;
   }
 
@@ -1729,8 +1773,51 @@ export function isMediaOnlyMessage(
       item.kind === 'gif' ||
       item.kind === 'sticker' ||
       item.kind === 'image' ||
-      item.kind === 'video',
+      item.kind === 'video' ||
+      isVoiceMediaAttachment(item, message.messageType),
   );
+}
+
+export function isVoiceMediaAttachment(
+  item: Pick<MessageMedia, 'url' | 'name'>,
+  messageType?: string | null,
+): boolean {
+  if (String(messageType ?? '').toUpperCase() === 'VOICE') {
+    return true;
+  }
+
+  const name = item.name?.toLowerCase() ?? '';
+  return (
+    name.includes('voice') ||
+    /\.(webm|ogg|mp3|m4a|wav)(\?|$)/i.test(item.url)
+  );
+}
+
+export function isVoiceMessage(
+  message: Pick<MessageItem, 'messageType' | 'media'>,
+): boolean {
+  if (String(message.messageType ?? '').toUpperCase() === 'VOICE') {
+    return true;
+  }
+
+  return (message.media ?? []).some((item) => isVoiceMediaAttachment(item, message.messageType));
+}
+
+export function isVoiceOnlyMessage(
+  message: Pick<MessageItem, 'content' | 'media' | 'messageType' | 'deletedForEveryone'>,
+): boolean {
+  if (isDeletedMessage(message) || !isVoiceMessage(message) || message.media.length === 0) {
+    return false;
+  }
+
+  let trimmedContent =
+    message.content.trim() === 'sticker' ? '' : message.content.trim();
+
+  if (trimmedContent && messageContentMatchesMediaUrl(trimmedContent, message.media)) {
+    trimmedContent = '';
+  }
+
+  return !trimmedContent;
 }
 
 export function isPollMessage(
@@ -1973,6 +2060,7 @@ export function normalizeMessage(record: Record<string, unknown>, index: number)
     senderId: sender ? readString(sender.id) : readString(record.senderId),
     senderName,
     senderInitials: initialsFromName(senderName),
+    senderAvatarUrl: resolveAvatarUrl(sender) ?? resolveAvatarUrl(record),
     createdAt:
       readString(record.createdAt) ??
       readString(record.sentAt) ??
@@ -2218,8 +2306,45 @@ export function normalizeNotifications(payload: unknown): NotificationItem[] {
           readString(record.href) ??
           (data ? readString(data.link) : null) ??
           null,
+        actorUserId:
+          readString(record.actorUserId) ??
+          readString(record.fromUserId) ??
+          readString(record.senderUserId) ??
+          readString(record.userId) ??
+          readString(data?.actorUserId) ??
+          readString(data?.fromUserId) ??
+          readString(data?.userId) ??
+          (asRecord(record.user) ? readString(asRecord(record.user)?.id) : null) ??
+          (asRecord(record.fromUser) ? readString(asRecord(record.fromUser)?.id) : null) ??
+          (asRecord(data?.user) ? readString(asRecord(data?.user)?.id) : null) ??
+          null,
       };
     });
+}
+
+export function resolveFriendRequestUserId(
+  notification: NotificationItem,
+  conversations: ReadonlyArray<{ kind: string; title: string; peerUserId: string | null }> = [],
+): string | null {
+  if (notification.actorUserId) {
+    return notification.actorUserId;
+  }
+
+  const body = notification.body.trim();
+  const sentMatch = body.match(/^(.+?)\s+sent you a friend request/i);
+
+  if (sentMatch) {
+    const name = sentMatch[1].trim();
+    const direct = conversations.find(
+      (conversation) => conversation.kind === 'direct' && conversation.title === name,
+    );
+
+    if (direct?.peerUserId) {
+      return direct.peerUserId;
+    }
+  }
+
+  return null;
 }
 
 function notificationHaystack(notification: NotificationItem): string {
@@ -2417,8 +2542,15 @@ export function normalizePendingFriends(payload: unknown): PendingFriendItem[] {
         readString(user.username) ??
         'Someone';
 
+      const userId =
+        readString(user.id) ??
+        readString(record.userId) ??
+        readString(record.fromUserId) ??
+        '';
+
       return {
-        id: readString(record.id) ?? readString(user.id) ?? `friend-${index}`,
+        id: readString(record.id) ?? userId ?? `friend-${index}`,
+        userId,
         title: 'Friend request',
         body: `${name} sent you a friend request.`,
         createdAt: readString(record.createdAt) ?? readString(record.timestamp) ?? '',
@@ -2462,6 +2594,41 @@ export function validateMessageDraft(content: string): { ok: true } | { ok: fals
   }
 
   return { ok: true };
+}
+
+export function validateScheduleMessageContent(
+  content: string,
+): { ok: true; content: string } | { ok: false; error: string } {
+  const trimmed = content.trim();
+
+  if (!trimmed) {
+    return { ok: false, error: 'Scheduled messages must include text.' };
+  }
+
+  const draftValidation = validateMessageDraft(trimmed);
+  if (!draftValidation.ok) {
+    return draftValidation;
+  }
+
+  return { ok: true, content: trimmed };
+}
+
+export function buildCreatePollPayload(input: {
+  question: string;
+  options: string[];
+  allowMultiple?: boolean;
+  expiresAt?: string | null;
+}): Record<string, unknown> {
+  const options = input.options.map((option) => option.trim()).filter(Boolean);
+
+  return {
+    question: input.question.trim(),
+    options,
+    optionTexts: options,
+    pollOptions: options.map((text) => ({ text, label: text })),
+    allowMultiple: input.allowMultiple === true,
+    ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+  };
 }
 
 export function buildScheduleMessageBody(input: {

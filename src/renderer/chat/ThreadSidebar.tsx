@@ -13,7 +13,6 @@ import { MessageContent } from './MessageContent';
 import { MessageInput } from './MessageInput';
 import { formatConversationTimestamp } from './format';
 import { Avatar } from './ChatIcons';
-
 type ThreadSidebarProps = {
   conversationId: string;
   rootMessage: MessageItem;
@@ -22,9 +21,11 @@ type ThreadSidebarProps = {
   onSendThreadMessage: (
     content: string,
     threadRootId: string,
+    replyToId?: string
   ) => Promise<{ ok: true; message: MessageItem } | { ok: false; error: string }>;
   onSendMedia?: (item: any, kind: 'gif' | 'sticker', replyToId?: string, threadRootId?: string) => void;
   onSendFile?: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
+  onSendVoice?: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
   onUnauthorized?: (status?: number) => boolean;
   onOpenFlexAi?: () => void;
   onThreadReplySent?: (threadRootId: string) => void;
@@ -39,6 +40,7 @@ export function ThreadSidebar({
   onSendThreadMessage,
   onSendMedia,
   onSendFile,
+  onSendVoice,
   onUnauthorized,
   onOpenFlexAi,
   onThreadReplySent,
@@ -50,6 +52,7 @@ export function ThreadSidebar({
   const [draft, setDraft] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [draftError, setDraftError] = useState('');
+  const [replyingToMessage, setReplyingToMessage] = useState<MessageItem | null>(null);
 
   const applyThreadMessages = (fetched: MessageItem[]) => {
     registerThreadReplyMessages(fetched, rootMessage.id);
@@ -118,7 +121,7 @@ export function ThreadSidebar({
     setIsSending(true);
     setDraftError('');
 
-    const result = await onSendThreadMessage(draft.trim(), rootMessage.id);
+    const result = await onSendThreadMessage(draft.trim(), rootMessage.id, replyingToMessage?.id);
 
     if (!result.ok) {
       setDraftError(result.error);
@@ -127,6 +130,7 @@ export function ThreadSidebar({
     }
 
     setDraft('');
+    setReplyingToMessage(null);
     setIsSending(false);
     onThreadReplySent?.(rootMessage.id);
     setMessages(appendThreadReply(conversationId, rootMessage.id, result.message));
@@ -143,7 +147,7 @@ export function ThreadSidebar({
   };
 
   return (
-    <div className="relative z-40 flex w-[340px] shrink-0 flex-col border-l border-app-border/70 bg-app-surface/95 backdrop-blur-xl shadow-2xl">
+    <div className="relative z-40 flex w-full max-w-[340px] sm:max-w-[420px] shrink-0 flex-col border-l border-app-border/70 bg-app-surface/95 backdrop-blur-xl shadow-2xl">
       <header className="flex h-16 shrink-0 items-center justify-between border-b border-app-border/50 px-5">
         <div>
           <h2 className="text-sm font-semibold text-app-text tracking-tight">Thread Replies</h2>
@@ -199,10 +203,17 @@ export function ThreadSidebar({
                   : 'border border-app-border/70 bg-app-card/85 text-app-text'
               }`}>
                 <MessageContent message={msg} currentUserId={currentUserId} />
-                <div className="mt-1 flex justify-end">
+                <div className="mt-1 flex justify-end items-center gap-2">
                   <span className={`text-[10px] ${msg.isOwn ? 'text-white/70' : 'text-app-muted'}`}>
                     {formatConversationTimestamp(msg.createdAt)}
                   </span>
+                  <button
+                    type="button"
+                    onClick={() => setReplyingToMessage(msg)}
+                    className={`text-[10px] font-medium hover:underline ${msg.isOwn ? 'text-white/80' : 'text-accent'}`}
+                  >
+                    Reply
+                  </button>
                 </div>
               </div>
             </div>
@@ -221,6 +232,8 @@ export function ThreadSidebar({
           disabled={loading}
           isSending={isSending}
           error={draftError}
+          replyingToMessage={replyingToMessage}
+          onCancelReply={() => setReplyingToMessage(null)}
           onChange={setDraft}
           onSend={handleSend}
           conversationId={conversationId}
@@ -236,6 +249,14 @@ export function ThreadSidebar({
             onSendFile
               ? (file, caption) => {
                   onSendFile(file, caption, undefined, rootMessage.id);
+                  scheduleThreadRefresh();
+                }
+              : undefined
+          }
+          onSendVoice={
+            onSendVoice
+              ? (file, caption) => {
+                  onSendVoice(file, caption, undefined, rootMessage.id);
                   scheduleThreadRefresh();
                 }
               : undefined

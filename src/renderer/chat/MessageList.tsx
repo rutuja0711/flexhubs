@@ -9,6 +9,7 @@ import {
   groupMessageReactions,
   isCallLogMessage,
   isMediaOnlyMessage,
+  isVoiceOnlyMessage,
   isPollMessage,
   resolveMessageReadBy,
   resolveReplyTarget,
@@ -55,6 +56,18 @@ function UnreadDivider() {
       <div className="h-px flex-1 bg-gradient-to-r from-transparent via-accent/40 to-transparent" />
       <span className="shrink-0 rounded-full border border-accent/30 bg-accent/15 px-3 py-0.5 text-[0.625rem] font-bold uppercase tracking-wider text-accent-soft shadow-sm shadow-accent/20">
         New messages
+      </span>
+      <div className="h-px flex-1 bg-gradient-to-r from-transparent via-accent/40 to-transparent" />
+    </div>
+  );
+}
+
+function BlockedByYouDivider() {
+  return (
+    <div className="flex items-center gap-3 py-2 my-1" role="status" aria-label="You blocked this user">
+      <div className="h-px flex-1 bg-gradient-to-r from-transparent via-accent/40 to-transparent" />
+      <span className="shrink-0 rounded-full border border-accent/30 bg-accent/15 px-3 py-0.5 text-[0.625rem] font-bold uppercase tracking-wider text-accent-soft shadow-sm shadow-accent/20">
+        You blocked this user
       </span>
       <div className="h-px flex-1 bg-gradient-to-r from-transparent via-accent/40 to-transparent" />
     </div>
@@ -358,12 +371,15 @@ const MessageRow = memo(function MessageRow({
   const reactionGroups = groupMessageReactions(message.reactions, currentUserId);
   const outboundMediaSending = shouldShowUploadProgress(message);
   const sendProgress = sendProgressByMessageId[message.id];
-  const mediaSendProps = outboundMediaSending
-    ? {
-        isSending: true as const,
-        sendProgress: sendProgress ?? null,
-      }
-    : {};
+  const mediaSendProps = {
+    isOwn: message.isOwn,
+    ...(outboundMediaSending
+      ? {
+          isSending: true as const,
+          sendProgress: sendProgress ?? null,
+        }
+      : {}),
+  };
   const timeInlineProps = {
     message,
     messages,
@@ -381,9 +397,11 @@ const MessageRow = memo(function MessageRow({
   const isEditing = editingId === message.id;
   const isPoll = isPollMessage(message);
   const isCallLog = isCallLogMessage(message);
-  const isMediaOnly = !isPoll && !isCallLog && isMediaOnlyMessage(message);
+  const isMediaOnly =
+    !isPoll && !isCallLog && (isMediaOnlyMessage(message) || isVoiceOnlyMessage(message));
   const hasMedia = (message.media?.length ?? 0) > 0;
   const isTextOnly = !isPoll && !isCallLog && !isMediaOnly && !hasMedia;
+  const bubbleHasMediaCaption = hasMedia && !isMediaOnly;
 
   const handleDownloadSendingMedia = async () => {
     const item = message.media?.[0];
@@ -414,11 +432,12 @@ const MessageRow = memo(function MessageRow({
     }
   };
 
-  const bubbleClassName = `inline-block w-fit max-w-full rounded-[18px] px-3.5 py-2 text-sm leading-relaxed ${
-    message.isOwn
-      ? 'self-end bg-gradient-to-br from-accent via-accent to-[#632a38] text-white shadow-sm shadow-accent/25'
-      : 'self-start bg-app-message-in text-app-text shadow-sm'
+  const bubbleClassName = `${
+    bubbleHasMediaCaption ? 'inline-flex w-fit max-w-full flex-col overflow-hidden p-0' : 'inline-block w-fit max-w-full px-3.5 py-2'
+  } rounded-[18px] text-sm leading-relaxed border border-black/20 dark:border-white/20 text-app-text ${
+    message.isOwn ? 'self-end' : 'self-start'
   }`;
+  const bubbleCaptionPad = bubbleHasMediaCaption ? 'px-3.5' : '';
 
   return (
     <div
@@ -434,7 +453,7 @@ const MessageRow = memo(function MessageRow({
       }`}
     >
       {!message.isOwn ? (
-        <Avatar imageUrl={null} initials={message.senderInitials} size="sm" />
+        <Avatar imageUrl={message.senderAvatarUrl ?? null} initials={message.senderInitials} size="sm" />
       ) : null}
       <div className={`flex max-w-[70%] flex-col ${message.isOwn ? 'items-end' : 'items-start'}`}>
         {!message.isOwn ? (
@@ -502,7 +521,7 @@ const MessageRow = memo(function MessageRow({
             <div className={`min-w-0 max-w-full ${message.isOwn ? 'items-end' : 'items-start'} flex flex-col`}>
               {isMediaOnly ? (
                 <div
-                  className={`inline-block w-fit max-w-full ${message.isOwn ? 'self-end' : 'self-start'}`}
+                  className={`inline-block w-fit max-w-full ${message.isOwn ? 'self-end' : 'self-start'} max-w-sm`}
                 >
                   <MessageContent
                     message={message}
@@ -563,7 +582,7 @@ const MessageRow = memo(function MessageRow({
                           onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
                         }
                       />
-                      <div className="mt-1.5 flex justify-end">
+                      <div className={`mt-1.5 flex justify-end ${bubbleHasMediaCaption ? `${bubbleCaptionPad} pb-2` : ''}`}>
                         <MessageTimeInline {...timeInlineProps} />
                       </div>
                     </>
@@ -686,6 +705,8 @@ type MessageListProps = {
   conversationKind?: string;
   onSummarizeUnread?: () => void;
   sendProgressByMessageId?: Record<string, number>;
+  /** True when the signed-in user blocked the direct-chat peer (not shown to the blocked party). */
+  peerBlockedByCurrentUser?: boolean;
 };
 
 export function MessageList({
@@ -722,6 +743,7 @@ export function MessageList({
   conversationKind,
   onSummarizeUnread,
   sendProgressByMessageId = {},
+  peerBlockedByCurrentUser = false,
 }: MessageListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
@@ -1020,6 +1042,7 @@ export function MessageList({
             />
           );
         })}
+        {peerBlockedByCurrentUser ? <BlockedByYouDivider key="blocked-by-you" /> : null}
         <div ref={bottomAnchorRef} aria-hidden="true" className="h-px shrink-0" />
         </div>
       </div>

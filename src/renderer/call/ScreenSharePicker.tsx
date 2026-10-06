@@ -75,13 +75,24 @@ export function ScreenSharePicker({ open, onClose, onShare }: ScreenSharePickerP
     onShare(source);
   };
 
+  const friendlyError =
+    error && /screen recording|screen capture|permission|enable/i.test(error)
+      ? 'Enable Screen Recording in System Settings → Privacy & Security, then try again.'
+      : error;
+
   if (!open) {
     return null;
   }
 
   return (
-    <div className="pointer-events-auto fixed inset-0 z-[100000] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm">
-      <div className="w-full max-w-lg overflow-hidden rounded-2xl border border-white/10 bg-[#101114] shadow-[0_24px_80px_rgba(0,0,0,0.55)]">
+    <>
+      <button
+        type="button"
+        aria-label="Close screen share picker"
+        className="fixed inset-0 z-[99998] bg-black/25 backdrop-blur-[1px]"
+        onClick={onClose}
+      />
+      <div className="pointer-events-auto fixed right-3 top-[max(0.75rem,env(safe-area-inset-top))] z-[99999] w-[min(calc(100vw-1.5rem),24rem)] overflow-hidden rounded-2xl border border-white/10 bg-[#101114] shadow-[0_16px_48px_rgba(0,0,0,0.45)] sm:right-4">
         <div className="flex items-start justify-between border-b border-white/10 px-5 py-4">
           <div>
             <h2 className="text-lg font-semibold text-white">Share your screen</h2>
@@ -149,8 +160,8 @@ export function ScreenSharePicker({ open, onClose, onShare }: ScreenSharePickerP
 
             {loading ? (
               <p className="py-8 text-center text-sm text-white/55">Loading sources...</p>
-            ) : error ? (
-              <p className="py-6 text-center text-sm text-red-300">{error}</p>
+            ) : friendlyError ? (
+              <p className="py-6 text-center text-sm leading-relaxed text-red-300/95">{friendlyError}</p>
             ) : (
               <div className="grid max-h-[min(360px,50vh)] grid-cols-2 gap-3 overflow-y-auto sm:grid-cols-3">
                 {sources.map((source) => {
@@ -207,6 +218,6 @@ export function ScreenSharePicker({ open, onClose, onShare }: ScreenSharePickerP
           </div>
         )}
       </div>
-    </div>
+    </>
   );
 }

@@ -24,10 +24,19 @@ import {
   formatContactPresenceLabel,
   mapContactPresenceStatus,
   normalizeContactUser,
+  initialsFromName,
   presenceDotClass,
   type ContactUserProfile,
 } from '../../shared/contact';
-import { blockUser, loadUserPresence, loadUserProfile } from '../chatApi';
+import {
+  markUserBlocked,
+  markUserUnblocked,
+  refreshBlockedUsersFromApi,
+  subscribeBlockedUsers,
+  syncPeerBlockFromRelationship,
+} from '../blockedUsersSync';
+import { redactPeerProfileForViewerBlocked } from '../../shared/blocking';
+import { blockUser, loadFriendRelationship, loadUserPresence, loadUserProfile, unblockUser } from '../chatApi';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
 import { Avatar, PinIcon } from './ChatIcons';
@@ -37,6 +46,8 @@ type ContactInfoPanelProps = {
   conversation: ConversationItem;
   peerUserId: string;
   pinnedCount: number;
+  pinnedMessages?: any[];
+  onJumpToMessage?: (id: string) => void;
   notificationsSnoozed: boolean;
   canCall: boolean;
   callBusy?: boolean;
@@ -51,6 +62,9 @@ type ContactInfoPanelProps = {
   onScheduleEvent: () => void;
   onSnooze: (duration: string) => void;
   snoozeOptions: ReadonlyArray<{ value: string; label: string }>;
+  onBlockedUsersChanged?: () => void;
+  peerIsBlocked?: boolean;
+  peerBlockedViewer?: boolean;
 };
 
 type AccordionProps = {
@@ -90,6 +104,8 @@ export function ContactInfoPanel({
   conversation,
   peerUserId,
   pinnedCount,
+  pinnedMessages = [],
+  onJumpToMessage,
   notificationsSnoozed,
   canCall,
   callBusy = false,
@@ -104,6 +120,9 @@ export function ContactInfoPanel({
   onScheduleEvent,
   onSnooze,
   snoozeOptions,
+  onBlockedUsersChanged,
+  peerIsBlocked = false,
+  peerBlockedViewer = false,
 }: ContactInfoPanelProps) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -113,6 +132,10 @@ export function ContactInfoPanel({
   const [liveStatus, setLiveStatus] = useState<PresenceStatus | null>(null);
   const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
   const [blocking, setBlocking] = useState(false);
+  const [relationshipBlocked, setRelationshipBlocked] = useState(false);
+  const [relationshipLoading, setRelationshipLoading] = useState(true);
+
+  const isBlocked = peerIsBlocked || relationshipBlocked;
 
   const loadProfile = useCallback(async () => {
     setLoading(true);
@@ -142,25 +165,61 @@ export function ContactInfoPanel({
     }
   }, [peerUserId]);
 
-  useEffect(() => {
-    void loadProfile();
-  }, [loadProfile]);
+  const loadRelationship = useCallback(async () => {
+    setRelationshipLoading(true);
+    const result = await loadFriendRelationship(peerUserId);
+    setRelationshipLoading(false);
+    if (result.ok) {
+      syncPeerBlockFromRelationship(peerUserId, result.data);
+      setRelationshipBlocked(peerIsBlocked || result.data.blockedByMe === true);
+    }
+  }, [peerIsBlocked, peerUserId]);
 
   useEffect(() => {
+    void loadProfile();
+    void loadRelationship();
+  }, [loadProfile, loadRelationship]);
+
+  useEffect(() => {
+    return subscribeBlockedUsers(() => {
+      void loadRelationship();
+    });
+  }, [loadRelationship]);
+
+  useEffect(() => {
+    if (peerBlockedViewer) {
+      setLiveStatus(null);
+      return;
+    }
+
     void refreshPresence();
     const intervalId = window.setInterval(() => {
       void refreshPresence();
     }, 30_000);
     return () => window.clearInterval(intervalId);
-  }, [refreshPresence]);
+  }, [peerBlockedViewer, refreshPresence]);
 
   const displayName = profile?.name ?? conversation.title;
-  const presenceStatus =
-    liveStatus ?? mapContactPresenceStatus(profile?.status ?? null) ?? null;
+  const visibleProfile = profile
+    ? redactPeerProfileForViewerBlocked(
+        {
+          avatarUrl: profile.avatarUrl,
+          status: profile.status,
+          lastSeenAt: profile.lastSeenAt,
+          sharePresence: profile.sharePresence,
+          tagline: profile.tagline,
+          role: profile.role,
+        },
+        peerBlockedViewer,
+      )
+    : null;
+  const presenceStatus = peerBlockedViewer
+    ? null
+    : liveStatus ?? mapContactPresenceStatus(visibleProfile?.status ?? null) ?? null;
   const presenceLabel = formatContactPresenceLabel(
     presenceStatus,
-    profile?.lastSeenAt ?? null,
-    profile?.sharePresence ?? true,
+    visibleProfile?.lastSeenAt ?? null,
+    visibleProfile?.sharePresence ?? true,
   );
 
   const handleBlockUser = async () => {
@@ -180,8 +239,34 @@ export function ContactInfoPanel({
       toast.error(result.error);
       return;
     }
+    setRelationshipBlocked(true);
+    markUserBlocked(peerUserId);
+    void refreshBlockedUsersFromApi();
     toast.success(`${displayName} blocked.`);
-    onClose();
+    onBlockedUsersChanged?.();
+  };
+
+  const handleUnblockUser = async () => {
+    const confirmed = await confirm({
+      title: 'Unblock user',
+      message: `Unblock ${displayName}? They will be able to message you again.`,
+      confirmLabel: 'Unblock user',
+    });
+    if (!confirmed) {
+      return;
+    }
+    setBlocking(true);
+    const result = await unblockUser(peerUserId);
+    setBlocking(false);
+    if (!result.ok) {
+      toast.error(result.error);
+      return;
+    }
+    setRelationshipBlocked(false);
+    markUserUnblocked(peerUserId);
+    void refreshBlockedUsersFromApi();
+    toast.success(`${displayName} unblocked.`);
+    onBlockedUsersChanged?.();
   };
 
   return (
@@ -202,41 +287,88 @@ export function ContactInfoPanel({
         <div className="flex flex-col items-center pt-8 pb-6 px-4">
           <div className="relative mb-3 flex items-center justify-center h-[88px] w-[88px]">
             <Avatar
-              imageUrl={profile?.avatarUrl ?? null}
-              initials={profile?.avatarInitials ?? displayName.slice(0, 2).toUpperCase()}
+              imageUrl={visibleProfile?.avatarUrl ?? conversation.avatarUrl ?? null}
+              initials={profile?.avatarInitials ?? initialsFromName(displayName)}
               size="xl"
             />
           </div>
           <div className="flex items-center gap-1 mb-1">
             <h3 className="text-[17px] font-bold text-app-text">{displayName}</h3>
           </div>
-          <div className="flex items-center gap-1.5 text-[13px] mb-1">
-            <span className={`w-2 h-2 rounded-full ${presenceStatus === 'online' ? 'bg-emerald-500' : 'bg-app-muted'}`}></span>
-            <span className="text-app-text font-medium">{presenceStatus === 'online' ? 'Online' : presenceLabel}</span>
-          </div>
-          {profile?.role && <p className="text-[13px] text-app-muted mb-1">{profile.role}</p>}
-          {profile?.tagline && <p className="text-[13px] text-app-muted">"{profile.tagline}"</p>}
+          {!peerBlockedViewer ? (
+            <div className="flex items-center gap-1.5 text-[13px] mb-1">
+              <span
+                className={`w-2 h-2 rounded-full ${presenceStatus === 'online' ? 'bg-emerald-500' : 'bg-app-muted'}`}
+              ></span>
+              <span className="text-app-text font-medium">
+                {presenceStatus === 'online' ? 'Online' : presenceLabel}
+              </span>
+            </div>
+          ) : null}
+          {!peerBlockedViewer && visibleProfile?.role ? (
+            <p className="text-[13px] text-app-muted mb-1">{visibleProfile.role}</p>
+          ) : null}
+          {!peerBlockedViewer && visibleProfile?.tagline ? (
+            <p className="text-[13px] text-app-muted">"{visibleProfile.tagline}"</p>
+          ) : null}
         </div>
 
-        <div className="flex items-center justify-center gap-6 pb-6 border-b border-app-border/40 px-4">
-          <button className="flex flex-col items-center gap-2 group">
+        <div className="flex flex-wrap items-start justify-center gap-5 pb-6 border-b border-app-border/40 px-4">
+          <button type="button" className="flex flex-col items-center gap-2 group">
             <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-app-border bg-transparent text-[#972c44] transition-colors group-hover:bg-[#972c44]/5">
               <FiMessageSquare className="text-lg" />
             </div>
             <span className="text-[11px] font-medium text-app-text">Message</span>
           </button>
-          <button className="flex flex-col items-center gap-2 group" onClick={onStartVoiceCall} disabled={!canCall || callBusy}>
-            <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-app-border bg-transparent text-[#972c44] transition-colors group-hover:bg-[#972c44]/5">
+          <button
+            type="button"
+            className="flex flex-col items-center gap-2 group"
+            onClick={onStartVoiceCall}
+            disabled={!canCall || callBusy || isBlocked || peerBlockedViewer}
+          >
+            <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-app-border bg-transparent text-[#972c44] transition-colors group-hover:bg-[#972c44]/5 disabled:opacity-40">
               <FiPhone className="text-lg" />
             </div>
             <span className="text-[11px] font-medium text-app-text">Call</span>
           </button>
-          <button className="flex flex-col items-center gap-2 group" onClick={onStartVideoCall} disabled={!canCall || callBusy}>
-            <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-app-border bg-transparent text-[#972c44] transition-colors group-hover:bg-[#972c44]/5">
+          <button
+            type="button"
+            className="flex flex-col items-center gap-2 group"
+            onClick={onStartVideoCall}
+            disabled={!canCall || callBusy || isBlocked || peerBlockedViewer}
+          >
+            <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-app-border bg-transparent text-[#972c44] transition-colors group-hover:bg-[#972c44]/5 disabled:opacity-40">
               <FiVideo className="text-lg" />
             </div>
             <span className="text-[11px] font-medium text-app-text">Video</span>
           </button>
+          {!relationshipLoading ? (
+            <button
+              type="button"
+              className="flex flex-col items-center gap-2 group"
+              disabled={blocking}
+              onClick={() => {
+                if (isBlocked) {
+                  void handleUnblockUser();
+                } else {
+                  void handleBlockUser();
+                }
+              }}
+            >
+              <div
+                className={`flex h-[42px] w-[42px] items-center justify-center rounded-full border bg-transparent transition-colors disabled:opacity-40 ${
+                  isBlocked
+                    ? 'border-app-border text-app-text group-hover:bg-app-inset/60'
+                    : 'border-red-500/30 text-[#c42c44] group-hover:bg-red-500/10'
+                }`}
+              >
+                <FiSlash className="text-lg" />
+              </div>
+              <span className={`text-[11px] font-medium ${isBlocked ? 'text-app-text' : 'text-[#c42c44]'}`}>
+                {isBlocked ? 'Unblock' : 'Block'}
+              </span>
+            </button>
+          ) : null}
         </div>
 
         <Accordion title="About" defaultOpen>
@@ -278,12 +410,32 @@ export function ContactInfoPanel({
         </Accordion>
 
         <Accordion title="Pinned messages" badge={pinnedCount > 0 ? pinnedCount : undefined}>
-          <div className="pt-2 text-[13px] text-app-muted">Pinned messages will appear here...</div>
+          <div className="pt-2">
+            {pinnedMessages.length === 0 ? (
+              <p className="text-[13px] text-app-muted">Pinned messages will appear here...</p>
+            ) : (
+              <div className="flex flex-col gap-2 max-h-[300px] overflow-y-auto pr-1">
+                {pinnedMessages.map((msg) => (
+                  <button
+                    key={msg.id}
+                    className="flex flex-col gap-1 rounded-[12px] border border-[#e2d5d8] bg-[#f8f9fa] px-3 py-2.5 text-left transition-colors hover:bg-[#f0f4f8]"
+                    onClick={() => onJumpToMessage?.(msg.id)}
+                  >
+                    <span className="text-[12px] font-semibold text-accent truncate w-full">{msg.senderName || 'Pinned message'}</span>
+                    <span className="text-[13px] text-[#1e293b] line-clamp-2 w-full leading-snug">{msg.content || 'Attachment'}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </Accordion>
 
-        <div className="p-4 mt-2 mb-6">
-          <button 
-            onClick={() => { onClose(); }}
+        <div className="px-4 pt-2 pb-6">
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+            }}
             className="flex w-full items-center justify-center gap-2 rounded-2xl border border-red-500/20 bg-red-500/5 py-3 text-[#c42c44] transition-colors hover:bg-red-500/10 hover:border-red-500/30"
           >
             <FiLogOut className="text-base" />

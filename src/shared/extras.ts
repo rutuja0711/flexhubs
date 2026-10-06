@@ -1,3 +1,5 @@
+import { resolveAvatarUrl } from './profile';
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -38,12 +40,29 @@ export type CalendarMentionableUser = {
   name: string;
 };
 
+export type CalendarTaggedHub = {
+  conversationId?: string | null;
+  channelId?: string | null;
+  name: string;
+  slug?: string;
+};
+
+export type CalendarHubOption = {
+  conversationId: string;
+  channelId: string | null;
+  name: string;
+  slug: string;
+};
+
 export type CreateCalendarEventInput = {
   title: string;
   startsAt: string;
   description?: string;
   mentionUserIds?: string[];
   conversationId?: string;
+  conversationIds?: string[];
+  mentionChannelIds?: string[];
+  channelIds?: string[];
 };
 
 export type UpdateCalendarEventInput = {
@@ -52,30 +71,42 @@ export type UpdateCalendarEventInput = {
   startsAt?: string;
   description?: string;
   mentionUserIds?: string[];
+  conversationId?: string | null;
+  conversationIds?: string[];
+  mentionChannelIds?: string[];
+  channelIds?: string[];
 };
 
 export type CalendarEventInvitee = {
-  userId: string | null;
+  userId?: string | null;
   username: string;
   name: string;
   status: string;
+  avatarUrl?: string | null;
 };
 
 export type CalendarEventItem = {
   id: string;
   title: string;
   startsAt: string;
+  endsAt: string | null;
+  mentionUserIds: string[];
   createdAt: string;
   createdById: string | null;
+  createdByAvatarUrl?: string | null;
   description: string;
   notes: string;
   status: string | null;
   myResponseStatus: string | null;
   sharedBy: string;
   invitees: CalendarEventInvitee[];
-  isOwner: boolean;
-  canRespond: boolean;
-  canDelete: boolean;
+  conversationId?: string | null;
+  conversationName?: string;
+  channelId?: string | null;
+  taggedHubs?: CalendarTaggedHub[];
+  isOwner?: boolean;
+  canRespond?: boolean;
+  canDelete?: boolean;
 };
 
 export type ScheduledMessageItem = {
@@ -125,6 +156,135 @@ export function normalizeCalendarMentionableUsers(payload: unknown): CalendarMen
     .filter((user) => user.id && user.username);
 }
 
+export function calendarHubSlug(name: string): string {
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return slug || 'hub';
+}
+
+export function buildCalendarHubOptions(
+  conversations: Array<{
+    id: string;
+    kind: string;
+    title: string;
+    channelId: string | null;
+  }>,
+): CalendarHubOption[] {
+  return conversations
+    .filter((conversation) => conversation.kind === 'hub')
+    .map((conversation) => ({
+      conversationId: conversation.id,
+      channelId: conversation.channelId,
+      name: conversation.title,
+      slug: calendarHubSlug(conversation.title),
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+export function parseHubConversationIdsFromText(
+  text: string,
+  hubs: CalendarHubOption[],
+): string[] {
+  const ids = new Set<string>();
+  const mentionPattern = /#([a-zA-Z0-9._-]+)/g;
+
+  for (const match of text.matchAll(mentionPattern)) {
+    const token = match[1]?.toLowerCase();
+    if (!token) {
+      continue;
+    }
+
+    const hub = hubs.find(
+      (entry) =>
+        entry.slug.toLowerCase() === token ||
+        entry.name.toLowerCase().replace(/\s+/g, '-') === token ||
+        entry.name.toLowerCase().replace(/\s+/g, '') === token,
+    );
+
+    if (hub) {
+      ids.add(hub.conversationId);
+    }
+  }
+
+  return [...ids];
+}
+
+export function mergeHubConversationIds(
+  description: string,
+  hubs: CalendarHubOption[],
+  selectedHubConversationIds: string[],
+): string[] {
+  return [
+    ...new Set([
+      ...selectedHubConversationIds,
+      ...parseHubConversationIdsFromText(description, hubs),
+    ]),
+  ];
+}
+
+export function collectEventHubMatchKeys(
+  event: Pick<
+    CalendarEventItem,
+    'conversationId' | 'channelId' | 'taggedHubs'
+  >,
+): Set<string> {
+  const keys = new Set<string>();
+
+  if (event.conversationId) {
+    keys.add(event.conversationId);
+  }
+
+  if (event.channelId) {
+    keys.add(event.channelId);
+  }
+
+  for (const hub of event.taggedHubs ?? []) {
+    if (hub.conversationId) {
+      keys.add(hub.conversationId);
+    }
+
+    if (hub.channelId) {
+      keys.add(hub.channelId);
+    }
+  }
+
+  return keys;
+}
+
+export function eventMatchesHubConversationFilter(
+  event: Pick<CalendarEventItem, 'conversationId' | 'channelId' | 'taggedHubs'>,
+  selectedConversationIds: string[],
+  hubOptions: CalendarHubOption[],
+): boolean {
+  if (selectedConversationIds.length === 0) {
+    return true;
+  }
+
+  const selectedKeys = new Set<string>();
+
+  for (const conversationId of selectedConversationIds) {
+    selectedKeys.add(conversationId);
+    const hub = hubOptions.find((entry) => entry.conversationId === conversationId);
+    if (hub?.channelId) {
+      selectedKeys.add(hub.channelId);
+    }
+  }
+
+  const eventKeys = collectEventHubMatchKeys(event);
+
+  for (const key of selectedKeys) {
+    if (eventKeys.has(key)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 export function parseMentionUserIdsFromText(
   text: string,
   users: CalendarMentionableUser[],
@@ -145,6 +305,64 @@ export function parseMentionUserIdsFromText(
   }
 
   return [...ids];
+}
+
+export function mergeCalendarPeopleWithInvitees(
+  people: CalendarMentionableUser[],
+  invitees: CalendarEventInvitee[] | undefined,
+): { people: CalendarMentionableUser[]; selectedUserIds: string[] } {
+  const byId = new Map<string, CalendarMentionableUser>();
+
+  for (const person of people) {
+    byId.set(person.id, person);
+  }
+
+  const selectedUserIds: string[] = [];
+
+  for (const invitee of invitees ?? []) {
+    const username = invitee.username?.trim() ?? '';
+    const name = invitee.name?.trim() || username || 'Teammate';
+    let person: CalendarMentionableUser | undefined;
+
+    if (invitee.userId) {
+      person = byId.get(invitee.userId);
+      if (!person) {
+        person = {
+          id: invitee.userId,
+          username: username || name,
+          name,
+        };
+        byId.set(person.id, person);
+      }
+    } else {
+      person = [...byId.values()].find(
+        (entry) =>
+          (username && entry.username.toLowerCase() === username.toLowerCase()) ||
+          (name && entry.name.toLowerCase() === name.toLowerCase()),
+      );
+    }
+
+    if (person) {
+      selectedUserIds.push(person.id);
+      continue;
+    }
+
+    if (username || name) {
+      const fallbackId = invitee.userId ?? `invitee:${username.toLowerCase() || name.toLowerCase()}`;
+      const fallbackPerson: CalendarMentionableUser = {
+        id: fallbackId,
+        username: username || name,
+        name,
+      };
+      byId.set(fallbackPerson.id, fallbackPerson);
+      selectedUserIds.push(fallbackPerson.id);
+    }
+  }
+
+  return {
+    people: [...byId.values()],
+    selectedUserIds: [...new Set(selectedUserIds)],
+  };
 }
 
 export function mergeMentionUserIds(
@@ -199,7 +417,92 @@ function normalizeInvitee(record: Record<string, unknown>): CalendarEventInvitee
       readString(record.id) ??
       null,
     status: status.toUpperCase(),
+    avatarUrl: resolveAvatarUrl(user) ?? resolveAvatarUrl(record),
   };
+}
+
+function extractCalendarTaggedHubs(record: Record<string, unknown>): CalendarTaggedHub[] {
+  const data = asRecord(record.data);
+  const hubs: CalendarTaggedHub[] = [];
+  const seen = new Set<string>();
+  const sources = [record, data].filter((item): item is Record<string, unknown> => item !== null);
+
+  const pushHub = (hub: CalendarTaggedHub) => {
+    const key = `${hub.conversationId ?? ''}:${hub.channelId ?? ''}:${hub.name}`;
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    hubs.push(hub);
+  };
+
+  for (const source of sources) {
+    for (const key of ['taggedHubs', 'hubs', 'channels', 'taggedChannels', 'mentionChannels']) {
+      const value = source[key];
+      if (!Array.isArray(value)) {
+        continue;
+      }
+
+      for (const entry of value) {
+        const item = asRecord(entry);
+        if (!item) {
+          continue;
+        }
+
+        const name =
+          readString(item.name) ??
+          readString(item.title) ??
+          readString(item.channelName) ??
+          'Hub';
+
+        pushHub({
+          conversationId:
+            readString(item.conversationId) ??
+            readString(asRecord(item.conversation)?.id) ??
+            null,
+          channelId: readString(item.channelId) ?? readString(item.id) ?? null,
+          name,
+          slug: readString(item.slug) ?? calendarHubSlug(name),
+        });
+      }
+    }
+  }
+
+  const conversation =
+    asRecord(record.conversation) ??
+    asRecord(data?.conversation) ??
+    asRecord(record.channel) ??
+    asRecord(data?.channel);
+  const conversationId =
+    readString(record.conversationId) ??
+    readString(data?.conversationId) ??
+    readString(conversation?.id) ??
+    null;
+  const conversationName =
+    readString(record.conversationName) ??
+    readString(data?.conversationName) ??
+    readString(conversation?.name) ??
+    readString(conversation?.title) ??
+    readString(record.hubName) ??
+    readString(data?.hubName) ??
+    '';
+  const channelId =
+    readString(record.channelId) ??
+    readString(data?.channelId) ??
+    readString(conversation?.channelId) ??
+    null;
+
+  if (conversationId && conversationName) {
+    pushHub({
+      conversationId,
+      channelId,
+      name: conversationName,
+      slug: readString(conversation?.slug) ?? calendarHubSlug(conversationName),
+    });
+  }
+
+  return hubs;
 }
 
 function extractCalendarInvitees(record: Record<string, unknown>): CalendarEventInvitee[] {
@@ -211,6 +514,7 @@ function extractCalendarInvitees(record: Record<string, unknown>): CalendarEvent
     'participants',
     'attendees',
     'mentionUsers',
+    'mentionUserIds',
     'mentionResponses',
     'calendarResponses',
   ];
@@ -228,13 +532,21 @@ function extractCalendarInvitees(record: Record<string, unknown>): CalendarEvent
       }
 
       for (const entry of value) {
-        const item = asRecord(entry);
+        let invitee: CalendarEventInvitee | null = null;
 
-        if (!item) {
-          continue;
+        if (typeof entry === 'string') {
+          invitee = {
+            userId: entry,
+            username: '',
+            name: '',
+            status: 'PENDING',
+          };
+        } else {
+          const item = asRecord(entry);
+          if (item) {
+            invitee = normalizeInvitee(item);
+          }
         }
-
-        const invitee = normalizeInvitee(item);
 
         if (!invitee) {
           continue;
@@ -321,6 +633,163 @@ export function findCurrentUserInvitee(
       );
     }) ?? null
   );
+}
+
+export function resolveEventCreatorDisplayName(
+  event: Pick<CalendarEventItem, 'sharedBy' | 'createdById' | 'isOwner' | 'invitees'>,
+  viewerUserId: string | null,
+  viewerUsername: string | null,
+  viewerDisplayName: string | null,
+): string {
+  const sharedBy = event.sharedBy?.trim();
+  if (sharedBy) {
+    return sharedBy;
+  }
+
+  if (viewerUserId && event.createdById && viewerUserId === event.createdById) {
+    return viewerDisplayName?.trim() || viewerUsername?.trim() || 'You';
+  }
+
+  if (event.createdById && event.invitees?.length) {
+    const creatorInvitee = event.invitees.find(
+      (invitee) => invitee.userId && invitee.userId === event.createdById,
+    );
+
+    if (creatorInvitee) {
+      return creatorInvitee.name?.trim() || creatorInvitee.username?.trim() || 'Teammate';
+    }
+  }
+
+  if (event.isOwner) {
+    return viewerDisplayName?.trim() || viewerUsername?.trim() || 'You';
+  }
+
+  return viewerUsername?.trim() || viewerDisplayName?.trim() || 'Teammate';
+}
+
+function findEventCreatorInvitee(
+  event: Pick<CalendarEventItem, 'sharedBy' | 'createdById' | 'invitees'>,
+): CalendarEventInvitee | null {
+  const invitees = event.invitees ?? [];
+
+  if (event.createdById) {
+    const byId = invitees.find(
+      (invitee) => invitee.userId && invitee.userId === event.createdById,
+    );
+    if (byId) {
+      return byId;
+    }
+  }
+
+  const sharedBy = event.sharedBy?.trim().toLowerCase();
+  if (!sharedBy) {
+    return null;
+  }
+
+  return (
+    invitees.find((invitee) => {
+      const name = invitee.name?.trim().toLowerCase() ?? '';
+      const username = invitee.username?.trim().toLowerCase() ?? '';
+      return name === sharedBy || username === sharedBy;
+    }) ?? null
+  );
+}
+
+export function enrichCalendarEventsWithTeammateAvatars(
+  events: CalendarEventItem[],
+  teammates: {
+    id: string;
+    name: string;
+    username: string;
+    avatarUrl: string | null;
+  }[],
+): CalendarEventItem[] {
+  if (!teammates.length) {
+    return events;
+  }
+
+  const avatarById = new Map(teammates.map((member) => [member.id, member.avatarUrl]));
+  const avatarByName = new Map(
+    teammates.map((member) => [member.name.trim().toLowerCase(), member.avatarUrl]),
+  );
+  const avatarByUsername = new Map(
+    teammates.map((member) => [member.username.trim().toLowerCase(), member.avatarUrl]),
+  );
+
+  const lookupAvatar = (userId?: string | null, name?: string, username?: string): string | null => {
+    if (userId && avatarById.has(userId)) {
+      return avatarById.get(userId) ?? null;
+    }
+
+    const normalizedName = name?.trim().toLowerCase();
+    if (normalizedName && avatarByName.has(normalizedName)) {
+      return avatarByName.get(normalizedName) ?? null;
+    }
+
+    const normalizedUsername = username?.trim().toLowerCase();
+    if (normalizedUsername && avatarByUsername.has(normalizedUsername)) {
+      return avatarByUsername.get(normalizedUsername) ?? null;
+    }
+
+    return null;
+  };
+
+  return events.map((event) => {
+    const invitees = event.invitees?.map((invitee) => {
+      if (invitee.avatarUrl) {
+        return invitee;
+      }
+
+      const avatarUrl = lookupAvatar(invitee.userId, invitee.name, invitee.username);
+      return avatarUrl ? { ...invitee, avatarUrl } : invitee;
+    });
+
+    let createdByAvatarUrl = event.createdByAvatarUrl ?? lookupAvatar(event.createdById, null, null);
+
+    if (!createdByAvatarUrl && event.sharedBy) {
+      createdByAvatarUrl =
+        lookupAvatar(null, event.sharedBy, event.sharedBy) ?? createdByAvatarUrl;
+    }
+
+    if (!createdByAvatarUrl) {
+      const creatorInvitee = findEventCreatorInvitee({ ...event, invitees: invitees ?? event.invitees });
+      createdByAvatarUrl = creatorInvitee?.avatarUrl ?? null;
+    }
+
+    return {
+      ...event,
+      invitees: invitees ?? event.invitees,
+      createdByAvatarUrl,
+    };
+  });
+}
+
+export function resolveEventCreatorAvatarUrl(
+  event: Pick<
+    CalendarEventItem,
+    'sharedBy' | 'createdById' | 'createdByAvatarUrl' | 'isOwner' | 'invitees'
+  >,
+  viewerUserId: string | null,
+  viewerAvatarUrl: string | null,
+): string | null {
+  if (viewerUserId && event.createdById && viewerUserId === event.createdById) {
+    return viewerAvatarUrl;
+  }
+
+  if (event.isOwner) {
+    return viewerAvatarUrl;
+  }
+
+  if (event.createdByAvatarUrl) {
+    return event.createdByAvatarUrl;
+  }
+
+  const creatorInvitee = findEventCreatorInvitee(event);
+  if (creatorInvitee?.avatarUrl) {
+    return creatorInvitee.avatarUrl;
+  }
+
+  return null;
 }
 
 export function isEventCreator(
@@ -416,18 +885,43 @@ export function normalizeCalendarEventsDetailed(payload: unknown): CalendarEvent
         asRecord(record.createdBy) ??
         asRecord(record.creator) ??
         asRecord(record.owner) ??
+        asRecord(data?.createdBy) ??
+        asRecord(data?.creator) ??
+        asRecord(record.author) ??
+        null;
+      const sharedByUser =
+        asRecord(record.sharedByUser) ??
+        (typeof record.sharedBy === 'object' ? asRecord(record.sharedBy) : null) ??
+        asRecord(record.user) ??
         null;
       const sharedBy =
         readString(record.sharedByUsername) ??
-        readString(record.sharedBy) ??
-        readString(record.createdByName) ??
         readString(record.sharedByName) ??
-        (creator ? readString(creator.name) ?? readString(creator.username) : null) ??
+        readString(record.createdByName) ??
+        readString(record.creatorName) ??
+        readString(record.organizerName) ??
+        (typeof record.sharedBy === 'string' ? readString(record.sharedBy) : null) ??
+        (sharedByUser
+          ? readString(sharedByUser.displayName) ??
+            readString(sharedByUser.name) ??
+            readString(sharedByUser.username)
+          : null) ??
+        (creator
+          ? readString(creator.displayName) ??
+            readString(creator.name) ??
+            readString(creator.username)
+          : null) ??
         '';
       const createdById =
         readString(record.createdById) ??
         readString(record.creatorId) ??
         (creator ? readString(creator.id) : null) ??
+        null;
+      const createdByAvatarUrl =
+        resolveAvatarUrl(creator) ??
+        resolveAvatarUrl(sharedByUser) ??
+        resolveAvatarUrl(record.createdBy) ??
+        resolveAvatarUrl(record.creator) ??
         null;
       const myResponseStatus = readMyResponseStatus(record);
       const isOwner =
@@ -436,6 +930,23 @@ export function normalizeCalendarEventsDetailed(payload: unknown): CalendarEvent
         record.createdByMe === true;
       const invitees = extractCalendarInvitees(record);
       const canRespond = !isOwner && myResponseStatus === 'PENDING';
+      const taggedHubs = extractCalendarTaggedHubs(record);
+      const conversationId =
+        readString(record.conversationId) ??
+        readString(data?.conversationId) ??
+        readString(record.chatId) ??
+        taggedHubs[0]?.conversationId ??
+        null;
+      const conversationName =
+        readString(record.conversationName) ??
+        readString(data?.conversationName) ??
+        taggedHubs[0]?.name ??
+        '';
+      const channelId =
+        readString(record.channelId) ??
+        readString(data?.channelId) ??
+        taggedHubs[0]?.channelId ??
+        null;
 
       return {
         id: readString(record.id) ?? `event-${index}`,
@@ -445,18 +956,27 @@ export function normalizeCalendarEventsDetailed(payload: unknown): CalendarEvent
           readString(record.startAt) ??
           readString(record.date) ??
           '',
+        endsAt: readString(record.endsAt) ?? readString(record.endAt) ?? null,
+        mentionUserIds: Array.isArray(record.mentionUserIds)
+          ? record.mentionUserIds.map(String)
+          : [],
         createdAt:
           readString(record.createdAt) ??
           readString(record.updatedAt) ??
           readString(record.startsAt) ??
           '',
         createdById,
+        createdByAvatarUrl,
         description: readString(record.description) ?? readString(record.notes) ?? '',
         notes: readString(record.notes) ?? readString(record.description) ?? '',
         status: readString(record.status) ?? myResponseStatus,
         myResponseStatus,
         sharedBy,
         invitees,
+        conversationId,
+        conversationName,
+        channelId,
+        taggedHubs,
         isOwner,
         canRespond,
         canDelete: record.canDelete === true || isOwner,
@@ -465,34 +985,113 @@ export function normalizeCalendarEventsDetailed(payload: unknown): CalendarEvent
   );
 }
 
-export function normalizeScheduledMessages(payload: unknown): ScheduledMessageItem[] {
-  return extractArray(payload, ['messages', 'scheduledMessages', 'items', 'data'])
-    .map(asRecord)
-    .filter((item): item is Record<string, unknown> => item !== null)
-    .map((record, index) => {
-      const conversation = asRecord(record.conversation);
+export function normalizeScheduledMessage(
+  payload: unknown,
+  index = 0,
+  fallbackConversationId = '',
+): ScheduledMessageItem | null {
+  const record = asRecord(payload);
+  if (!record) {
+    return null;
+  }
 
-      return {
-        id: readString(record.id) ?? `scheduled-${index}`,
-        conversationId:
-          readString(record.conversationId) ?? readString(conversation?.id) ?? '',
-        conversationName:
-          readString(record.conversationName) ??
-          readString(conversation?.name) ??
-          readString(conversation?.title) ??
-          'Chat',
-        content: readString(record.content) ?? readString(record.text) ?? '',
-        scheduledAt:
-          readString(record.scheduledAt) ??
-          readString(record.sendAt) ??
-          readString(record.scheduledFor) ??
-          '',
-        status: readString(record.status) ?? 'PENDING',
-      };
-    });
+  const nested =
+    asRecord(record.scheduledMessage) ??
+    asRecord(record.message) ??
+    asRecord(record.data) ??
+    record;
+  const message = asRecord(nested.message) ?? asRecord(record.message);
+  const conversation =
+    asRecord(nested.conversation) ?? asRecord(record.conversation) ?? asRecord(message?.conversation);
+  const messageText =
+    typeof record.message === 'string'
+      ? record.message
+      : typeof nested.message === 'string'
+        ? nested.message
+        : '';
+
+  const id =
+    readString(nested.id) ??
+    readString(record.id) ??
+    readString(record.scheduledId) ??
+    readString(message?.id) ??
+    `scheduled-${index}-${fallbackConversationId || 'local'}`;
+
+  return {
+    id,
+    conversationId:
+      readString(nested.conversationId) ??
+      readString(record.conversationId) ??
+      readString(conversation?.id) ??
+      fallbackConversationId,
+    conversationName:
+      readString(nested.conversationName) ??
+      readString(record.conversationName) ??
+      readString(conversation?.name) ??
+      readString(conversation?.title) ??
+      'Chat',
+    content:
+      readString(nested.content) ??
+      readString(record.content) ??
+      readString(nested.text) ??
+      readString(record.text) ??
+      readString(message?.content) ??
+      readString(message?.text) ??
+      readString(message?.body) ??
+      readString(record.body) ??
+      readString(messageText) ??
+      '',
+    scheduledAt:
+      readString(nested.scheduledAt) ??
+      readString(record.scheduledAt) ??
+      readString(nested.sendAt) ??
+      readString(record.sendAt) ??
+      readString(nested.scheduledFor) ??
+      readString(record.scheduledFor) ??
+      '',
+    status: readString(nested.status) ?? readString(record.status) ?? 'PENDING',
+  };
+}
+
+export function isPendingScheduledMessage(item: ScheduledMessageItem): boolean {
+  const status = (item.status || 'PENDING').toUpperCase();
+  return !['SENT', 'CANCELLED', 'CANCELED', 'DELIVERED', 'FAILED', 'COMPLETED'].includes(status);
+}
+
+export function normalizeScheduledMessages(payload: unknown): ScheduledMessageItem[] {
+  const list = extractArray(payload, [
+    'messages',
+    'scheduledMessages',
+    'scheduled',
+    'items',
+    'data',
+    'results',
+  ]);
+
+  if (list.length === 0) {
+    const single = normalizeScheduledMessage(payload);
+    return single ? [single] : [];
+  }
+
+  return list
+    .map((entry, index) => normalizeScheduledMessage(entry, index))
+    .filter((item): item is ScheduledMessageItem => item !== null);
 }
 
 export function normalizeAiTextResult(payload: unknown): AiTextResult {
+  if (typeof payload === 'string' && payload.trim()) {
+    return {
+      text: payload.trim(),
+      action: null,
+      conversationId: null,
+      conversationName: null,
+      message: null,
+      scheduledAt: null,
+      snoozeUntil: null,
+      snoozeHours: null,
+    };
+  }
+
   const record = asRecord(payload) ?? {};
   const nested =
     asRecord(record.data) ??
@@ -522,6 +1121,9 @@ export function normalizeAiTextResult(payload: unknown): AiTextResult {
       readString(nested.content) ??
       readString(nested.output) ??
       readString(nested.transcript) ??
+      readString(nested.transcription) ??
+      readString(record.transcribedText) ??
+      readString(nested.transcribedText) ??
       '',
     action:
       readString(record.action) ??

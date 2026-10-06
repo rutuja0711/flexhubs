@@ -305,7 +305,7 @@ declare global {
         token: string,
         conversationId: string,
         payloadJson: string,
-      ) => Promise<ApiResult<unknown>>;
+      ) => Promise<ApiResult<import('../shared/extras').ScheduledMessageItem>>;
       deleteConversationScheduledMessage: (
         token: string,
         conversationId: string,
@@ -558,12 +558,27 @@ declare global {
       ) => Promise<ApiResult<unknown>>;
       setNativeTheme: (mode: 'light' | 'dark') => Promise<{ ok: boolean }>;
       showDesktopNotification: (
-        title: string,
-        body: string,
-        tag?: string,
+        payload: any
       ) => Promise<{ ok: boolean; error?: string }>;
       logRendererDebug: (message: string) => Promise<{ ok: boolean }>;
       onDesktopNotificationClick: (callback: (tag: string) => void) => () => void;
+      onNotificationRender: (callback: (payload: any) => void) => () => void;
+      sendNotificationAction: (action: string) => void;
+      checkForUpdates: () => Promise<{
+        ok: boolean;
+        status?: 'skipped' | 'up-to-date' | 'available';
+        skipped?: boolean;
+        currentVersion?: string;
+        data?: { version?: string; releaseNotes?: unknown };
+        error?: string;
+      }>;
+      downloadUpdate: () => Promise<{ ok: boolean; error?: string }>;
+      quitAndInstallUpdate: () => Promise<void>;
+      getAppVersion: () => Promise<string>;
+      getHardwareAccelerationDisabled: () => Promise<boolean>;
+      setHardwareAccelerationDisabled: (disabled: boolean) => Promise<void>;
+      relaunchApp: () => Promise<void>;
+      onUpdaterEvent: (event: string, callback: (...args: any[]) => void) => () => void;
     };
   }
 }

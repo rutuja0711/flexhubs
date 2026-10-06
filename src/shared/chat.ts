@@ -1097,9 +1097,15 @@ export function mergeConversationLists(
 
   for (const conversation of incoming) {
     const previous = byId.get(conversation.id);
+    const previousTime = previous ? conversationRecency(previous) : 0;
+    const incomingTime = conversationRecency(conversation);
+    const timestamp =
+      previous && previousTime > incomingTime ? previous.timestamp : conversation.timestamp;
+
     byId.set(conversation.id, {
       ...previous,
       ...conversation,
+      timestamp,
       isPinned: conversation.isPinned,
     });
   }

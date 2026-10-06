@@ -7,7 +7,7 @@ import {
   verifyPasswordResetCode,
 } from './authExtrasApi';
 import { storeAuth } from './authApi';
-import { AppLogoHorizontal, AppLogoWhite, FlexhubsSymbolSvg } from './brand/AppLogo';
+import { AppLogoHorizontal } from './brand/AppLogo';
 import { readInviteRegistrationEmail } from '../shared/auth';
 import {
   FiMessageSquare,
@@ -618,6 +618,9 @@ export function InviteRegisterPage({
  * Rich Left Showcase Panel featuring Flexhubs Brand & Interactive Workspace Mockup
  */
 export function BrandingPanel() {
+  const { theme } = useTheme();
+  const logoTheme = theme === 'dark' ? 'dark' : 'light';
+
   const features = [
     {
       icon: FiZap,
@@ -637,18 +640,25 @@ export function BrandingPanel() {
   ];
 
   return (
-    <div className="relative hidden w-[48%] flex-col justify-between overflow-hidden bg-gradient-to-br from-[#1b0b14] via-[#12070e] to-[#090307] p-10 text-white lg:flex select-none">
+    <div className="relative hidden w-[48%] flex-col justify-between overflow-hidden bg-gradient-to-br from-[#faf8f9] via-[#f3ebef] to-[#e6dce1] p-10 text-[#14151a] lg:flex select-none dark:from-[#1b0b14] dark:via-[#12070e] dark:to-[#090307] dark:text-white">
       {/* Ambient background glow orbs */}
-      <div className="pointer-events-none absolute -top-24 -left-24 h-96 w-96 rounded-full bg-accent/25 blur-[100px]" />
-      <div className="pointer-events-none absolute top-1/2 -right-24 h-80 w-80 rounded-full bg-[#943853]/20 blur-[90px]" />
-      <div className="pointer-events-none absolute -bottom-20 left-1/4 h-72 w-72 rounded-full bg-accent/15 blur-[80px]" />
+      <div className="pointer-events-none absolute -top-24 -left-24 h-96 w-96 rounded-full bg-accent/15 blur-[100px] dark:bg-accent/25" />
+      <div className="pointer-events-none absolute top-1/2 -right-24 h-80 w-80 rounded-full bg-[#943853]/10 blur-[90px] dark:bg-[#943853]/20" />
+      <div className="pointer-events-none absolute -bottom-20 left-1/4 h-72 w-72 rounded-full bg-accent/10 blur-[80px] dark:bg-accent/15" />
 
       {/* Subtle background tech grid */}
       <div
-        className="pointer-events-none absolute inset-0 opacity-[0.04]"
+        className="pointer-events-none absolute inset-0 opacity-[0.07] dark:opacity-[0.04]"
         style={{
           backgroundImage:
-            'radial-gradient(circle at 1px 1px, white 1px, transparent 0)',
+            'radial-gradient(circle at 1px 1px, rgba(20,21,26,0.35) 1px, transparent 0)',
+          backgroundSize: '24px 24px',
+        }}
+      />
+      <div
+        className="pointer-events-none absolute inset-0 hidden opacity-[0.04] dark:block"
+        style={{
+          backgroundImage: 'radial-gradient(circle at 1px 1px, white 1px, transparent 0)',
           backgroundSize: '24px 24px',
         }}
       />
@@ -656,33 +666,33 @@ export function BrandingPanel() {
       {/* Top Header */}
       <div className="relative z-10">
         <div className="flex items-center">
-          <AppLogoWhite className="h-11" />
+          <AppLogoHorizontal className="h-11" theme={logoTheme} />
         </div>
 
-        <h1 className="mt-8 text-3xl font-extrabold tracking-tight text-white leading-tight">
+        <h1 className="mt-8 text-3xl font-extrabold tracking-tight leading-tight text-[#14151a] dark:text-white">
           Connect, chat, and collaborate{' '}
-          <span className="bg-gradient-to-r from-[#e3829b] via-[#f7b5c6] to-white bg-clip-text text-transparent">
+          <span className="bg-gradient-to-r from-[#943853] via-[#c45a75] to-[#14151a] bg-clip-text text-transparent dark:from-[#e3829b] dark:via-[#f7b5c6] dark:to-white">
             in real time
           </span>
         </h1>
-        <p className="mt-3 max-w-md text-sm leading-relaxed text-white/75">
+        <p className="mt-3 max-w-md text-sm leading-relaxed text-[#14151a]/70 dark:text-white/75">
           Flexhubs brings your team conversations, audio hubs, and workspaces together into one seamless, high-performance client.
         </p>
 
         {/* Realistic Desktop App Mockup Card */}
-        <div className="mt-7 relative overflow-hidden rounded-2xl border border-white/15 bg-white/[0.04] p-4 backdrop-blur-xl shadow-2xl">
+        <div className="relative mt-7 overflow-hidden rounded-2xl border border-black/[0.08] bg-white/55 p-4 shadow-[0_24px_60px_rgba(15,23,42,0.08)] backdrop-blur-xl dark:border-white/15 dark:bg-white/[0.04] dark:shadow-2xl">
           {/* Mock Window Bar */}
-          <div className="flex items-center justify-between border-b border-white/10 pb-3">
+          <div className="flex items-center justify-between border-b border-black/[0.06] pb-3 dark:border-white/10">
             <div className="flex items-center gap-1.5">
               <div className="h-2.5 w-2.5 rounded-full bg-[#ff5f56]/80" />
               <div className="h-2.5 w-2.5 rounded-full bg-[#ffbd2e]/80" />
               <div className="h-2.5 w-2.5 rounded-full bg-[#27c93f]/80" />
-              <span className="ml-2 text-[11px] font-medium text-white/60">
+              <span className="ml-2 text-[11px] font-medium text-[#14151a]/55 dark:text-white/60">
                 ⚡️ Acme Engineering Hub
               </span>
             </div>
-            <span className="flex items-center gap-1 text-[10px] font-medium text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded-full border border-emerald-500/20">
-              <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            <span className="flex items-center gap-1 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400 dark:border-emerald-500/20">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500 dark:bg-emerald-400" />
               18 Online
             </span>
           </div>
@@ -694,19 +704,19 @@ export function BrandingPanel() {
               <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500 to-indigo-600 text-[11px] font-bold text-white shadow-sm">
                 AK
               </div>
-              <div className="flex-1 rounded-xl bg-white/[0.06] p-2.5 border border-white/5">
+              <div className="flex-1 rounded-xl border border-black/[0.05] bg-white/65 p-2.5 backdrop-blur-md dark:border-white/5 dark:bg-white/[0.06]">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-white/95">Alex Kim</span>
-                  <span className="text-[10px] text-white/40">11:42 AM</span>
+                  <span className="font-semibold text-[#14151a]/95 dark:text-white/95">Alex Kim</span>
+                  <span className="text-[10px] text-[#14151a]/45 dark:text-white/40">11:42 AM</span>
                 </div>
-                <p className="mt-1 text-white/80 leading-snug">
+                <p className="mt-1 leading-snug text-[#14151a]/80 dark:text-white/80">
                   Just deployed the real-time audio rooms to production! 🚀
                 </p>
                 <div className="mt-2 flex items-center gap-1.5">
-                  <span className="inline-flex items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] text-white/90">
+                  <span className="inline-flex items-center gap-1 rounded-md bg-black/[0.04] px-1.5 py-0.5 text-[10px] text-[#14151a]/85 dark:bg-white/10 dark:text-white/90">
                     🔥 6
                   </span>
-                  <span className="inline-flex items-center gap-1 rounded-md bg-white/10 px-1.5 py-0.5 text-[10px] text-white/90">
+                  <span className="inline-flex items-center gap-1 rounded-md bg-black/[0.04] px-1.5 py-0.5 text-[10px] text-[#14151a]/85 dark:bg-white/10 dark:text-white/90">
                     🎉 4
                   </span>
                 </div>
@@ -714,20 +724,23 @@ export function BrandingPanel() {
             </div>
 
             {/* Active Voice Hub Pill */}
-            <div className="flex items-center justify-between rounded-xl bg-accent/20 border border-accent/35 px-3 py-2">
+            <div className="flex items-center justify-between rounded-xl border border-accent/30 bg-accent/15 px-3 py-2 backdrop-blur-sm dark:border-accent/35 dark:bg-accent/20">
               <div className="flex items-center gap-2">
                 <div className="flex h-6 w-6 items-center justify-center rounded-md bg-accent text-white">
                   <FiMic size={12} />
                 </div>
                 <div>
-                  <p className="text-[11px] font-semibold text-white">Sprint Planning Room</p>
-                  <p className="text-[10px] text-white/60">3 members connected</p>
+                  <p className="text-[11px] font-semibold text-[#14151a] dark:text-white">Sprint Planning Room</p>
+                  <p className="text-[10px] text-[#14151a]/60 dark:text-white/60">3 members connected</p>
                 </div>
               </div>
               <div className="flex items-center gap-1">
-                <span className="h-2 w-1 rounded-full bg-accent-soft animate-bounce" />
-                <span className="h-3.5 w-1 rounded-full bg-white animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="h-2 w-1 rounded-full bg-accent-soft animate-bounce" style={{ animationDelay: '300ms' }} />
+                <span className="h-2 w-1 animate-bounce rounded-full bg-accent-soft" />
+                <span
+                  className="h-3.5 w-1 animate-bounce rounded-full bg-[#14151a]/70 dark:bg-white"
+                  style={{ animationDelay: '150ms' }}
+                />
+                <span className="h-2 w-1 animate-bounce rounded-full bg-accent-soft" style={{ animationDelay: '300ms' }} />
               </div>
             </div>
           </div>
@@ -739,28 +752,48 @@ export function BrandingPanel() {
         {features.map((feature) => (
           <div
             key={feature.title}
-            className="flex items-center gap-3.5 rounded-xl border border-white/5 bg-white/[0.03] p-2.5 backdrop-blur-sm transition-colors hover:bg-white/[0.06]"
+            className="flex items-center gap-3.5 rounded-xl border border-black/[0.06] bg-white/45 p-2.5 backdrop-blur-md transition-colors hover:bg-white/60 dark:border-white/5 dark:bg-white/[0.03] dark:hover:bg-white/[0.06]"
           >
             <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-accent to-[#5e1f30] text-white shadow-md shadow-accent/20">
               <feature.icon size={16} />
             </div>
             <div>
-              <p className="text-xs font-semibold text-white/95">{feature.title}</p>
-              <p className="text-[11px] text-white/65 leading-tight">{feature.description}</p>
+              <p className="text-xs font-semibold text-[#14151a]/95 dark:text-white/95">{feature.title}</p>
+              <p className="text-[11px] leading-tight text-[#14151a]/65 dark:text-white/65">{feature.description}</p>
             </div>
           </div>
         ))}
 
         {/* Security / Quality stamp */}
-        <div className="flex items-center justify-between pt-2 text-[11px] text-white/50 border-t border-white/10">
+        <div className="flex items-center justify-between border-t border-black/[0.08] pt-2 text-[11px] text-[#14151a]/50 dark:border-white/10 dark:text-white/50">
           <span className="flex items-center gap-1">
-            <FiCheckCircle size={12} className="text-emerald-400" /> End-to-end encrypted
+            <FiCheckCircle size={12} className="text-emerald-600 dark:text-emerald-400" /> End-to-end encrypted
           </span>
           <span>99.9% Real-time SLA</span>
           <span>High-performance Hubs</span>
         </div>
       </div>
     </div>
+  );
+}
+
+/** Shared auth / onboarding backdrop (gradient + accent glow). */
+export function AppShellBackground() {
+  return (
+    <>
+      <div
+        className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/70 via-transparent to-app-inset/45 dark:from-[#12131c]/90 dark:via-[#0a0b10]/40 dark:to-[#040408]"
+        aria-hidden="true"
+      />
+      <div
+        className="pointer-events-none absolute top-12 right-[10%] h-72 w-72 rounded-full bg-accent/[0.07] blur-[100px] dark:bg-accent/[0.14]"
+        aria-hidden="true"
+      />
+      <div
+        className="pointer-events-none absolute bottom-16 left-[8%] h-56 w-56 rounded-full bg-accent/[0.04] blur-[80px] dark:bg-accent/[0.08]"
+        aria-hidden="true"
+      />
+    </>
   );
 }
 
@@ -785,13 +818,13 @@ export function AuthShell({
   const { theme, toggleTheme } = useTheme();
 
   return (
-    <div className="flex h-screen w-full overflow-hidden bg-app-bg-login text-app-text">
+    <div className="relative flex h-screen w-full overflow-hidden bg-app-bg-login text-app-text">
+      <AppShellBackground />
+      <div className="relative z-[1] flex min-h-0 min-w-0 flex-1">
       <BrandingPanel />
 
       {/* Right Form Area */}
-      <div className="relative flex flex-1 flex-col items-center justify-center overflow-y-auto bg-app-bg-login p-6 sm:p-10">
-        <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white via-transparent to-app-inset/40 dark:hidden" />
-        <div className="pointer-events-none absolute top-10 right-10 h-64 w-64 rounded-full bg-accent/[0.06] blur-[90px] dark:bg-accent/10" />
+      <div className="relative flex flex-1 flex-col items-center justify-center overflow-y-auto p-6 sm:p-10">
 
         {/* Theme Toggle Button */}
         <div className="absolute top-6 right-6 z-20">
@@ -840,6 +873,7 @@ export function AuthShell({
 
           {children}
         </div>
+      </div>
       </div>
     </div>
   );

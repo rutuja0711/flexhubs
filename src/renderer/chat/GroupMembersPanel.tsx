@@ -10,7 +10,6 @@ import {
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
 import { ConversationSharedFiles } from './ConversationSharedFiles';
-
 type GroupMembersPanelProps = {
   conversation: ConversationItem;
   conversationDetails?: Record<string, unknown> | null;

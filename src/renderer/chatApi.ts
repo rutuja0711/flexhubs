@@ -1,6 +1,8 @@
 import type { ApiResult } from '../shared/api';
 import type { GifPickerItem } from '../shared/gifs';
-import { buildFileMessagePayload, buildMediaMessagePayload } from '../shared/gifs';
+import { buildFileMessagePayload, buildMediaMessagePayload, buildVoiceMessagePayload } from '../shared/gifs';
+import type { ScheduledMessageItem } from '../shared/extras';
+import { buildCreatePollPayload } from '../shared/messages';
 import type { ConversationsPayload, ConversationItem, UnreadCountPayload } from '../shared/chat';
 import type { ConversationBootstrap, MessageDraft } from '../shared/messages';
 import { buildProfileUpdatePayload } from '../shared/profile';
@@ -434,6 +436,21 @@ export async function sendChatFileMessage(
   caption?: string,
 ): Promise<ApiResult<import('../shared/messages').MessageItem>> {
   const mediaPayload = buildFileMessagePayload(url, fileName, mimeType, caption);
+
+  return sendChatMessage(conversationId, '', replyToId, threadRootId, JSON.stringify(mediaPayload));
+}
+
+export async function sendChatVoiceMessage(
+  conversationId: string,
+  fileUrl: string,
+  fileName: string,
+  mimeType: string,
+  fileSize: number,
+  replyToId?: string,
+  threadRootId?: string,
+  caption?: string,
+): Promise<ApiResult<import('../shared/messages').MessageItem>> {
+  const mediaPayload = buildVoiceMessagePayload(fileUrl, fileName, mimeType, fileSize, caption);
 
   return sendChatMessage(conversationId, '', replyToId, threadRootId, JSON.stringify(mediaPayload));
 }
@@ -918,8 +935,17 @@ export async function loadMentionSuggestions(conversationId: string, query: stri
   return withToken((token) => window.electronAPI.getMentionSuggestions(token, conversationId, query));
 }
 
-export async function createPoll(conversationId: string, payload: Record<string, unknown>): Promise<ApiResult<import('../shared/messages').MessageItem>> {
+export async function createPoll(
+  conversationId: string,
+  input: {
+    question: string;
+    options: string[];
+    allowMultiple?: boolean;
+    expiresAt?: string | null;
+  },
+): Promise<ApiResult<import('../shared/messages').MessageItem>> {
   if (!window.electronAPI?.createPollMessage) return unavailable();
+  const payload = buildCreatePollPayload(input);
   return withToken((token) => window.electronAPI.createPollMessage(token, conversationId, JSON.stringify(payload)));
 }
 
@@ -969,7 +995,7 @@ export async function loadMessageById(
 
 export async function loadConversationScheduledMessages(
   conversationId: string,
-): Promise<ApiResult<unknown[]>> {
+): Promise<ApiResult<ScheduledMessageItem[]>> {
   if (!window.electronAPI?.getConversationScheduledMessages) return unavailable();
   return withToken((token) => window.electronAPI.getConversationScheduledMessages(token, conversationId));
 }
@@ -977,7 +1003,7 @@ export async function loadConversationScheduledMessages(
 export async function scheduleConversationMessage(
   conversationId: string,
   payload: Record<string, unknown>,
-): Promise<ApiResult<unknown>> {
+): Promise<ApiResult<ScheduledMessageItem>> {
   if (!window.electronAPI?.createConversationScheduledMessage) return unavailable();
   return withToken((token) =>
     window.electronAPI.createConversationScheduledMessage(token, conversationId, JSON.stringify(payload)),

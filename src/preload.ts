@@ -765,10 +765,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setNativeTheme: (mode: 'light' | 'dark'): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('app:set-theme', mode),
   showDesktopNotification: (
-    title: string,
-    body: string,
-    tag?: string,
-  ): Promise<{ ok: boolean }> => ipcRenderer.invoke('desktop:notify', { title, body, tag }),
+    payload: any
+  ): Promise<{ ok: boolean }> => ipcRenderer.invoke('desktop:notify', payload),
+  onNotificationRender: (callback: (payload: any) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: any) => callback(payload);
+    ipcRenderer.on('notification:render', handler);
+    return () => ipcRenderer.removeListener('notification:render', handler);
+  },
+  sendNotificationAction: (action: string) => ipcRenderer.send('notification:action', action),
   logRendererDebug: (message: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('renderer:debug-log', message).catch(() => ({ ok: false })),
   onDesktopNotificationClick: (callback: (tag: string) => void): (() => void) => {
@@ -781,5 +785,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => {
       ipcRenderer.removeListener('desktop:notify-click', handler);
     };
+  },
+  checkForUpdates: (): Promise<{
+    ok: boolean;
+    status?: 'skipped' | 'up-to-date' | 'available';
+    skipped?: boolean;
+    currentVersion?: string;
+    data?: { version?: string; releaseNotes?: unknown };
+    error?: string;
+  }> => ipcRenderer.invoke('updater:check'),
+  downloadUpdate: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('updater:download'),
+  quitAndInstallUpdate: (): Promise<void> => ipcRenderer.invoke('updater:quit-and-install'),
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke('updater:get-version'),
+  getHardwareAccelerationDisabled: (): Promise<boolean> => ipcRenderer.invoke('app:get-hardware-acceleration-disabled'),
+  setHardwareAccelerationDisabled: (disabled: boolean): Promise<void> => ipcRenderer.invoke('app:set-hardware-acceleration-disabled', disabled),
+  relaunchApp: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),
+  onUpdaterEvent: (eventStr: string, callback: (...args: any[]) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, ...args: any[]) => callback(...args);
+    ipcRenderer.on(`updater:${eventStr}`, handler);
+    return () => ipcRenderer.removeListener(`updater:${eventStr}`, handler);
   },
 });

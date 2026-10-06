@@ -23,9 +23,10 @@ type NavRailProps = {
   onNavigate: (view: MainView) => void;
   onOpenFlexAi?: () => void;
   onLogout?: () => void;
+  hasUpdateBadge?: boolean;
 };
 
-export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexAi, onLogout }: NavRailProps) {
+export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexAi, onLogout, hasUpdateBadge }: NavRailProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [presenceStatus, setPresenceStatus] = useState<UserPresenceStatus>(() => getEffectivePresenceStatus());
   const menuRef = useRef<HTMLDivElement>(null);
@@ -51,7 +52,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
     }
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [menuOpen]);
-  const navItemKeys: MainView[] = ['activity', 'calls', 'hubs', 'saved', 'calendar'];
+  const navItemKeys: MainView[] = ['activity', 'calls', 'saved', 'calendar'];
   const activeNavIndex = navItemKeys.indexOf(activeView);
   const isRailViewActive = activeNavIndex !== -1;
   const showSuperAdminNav = userIsSuperAdmin(user);
@@ -95,13 +96,6 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
           <CallsNavIcon />
         </NavIconButton>
         <NavIconButton
-          label="Hubs"
-          active={activeView === 'hubs'}
-          onClick={() => onNavigate('hubs')}
-        >
-          <BuildingIcon />
-        </NavIconButton>
-        <NavIconButton
           label="Saved"
           active={activeView === 'saved'}
           onClick={() => onNavigate('saved')}
@@ -119,29 +113,26 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
       </nav>
 
       <div className="mt-auto flex w-full flex-col items-center gap-3.5 overflow-visible px-2 pb-1">
-        {/* Ask Flex AI Button */}
-        <div className="group relative z-[80]">
+        {/* Ask Flex AI — expands to the right from a fixed left anchor so it stays on-screen */}
+        <div className="relative h-11 w-full">
           <button
             type="button"
             aria-label="Ask Flex"
-            className="relative flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-accent via-accent to-[#5c2431] text-white shadow-md shadow-accent/30 transition-all duration-200 hover:shadow-accent-glow hover:scale-105 active:scale-95"
+            title="Ask Flex!"
+            className="group/flex-ai absolute bottom-0 left-1/2 z-[80] flex h-11 w-11 max-w-[calc(100vw-5rem)] -translate-x-1/2 items-center justify-center gap-0 overflow-hidden rounded-2xl border border-transparent bg-gradient-to-br from-accent via-accent to-[#5c2431] text-white shadow-md shadow-accent/30 transition-[left,width,transform,box-shadow,padding,gap] duration-200 ease-out hover:left-0 hover:w-[min(148px,calc(100vw-5rem))] hover:translate-x-0 hover:justify-start hover:gap-2 hover:border-accent/20 hover:pr-3 hover:pl-2 hover:shadow-accent-glow focus-visible:left-0 focus-visible:w-[min(148px,calc(100vw-5rem))] focus-visible:translate-x-0 focus-visible:justify-start focus-visible:gap-2 focus-visible:pr-3 focus-visible:pl-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 active:scale-[0.98]"
             onClick={onOpenFlexAi}
           >
-            <SparkleIcon />
-            <span className="absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-soft opacity-75" />
-              <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-accent-soft" />
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center group-hover/flex-ai:h-8 group-hover/flex-ai:w-8 group-focus-visible/flex-ai:h-8 group-focus-visible/flex-ai:w-8">
+              <SparkleIcon className="shrink-0" />
+            </span>
+            <span className="min-w-0 max-w-0 overflow-hidden whitespace-nowrap text-xs font-semibold tracking-wide opacity-0 transition-[max-width,opacity] duration-200 ease-out group-hover/flex-ai:max-w-[5.5rem] group-hover/flex-ai:opacity-100 group-focus-visible/flex-ai:max-w-[5.5rem] group-focus-visible/flex-ai:opacity-100">
+              Ask Flex!
+            </span>
+            <span className="pointer-events-none absolute -top-0.5 -right-0.5 flex h-2.5 w-2.5 transition-opacity duration-200 group-hover/flex-ai:opacity-0 group-focus-visible/flex-ai:opacity-0">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent-soft opacity-75" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-accent-soft" />
             </span>
           </button>
-          <div
-            className="pointer-events-none absolute top-1/2 left-0 z-[80] flex -translate-y-1/2 items-center rounded-2xl border border-app-border/70 bg-app-surface/95 backdrop-blur-md py-2 pr-4 pl-2 opacity-0 shadow-xl transition-all duration-200 group-hover:translate-x-3 group-hover:opacity-100 group-focus-within:translate-x-3 group-focus-within:opacity-100"
-            aria-hidden="true"
-          >
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-accent text-white shadow-sm shadow-accent/30">
-              <SparkleIcon />
-            </span>
-            <span className="ml-2.5 whitespace-nowrap text-xs font-semibold text-app-text tracking-wide">Ask Flex!</span>
-          </div>
         </div>
 
         {/* User Profile Avatar & Menu */}
@@ -161,6 +152,9 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
               className={`absolute right-0 bottom-0 h-3 w-3 rounded-full ring-2 ring-app-chat-rail shadow-sm ${userPresenceDotClass(presenceStatus)}`}
               aria-hidden="true"
             />
+            {hasUpdateBadge && (
+              <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-accent ring-2 ring-app-chat-rail animate-pulse" />
+            )}
           </button>
           
           {menuOpen && (
@@ -177,8 +171,11 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
                   onNavigate('profile');
                 }}
               >
-                <FiSettings className="shrink-0 text-sm text-app-muted" />
-                <span>Profile & settings</span>
+                <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                  <FiSettings className="shrink-0 text-sm text-app-muted" />
+                  <span className="truncate">Profile & settings</span>
+                </div>
+                {hasUpdateBadge && <span className="h-2 w-2 rounded-full bg-accent animate-pulse shrink-0" />}
               </button>
               <button
                 type="button"

@@ -63,8 +63,12 @@ function readCallParticipant(value: unknown): CallParticipant | null {
     return null;
   }
 
-  const id = readString(record.id);
-  const username = readString(record.username) ?? readString(record.name) ?? 'Caller';
+  const id = readString(record.id) ?? readString(record.userId);
+  const username =
+    readString(record.username) ??
+    readString(record.name) ??
+    readString(record.displayName) ??
+    'Caller';
 
   if (!id) {
     return null;
@@ -73,7 +77,34 @@ function readCallParticipant(value: unknown): CallParticipant | null {
   return {
     id,
     username,
-    avatar: readString(record.avatar),
+    avatar: readString(record.avatar) ?? readString(record.avatarUrl),
+  };
+}
+
+function readCallPerson(value: unknown): CallParticipant | null {
+  const strict = readCallParticipant(value);
+  if (strict) {
+    return strict;
+  }
+
+  const record = asRecord(value);
+  if (!record) {
+    return null;
+  }
+
+  const username =
+    readString(record.username) ??
+    readString(record.name) ??
+    readString(record.displayName);
+
+  if (!username) {
+    return null;
+  }
+
+  return {
+    id: readString(record.id) ?? readString(record.userId) ?? `person:${username}`,
+    username,
+    avatar: readString(record.avatar) ?? readString(record.avatarUrl),
   };
 }
 
@@ -712,6 +743,7 @@ export type CallHistoryItem = {
   initiatorId: string;
   initiatorName: string;
   peerName: string;
+  peerAvatarUrl?: string | null;
   conversationTitle?: string;
   createdAt: string;
 };
@@ -736,19 +768,32 @@ function normalizeCallHistoryItem(raw: unknown, index: number): CallHistoryItem 
   const content = readString(record.content);
   const parsedLog = content ? parseCallLogContent(content) : null;
   const conversationRecord = asRecord(record.conversation);
-  const sender = readCallParticipant(record.sender) ?? readCallParticipant(record.author);
+  const sender = readCallPerson(record.sender) ?? readCallPerson(record.author);
+  const recipient =
+    readCallPerson(record.recipient) ??
+    readCallPerson(record.receiver) ??
+    readCallPerson(record.toUser);
   const initiator =
-    readCallParticipant(record.initiator) ??
-    readCallParticipant(record.startedBy) ??
+    readCallPerson(record.initiator) ??
+    readCallPerson(record.startedBy) ??
     (parsedLog?.initiatorId && sender?.id === parsedLog.initiatorId ? sender : null) ??
     sender;
-  const peer =
-    readCallParticipant(record.peer) ??
-    readCallParticipant(record.otherParticipant) ??
-    readCallParticipant(record.participant) ??
-    readCallParticipant(record.with) ??
-    readCallParticipant(record.callee) ??
-    readCallParticipant(record.caller);
+  let peer =
+    readCallPerson(record.peer) ??
+    readCallPerson(record.otherParticipant) ??
+    readCallPerson(record.participant) ??
+    readCallPerson(record.with) ??
+    readCallPerson(record.callee) ??
+    readCallPerson(record.caller) ??
+    readCallPerson(record.otherUser);
+
+  if (!peer && initiator && sender && sender.id !== initiator.id) {
+    peer = sender;
+  } else if (!peer && initiator && recipient && recipient.id !== initiator.id) {
+    peer = recipient;
+  } else if (!peer && sender && initiator && sender.id === initiator.id) {
+    peer = recipient;
+  }
 
   const callId =
     readString(record.callId) ??
@@ -774,24 +819,54 @@ function normalizeCallHistoryItem(raw: unknown, index: number): CallHistoryItem 
     initiator?.id ??
     sender?.id ??
     '';
-  const initiatorName =
-    initiator?.username ??
-    readString(record.initiatorName) ??
-    readString(record.startedByName) ??
-    sender?.username ??
-    '';
   const conversationTitle =
     readString(record.conversationTitle) ??
     readString(conversationRecord?.title) ??
     readString(conversationRecord?.name) ??
+    readString(conversationRecord?.displayName) ??
     undefined;
-  const peerName =
+  let resolvedInitiatorName =
+    initiator?.username ??
+    readString(record.initiatorName) ??
+    readString(record.startedByName) ??
+    readString(record.callerName) ??
+    '';
+
+  const messageRecord = asRecord(record.message);
+  const messageSender = messageRecord
+    ? readCallPerson(messageRecord.sender) ??
+      readCallPerson(messageRecord.user) ??
+      readCallPerson(messageRecord.author)
+    : null;
+
+  if (!resolvedInitiatorName && messageSender?.id === initiatorId) {
+    resolvedInitiatorName = messageSender.username;
+  }
+
+  if (!resolvedInitiatorName && sender?.id === initiatorId) {
+    resolvedInitiatorName = sender.username;
+  }
+
+  for (const participant of extractArray(record, ['participants', 'members', 'attendees'])) {
+    const person = readCallPerson(participant);
+    if (person && person.id === initiatorId && !resolvedInitiatorName) {
+      resolvedInitiatorName = person.username;
+    }
+    if (person && person.id !== initiatorId && !peer) {
+      peer = person;
+    }
+  }
+
+  let resolvedPeerName =
     peer?.username ??
     readString(record.peerName) ??
     readString(record.participantName) ??
     readString(record.withName) ??
-    conversationTitle ??
+    readString(record.otherUserName) ??
+    readString(record.calleeName) ??
     '';
+
+  const peerAvatarUrl = peer?.avatar ?? readString(record.peerAvatar) ?? readString(record.peerAvatarUrl);
   const createdAt =
     readString(record.createdAt) ??
     readString(record.startedAt) ??
@@ -815,15 +890,24 @@ function normalizeCallHistoryItem(raw: unknown, index: number): CallHistoryItem 
     outcome,
     durationSec,
     initiatorId,
-    initiatorName,
-    peerName,
+    initiatorName: resolvedInitiatorName,
+    peerName: resolvedPeerName,
+    peerAvatarUrl,
     conversationTitle,
     createdAt: createdAt || new Date(0).toISOString(),
   };
 }
 
 export function normalizeCallHistoryList(payload: unknown): CallHistoryItem[] {
-  const items = extractArray(payload, ['items', 'calls', 'history', 'data', 'results']);
+  const items = extractArray(payload, [
+    'items',
+    'calls',
+    'history',
+    'callHistory',
+    'data',
+    'results',
+    'logs',
+  ]);
 
   return items
     .map((item, index) => normalizeCallHistoryItem(item, index))
@@ -876,4 +960,189 @@ export function formatCallHistorySubtitle(
   const peer = item.peerName.trim() || item.conversationTitle?.trim() || 'Unknown';
 
   return `Started by ${starter} - ${peer}`;
+}
+
+export function formatCallHistoryContactTitle(
+  item: Pick<CallHistoryItem, 'peerName' | 'conversationTitle' | 'initiatorName' | 'initiatorId'>,
+  currentUserId: string | null,
+): string {
+  const hub = item.conversationTitle?.trim();
+  if (hub) {
+    return hub;
+  }
+
+  const peer = item.peerName.trim();
+  if (peer) {
+    return peer;
+  }
+
+  if (currentUserId && item.initiatorId && item.initiatorId !== currentUserId) {
+    return item.initiatorName.trim() || 'Unknown caller';
+  }
+
+  return item.initiatorName.trim() || 'Unknown contact';
+}
+
+export function formatCallHistoryDetails(
+  item: CallHistoryItem,
+  currentUserId: string | null,
+): string {
+  const isOutgoing = Boolean(currentUserId && item.initiatorId === currentUserId);
+  const mode = item.mode === 'video' ? 'video' : 'voice';
+  const hub = item.conversationTitle?.trim();
+  const caller = item.initiatorName.trim() || item.peerName.trim() || 'Unknown caller';
+  const peer = item.peerName.trim() || item.initiatorName.trim() || 'Unknown contact';
+
+  if (hub) {
+    const starter = isOutgoing ? 'You' : item.initiatorName.trim() || caller;
+    switch (item.outcome) {
+      case 'missed':
+        return `Missed ${mode} meeting · Started by ${starter}`;
+      case 'declined':
+        return `${mode === 'video' ? 'Video' : 'Voice'} meeting declined · ${starter}`;
+      case 'cancelled':
+        return `${mode === 'video' ? 'Video' : 'Voice'} meeting cancelled · ${starter}`;
+      default:
+        return `${mode === 'video' ? 'Video' : 'Voice'} meeting · Started by ${starter}`;
+    }
+  }
+
+  switch (item.outcome) {
+    case 'missed':
+      return isOutgoing
+        ? `Outgoing ${mode} · No answer · To ${peer}`
+        : `Missed incoming ${mode} · From ${caller}`;
+    case 'declined':
+      return isOutgoing
+        ? `Outgoing ${mode} · Declined · To ${peer}`
+        : `Incoming ${mode} · Declined · From ${caller}`;
+    case 'cancelled':
+      return isOutgoing
+        ? `Outgoing ${mode} · Cancelled · To ${peer}`
+        : `Incoming ${mode} · Cancelled · From ${caller}`;
+    default:
+      return isOutgoing
+        ? `Outgoing ${mode} call · To ${peer}`
+        : `Incoming ${mode} call · From ${caller}`;
+  }
+}
+
+export function formatCallHistoryWhen(value: string): { dateLabel: string; timeLabel: string } {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return { dateLabel: value, timeLabel: '' };
+  }
+
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  let dateLabel: string;
+  if (date.toDateString() === today.toDateString()) {
+    dateLabel = 'Today';
+  } else if (date.toDateString() === yesterday.toDateString()) {
+    dateLabel = 'Yesterday';
+  } else {
+    dateLabel = date.toLocaleDateString('en-US', { day: 'numeric', month: 'short' });
+  }
+
+  const timeLabel = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+  return { dateLabel, timeLabel };
+}
+
+function initialsFromLabel(label: string): string {
+  const parts = label.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) {
+    return '?';
+  }
+  if (parts.length === 1) {
+    return parts[0].slice(0, 2).toUpperCase();
+  }
+  return `${parts[0][0] ?? ''}${parts[1][0] ?? ''}`.toUpperCase();
+}
+
+export function callHistoryAvatarInitials(
+  item: Pick<CallHistoryItem, 'peerName' | 'conversationTitle' | 'initiatorName'>,
+  currentUserId: string | null,
+  initiatorId: string,
+): string {
+  return initialsFromLabel(formatCallHistoryContactTitle({ ...item, initiatorId }, currentUserId));
+}
+
+export type CallHistoryEnrichmentContext = {
+  currentUserId: string | null;
+  currentUserName: string | null;
+  conversations: ReadonlyArray<{
+    id: string;
+    kind: 'direct' | 'hub';
+    title: string;
+    peerUserId: string | null;
+  }>;
+  teammateNamesById?: Readonly<Record<string, string>>;
+};
+
+export function enrichCallHistoryItems(
+  items: CallHistoryItem[],
+  context: CallHistoryEnrichmentContext,
+): CallHistoryItem[] {
+  const namesByUserId: Record<string, string> = { ...(context.teammateNamesById ?? {}) };
+
+  if (context.currentUserId && context.currentUserName?.trim()) {
+    namesByUserId[context.currentUserId] = context.currentUserName.trim();
+  }
+
+  for (const conversation of context.conversations) {
+    if (conversation.kind === 'direct' && conversation.peerUserId && conversation.title.trim()) {
+      namesByUserId[conversation.peerUserId] = conversation.title.trim();
+    }
+  }
+
+  const conversationById = new Map(context.conversations.map((entry) => [entry.id, entry]));
+
+  return items.map((item) => {
+    let initiatorName = item.initiatorName.trim();
+    let peerName = item.peerName.trim();
+    let conversationTitle = item.conversationTitle?.trim() ?? '';
+
+    if (item.initiatorId && namesByUserId[item.initiatorId]) {
+      initiatorName = namesByUserId[item.initiatorId];
+    }
+
+    if (item.initiatorId && context.currentUserId === item.initiatorId && context.currentUserName) {
+      initiatorName = context.currentUserName.trim();
+    }
+
+    const conversation = conversationById.get(item.conversationId);
+    if (conversation) {
+      if (!conversationTitle && conversation.kind === 'hub') {
+        conversationTitle = conversation.title.trim();
+      }
+
+      if (conversation.kind === 'direct') {
+        const contactName = conversation.title.trim();
+        const peerUserId = conversation.peerUserId;
+
+        if (!peerName && contactName) {
+          peerName = contactName;
+        }
+
+        if (peerUserId && namesByUserId[peerUserId]) {
+          if (item.initiatorId === peerUserId && !initiatorName) {
+            initiatorName = namesByUserId[peerUserId];
+          }
+          if (item.initiatorId === context.currentUserId && !peerName) {
+            peerName = namesByUserId[peerUserId] ?? contactName;
+          }
+        }
+      }
+    }
+
+    return {
+      ...item,
+      initiatorName,
+      peerName,
+      conversationTitle: conversationTitle || item.conversationTitle,
+    };
+  });
 }

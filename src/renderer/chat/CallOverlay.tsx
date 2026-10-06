@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { isAppInBackground, subscribeAppFocus } from '../appFocus';
 import { createPortal } from 'react-dom';
 import { Track } from 'livekit-client';
-import { FiX } from 'react-icons/fi';
 import type { RemoteParticipant, Room } from 'livekit-client';
 import type { CallSession } from '../callManager';
 import { isMeetingModerator } from '../../shared/calls';
@@ -44,8 +43,6 @@ type CallOverlayProps = {
   onToggleMic: () => void;
   onToggleCamera: () => void;
   onToggleScreenShare: () => void;
-  onJoinMeeting: () => void;
-  onDismissMeetingBanner: () => void;
   onApproveJoinRequest: (requestId: string) => void;
   onDenyJoinRequest: (requestId: string) => void;
   onMuteParticipant: (participantIdentity: string, muted: boolean) => void;
@@ -83,8 +80,6 @@ export function CallOverlay({
   onToggleMic,
   onToggleCamera,
   onToggleScreenShare,
-  onJoinMeeting,
-  onDismissMeetingBanner,
   onApproveJoinRequest,
   onDenyJoinRequest,
   onMuteParticipant,
@@ -200,46 +195,6 @@ export function CallOverlay({
     stopCallRing();
     return undefined;
   }, [session.phase]);
-
-  if (session.phase === 'idle' && session.meetingBanner) {
-    const meeting = session.meetingBanner;
-
-    return createPortal(
-      <div className="pointer-events-none fixed inset-x-0 top-0 z-[200] flex justify-center px-3 pb-2 pt-[max(0.75rem,env(safe-area-inset-top,0px))] sm:px-4 sm:pb-3 sm:pt-[max(1rem,env(safe-area-inset-top,0px))]">
-        <div className="pointer-events-auto flex w-full max-w-xl items-center gap-2 rounded-2xl border border-app-border bg-app-elevated px-3 py-2.5 shadow-app sm:gap-3 sm:px-4 sm:py-3">
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-app-text">
-              {meeting.startedBy.username} started a {meeting.video ? 'video' : 'voice'} meeting
-            </p>
-            <p className="truncate text-xs text-app-muted">{meeting.conversationTitle}</p>
-          </div>
-          <button
-            type="button"
-            className="shrink-0 rounded-xl bg-accent px-3 py-2 text-sm font-semibold text-white hover:opacity-90"
-            onClick={onJoinMeeting}
-          >
-            Join
-          </button>
-          <button
-            type="button"
-            className="shrink-0 rounded-xl border border-app-border px-3 py-2 text-sm font-semibold text-app-text hover:bg-app-chat-hover"
-            onClick={onDismissMeetingBanner}
-          >
-            Decline
-          </button>
-          <button
-            type="button"
-            aria-label="Dismiss meeting banner"
-            className="shrink-0 rounded-lg p-2 text-app-muted hover:bg-app-chat-hover hover:text-app-text"
-            onClick={onDismissMeetingBanner}
-          >
-            <FiX />
-          </button>
-        </div>
-      </div>,
-      document.body,
-    );
-  }
 
   if (session.phase === 'idle') {
     return null;

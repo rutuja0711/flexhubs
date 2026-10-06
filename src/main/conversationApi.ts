@@ -11,6 +11,7 @@ import {
   normalizeMessageReadReceipts,
   normalizeMessageThread,
 } from '../shared/messages';
+import { normalizeScheduledMessage, normalizeScheduledMessages } from '../shared/extras';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './apiRequest';
 
 export async function fetchConversationBootstrap(
@@ -202,9 +203,11 @@ export async function sendThreadReply(
   rootMessageId: string,
   content: string,
   mediaJson?: string,
+  replyToId?: string,
 ): Promise<ApiResult<MessageItem>> {
   const payload: Record<string, unknown> = {
-    threadRootId: rootMessageId,
+    replyToId: replyToId || rootMessageId,
+    replyInThread: true,
   };
 
   if (mediaJson) {
@@ -216,6 +219,7 @@ export async function sendThreadReply(
       if (media.fileUrl) payload.fileUrl = media.fileUrl;
       if (media.fileName) payload.fileName = media.fileName;
       if (media.mimeType) payload.mimeType = media.mimeType;
+      if (typeof media.fileSize === 'number') payload.fileSize = media.fileSize;
     } catch {
       // Ignore malformed media payload and send as plain text.
     }
@@ -283,7 +287,7 @@ export async function sendMessage(
   mediaJson?: string,
 ): Promise<ApiResult<MessageItem>> {
   if (threadRootId) {
-    return sendThreadReply(token, conversationId, threadRootId, content, mediaJson);
+    return sendThreadReply(token, conversationId, threadRootId, content, mediaJson, replyToId);
   }
 
   const payload: Record<string, unknown> = {};
@@ -298,6 +302,7 @@ export async function sendMessage(
       if (media.fileUrl) payload.fileUrl = media.fileUrl;
       if (media.fileName) payload.fileName = media.fileName;
       if (media.mimeType) payload.mimeType = media.mimeType;
+      if (typeof media.fileSize === 'number') payload.fileSize = media.fileSize;
     } catch {
       // Ignore malformed media payload and send as plain text.
     }
@@ -748,7 +753,7 @@ export async function sendMessageStream(
   threadRootId?: string,
 ): Promise<ApiResult<MessageItem>> {
   if (threadRootId) {
-    return sendThreadReply(token, conversationId, threadRootId, content);
+    return sendThreadReply(token, conversationId, threadRootId, content, undefined, replyToId);
   }
 
   const payload: Record<string, unknown> = { content };
@@ -797,7 +802,7 @@ export async function votePollMessage(
     `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}/poll/vote`,
     token,
     'Vote Poll API',
-    { optionId, optionIds: [optionId] },
+    { optionId },
   );
 
   if (!result.ok) {
@@ -902,27 +907,61 @@ export async function fetchConversationScheduledMessages(
     return result;
   }
 
-  const record = asRecord(result.data);
-  const messages = Array.isArray(result.data)
-    ? result.data
-    : Array.isArray(record?.messages)
-      ? record.messages
-      : [];
-
-  return { ok: true, data: messages };
+  return { ok: true, data: normalizeScheduledMessages(result.data) };
 }
 
 export async function createConversationScheduledMessage(
   token: string,
   conversationId: string,
   payload: Record<string, unknown>,
-): Promise<ApiResult<unknown>> {
-  return apiPost<unknown>(
+): Promise<ApiResult<import('../shared/extras').ScheduledMessageItem>> {
+  const scheduledContent =
+    typeof payload.content === 'string'
+      ? payload.content.trim()
+      : typeof payload.text === 'string'
+        ? payload.text.trim()
+        : typeof payload.message === 'string'
+          ? payload.message.trim()
+          : '';
+
+  if (!scheduledContent) {
+    return { ok: false, error: 'Scheduled messages must include text.' };
+  }
+
+  const requestPayload = {
+    ...payload,
+    content: scheduledContent,
+    type: payload.type ?? 'TEXT',
+  };
+
+  const result = await apiPost<unknown>(
     `${API_BASE_URL}/conversations/${conversationId}/messages/scheduled`,
     token,
     'Schedule Conversation Message API',
-    payload,
+    requestPayload,
   );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const normalized =
+    normalizeScheduledMessage(result.data, 0, conversationId) ??
+    normalizeScheduledMessage(
+      { ...requestPayload, id: `scheduled-${Date.now()}` },
+      0,
+      conversationId,
+    );
+
+  if (!normalized) {
+    return { ok: false, error: 'Scheduled message created but response was invalid.' };
+  }
+
+  if (!normalized.content.trim()) {
+    normalized.content = scheduledContent;
+  }
+
+  return { ok: true, data: normalized };
 }
 
 export async function deleteConversationScheduledMessage(

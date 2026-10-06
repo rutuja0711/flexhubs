@@ -88,24 +88,12 @@ export function AppLogoHorizontal({
   }
 
   return (
-    <div className={`inline-flex items-center gap-2.5 select-none ${className}`}>
-      {/* Symbol */}
-      <div className="relative flex items-center justify-center shrink-0">
-        <FlexhubsSymbolSvg className="h-8 w-8 sm:h-9 sm:w-9 filter drop-shadow-sm transition-transform duration-200 hover:scale-105" />
-      </div>
-
-      {/* Modern Wordmark */}
-      <span
-        className={`font-extrabold tracking-[-0.035em] text-xl sm:text-2xl leading-none font-sans ${
-          theme === 'light'
-            ? 'text-[#14151a]'
-            : 'text-app-text'
-        } ${wordmarkClassName}`}
-        style={{ letterSpacing: '-0.04em' }}
-      >
-        Flex<span className="text-accent">hubs</span>
-      </span>
-    </div>
+    <img
+      src={APP_LOGO_HORIZONTAL_SRC}
+      alt="Flexhubs"
+      className={`object-contain object-left select-none ${className} ${wordmarkClassName}`}
+      draggable={false}
+    />
   );
 }
 

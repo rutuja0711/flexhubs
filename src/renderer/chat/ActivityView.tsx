@@ -1,7 +1,11 @@
 import { useMemo, useState } from 'react';
-import type { NotificationItem, PendingFriendItem } from '../../shared/messages';
-import { isNotificationClickable } from '../../shared/messages';
 import type { ConversationItem } from '../../shared/chat';
+import {
+  resolveFriendRequestUserId,
+  type NotificationItem,
+  type PendingFriendItem,
+} from '../../shared/messages';
+import { isNotificationClickable } from '../../shared/messages';
 import { validateSearchQuery } from '../../shared/chat';
 import { formatNotificationDisplayBody } from '../../shared/calls';
 import { formatConversationTimestamp } from './format';
@@ -43,6 +47,7 @@ type ActivityListItem = {
   kind: ActivityKind;
   notification: NotificationItem | null;
   isUnread: boolean;
+  respondUserId: string | null;
 };
 
 function classifyNotification(item: NotificationItem): ActivityKind {
@@ -231,30 +236,36 @@ function ActivityRowContent({
             </div>
           )}
 
-          {item.kind === 'request' && item.id.startsWith('pending-') && (
+          {item.kind === 'request' && item.respondUserId ? (
             <div className="flex gap-2 shrink-0 mt-3">
               <button
+                type="button"
                 disabled={isProcessing}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (onRespondFriend) onRespondFriend(item.id.replace('pending-', ''), 'ACCEPTED');
+                  if (onRespondFriend && item.respondUserId) {
+                    onRespondFriend(item.respondUserId, 'ACCEPTED');
+                  }
                 }}
                 className="px-4 py-1.5 rounded-full bg-accent text-white text-xs font-semibold hover:bg-accent/90 transition-colors shadow-sm disabled:opacity-50"
               >
                 {isProcessing ? '...' : 'Accept'}
               </button>
               <button
+                type="button"
                 disabled={isProcessing}
                 onClick={(e) => {
                   e.stopPropagation();
-                  if (onRespondFriend) onRespondFriend(item.id.replace('pending-', ''), 'DECLINED');
+                  if (onRespondFriend && item.respondUserId) {
+                    onRespondFriend(item.respondUserId, 'DECLINED');
+                  }
                 }}
                 className="px-4 py-1.5 rounded-full bg-app-surface border border-app-border text-app-text text-xs font-semibold hover:bg-app-card transition-colors disabled:opacity-50"
               >
                 {isProcessing ? '...' : 'Decline'}
               </button>
             </div>
-          )}
+          ) : null}
         </div>
       </div>
 
@@ -337,6 +348,10 @@ export function ActivityView({
   };
 
   const combinedItems = useMemo<ActivityListItem[]>(() => {
+    const pendingUserIds = new Set(
+      pendingFriends.map((item) => item.userId || item.id).filter(Boolean),
+    );
+
     const pendingItems: ActivityListItem[] = pendingFriends.map((item) => ({
       id: `pending-${item.id}`,
       title: item.title,
@@ -345,20 +360,38 @@ export function ActivityView({
       kind: 'request',
       notification: null,
       isUnread: true,
+      respondUserId: item.userId || item.id,
     }));
 
-    const notificationItems: ActivityListItem[] = notifications.map((item) => ({
-      id: item.id,
-      title: item.title,
-      body: formatNotificationDisplayBody(item.body),
-      createdAt: item.createdAt,
-      kind: classifyNotification(item),
-      notification: item,
-      isUnread: !item.isRead,
-    }));
+    const notificationItems: ActivityListItem[] = notifications
+      .map((item) => {
+        const kind = classifyNotification(item);
+        const respondUserId =
+          kind === 'request' ? resolveFriendRequestUserId(item, conversations) : null;
 
-    return [...pendingItems, ...notificationItems].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [notifications, pendingFriends]);
+        return {
+          id: item.id,
+          title: item.title,
+          body: formatNotificationDisplayBody(item.body),
+          createdAt: item.createdAt,
+          kind,
+          notification: item,
+          isUnread: !item.isRead,
+          respondUserId,
+        };
+      })
+      .filter((item) => {
+        if (item.kind !== 'request' || !item.respondUserId) {
+          return true;
+        }
+
+        return !pendingUserIds.has(item.respondUserId);
+      });
+
+    return [...pendingItems, ...notificationItems].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+    );
+  }, [conversations, notifications, pendingFriends]);
 
   const filterItemsByCategory = (items: ActivityListItem[], filter: ActivityFilter) => {
     let next = items;
@@ -405,14 +438,24 @@ export function ActivityView({
               {groups[groupName].items.map((item) => (
                 <div
                   key={item.id}
-                  onClick={() => item.notification && onNotificationClick(item.notification)}
-                  className="border-b border-app-border/30 last:border-0 cursor-pointer"
+                  onClick={() => {
+                    if (item.kind === 'request') {
+                      return;
+                    }
+
+                    if (item.notification) {
+                      onNotificationClick(item.notification);
+                    }
+                  }}
+                  className={`border-b border-app-border/30 last:border-0 ${item.kind === 'request' ? '' : 'cursor-pointer'}`}
                 >
                   <ActivityRowContent
                     item={item}
                     conversations={conversations}
                     onRespondFriend={handleRespondFriend}
-                    isProcessing={processingId === item.id.replace('pending-', '')}
+                    isProcessing={
+                      Boolean(item.respondUserId) && processingId === item.respondUserId
+                    }
                   />
                 </div>
               ))}

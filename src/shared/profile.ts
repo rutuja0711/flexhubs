@@ -127,6 +127,13 @@ export type UserPresenceStatus = 'ONLINE' | 'AWAY' | 'BUSY' | 'DND' | 'OFFLINE';
 
 export type ProfileSettings = {
   shareOnlineStatus: boolean;
+  showLastActive?: boolean;
+  readReceipts?: boolean;
+  profileVisibility?: string;
+  emailVisibility?: string;
+  statusVisibility?: string;
+  allowDirectMessagesFrom?: string;
+  callPrivacy?: string;
   messageSoundEnabled: boolean;
   dndEnabled: boolean;
   dndUntil: string | null;
@@ -218,6 +225,7 @@ export function userPresenceDotClass(status: UserPresenceStatus): string {
 export function normalizeNotificationSettings(payload: unknown): ProfileSettings {
   const root = asRecord(payload) ?? {};
   const record = asRecord(root.settings) ?? root;
+  console.log('RAW NOTIFICATION SETTINGS PAYLOAD:', JSON.stringify(payload, null, 2));
 
   const snoozedUntil =
     readString(record.snoozeUntil) ??
@@ -237,6 +245,19 @@ export function normalizeNotificationSettings(payload: unknown): ProfileSettings
       readBoolean(record.showOnlineStatus) ??
       readBoolean(record.onlineStatusVisible) ??
       true,
+    showLastActive:
+      readBoolean(record.showLastActive) ??
+      readBoolean(record.lastActiveVisible) ??
+      true,
+    readReceipts:
+      readBoolean(record.readReceipts) ??
+      readBoolean(record.readReceiptsEnabled) ??
+      true,
+    profileVisibility: readString(record.profileVisibility) ?? 'Everyone',
+    emailVisibility: readString(record.emailVisibility) ?? 'Organization only',
+    statusVisibility: readString(record.statusVisibility) ?? 'Everyone',
+    allowDirectMessagesFrom: readString(record.allowDirectMessagesFrom) ?? 'Organization members',
+    callPrivacy: readString(record.callPrivacy) ?? 'Everyone',
     messageSoundEnabled:
       readBoolean(record.messageSoundEnabled) ??
       readBoolean(record.messageSound) ??
@@ -822,6 +843,36 @@ export function buildProfileUpdatePayload(
     payload.showOnlineStatus = updates.shareOnlineStatus;
   }
 
+  if (typeof updates.showLastActive === 'boolean') {
+    payload.showLastActive = updates.showLastActive;
+    payload.lastActiveVisible = updates.showLastActive;
+  }
+
+  if (typeof updates.readReceipts === 'boolean') {
+    payload.readReceipts = updates.readReceipts;
+    payload.readReceiptsEnabled = updates.readReceipts;
+  }
+
+  if (typeof updates.profileVisibility === 'string') {
+    payload.profileVisibility = updates.profileVisibility;
+  }
+
+  if (typeof updates.emailVisibility === 'string') {
+    payload.emailVisibility = updates.emailVisibility;
+  }
+
+  if (typeof updates.statusVisibility === 'string') {
+    payload.statusVisibility = updates.statusVisibility;
+  }
+
+  if (typeof updates.allowDirectMessagesFrom === 'string') {
+    payload.allowDirectMessagesFrom = updates.allowDirectMessagesFrom;
+  }
+
+  if (typeof updates.callPrivacy === 'string') {
+    payload.callPrivacy = updates.callPrivacy;
+  }
+
   if (typeof updates.messageSoundEnabled === 'boolean') {
     payload.messageSoundEnabled = updates.messageSoundEnabled;
     payload.messageSound = updates.messageSoundEnabled;
@@ -850,6 +901,15 @@ export type NotificationPreferenceUpdate = {
   snoozeValue?: string;
   dndValue?: string;
   messageSoundEnabled?: boolean;
+  shareOnlineStatus?: boolean;
+  showLastActive?: boolean;
+  readReceipts?: boolean;
+  profileVisibility?: string;
+  emailVisibility?: string;
+  statusVisibility?: string;
+  allowDirectMessagesFrom?: string;
+  callPrivacy?: string;
+  dndEnabled?: boolean;
 };
 
 const SNOOZE_PRESET_VALUES = ['30m', '1h', '4h', '8h', '24h', 'tomorrow', 'forever', 'off'] as const;
@@ -891,8 +951,10 @@ function buildSnoozePayload(value: string): Record<string, unknown> {
     };
   }
 
+  const ms = SNOOZE_DURATION_MS[preset];
+
   return {
-    snoozedUntil: null,
+    snoozedUntil: ms ? new Date(Date.now() + ms).toISOString() : null,
     snoozedForever: false,
     snoozeDuration: preset,
   };
@@ -916,9 +978,11 @@ function buildDndPayload(value: string): Record<string, unknown> {
     };
   }
 
+  const ms = SNOOZE_DURATION_MS[preset];
+
   return {
     dndEnabled: true,
-    dndUntil: null,
+    dndUntil: ms ? new Date(Date.now() + ms).toISOString() : null,
     duration: preset,
   };
 }
@@ -1091,13 +1155,64 @@ export function applyNotificationPreferenceUpdate(
 export function buildNotificationSettingsPayload(
   updates: NotificationPreferenceUpdate,
 ): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
+
   if (updates.snoozeValue !== undefined) {
-    return buildSnoozePayload(updates.snoozeValue || 'off');
+    Object.assign(payload, buildSnoozePayload(updates.snoozeValue || 'off'));
   }
 
   if (updates.dndValue !== undefined) {
-    return buildDndPayload(updates.dndValue || 'off');
+    Object.assign(payload, buildDndPayload(updates.dndValue || 'off'));
   }
 
-  return buildSnoozePayload('off');
+  if (updates.messageSoundEnabled !== undefined) {
+    payload.messageSoundEnabled = updates.messageSoundEnabled;
+    payload.messageSound = updates.messageSoundEnabled;
+    payload.soundEnabled = updates.messageSoundEnabled;
+  }
+
+  if (updates.shareOnlineStatus !== undefined) {
+    payload.shareOnlineStatus = updates.shareOnlineStatus;
+    payload.sharePresence = updates.shareOnlineStatus;
+    payload.showOnlineStatus = updates.shareOnlineStatus;
+  }
+
+  if (updates.showLastActive !== undefined) {
+    payload.showLastActive = updates.showLastActive;
+    payload.lastActiveVisible = updates.showLastActive;
+  }
+
+  if (updates.readReceipts !== undefined) {
+    payload.readReceipts = updates.readReceipts;
+    payload.readReceiptsEnabled = updates.readReceipts;
+  }
+
+  if (updates.profileVisibility !== undefined) {
+    payload.profileVisibility = updates.profileVisibility;
+  }
+
+  if (updates.emailVisibility !== undefined) {
+    payload.emailVisibility = updates.emailVisibility;
+  }
+
+  if (updates.statusVisibility !== undefined) {
+    payload.statusVisibility = updates.statusVisibility;
+  }
+
+  if (updates.allowDirectMessagesFrom !== undefined) {
+    payload.allowDirectMessagesFrom = updates.allowDirectMessagesFrom;
+  }
+
+  if (updates.callPrivacy !== undefined) {
+    payload.callPrivacy = updates.callPrivacy;
+  }
+
+  if (updates.dndEnabled !== undefined) {
+    payload.dndEnabled = updates.dndEnabled;
+    payload.dndActive = updates.dndEnabled;
+    payload.doNotDisturb = updates.dndEnabled;
+    payload.dnd = updates.dndEnabled;
+  }
+
+  return payload;
 }

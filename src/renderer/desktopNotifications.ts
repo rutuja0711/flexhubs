@@ -6,6 +6,7 @@ import { getUserId } from '../shared/user';
 import { getStoredUser } from './authApi';
 import { APP_LOGO_SYMBOL_SRC } from './brand/logoAssets';
 import { playMessageNotificationSound } from './messageSound';
+import { mapMessageToNotificationData } from './ui/notifications/FlexHubsDesktopNotification';
 
 let notificationSnapshotReady = false;
 const knownNotificationKeys = new Set<string>();
@@ -256,13 +257,17 @@ async function openDesktopNotification(
   body: string,
   tag: string,
   onClick: () => void,
+  payload?: any,
 ): Promise<boolean> {
   bindNativeNotificationClicks();
 
   if (window.electronAPI?.showDesktopNotification) {
     pendingClicks.set(tag, onClick);
 
-    void window.electronAPI.showDesktopNotification(title, body, tag).then((result) => {
+    const data = payload || { title, body, tag };
+    data.tag = tag;
+
+    void window.electronAPI.showDesktopNotification(data).then((result) => {
       if (result.ok) {
         return;
       }
@@ -493,6 +498,7 @@ export async function showIncomingMessageDesktopNotification(
   conversation: Pick<ConversationItem, 'kind' | 'title'> | null,
   onClick: () => void,
   conversationId?: string,
+  avatarUrl?: string | null,
 ): Promise<boolean> {
   if (isCallLogMessage(message)) {
     return false;
@@ -515,10 +521,6 @@ export async function showIncomingMessageDesktopNotification(
   );
   const alertKeys = [
     message.id,
-    contentFingerprint(conversationId, title, body),
-    contentFingerprint(title, body),
-    contentFingerprint(message.senderName, preview),
-    contentFingerprint(effectiveConversation?.title, preview),
   ];
 
   if (shownMessageIds.has(message.id) || !claimAlertKeys(alertKeys)) {
@@ -532,7 +534,9 @@ export async function showIncomingMessageDesktopNotification(
   rememberConversationAlert(conversationId);
   maybePlayAlertSound(message.id);
 
-  const delivered = await openDesktopNotification(title, body, `message-${message.id}`, onClick);
+  const payload = mapMessageToNotificationData(message, conversation?.title, conversation?.kind === 'hub' || conversation?.kind === 'group');
+  payload.avatarUrl = avatarUrl || payload.avatarUrl;
+  const delivered = await openDesktopNotification(title, body, `message-${message.id}`, onClick, payload);
 
   finalizeAlertKeys(alertKeys, delivered);
 

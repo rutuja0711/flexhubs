@@ -1,4 +1,4 @@
-import { FiPhone, FiPhoneOff } from 'react-icons/fi';
+import { FiPhone, FiPhoneOff, FiX } from 'react-icons/fi';
 import type { CallSession } from '../callManager';
 
 type CallRingingViewProps = {
@@ -25,75 +25,88 @@ export function CallRingingView({
     (phase === 'incoming' || phase === 'connecting') && !session.isInitiator;
   const isOutgoingCaller = phase === 'outgoing' || (phase === 'connecting' && session.isInitiator);
 
+  const statusLabel =
+    phase === 'connecting'
+      ? 'Connecting...'
+      : isIncomingCallee
+        ? session.video
+          ? 'Incoming video call'
+          : 'Incoming voice call'
+        : isOutgoingCaller
+          ? session.video
+            ? 'Calling with video…'
+            : 'Calling…'
+          : 'In call';
+
   return (
-    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 p-4 backdrop-blur-md">
-      <div className="flex w-full max-w-md flex-col items-center overflow-hidden rounded-[28px] border border-app-border bg-app-elevated px-8 py-10 shadow-app">
-        <div className="relative mb-6">
-          <span
-            className={`absolute inset-0 rounded-full bg-accent/20 ${
-              isIncomingCallee || isOutgoingCaller ? 'animate-ping' : ''
-            }`}
-            aria-hidden="true"
-          />
-          <span
-            className={`absolute -inset-3 rounded-full border border-accent/30 ${
-              isIncomingCallee || isOutgoingCaller ? 'animate-pulse' : ''
-            }`}
-            aria-hidden="true"
-          />
-          {session.peerAvatar ? (
-            <img
-              src={session.peerAvatar}
-              alt=""
-              className="relative h-28 w-28 rounded-full border-4 border-white/10 object-cover shadow-lg"
-            />
-          ) : (
-            <div className="relative flex h-28 w-28 items-center justify-center rounded-full bg-accent/15 text-4xl font-semibold text-accent-soft">
-              {initial}
-            </div>
-          )}
+    <div className="pointer-events-none fixed inset-x-0 top-0 z-[9999] flex justify-end px-3 pb-2 pt-[max(0.75rem,env(safe-area-inset-top,0px))] sm:px-4 sm:pb-3 sm:pt-[max(1rem,env(safe-area-inset-top,0px))]">
+      <div
+        className="pointer-events-auto w-full max-w-[min(100%,22rem)] overflow-hidden rounded-2xl border border-app-border bg-app-elevated shadow-app animate-in slide-in-from-top-2 fade-in duration-200"
+        role="dialog"
+        aria-label={statusLabel}
+      >
+        <div className="flex items-start gap-3 px-3 py-3 sm:px-4">
+          <div className="relative shrink-0">
+            {isIncomingCallee || isOutgoingCaller ? (
+              <span
+                className="absolute -inset-1 rounded-full bg-accent/15 animate-pulse"
+                aria-hidden="true"
+              />
+            ) : null}
+            {session.peerAvatar ? (
+              <img
+                src={session.peerAvatar}
+                alt=""
+                className="relative h-11 w-11 rounded-full border border-app-border object-cover"
+              />
+            ) : (
+              <div className="relative flex h-11 w-11 items-center justify-center rounded-full bg-accent/15 text-sm font-semibold text-accent-soft">
+                {initial}
+              </div>
+            )}
+          </div>
+
+          <div className="min-w-0 flex-1 pt-0.5">
+            <p className="truncate text-sm font-semibold text-app-text">{title}</p>
+            <p className="mt-0.5 text-xs text-app-muted">{statusLabel}</p>
+            {notice ? (
+              <p className="mt-1 line-clamp-2 text-[11px] text-app-muted" role="status">
+                {notice}
+              </p>
+            ) : null}
+          </div>
+
+          <button
+            type="button"
+            aria-label="Dismiss"
+            className="shrink-0 rounded-lg p-1.5 text-app-muted hover:bg-app-chat-hover hover:text-app-text"
+            onClick={isIncomingCallee ? onReject : onCancel}
+          >
+            <FiX className="h-4 w-4" />
+          </button>
         </div>
 
-        <p className="truncate text-xl font-semibold text-app-text">{title}</p>
-        <p className="mt-2 text-sm text-app-muted">
-          {phase === 'connecting'
-            ? 'Connecting...'
-            : isIncomingCallee
-              ? session.video
-                ? 'Incoming video call'
-                : 'Incoming voice call'
-              : isOutgoingCaller
-                ? session.video
-                  ? 'Calling with video...'
-                  : 'Calling...'
-                : 'In call'}
-        </p>
-
-        {notice ? (
-          <p className="mt-3 max-w-xs text-center text-xs text-app-muted" role="status">
-            {notice}
-          </p>
-        ) : null}
-
-        <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-app-border px-3 py-2.5 sm:px-4">
           {isIncomingCallee ? (
             <>
               {phase === 'incoming' ? (
                 <button
                   type="button"
                   disabled={busy}
-                  className="inline-flex items-center gap-2 rounded-full bg-emerald-500 px-5 py-3 text-sm font-semibold text-white hover:opacity-90 disabled:opacity-60"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-semibold text-white hover:opacity-90 disabled:opacity-60"
                   onClick={onAccept}
                 >
-                  <FiPhone /> Accept
+                  <FiPhone className="h-3.5 w-3.5" />
+                  Accept
                 </button>
               ) : null}
               <button
                 type="button"
-                className="inline-flex items-center gap-2 rounded-full bg-red-500 px-5 py-3 text-sm font-semibold text-white hover:opacity-90"
+                className="inline-flex items-center gap-1.5 rounded-xl bg-red-500 px-3 py-2 text-xs font-semibold text-white hover:opacity-90"
                 onClick={onReject}
               >
-                <FiPhoneOff /> Decline
+                <FiPhoneOff className="h-3.5 w-3.5" />
+                Decline
               </button>
             </>
           ) : null}
@@ -101,10 +114,11 @@ export function CallRingingView({
           {isOutgoingCaller ? (
             <button
               type="button"
-              className="inline-flex items-center gap-2 rounded-full bg-red-500 px-5 py-3 text-sm font-semibold text-white hover:opacity-90"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-red-500 px-3 py-2 text-xs font-semibold text-white hover:opacity-90"
               onClick={onCancel}
             >
-              <FiPhoneOff /> {phase === 'outgoing' ? 'Cancel' : 'End call'}
+              <FiPhoneOff className="h-3.5 w-3.5" />
+              {phase === 'outgoing' ? 'Cancel' : 'End call'}
             </button>
           ) : null}
         </div>

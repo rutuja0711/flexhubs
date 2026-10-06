@@ -1,5 +1,22 @@
 import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
-import { FiBell, FiCalendar, FiMapPin, FiMoreVertical, FiPhone, FiUsers, FiVideo } from 'react-icons/fi';
+import {
+  FiBell,
+  FiBellOff,
+  FiBookmark,
+  FiCalendar,
+  FiClock,
+  FiMail,
+  FiMapPin,
+  FiMoreVertical,
+  FiPhone,
+  FiTrash2,
+  FiUsers,
+  FiVideo,
+} from 'react-icons/fi';
+import {
+  filterMessagesForBlockPolicy,
+  isViewerBlockedByPeer,
+} from '../../shared/blocking';
 import type { ConversationItem, PresenceStatus } from '../../shared/chat';
 import {
   buildConversationSnoozePayload,
@@ -57,6 +74,7 @@ type ConversationThreadProps = {
   onRetryMessage?: (messageId: string) => void;
   onSendMedia?: (item: GifPickerItem, kind: 'gif' | 'sticker', replyToId?: string, threadRootId?: string) => void;
   onSendFile?: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
+  onSendVoice?: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
   onUnauthorized: (status?: number) => boolean;
   currentUserId: string | null;
   onAddReaction: (messageId: string, emoji: string) => void;
@@ -86,6 +104,9 @@ type ConversationThreadProps = {
   onThreadMessagesRegistered?: () => void;
   onSummarizeUnread?: () => void;
   sendProgressByMessageId?: Record<string, number>;
+  onBlockedUsersChanged?: () => void;
+  blockedUserIds?: ReadonlySet<string>;
+  blockedByPeerIds?: ReadonlySet<string>;
 };
 
 export function ConversationThread({
@@ -105,6 +126,7 @@ export function ConversationThread({
   onRetryMessage,
   onSendMedia,
   onSendFile,
+  onSendVoice,
   onUnauthorized,
   currentUserId,
   onAddReaction,
@@ -134,6 +156,9 @@ export function ConversationThread({
   onOpenFlexAi,
   onThreadReplySent,
   onThreadMessagesRegistered,
+  onBlockedUsersChanged,
+  blockedUserIds,
+  blockedByPeerIds,
 }: ConversationThreadProps) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -143,6 +168,8 @@ export function ConversationThread({
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchResultCount, setSearchResultCount] = useState(0);
   const [highlightedMessageIds, setHighlightedMessageIds] = useState<string[]>([]);
+  const [searchActiveMatchIndex, setSearchActiveMatchIndex] = useState(0);
+  const searchMatchIdsRef = useRef<string[]>([]);
   const [forwardMessageId, setForwardMessageId] = useState<string | null>(null);
   const [forwardLoading, setForwardLoading] = useState(false);
   const [forwardError, setForwardError] = useState('');
@@ -190,6 +217,17 @@ export function ConversationThread({
     return null;
   }
 
+  const isDirectContact =
+    conversation.kind === 'direct' && !conversation.isSelf && Boolean(conversation.peerUserId);
+  const peerBlockedByCurrentUser =
+    isDirectContact &&
+    conversation.peerUserId != null &&
+    blockedUserIds?.has(conversation.peerUserId) === true;
+  const peerBlockedViewer =
+    isDirectContact &&
+    conversation.peerUserId != null &&
+    isViewerBlockedByPeer(conversation.peerUserId, blockedByPeerIds ?? new Set());
+
   const subtitle = (() => {
     if (conversation.isSelf) {
       return 'Message yourself';
@@ -202,6 +240,10 @@ export function ConversationThread({
       }
 
       return 'Hub';
+    }
+
+    if (peerBlockedViewer) {
+      return '';
     }
 
     const customStatus = conversation.peerStatusMessage?.trim();
@@ -293,7 +335,15 @@ export function ConversationThread({
     });
   }, [loadedPinnedMessages, messages, pinnedMessageIds]);
 
-  const mainChatMessages = useMemo(() => filterMainChatMessages(messages), [messages]);
+  const mainChatMessages = useMemo(() => {
+    const main = filterMainChatMessages(messages);
+    return filterMessagesForBlockPolicy(
+      main,
+      conversation.kind,
+      blockedUserIds ?? new Set(),
+      currentUserId,
+    );
+  }, [blockedUserIds, conversation.kind, currentUserId, messages]);
   const threadsEnabled = conversation.kind === 'hub';
 
   const featuredPinnedMessage =
@@ -312,9 +362,13 @@ export function ConversationThread({
     setNotificationsSnoozed(notificationsSnoozedFromProps);
   }, [conversation.id, notificationsSnoozedFromProps]);
 
-  const jumpToMessage = useCallback((messageId: string) => {
+  const scrollToMessageInThread = useCallback((messageId: string) => {
     setBannerScrollTargetId(messageId);
     setScrollRequestKey((current) => current + 1);
+  }, []);
+
+  const jumpToMessage = useCallback((messageId: string) => {
+    scrollToMessageInThread(messageId);
     setHighlightedMessageIds((current) => [...new Set([...current, messageId])]);
 
     const timeoutId = window.setTimeout(() => {
@@ -323,7 +377,29 @@ export function ConversationThread({
     }, 2200);
 
     highlightTimeoutsRef.current.push(timeoutId);
-  }, []);
+  }, [scrollToMessageInThread]);
+
+  const navigateSearchMatch = useCallback(
+    (delta: number) => {
+      const ids = searchMatchIdsRef.current;
+
+      if (ids.length === 0) {
+        return;
+      }
+
+      setSearchActiveMatchIndex((current) => {
+        const next = (current + delta + ids.length) % ids.length;
+        const messageId = ids[next];
+
+        if (messageId) {
+          scrollToMessageInThread(messageId);
+        }
+
+        return next;
+      });
+    },
+    [scrollToMessageInThread],
+  );
 
   useEffect(() => {
     if (focusMessageId) {
@@ -496,6 +572,8 @@ export function ConversationThread({
     if (!validation.ok) {
       setSearchError(validation.error);
       setHighlightedMessageIds([]);
+      searchMatchIdsRef.current = [];
+      setSearchActiveMatchIndex(0);
       setSearchResultCount(0);
       return;
     }
@@ -503,6 +581,8 @@ export function ConversationThread({
     if (!validation.value) {
       setSearchError('');
       setHighlightedMessageIds([]);
+      searchMatchIdsRef.current = [];
+      setSearchActiveMatchIndex(0);
       setSearchResultCount(0);
       return;
     }
@@ -521,31 +601,39 @@ export function ConversationThread({
 
           setSearchError(response.error);
           setHighlightedMessageIds([]);
+          searchMatchIdsRef.current = [];
+          setSearchActiveMatchIndex(0);
           setSearchResultCount(0);
           return;
         }
 
+        const matchIds = response.data.hits.map((hit) => hit.messageId);
+        searchMatchIdsRef.current = matchIds;
         setSearchResultCount(response.data.count);
-        setHighlightedMessageIds(response.data.hits.map((hit) => hit.messageId));
+        setHighlightedMessageIds(matchIds);
+        setSearchActiveMatchIndex(0);
+
+        if (matchIds[0]) {
+          scrollToMessageInThread(matchIds[0]);
+        }
       });
     }, 300);
 
     return () => window.clearTimeout(timer);
-  }, [conversation.id, onUnauthorized, searchOpen, searchQuery]);
+  }, [conversation.id, onUnauthorized, scrollToMessageInThread, searchOpen, searchQuery]);
 
   const closeSearch = () => {
     setSearchOpen(false);
     setSearchQuery('');
     setSearchError('');
     setHighlightedMessageIds([]);
+    searchMatchIdsRef.current = [];
+    setSearchActiveMatchIndex(0);
     setSearchResultCount(0);
   };
 
-  const canCallDirect =
-    conversation.kind === 'direct' && !conversation.isSelf && Boolean(conversation.peerUserId);
+  const canCallDirect = isDirectContact;
   const canCallHub = conversation.kind === 'hub';
-  const isDirectContact =
-    conversation.kind === 'direct' && !conversation.isSelf && Boolean(conversation.peerUserId);
   const isHubPanel = conversation.kind === 'hub' || Boolean(hubDetails);
   const isGroupPanel = !isHubPanel && !isDirectContact;
 
@@ -598,7 +686,7 @@ export function ConversationThread({
               <button
                 type="button"
                 aria-label={canCallHub ? 'Start voice meeting' : 'Start voice call'}
-                disabled={callBusy}
+                disabled={callBusy || peerBlockedByCurrentUser || peerBlockedViewer}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95 disabled:opacity-40"
                 onClick={() => onStartVoiceCall?.()}
               >
@@ -607,7 +695,7 @@ export function ConversationThread({
               <button
                 type="button"
                 aria-label={canCallHub ? 'Start video meeting' : 'Start video call'}
-                disabled={callBusy}
+                disabled={callBusy || peerBlockedByCurrentUser || peerBlockedViewer}
                 className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95 disabled:opacity-40"
                 onClick={() => onStartVideoCall?.()}
               >
@@ -629,7 +717,13 @@ export function ConversationThread({
               <FiMoreVertical className="text-base" />
             </button>
             {menuOpen && (
-              <div className="absolute right-0 top-full z-50 mt-2 w-60 rounded-2xl border border-app-border bg-app-surface/98 dark:bg-app-elevated/95 backdrop-blur-xl p-1.5 shadow-2xl animate-pop-in origin-top-right">
+              <div className="absolute right-0 top-full z-[120] mt-2 w-60 overflow-hidden rounded-2xl border border-app-border/80 bg-app-surface shadow-[0_20px_50px_-12px_rgba(0,0,0,0.45)] ring-1 ring-black/[0.06] animate-pop-in origin-top-right dark:border-white/10 dark:bg-[#18181c] dark:ring-white/10 dark:shadow-black/70">
+                <div
+                  className="pointer-events-none absolute inset-0 bg-gradient-to-b from-white/25 via-white/5 to-transparent dark:from-white/[0.08] dark:via-white/[0.02]"
+                  aria-hidden="true"
+                />
+                <div className="pointer-events-none absolute inset-0 backdrop-blur-2xl backdrop-saturate-150" aria-hidden="true" />
+                <div className="relative p-1.5">
                 <button
                   type="button"
                   disabled={menuBusy}
@@ -639,7 +733,7 @@ export function ConversationThread({
                   className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                 >
                   <span className="flex items-center gap-2">
-                    <FiMapPin />
+                    <FiMapPin className="shrink-0 text-sm text-app-muted" strokeWidth={1.75} aria-hidden="true" />
                     {conversation.isPinned ? 'Unpin chat' : 'Pin chat'}
                   </span>
                 </button>
@@ -653,7 +747,7 @@ export function ConversationThread({
                   className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                 >
                   <span className="flex items-center gap-2">
-                    <FiMapPin />
+                    <FiBookmark className="shrink-0 text-sm text-app-muted" strokeWidth={1.75} aria-hidden="true" />
                     Pinned messages
                   </span>
                   <span className="text-app-muted">{pinnedMessages.length > 0 ? pinnedMessages.length : '›'}</span>
@@ -668,7 +762,7 @@ export function ConversationThread({
                     className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                   >
                     <span className="flex items-center gap-2">
-                      <FiBell />
+                      <FiBell className="shrink-0 text-sm text-app-muted" strokeWidth={1.75} aria-hidden="true" />
                       Enable notifications
                     </span>
                   </button>
@@ -681,7 +775,7 @@ export function ConversationThread({
                       className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                     >
                       <span className="flex items-center gap-2">
-                        <FiBell />
+                        <FiBellOff className="shrink-0 text-sm text-app-muted" strokeWidth={1.75} aria-hidden="true" />
                         Snooze notifications
                       </span>
                       <span className="text-app-muted">{snoozeMenuOpen ? '⌃' : '›'}</span>
@@ -695,8 +789,9 @@ export function ConversationThread({
                             onClick={() => {
                               void handleSnooze(option.value);
                             }}
-                            className="flex w-full rounded-lg px-7 py-1.5 text-left text-xs text-app-muted hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-app-text transition-colors disabled:opacity-50"
+                            className="flex w-full items-center gap-2 rounded-lg px-7 py-1.5 text-left text-xs text-app-muted hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-app-text transition-colors disabled:opacity-50"
                           >
+                            <FiClock className="shrink-0 text-[13px] opacity-70" strokeWidth={1.75} aria-hidden="true" />
                             {option.label}
                           </button>
                         ))
@@ -705,13 +800,31 @@ export function ConversationThread({
                 )}
                 <button
                   type="button"
+                  onClick={() => {
+                    setMenuOpen(false);
+                    openInfoPanel();
+                  }}
+                  className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors"
+                >
+                  <span className="flex items-center gap-2">
+                    <FiUsers className="shrink-0 text-sm text-app-muted" strokeWidth={1.75} aria-hidden="true" />
+                    Members
+                  </span>
+                  <span className="text-app-muted">›</span>
+                </button>
+                <div className="my-1 h-px bg-app-border/70" role="separator" />
+                <button
+                  type="button"
                   disabled={menuBusy}
                   onClick={() => {
                     void handleMarkUnread();
                   }}
                   className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                 >
-                  Mark as unread
+                  <span className="flex items-center gap-2">
+                    <FiMail className="shrink-0 text-sm text-app-muted" strokeWidth={1.75} aria-hidden="true" />
+                    Mark as unread
+                  </span>
                 </button>
                 <button
                   type="button"
@@ -721,7 +834,21 @@ export function ConversationThread({
                   }}
                   className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
                 >
-                  Clear history
+                  <span className="flex items-center gap-2">
+                    <FiTrash2 className="shrink-0 text-sm text-app-muted" strokeWidth={1.75} aria-hidden="true" />
+                    Clear history
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  disabled={menuBusy}
+                  onClick={handleScheduleEvent}
+                  className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
+                >
+                  <span className="flex items-center gap-2">
+                    <FiCalendar className="shrink-0 text-sm text-app-muted" strokeWidth={1.75} aria-hidden="true" />
+                    Schedule event
+                  </span>
                 </button>
                 {conversation.kind !== 'hub' ? (
                   <button
@@ -732,34 +859,13 @@ export function ConversationThread({
                     }}
                     className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors disabled:opacity-50"
                   >
-                    Delete conversation
+                    <span className="flex items-center gap-2">
+                      <FiTrash2 className="shrink-0 text-sm" strokeWidth={1.75} aria-hidden="true" />
+                      Delete conversation
+                    </span>
                   </button>
                 ) : null}
-                <button
-                  type="button"
-                  disabled={menuBusy}
-                  onClick={handleScheduleEvent}
-                  className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
-                >
-                  <span className="flex items-center gap-2">
-                    <FiCalendar />
-                    Schedule event
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    openInfoPanel();
-                  }}
-                  className="flex w-full items-center justify-between px-4 py-2 text-left text-sm text-app-text hover:bg-app-chat-hover"
-                >
-                  <span className="flex items-center gap-2">
-                    <FiUsers />
-                    Members
-                  </span>
-                  <span className="text-app-muted">›</span>
-                </button>
+                </div>
               </div>
             )}
           </div>
@@ -771,8 +877,11 @@ export function ConversationThread({
           value={searchQuery}
           error={searchError}
           resultCount={searchLoading ? 0 : searchResultCount}
+          activeMatchIndex={searchActiveMatchIndex}
           onChange={setSearchQuery}
           onClose={closeSearch}
+          onPreviousMatch={() => navigateSearchMatch(-1)}
+          onNextMatch={() => navigateSearchMatch(1)}
         />
       ) : null}
 
@@ -846,6 +955,7 @@ export function ConversationThread({
         conversationKind={conversation.kind}
         onVotePoll={onVotePoll}
         showReactionAuthors={conversation.kind === 'hub'}
+        peerBlockedByCurrentUser={peerBlockedByCurrentUser}
       />
 
       {typingLabel ? (
@@ -864,7 +974,9 @@ export function ConversationThread({
 
       <MessageInput
         value={draft}
-        disabled={loading && messages.length === 0}
+        disabled={
+          (loading && messages.length === 0) || peerBlockedByCurrentUser || peerBlockedViewer
+        }
         isSending={isSending}
         error={draftError}
         conversationId={conversation.id}
@@ -895,6 +1007,17 @@ export function ConversationThread({
               }
             : undefined
         }
+        onSendVoice={
+          onSendVoice
+            ? (file, caption) => {
+                onSendVoice(file, caption, replyingToMessage?.id);
+                setReplyingToMessage(null);
+              }
+            : undefined
+        }
+        onScheduled={() => {
+          onConversationUpdated?.();
+        }}
         onUnauthorized={onUnauthorized}
         onOpenFlexAi={onOpenFlexAi}
       />
@@ -1003,6 +1126,8 @@ export function ConversationThread({
           conversation={conversation}
           peerUserId={conversation.peerUserId}
           pinnedCount={pinnedMessages.length}
+          pinnedMessages={pinnedMessages}
+          onJumpToMessage={jumpToMessage}
           notificationsSnoozed={notificationsSnoozed}
           canCall={canCallDirect}
           callBusy={callBusy}
@@ -1025,6 +1150,11 @@ export function ConversationThread({
             void handleSnooze(duration);
           }}
           snoozeOptions={CONVERSATION_SNOOZE_OPTIONS}
+          onBlockedUsersChanged={onBlockedUsersChanged}
+          peerIsBlocked={
+            conversation.peerUserId ? blockedUserIds?.has(conversation.peerUserId) === true : false
+          }
+          peerBlockedViewer={peerBlockedViewer}
         />
       ) : null}
       {settingsOpen && isHubPanel ? (
@@ -1032,6 +1162,8 @@ export function ConversationThread({
           conversation={conversation}
           hubDetails={hubDetails}
           currentUserId={currentUserId}
+          blockedUserIds={blockedUserIds}
+          blockedByPeerIds={blockedByPeerIds}
           onClose={() => setSettingsOpen(false)}
           onConversationUpdated={() => {
             onConversationUpdated?.();
@@ -1059,10 +1191,10 @@ export function ConversationThread({
           rootMessage={threadRootMessage}
           currentUserId={currentUserId}
           onClose={() => setThreadRootMessage(null)}
-          onSendThreadMessage={async (content, threadRootId) => {
+          onSendThreadMessage={async (content, threadRootId, replyToId) => {
             const { sendChatMessage } = await import('../chatApi');
             trackPendingThreadSend(content, threadRootId);
-            const result = await sendChatMessage(conversation.id, content, undefined, threadRootId);
+            const result = await sendChatMessage(conversation.id, content, replyToId, threadRootId);
             if (!result.ok) {
               return { ok: false as const, error: result.error };
             }
@@ -1072,6 +1204,7 @@ export function ConversationThread({
           }}
           onSendMedia={onSendMedia}
           onSendFile={onSendFile}
+          onSendVoice={onSendVoice}
           onUnauthorized={onUnauthorized}
           onOpenFlexAi={onOpenFlexAi}
           onThreadReplySent={onThreadReplySent}

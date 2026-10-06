@@ -4,13 +4,18 @@ import { FiBarChart2, FiClock, FiImage, FiLink, FiMic, FiPaperclip, FiPlus, FiSe
 import { EnhanceSparkleIcon } from './ChatIcons';
 import type { GifPickerItem } from '../../shared/gifs';
 import type { MessageItem } from '../../shared/messages';
-import { buildScheduleMessageBody, validateMessageDraft } from '../../shared/messages';
+import {
+  buildScheduleMessageBody,
+  validateMessageDraft,
+  validateScheduleMessageContent,
+} from '../../shared/messages';
 import {
   enhanceMessageText,
   generateMessageText,
   parseFlexCommand,
   transcribeAudioFile,
 } from '../extrasApi';
+import { ensureCallMediaPermissions } from '../callsApi';
 import {
   createPoll,
   loadMentionSuggestions,
@@ -22,6 +27,9 @@ import { useToast } from '../ui/Toast';
 import { MessageReplyPreview } from './MessageContent';
 import { MediaPicker, type MediaPickerTab } from './MediaPicker';
 import { ScheduleMessageModal } from './ScheduleMessageModal';
+import type { ScheduledMessageItem } from '../../shared/extras';
+import { VoiceInlineRecording } from './VoiceInlineRecording';
+import { parseDateTimeLocalValue } from './scheduleDateTime';
 
 type MessageInputProps = {
   value: string;
@@ -35,8 +43,9 @@ type MessageInputProps = {
   onSend: () => void;
   onSendMedia?: (item: GifPickerItem, kind: 'gif' | 'sticker') => void;
   onSendFile?: (file: File, caption?: string) => void;
+  onSendVoice?: (file: File, caption?: string) => void;
   onPollCreated?: () => void;
-  onScheduled?: () => void;
+  onScheduled?: (item?: ScheduledMessageItem) => void;
   onUnauthorized?: (status?: number) => boolean;
   onOpenFlexAi?: () => void;
   compact?: boolean;
@@ -105,6 +114,21 @@ function detectMentionAnchor(text: string, cursor: number): number | null {
   return match ? cursor - match[0].length : null;
 }
 
+const VOICE_RECORDER_MIME_TYPES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4',
+  'audio/ogg;codecs=opus',
+];
+
+function pickVoiceRecorderMimeType(): string | undefined {
+  if (typeof MediaRecorder === 'undefined') {
+    return undefined;
+  }
+
+  return VOICE_RECORDER_MIME_TYPES.find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+}
+
 function readFileAsBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -135,6 +159,7 @@ export function MessageInput({
   onSend,
   onSendMedia,
   onSendFile,
+  onSendVoice,
   onPollCreated,
   onScheduled,
   onUnauthorized,
@@ -167,9 +192,26 @@ export function MessageInput({
   const [pollQuestion, setPollQuestion] = useState('');
   const [pollOptions, setPollOptions] = useState(['', '']);
   const [pollBusy, setPollBusy] = useState(false);
+  const [pollAllowMultiple, setPollAllowMultiple] = useState(false);
+  const [pollExpiresAt, setPollExpiresAt] = useState('');
+  const [voiceCaptureMode, setVoiceCaptureMode] = useState<'note' | 'typing' | null>(null);
+  const [voiceTypingTranscribing, setVoiceTypingTranscribing] = useState(false);
+  const [pendingVoiceNote, setPendingVoiceNote] = useState<{
+    file: File;
+    url: string;
+    durationSec: number;
+  } | null>(null);
+  const [recordingElapsedSec, setRecordingElapsedSec] = useState(0);
+  const voiceCaptureModeRef = useRef<'note' | 'typing' | null>(null);
+  const voiceRecorderRef = useRef<MediaRecorder | null>(null);
+  const voiceStreamRef = useRef<MediaStream | null>(null);
+  const voiceChunksRef = useRef<Blob[]>([]);
+  const voiceDiscardRef = useRef(false);
+  const recordingStartedAtRef = useRef<number | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const imageInputRef = useRef<HTMLInputElement>(null);
-  const audioInputRef = useRef<HTMLInputElement>(null);
+  const voiceNoteInputRef = useRef<HTMLInputElement>(null);
+  const dictationBaseRef = useRef('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const aiMenuButtonRef = useRef<HTMLButtonElement>(null);
   const actionsMenuButtonRef = useRef<HTMLButtonElement>(null);
@@ -218,7 +260,54 @@ export function MessageInput({
 
   useEffect(() => {
     clearPendingAttachments();
+    clearPendingVoiceNote();
+    setVoiceTypingTranscribing(false);
+    setVoiceCaptureMode(null);
+    voiceCaptureModeRef.current = null;
   }, [conversationId]);
+
+  const clearPendingVoiceNote = () => {
+    setPendingVoiceNote((current) => {
+      if (current?.url.startsWith('blob:')) {
+        URL.revokeObjectURL(current.url);
+      }
+      return null;
+    });
+    setRecordingElapsedSec(0);
+    recordingStartedAtRef.current = null;
+  };
+
+  useEffect(() => {
+    if (!voiceCaptureMode) {
+      recordingStartedAtRef.current = null;
+      return;
+    }
+
+    recordingStartedAtRef.current = Date.now();
+    setRecordingElapsedSec(0);
+
+    const timer = window.setInterval(() => {
+      const startedAt = recordingStartedAtRef.current;
+      if (!startedAt) {
+        return;
+      }
+      setRecordingElapsedSec(Math.max(0, Math.floor((Date.now() - startedAt) / 1000)));
+    }, 250);
+
+    return () => window.clearInterval(timer);
+  }, [voiceCaptureMode]);
+
+  useEffect(() => {
+    return () => {
+      if (pendingVoiceNote?.url.startsWith('blob:')) {
+        URL.revokeObjectURL(pendingVoiceNote.url);
+      }
+    };
+  }, [pendingVoiceNote?.url]);
+
+  const notifyScheduled = () => {
+    onScheduled?.();
+  };
 
   const handleChange = (nextValue: string, fromAi = false) => {
     const validation = validateMessageDraft(nextValue);
@@ -416,12 +505,22 @@ export function MessageInput({
       return;
     }
 
+    let expiresAt: string | null = null;
+    if (pollExpiresAt.trim()) {
+      const expiresMs = parseDateTimeLocalValue(pollExpiresAt);
+      if (!Number.isFinite(expiresMs)) {
+        toast.error('Enter a valid poll expiry date and time.');
+        return;
+      }
+      expiresAt = new Date(expiresMs).toISOString();
+    }
+
     setPollBusy(true);
     const result = await createPoll(conversationId, {
       question,
       options,
-      allowMultiple: false,
-      anonymous: false,
+      allowMultiple: pollAllowMultiple,
+      expiresAt,
     });
     setPollBusy(false);
 
@@ -437,6 +536,8 @@ export function MessageInput({
     setPollOpen(false);
     setPollQuestion('');
     setPollOptions(['', '']);
+    setPollAllowMultiple(false);
+    setPollExpiresAt('');
     onPollCreated?.();
   };
 
@@ -446,11 +547,17 @@ export function MessageInput({
       return;
     }
 
+    const contentValidation = validateScheduleMessageContent(content);
+    if (!contentValidation.ok) {
+      toast.error(contentValidation.error);
+      return;
+    }
+
     setScheduleBusy(true);
     const result = await scheduleConversationMessage(
       conversationId,
       buildScheduleMessageBody({
-        content,
+        content: contentValidation.content,
         scheduledAt,
         replyToId: replyingToMessage?.id ?? null,
       }),
@@ -469,7 +576,7 @@ export function MessageInput({
     setScheduleOpen(false);
     setActionsMenuOpen(false);
     handleChange('');
-    onScheduled?.();
+    notifyScheduled();
   };
 
   const updateMentionState = (nextValue: string, cursor: number) => {
@@ -575,7 +682,7 @@ export function MessageInput({
     }
 
     setAiBusy(true);
-    const result = await parseFlexCommand(input.trim());
+    const result = await parseFlexCommand(input.trim(), conversationId);
     setAiBusy(false);
 
     if (!result.ok) {
@@ -586,26 +693,57 @@ export function MessageInput({
       return;
     }
 
-    if (!result.data.text.trim()) {
+    const command = result.data;
+    const action = (command.action ?? '').toLowerCase();
+    const isSchedule =
+      action.includes('schedule') || Boolean(command.scheduledAt?.trim());
+
+    if (isSchedule && conversationId && command.message?.trim() && command.scheduledAt?.trim()) {
+      const scheduleResult = await scheduleConversationMessage(
+        conversationId,
+        buildScheduleMessageBody({
+          content: command.message.trim(),
+          scheduledAt: command.scheduledAt.trim(),
+          replyToId: replyingToMessage?.id ?? null,
+        }),
+      );
+
+      if (!scheduleResult.ok) {
+        if (onUnauthorized?.(scheduleResult.status)) {
+          return;
+        }
+        toast.error(scheduleResult.error);
+        return;
+      }
+
+      toast.success('Message scheduled.');
+      notifyScheduled();
+      return;
+    }
+
+    const nextText = command.message?.trim() || command.text.trim();
+
+    if (!nextText) {
       toast.error('Flex command did not return any text.');
       return;
     }
 
-    handleChange(result.data.text, true);
+    handleChange(nextText, true);
     toast.success('Flex command applied.');
   };
 
-  const handleTranscribeFile = async (file: File) => {
-    setAiBusy(true);
+  const transcribeVoiceTypingFile = async (file: File) => {
+    if (file.size < 800) {
+      toast.error('Recording was too short. Speak a little longer and try again.');
+      return;
+    }
+
+    setVoiceTypingTranscribing(true);
 
     try {
       const base64 = await readFileAsBase64(file);
-      const result = await transcribeAudioFile(
-        file.name,
-        file.type || 'audio/webm',
-        base64,
-      );
-      setAiBusy(false);
+      const mimeType = file.type || pickVoiceRecorderMimeType() || 'audio/webm';
+      const result = await transcribeAudioFile(file.name, mimeType, base64);
 
       if (!result.ok) {
         if (onUnauthorized?.(result.status)) {
@@ -615,17 +753,68 @@ export function MessageInput({
         return;
       }
 
-      if (!result.data.text.trim()) {
+      const transcript = result.data.text.trim();
+      if (!transcript) {
         toast.error('No transcription returned.');
         return;
       }
 
-      handleChange(result.data.text);
-      toast.success('Audio transcribed.');
+      const base = dictationBaseRef.current.trim();
+      const merged = base ? `${base} ${transcript}` : transcript;
+      onChange(merged);
+      requestAnimationFrame(() => {
+        const textarea = textareaRef.current;
+        if (!textarea) {
+          return;
+        }
+        textarea.focus();
+        const end = merged.length;
+        textarea.setSelectionRange(end, end);
+      });
     } catch {
-      setAiBusy(false);
-      toast.error('Unable to read audio file.');
+      toast.error('Unable to transcribe audio.');
+    } finally {
+      setVoiceTypingTranscribing(false);
+      requestAnimationFrame(() => textareaRef.current?.focus());
     }
+  };
+
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!disabled && !fileDisabled) {
+      setIsDraggingOver(true);
+    }
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+
+    if (disabled || fileDisabled) return;
+
+    const files = Array.from(e.dataTransfer.files);
+    if (!files.length) return;
+
+    const newAttachments = files.map((file) => {
+      const mimeType = file.type || 'application/octet-stream';
+      const isImage = mimeType.startsWith('image/');
+      const isVideo = mimeType.startsWith('video/');
+      const previewUrl = isImage || isVideo ? URL.createObjectURL(file) : '';
+      return { file, previewUrl, isImage, isVideo };
+    });
+
+    setPendingAttachments((current) => [...current, ...newAttachments]);
+    requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const handleFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -650,6 +839,13 @@ export function MessageInput({
   };
 
   const handleSendAction = () => {
+    if (pendingVoiceNote && onSendVoice) {
+      onSendVoice(pendingVoiceNote.file, value.trim() || undefined);
+      clearPendingVoiceNote();
+      handleChange('');
+      return;
+    }
+
     if (pendingAttachments.length > 0) {
       pendingAttachments.forEach((attachment, index) => {
         onSendFile?.(attachment.file, index === 0 ? (value.trim() || undefined) : undefined);
@@ -662,7 +858,151 @@ export function MessageInput({
     onSend();
   };
 
-  const handleAudioSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const stopVoiceCapture = () => {
+    const recorder = voiceRecorderRef.current;
+
+    if (recorder && recorder.state !== 'inactive') {
+      recorder.stop();
+    }
+  };
+
+  const cancelVoiceRecording = () => {
+    voiceDiscardRef.current = true;
+
+    if (voiceRecorderRef.current && voiceRecorderRef.current.state !== 'inactive') {
+      stopVoiceCapture();
+      return;
+    }
+
+    voiceCaptureModeRef.current = null;
+    setVoiceCaptureMode(null);
+    voiceChunksRef.current = [];
+  };
+
+  const startVoiceCapture = async (mode: 'note' | 'typing') => {
+    if (disabled || isSending || voiceCaptureMode || voiceTypingTranscribing) {
+      if (voiceCaptureMode) {
+        stopVoiceCapture();
+      }
+      return;
+    }
+
+    if (mode === 'note' && aiDisabled) {
+      return;
+    }
+
+    if (mode === 'typing') {
+      dictationBaseRef.current = value;
+    }
+
+    if (!navigator.mediaDevices?.getUserMedia) {
+      if (mode === 'note') {
+        voiceNoteInputRef.current?.click();
+      } else {
+        toast.error('Microphone recording is not available on this device.');
+      }
+      return;
+    }
+
+    const permission = await ensureCallMediaPermissions(false);
+    if (!permission.ok) {
+      toast.error(permission.error);
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+      });
+      voiceStreamRef.current = stream;
+      voiceChunksRef.current = [];
+      const mimeType = pickVoiceRecorderMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      voiceRecorderRef.current = recorder;
+      voiceCaptureModeRef.current = mode;
+      setVoiceCaptureMode(mode);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          voiceChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onerror = () => {
+        toast.error('Recording failed. Please try again.');
+        stopVoiceCapture();
+      };
+
+      recorder.onstop = () => {
+        stream.getTracks().forEach((track) => track.stop());
+        voiceStreamRef.current = null;
+        voiceRecorderRef.current = null;
+
+        const captureMode = voiceCaptureModeRef.current ?? mode;
+        voiceCaptureModeRef.current = null;
+        setVoiceCaptureMode(null);
+
+        if (voiceDiscardRef.current) {
+          voiceDiscardRef.current = false;
+          voiceChunksRef.current = [];
+          return;
+        }
+
+        const blob = new Blob(voiceChunksRef.current, {
+          type: recorder.mimeType || mimeType || 'audio/webm',
+        });
+        voiceChunksRef.current = [];
+
+        if (blob.size === 0) {
+          toast.error('No audio captured. Try recording again.');
+          return;
+        }
+
+        const extension = (recorder.mimeType || mimeType || '').includes('mp4') ? 'm4a' : 'webm';
+        const file = new File(
+          [blob],
+          captureMode === 'note' ? `voice-note.${extension}` : `voice-typing.${extension}`,
+          {
+            type: blob.type || mimeType || 'audio/webm',
+          },
+        );
+
+        const startedAt = recordingStartedAtRef.current;
+        const durationSec = startedAt
+          ? Math.max(1, Math.round((Date.now() - startedAt) / 1000))
+          : Math.max(1, recordingElapsedSec);
+
+        recordingStartedAtRef.current = null;
+
+        if (captureMode === 'typing') {
+          void transcribeVoiceTypingFile(file);
+          return;
+        }
+
+        setPendingVoiceNote((current) => {
+          if (current?.url.startsWith('blob:')) {
+            URL.revokeObjectURL(current.url);
+          }
+          return {
+            file,
+            url: URL.createObjectURL(blob),
+            durationSec,
+          };
+        });
+        requestAnimationFrame(() => textareaRef.current?.focus());
+      };
+
+      recorder.start(250);
+    } catch {
+      toast.error('Microphone access was denied.');
+    }
+  };
+
+  const handleVoiceNoteFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     event.target.value = '';
 
@@ -670,15 +1010,38 @@ export function MessageInput({
       return;
     }
 
-    void handleTranscribeFile(file);
+    if (!onSendVoice) {
+      toast.error('Voice messages are unavailable in this chat.');
+      return;
+    }
+
+    setPendingVoiceNote((current) => {
+      if (current?.url.startsWith('blob:')) {
+        URL.revokeObjectURL(current.url);
+      }
+      return {
+        file,
+        url: URL.createObjectURL(file),
+        durationSec: Math.max(1, Math.round(file.size / 8000)),
+      };
+    });
+    requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   const iconButtonClass = compact
     ? 'flex h-7 w-7 items-center justify-center rounded-lg text-app-muted transition-all hover:bg-app-chat-hover hover:text-app-text active:scale-95 disabled:cursor-not-allowed disabled:opacity-40'
     : 'flex h-8 w-8 items-center justify-center rounded-xl text-app-muted transition-all hover:bg-app-chat-hover hover:text-app-text active:scale-95 disabled:cursor-not-allowed disabled:opacity-40';
 
+  const dragClasses = isDraggingOver ? 'bg-app-chat-hover/30 ring-2 ring-accent ring-inset rounded-xl transition-all' : '';
+
   return (
-    <div className={compact ? '' : 'px-6 pb-4 pt-1.5'}>
+    <div 
+      className={`${compact ? '' : 'px-6 pb-4 pt-1.5'} ${dragClasses} relative`}
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {displayError ? (
         <p className="mb-2 text-xs text-accent-soft" role="alert">
           {displayError}
@@ -722,6 +1085,29 @@ export function MessageInput({
               </button>
             </div>
           ))}
+        </div>
+      ) : null}
+
+      {pendingVoiceNote ? (
+        <div className="mb-2 flex items-center gap-3 rounded-2xl border border-app-border bg-app-surface/90 p-2.5 shadow-sm backdrop-blur-md">
+          <audio
+            src={pendingVoiceNote.url}
+            controls
+            preload="metadata"
+            className="h-9 max-w-[220px] min-w-0 flex-1"
+          />
+          <span className="shrink-0 text-xs tabular-nums text-app-muted">
+            {Math.floor(pendingVoiceNote.durationSec / 60)}:
+            {String(pendingVoiceNote.durationSec % 60).padStart(2, '0')}
+          </span>
+          <button
+            type="button"
+            onClick={clearPendingVoiceNote}
+            className="shrink-0 rounded-lg p-1 text-app-muted hover:bg-app-chat-hover hover:text-app-text"
+            aria-label="Remove voice message"
+          >
+            ✕
+          </button>
         </div>
       ) : null}
 
@@ -785,13 +1171,12 @@ export function MessageInput({
           onChange={handleFileSelected}
         />
         <input
-          ref={audioInputRef}
+          ref={voiceNoteInputRef}
           type="file"
           accept="audio/*"
           className="hidden"
-          onChange={handleAudioSelected}
+          onChange={handleVoiceNoteFileSelected}
         />
-
         <MediaPicker
           open={pickerOpen}
           onClose={() => setPickerOpen(false)}
@@ -803,17 +1188,27 @@ export function MessageInput({
 
 
         <div className={`flex items-end gap-1 ${compact ? 'px-1 py-1' : 'px-2 py-2'}`}>
+          {voiceCaptureMode ? (
+            <VoiceInlineRecording
+              elapsedSec={recordingElapsedSec}
+              variant={voiceCaptureMode}
+              onCancel={cancelVoiceRecording}
+              onStop={stopVoiceCapture}
+            />
+          ) : (
           <textarea
             ref={textareaRef}
             value={value}
             rows={1}
-            disabled={disabled || isSending || aiBusy}
+            disabled={disabled || isSending || aiBusy || voiceTypingTranscribing}
             placeholder={
-              aiBusy
-                ? 'AI is working…'
-                : pendingAttachments.length > 0
-                  ? 'Add a caption (optional)'
-                  : 'Type a message'
+              voiceTypingTranscribing
+                ? 'Transcribing…'
+                : aiBusy
+                  ? 'AI is working…'
+                  : pendingVoiceNote || pendingAttachments.length > 0
+                    ? 'Add a caption (optional)'
+                    : 'Type a message'
             }
             aria-invalid={Boolean(displayError)}
             className={`max-h-32 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-snug text-app-text outline-none placeholder:text-app-placeholder disabled:opacity-60 ${
@@ -862,7 +1257,13 @@ export function MessageInput({
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
 
-                if (!disabled && !isSending && !aiBusy && (value.trim() || pendingAttachments.length > 0)) {
+                if (
+                  !disabled &&
+                  !isSending &&
+                  !aiBusy &&
+                  !voiceCaptureMode &&
+                  (value.trim() || pendingAttachments.length > 0 || pendingVoiceNote)
+                ) {
                   handleSendAction();
                 }
               }
@@ -875,6 +1276,7 @@ export function MessageInput({
               updateMentionState(target.value, target.selectionStart ?? target.value.length);
             }}
           />
+          )}
           <div className="flex shrink-0 items-center gap-0.5 self-end overflow-visible pb-0.5">
               <button
                 type="button"
@@ -942,7 +1344,14 @@ export function MessageInput({
           </div>
           <button
             type="button"
-            disabled={disabled || isSending || aiBusy || (!value.trim() && pendingAttachments.length === 0)}
+            disabled={
+              disabled ||
+              isSending ||
+              aiBusy ||
+              Boolean(voiceCaptureMode) ||
+              voiceTypingTranscribing ||
+              (!value.trim() && pendingAttachments.length === 0 && !pendingVoiceNote)
+            }
             aria-label={isSending ? 'Sending message' : aiBusy ? 'Working' : 'Send message'}
             className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center self-end rounded-xl bg-gradient-to-br from-accent via-accent to-[#632a38] text-white shadow-md shadow-accent/30 transition-all duration-200 hover:shadow-accent-glow hover:scale-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100 disabled:shadow-none"
             onClick={handleSendAction}
@@ -1029,9 +1438,13 @@ export function MessageInput({
 
                     <button
                       type="button"
-                      disabled={disabled || isSending || !conversationId}
+                      disabled={disabled || isSending || !conversationId || !value.trim()}
                       className="flex w-full items-center gap-3.5 rounded-2xl px-3 py-2.5 text-left text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
                       onClick={() => {
+                        if (!value.trim()) {
+                          toast.error('Type a message before scheduling.');
+                          return;
+                        }
                         setActionsMenuOpen(false);
                         setScheduleOpen(true);
                       }}
@@ -1053,7 +1466,7 @@ export function MessageInput({
                   className="flex w-full items-center gap-3.5 rounded-2xl px-3 py-2.5 text-left text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
                   onClick={() => {
                     setActionsMenuOpen(false);
-                    audioInputRef.current?.click();
+                    void startVoiceCapture('note');
                   }}
                 >
                   <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent">
@@ -1065,25 +1478,6 @@ export function MessageInput({
                   </span>
                 </button>
 
-                <button
-                  type="button"
-                  disabled={aiDisabled}
-                  className="flex w-full items-center gap-3.5 rounded-2xl px-3 py-2.5 text-left text-app-text transition-colors hover:bg-app-chat-hover disabled:cursor-not-allowed disabled:opacity-40"
-                  onClick={() => {
-                    setActionsMenuOpen(false);
-                    // placeholder for voice typing
-                  }}
-                >
-                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-accent/10 text-accent">
-                    <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                    </svg>
-                  </span>
-                  <span>
-                    <span className="block text-[15px] font-semibold tracking-tight text-app-text">Voice typing</span>
-                    <span className="text-xs text-app-muted">Speak to write a message</span>
-                  </span>
-                </button>
               </div>
             </>,
             document.body,
@@ -1178,6 +1572,23 @@ export function MessageInput({
                   Add option
                 </button>
               ) : null}
+              <label className="mt-4 flex items-center gap-2 text-sm text-app-text">
+                <input
+                  type="checkbox"
+                  checked={pollAllowMultiple}
+                  disabled={pollBusy}
+                  onChange={(event) => setPollAllowMultiple(event.target.checked)}
+                />
+                Allow multiple answers
+              </label>
+              <label className="mb-1 mt-3 block text-sm text-app-muted">Expires at (optional)</label>
+              <input
+                type="datetime-local"
+                value={pollExpiresAt}
+                disabled={pollBusy}
+                className="mb-2 w-full rounded-xl border border-app-border bg-app-surface-input px-3 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+                onChange={(event) => setPollExpiresAt(event.target.value)}
+              />
               <div className="mt-5 flex justify-end gap-3">
                 <button
                   type="button"
@@ -1205,7 +1616,10 @@ export function MessageInput({
         open={scheduleOpen}
         initialContent={value.trim()}
         busy={scheduleBusy}
+        conversationId={conversationId}
+        onUnauthorized={onUnauthorized}
         onClose={() => setScheduleOpen(false)}
+        onScheduledListChanged={() => notifyScheduled()}
         onSchedule={(content, scheduledAt) => void handleScheduleMessage(content, scheduledAt)}
       />
     </div>

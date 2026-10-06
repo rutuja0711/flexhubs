@@ -99,6 +99,7 @@ export async function fetchCalendarEvents(token: string): Promise<ApiResult<Cale
     return result;
   }
 
+  console.log('fetchCalendarEvents API response:', JSON.stringify(result.data, null, 2));
   return { ok: true, data: normalizeCalendarEventsDetailed(result.data) };
 }
 

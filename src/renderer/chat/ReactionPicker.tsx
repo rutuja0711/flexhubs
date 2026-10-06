@@ -102,7 +102,7 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
       role="dialog"
       aria-label="Choose a reaction"
     >
-      <div className="border-b border-app-border/40 px-3 py-2">
+      <div className="shrink-0 border-b border-app-border/40 px-3 py-2">
         <div className="flex flex-wrap gap-1">
           {QUICK_REACTIONS.map((emoji) => (
             <button
@@ -118,7 +118,7 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
         </div>
       </div>
 
-      <div className="flex gap-1 overflow-x-auto border-b border-app-border/40 px-2 py-1.5">
+      <div className="shrink-0 flex gap-1 overflow-x-auto border-b border-app-border/40 px-2 py-1.5 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         {REACTION_EMOJI_CATEGORIES.map((category, index) => (
           <button
             key={category.label}
@@ -151,7 +151,7 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
         </div>
       </div>
 
-      <div className="border-t border-app-border/40 px-3 py-2">
+      <div className="shrink-0 border-t border-app-border/40 px-3 py-2">
         <input
           ref={customInputRef}
           type="text"

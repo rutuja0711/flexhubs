@@ -305,11 +305,13 @@ export function Avatar({
 }: {
   imageUrl: string | null;
   initials: string;
-  size?: 'sm' | 'md' | 'lg' | 'xl';
+  size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 }) {
   const [failed, setFailed] = useState(false);
   const sizeClass =
-    size === 'sm'
+    size === 'xs'
+      ? 'h-5 w-5 text-[9px] font-bold'
+      : size === 'sm'
       ? 'h-8 w-8 text-xs'
       : size === 'xl'
         ? 'h-24 w-24 text-3xl font-bold'

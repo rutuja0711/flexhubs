@@ -52,6 +52,22 @@ async function resolveFlexHubsImageSrc(rawUrl: string): Promise<string> {
   return dataUrl;
 }
 
+function getInitialSrc(src: string | null | undefined): string | null {
+  if (!src?.trim()) return null;
+  const normalized = normalizeUploadUrl(src.trim());
+  
+  if (canUseDirectly(normalized) || !isFlexHubsHostedAssetUrl(normalized)) {
+    return normalized;
+  }
+  
+  const cached = resolvedSrcCache.get(normalized);
+  if (cached) {
+    return cached;
+  }
+  
+  return null;
+}
+
 export function RemoteImage({
   src,
   alt = '',
@@ -59,9 +75,12 @@ export function RemoteImage({
   loading = 'lazy',
   onError,
 }: RemoteImageProps) {
-  const [displaySrc, setDisplaySrc] = useState<string | null>(null);
+  const [displaySrc, setDisplaySrc] = useState<string | null>(() => getInitialSrc(src));
+  const [hasError, setHasError] = useState(false);
 
   useEffect(() => {
+    setHasError(false);
+
     if (!src?.trim()) {
       setDisplaySrc(null);
       return;
@@ -72,6 +91,12 @@ export function RemoteImage({
 
     if (canUseDirectly(normalized) || !isFlexHubsHostedAssetUrl(normalized)) {
       setDisplaySrc(normalized);
+      return;
+    }
+
+    const cached = resolvedSrcCache.get(normalized);
+    if (cached) {
+      setDisplaySrc(cached);
       return;
     }
 
@@ -88,7 +113,7 @@ export function RemoteImage({
     };
   }, [src]);
 
-  if (!displaySrc) {
+  if (!displaySrc || hasError) {
     return null;
   }
 
@@ -99,6 +124,7 @@ export function RemoteImage({
       loading={loading}
       className={className}
       onError={() => {
+        setHasError(true);
         onError?.();
       }}
     />

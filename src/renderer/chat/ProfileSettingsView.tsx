@@ -7,6 +7,7 @@ import {
   FiClock,
   FiEye,
   FiLogOut,
+  FiMail,
   FiMoon,
   FiStar,
   FiSun,
@@ -15,6 +16,7 @@ import {
   FiVolume2,
   FiShield,
   FiSmartphone,
+  FiDownloadCloud,
 } from 'react-icons/fi';
 import { RemoteImage } from '../RemoteImage';
 import {
@@ -56,6 +58,13 @@ import {
   shouldDeliverDesktopNotifications,
 } from '../pushNotifications';
 import { playMessageNotificationSound } from '../messageSound';
+import { UpdatesSettings } from './UpdatesSettings';
+import { PrivacySettings } from './PrivacySettings';
+import {
+  markUserUnblocked,
+  refreshBlockedUsersFromApi,
+  setBlockedUserIdsFromList,
+} from '../blockedUsersSync';
 import { clearProfileCache, readProfileCache, writeProfileCache } from '../profileCache';
 
 type ProfileSettingsViewProps = {
@@ -63,6 +72,8 @@ type ProfileSettingsViewProps = {
   onLogout: () => void;
   onUnauthorized: (status?: number) => boolean;
   onUserUpdated?: () => void;
+  hasUpdateBadge?: boolean;
+  onUpdateViewed?: () => void;
 };
 
 type AvatarTab = 'avatar' | 'upload' | 'initials';
@@ -148,13 +159,12 @@ function NavButton({ icon, label, active, onClick, danger }: { icon: ReactNode, 
     <button
       type="button"
       onClick={onClick}
-      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${
-        danger 
+      className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm transition-colors ${danger
           ? 'text-red-500 hover:bg-red-500/10 font-semibold'
-          : active 
-            ? 'bg-app-chat-hover text-app-text font-bold' 
+          : active
+            ? 'bg-app-chat-hover text-app-text font-bold'
             : 'text-app-muted hover:bg-app-chat-hover/50 hover:text-app-text font-medium'
-      }`}
+        }`}
     >
       <span className="text-[1.1rem] shrink-0">{icon}</span>
       {label}
@@ -167,10 +177,12 @@ export function ProfileSettingsView({
   onLogout,
   onUnauthorized,
   onUserUpdated,
+  hasUpdateBadge,
+  onUpdateViewed,
 }: ProfileSettingsViewProps) {
   const { theme, setTheme } = useTheme();
   const toast = useToast();
-  const [activeTab, setActiveTab] = useState<'profile' | 'appearance' | 'notifications' | 'privacy'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates'>('profile');
   const [profile, setProfile] = useState<UserProfileState | null>(null);
   const [settings, setSettings] = useState<ProfileSettings | null>(null);
   const [avatarStyles, setAvatarStyles] = useState<AvatarStyleItem[]>([]);
@@ -181,7 +193,6 @@ export function ProfileSettingsView({
   const [statusUi, setStatusUi] = useState('Available');
   const [statusMessage, setStatusMessage] = useState('');
   const [savedStatusMessage, setSavedStatusMessage] = useState('');
-  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const [timezone, setTimezone] = useState('UTC');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [avatarTab, setAvatarTab] = useState<AvatarTab>('avatar');
@@ -196,6 +207,29 @@ export function ProfileSettingsView({
   const [blockedUsers, setBlockedUsers] = useState<import('../../shared/features').BlockedUserItem[]>([]);
   const [blockedLoading, setBlockedLoading] = useState(false);
   const [unblockingId, setUnblockingId] = useState<string | null>(null);
+
+  const [hwAccelerationDisabled, setHwAccelerationDisabled] = useState<boolean>(false);
+
+  useEffect(() => {
+    void window.electronAPI?.getHardwareAccelerationDisabled?.().then(disabled => {
+      setHwAccelerationDisabled(disabled);
+    });
+  }, []);
+
+  const handleToggleHwAcceleration = async () => {
+    const nextState = !hwAccelerationDisabled;
+    setHwAccelerationDisabled(nextState);
+    if (window.electronAPI?.setHardwareAccelerationDisabled) {
+      await window.electronAPI.setHardwareAccelerationDisabled(nextState);
+
+      const shouldRestart = window.confirm(
+        'Hardware acceleration settings have been updated.\n\nThe app must be restarted for this change to take effect. Restart now?'
+      );
+      if (shouldRestart) {
+        await window.electronAPI.relaunchApp?.();
+      }
+    }
+  };
   const saveTimeoutRef = useRef<number | undefined>(undefined);
   const timezoneOptions = useMemo(() => getTimezoneOptions(), []);
 
@@ -325,6 +359,14 @@ export function ProfileSettingsView({
   }, [applyProfileSnapshot, refreshProfile]);
 
   useEffect(() => {
+    if (activeTab !== 'privacy') {
+      return;
+    }
+
+    void refreshBlockedUsersFromApi();
+  }, [activeTab]);
+
+  useEffect(() => {
     let cancelled = false;
 
     const loadBlocks = async () => {
@@ -341,6 +383,7 @@ export function ProfileSettingsView({
       }
 
       setBlockedUsers(result.data);
+      setBlockedUserIdsFromList(result.data);
     };
 
     void loadBlocks();
@@ -362,6 +405,8 @@ export function ProfileSettingsView({
     }
 
     setBlockedUsers((current) => current.filter((user) => user.id !== userId));
+    markUserUnblocked(userId);
+    void refreshBlockedUsersFromApi();
     toast.success(`${username} unblocked.`);
   };
 
@@ -643,11 +688,11 @@ export function ProfileSettingsView({
       setProfile((current) =>
         current
           ? {
-              ...current,
-              avatarMode: 'upload',
-              avatarUrl: typeof updates.avatarUrl === 'string' ? updates.avatarUrl : current.avatarUrl,
-              avatarStyle: null,
-            }
+            ...current,
+            avatarMode: 'upload',
+            avatarUrl: typeof updates.avatarUrl === 'string' ? updates.avatarUrl : current.avatarUrl,
+            avatarStyle: null,
+          }
           : current,
       );
     } else if (updates.avatarMode === 'avatar') {
@@ -655,16 +700,16 @@ export function ProfileSettingsView({
       setProfile((current) =>
         current
           ? {
-              ...current,
-              avatarMode: 'avatar',
-              avatarUrl: typeof updates.avatarUrl === 'string' ? updates.avatarUrl : current.avatarUrl,
-              avatarStyle:
-                typeof updates.avatarStyle === 'string'
-                  ? updates.avatarStyle
-                  : current.avatarStyle,
-              avatarSeed:
-                typeof updates.avatarSeed === 'string' ? updates.avatarSeed : current.avatarSeed,
-            }
+            ...current,
+            avatarMode: 'avatar',
+            avatarUrl: typeof updates.avatarUrl === 'string' ? updates.avatarUrl : current.avatarUrl,
+            avatarStyle:
+              typeof updates.avatarStyle === 'string'
+                ? updates.avatarStyle
+                : current.avatarStyle,
+            avatarSeed:
+              typeof updates.avatarSeed === 'string' ? updates.avatarSeed : current.avatarSeed,
+          }
           : current,
       );
     }
@@ -830,19 +875,21 @@ export function ProfileSettingsView({
   })();
   const usernameChanged = usernameDraft.trim() !== savedUsername;
   const statusMessageChanged = statusMessage !== savedStatusMessage;
+  const selectedAvatarStyleName =
+    avatarStyles.find((style) => style.id === selectedStyle)?.name ?? selectedStyle;
 
   return (
     <div className="flex h-full w-full bg-app-chat-bg text-app-text">
       {/* Sidebar Navigation */}
       <div className="w-64 shrink-0 border-r border-app-border overflow-y-auto bg-app-surface/30 px-4 py-8">
         <h1 className="mb-8 px-3 text-xl font-bold text-app-text tracking-tight">Profile & Settings</h1>
-        
+
         <div className="space-y-6">
           <div>
             <p className="mb-2 px-3 text-[10px] font-bold tracking-wider text-app-muted uppercase">Account</p>
             <NavButton icon={<FiUser />} label="Profile" active={activeTab === 'profile'} onClick={() => setActiveTab('profile')} />
           </div>
-          
+
           <div>
             <p className="mb-2 px-3 text-[10px] font-bold tracking-wider text-app-muted uppercase">Preferences</p>
             <NavButton icon={<FiSun />} label="Appearance" active={activeTab === 'appearance'} onClick={() => setActiveTab('appearance')} />
@@ -854,18 +901,41 @@ export function ProfileSettingsView({
             <NavButton icon={<FiShield />} label="Privacy" active={activeTab === 'privacy'} onClick={() => setActiveTab('privacy')} />
           </div>
 
+          <div>
+            <p className="mb-2 px-3 text-[10px] font-bold tracking-wider text-app-muted uppercase">Application</p>
+            <div className="relative">
+              <NavButton icon={<FiDownloadCloud />} label="Updates" active={activeTab === 'updates'} onClick={() => { setActiveTab('updates'); onUpdateViewed?.(); }} />
+              {hasUpdateBadge && (
+                <span className="absolute right-4 top-1/2 -translate-y-1/2 h-2 w-2 rounded-full bg-accent animate-pulse" />
+              )}
+            </div>
+          </div>
+
           <div className="pt-4 mt-6 border-t border-app-border">
             <NavButton danger icon={<FiLogOut />} label="Sign out" onClick={() => void onLogout()} />
           </div>
         </div>
       </div>
-      
+
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto px-8 py-8 md:px-12 lg:px-20">
         <div className="w-full max-w-4xl">
-          <div className="mb-8 flex items-center justify-between">
-            <h2 className="text-2xl font-bold tracking-tight text-app-text capitalize">{activeTab}</h2>
-            {saving ? <span className="text-xs font-medium text-accent-soft animate-pulse">Saving...</span> : null}
+          <div className="mb-8 flex items-start justify-between gap-4">
+            <div>
+              {activeTab === 'profile' ? (
+                <>
+                  <h2 className="text-2xl font-bold tracking-tight text-app-text">Profile</h2>
+                  <p className="mt-1 text-sm text-app-muted">
+                    Photo, status, and how teammates see you
+                  </p>
+                </>
+              ) : activeTab !== 'privacy' ? (
+                <h2 className="text-2xl font-bold tracking-tight text-app-text capitalize">{activeTab}</h2>
+              ) : null}
+            </div>
+            <div className="flex items-center gap-4">
+              {saving ? <span className="shrink-0 text-xs font-medium text-accent-soft animate-pulse">Saving...</span> : null}
+            </div>
           </div>
 
           {actionError ? (
@@ -875,37 +945,63 @@ export function ProfileSettingsView({
           <div className="space-y-8 pb-12 animate-in fade-in slide-in-from-bottom-2 duration-300">
             {activeTab === 'profile' && (
               <>
-                {/* Profile Hero */}
-                <SectionCard className="flex items-start gap-5 p-6 border-app-border/70 bg-gradient-to-br from-app-card/80 to-app-surface">
-                  <div className="relative shrink-0">
-                    <div className="relative flex h-16 w-16 items-center justify-center overflow-hidden rounded-2xl bg-gradient-to-br from-accent to-[#632a38] text-white shadow-sm ring-1 ring-white/10">
-                      <span className="absolute inset-0 flex items-center justify-center text-lg font-bold">
-                        {initials}
-                      </span>
-                      {previewAvatarUrl ? (
-                        <RemoteImage
-                          src={previewAvatarUrl}
-                          alt=""
-                          loading="eager"
-                          className="relative z-10 h-full w-full object-cover"
-                        />
-                      ) : null}
+                {/* Profile summary */}
+                <SectionCard className="flex flex-col gap-6 p-6 sm:flex-row sm:items-start sm:gap-8">
+                  <div className="flex shrink-0 flex-col items-center gap-3 sm:items-start">
+                    <div className="relative">
+                      <div className="relative flex h-[4.5rem] w-[4.5rem] items-center justify-center overflow-hidden rounded-full bg-app-chat-hover ring-1 ring-app-border/60">
+                        <span className="absolute inset-0 flex items-center justify-center text-lg font-bold text-app-text">
+                          {initials}
+                        </span>
+                        {previewAvatarUrl ? (
+                          <RemoteImage
+                            src={previewAvatarUrl}
+                            alt=""
+                            loading="eager"
+                            className="relative z-10 h-full w-full object-cover"
+                          />
+                        ) : null}
+                      </div>
+                      <div
+                        className={`absolute -right-0.5 -bottom-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-app-surface ${statusDotClass(statusUi)}`}
+                      />
                     </div>
-                    <div className={`absolute -right-0.5 -bottom-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-app-surface shadow-sm ${statusDotClass(statusUi)}`} />
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold ${STATUS_OPTIONS.find((option) => option.label === statusUi)?.activeBorder ??
+                        'border-app-border bg-app-chat-hover'
+                        }`}
+                    >
+                      <span className={`h-2 w-2 rounded-full ${statusDotClass(statusUi)}`} />
+                      {statusUi}
+                    </span>
+                    <p className="flex items-center gap-1.5 text-xs text-app-muted">
+                      <FiClock className="shrink-0" aria-hidden="true" />
+                      {formatLocalTime(timezone)}
+                    </p>
                   </div>
-                  <div className="min-w-0 flex-1">
-                    <h3 className="text-lg font-bold text-app-text tracking-tight">{displayName}</h3>
+                  <div className="min-w-0 flex-1 text-center sm:text-left">
+                    <h3 className="text-xl font-bold tracking-tight text-app-text">{displayName}</h3>
                     {profile.email ? (
-                      <p className="text-sm text-app-muted">{profile.email}</p>
+                      <p className="mt-1.5 flex items-center justify-center gap-2 text-sm text-app-muted sm:justify-start">
+                        <FiMail className="shrink-0 opacity-80" size={14} aria-hidden="true" />
+                        <span className="truncate">{profile.email}</span>
+                      </p>
                     ) : null}
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                    <div className="mt-3 flex flex-wrap items-center justify-center gap-2 sm:justify-start">
                       {profile.inOrganization ? (
-                        <span className="rounded bg-app-chat-hover px-2 py-0.5 text-[11px] font-medium text-app-text">In organization</span>
+                        <span className="rounded-full bg-app-chat-hover px-2.5 py-0.5 text-[11px] font-medium text-app-text">
+                          In organization
+                        </span>
                       ) : null}
                       {profile.organizationRole ? (
-                        <span className="rounded bg-accent-soft/20 px-2 py-0.5 text-[11px] font-medium text-accent-soft">{profile.organizationRole}</span>
+                        <span className="rounded-full bg-accent-soft/15 px-2.5 py-0.5 text-[11px] font-medium text-accent-soft">
+                          {profile.organizationRole}
+                        </span>
                       ) : null}
                     </div>
+                    {savedStatusMessage.trim() ? (
+                      <p className="mt-3 text-sm text-app-muted">{savedStatusMessage.trim()}</p>
+                    ) : null}
                   </div>
                 </SectionCard>
 
@@ -920,7 +1016,7 @@ export function ProfileSettingsView({
                       onChange={(event) => setUsernameDraft(event.target.value)}
                       className="w-full rounded-lg border border-app-border bg-app-chat-bg px-3 py-2 text-sm text-app-text focus:border-accent focus:outline-none"
                     />
-                    
+
                     <div className="mt-4 flex justify-end">
                       <button
                         type="button"
@@ -936,18 +1032,29 @@ export function ProfileSettingsView({
 
                 {/* Profile Photo */}
                 <section>
-                  <h4 className="mb-3 text-sm font-semibold text-app-text">Profile photo</h4>
+                  <h4 className="text-base font-semibold text-app-text">Profile photo</h4>
+                  <p className="mt-1 mb-4 text-sm text-app-muted">
+                    Pick a generated avatar, upload a photo, or use your initials.
+                  </p>
                   <SectionCard className="p-5">
-                    <div className="mb-4 flex items-center border-b border-app-border">
+                    <div className="mb-5 flex gap-1 rounded-xl border border-app-border bg-app-inset/60 p-1">
                       {(['avatar', 'upload', 'initials'] as const).map((tab) => (
                         <button
                           key={tab}
                           type="button"
                           onClick={() => setAvatarTab(tab)}
-                          className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 ${
-                            avatarTab === tab ? 'border-accent text-accent-soft' : 'border-transparent text-app-muted hover:text-app-text hover:border-app-muted/50'
-                          }`}
+                          className={`flex flex-1 items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold transition-all ${avatarTab === tab
+                              ? 'bg-app-elevated text-app-text shadow-sm ring-1 ring-black/5 dark:ring-white/5'
+                              : 'text-app-muted hover:text-app-text'
+                            }`}
                         >
+                          {tab === 'avatar' ? (
+                            <FiStar className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                          ) : tab === 'upload' ? (
+                            <FiUpload className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                          ) : (
+                            <FiUser className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                          )}
                           {tab === 'avatar' ? 'Avatar' : tab === 'upload' ? 'Upload' : 'Initials'}
                         </button>
                       ))}
@@ -955,42 +1062,34 @@ export function ProfileSettingsView({
 
                     {avatarTab === 'avatar' ? (
                       <>
-                        <div className="mb-4 grid grid-cols-4 gap-3 sm:grid-cols-6">
-                          {avatarStyles.map((style) => (
-                            <button
-                              key={style.id}
-                              type="button"
-                              onClick={() => void handleSelectAvatarStyle(style.id)}
-                              className={`overflow-hidden rounded-lg border transition-colors ${
-                                selectedStyle === style.id ? 'border-accent ring-1 ring-accent/30' : 'border-app-border hover:border-app-muted'
-                              }`}
-                            >
-                              <img src={style.previewUrl} alt={style.name} className="aspect-square w-full object-cover" />
-                            </button>
-                          ))}
+                        <p className="mb-2 text-[10px] font-semibold tracking-wider text-app-muted uppercase">
+                          Choose a style
+                        </p>
+                        <div className="max-h-[17.5rem] overflow-y-auto rounded-xl border border-app-border bg-app-inset/40 p-3">
+                          <div className="grid grid-cols-4 gap-2 sm:grid-cols-6">
+                            {avatarStyles.map((style) => (
+                              <button
+                                key={style.id}
+                                type="button"
+                                onClick={() => void handleSelectAvatarStyle(style.id)}
+                                className={`overflow-hidden rounded-xl border-2 transition-colors ${selectedStyle === style.id
+                                    ? 'border-accent ring-2 ring-accent/25'
+                                    : 'border-transparent hover:border-app-border'
+                                  }`}
+                              >
+                                <img
+                                  src={style.previewUrl}
+                                  alt={style.name}
+                                  className="aspect-square w-full bg-app-surface object-cover"
+                                />
+                              </button>
+                            ))}
+                          </div>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <input
-                            type="text"
-                            value={avatarSeed}
-                            onChange={(event) => setAvatarSeed(event.target.value)}
-                            className="flex-1 rounded-lg border border-app-border bg-app-chat-bg px-3 py-2 text-sm text-app-text focus:border-accent focus:outline-none"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => void handleRandomizeSeed()}
-                            className="rounded-lg border border-app-border px-3 py-2 text-sm font-medium hover:bg-app-chat-hover"
-                          >
-                            Randomize
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void handleApplyAvatar()}
-                            className="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white hover:bg-accent-hover"
-                          >
-                            Apply
-                          </button>
-                        </div>
+                        <p className="mt-3 text-xs text-app-muted">
+                          Selected:{' '}
+                          <span className="font-semibold text-app-text">{selectedAvatarStyleName}</span>
+                        </p>
                       </>
                     ) : null}
 
@@ -1030,77 +1129,71 @@ export function ProfileSettingsView({
 
                 {/* Status & Presence */}
                 <section>
-                  <h4 className="mb-3 text-sm font-semibold text-app-text">Status & presence</h4>
                   <SectionCard className="p-5">
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold text-app-text">Online status</label>
-                        <div className="relative">
+                    <h4 className="text-sm font-semibold text-app-text">Status &amp; presence</h4>
+                    <p className="mt-1 mb-4 text-xs leading-relaxed text-app-muted">
+                      Set Available, Away, Busy, or Do not disturb. Your status message appears under
+                      your name in the chat list.
+                    </p>
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                      {STATUS_OPTIONS.map((option) => {
+                        const isActive = statusUi === option.label;
+
+                        return (
                           <button
+                            key={option.label}
                             type="button"
-                            onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
-                            className="w-full flex items-center justify-between rounded-lg border border-app-border bg-app-chat-bg px-3 py-2 text-sm text-app-text focus:border-accent focus:outline-none"
-                          >
-                            <div className="flex items-center gap-2">
-                              <span className={`h-2 w-2 rounded-full ${statusDotClass(statusUi)}`} />
-                              {statusUi}
-                            </div>
-                            <FiChevronDown className="text-app-muted" />
-                          </button>
-                          
-                          {statusDropdownOpen && (
-                            <>
-                              <div className="fixed inset-0 z-40" onClick={() => setStatusDropdownOpen(false)} />
-                              <div className="absolute left-0 top-full z-50 mt-1 w-full rounded-lg border border-app-border bg-app-surface shadow-lg overflow-hidden animate-in fade-in zoom-in-95 duration-100">
-                                {STATUS_OPTIONS.map((option) => (
-                                  <button
-                                    key={option.label}
-                                    type="button"
-                                    className="flex w-full items-center gap-2 px-3 py-2.5 text-sm font-medium text-app-text hover:bg-app-chat-hover"
-                                    onClick={() => {
-                                      setStatusDropdownOpen(false);
-                                      if (option.label !== statusUi) {
-                                        void handleStatusChange(option.label);
-                                      }
-                                    }}
-                                  >
-                                    <span className={`h-2 w-2 rounded-full ${option.dot}`} />
-                                    {option.label}
-                                  </button>
-                                ))}
-                              </div>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                      <div>
-                        <label className="mb-1 block text-xs font-semibold text-app-text">Status message</label>
-                        <div className="relative">
-                          <input
-                            type="text"
-                            placeholder="What's on your mind?"
-                            value={statusMessage}
-                            onChange={(event) => handleStatusMessageChange(event.target.value)}
-                            onKeyDown={(e) => {
-                              if (e.key === 'Enter' && statusMessageChanged) {
-                                void handleSaveStatusMessage();
+                            onClick={() => {
+                              if (!isActive) {
+                                void handleStatusChange(option.label);
                               }
                             }}
-                            className="w-full rounded-lg border border-app-border bg-app-chat-bg px-3 py-2 pr-10 text-sm text-app-text focus:border-accent focus:outline-none"
-                          />
-                          <button
-                            type="button"
-                            disabled={!statusMessageChanged || saving}
-                            onClick={() => void handleSaveStatusMessage()}
-                            className={`absolute right-2 top-1/2 -translate-y-1/2 flex h-6 w-6 items-center justify-center rounded-md transition-colors focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1 focus:ring-offset-app-chat-bg ${
-                              statusMessageChanged ? 'bg-accent text-white hover:bg-accent-hover' : 'bg-app-border text-app-muted cursor-not-allowed'
-                            }`}
-                            aria-label="Save status message"
+                            className={`flex items-center justify-between rounded-xl border px-4 py-3 text-left text-sm font-medium transition-colors ${isActive
+                                ? option.activeBorder
+                                : 'border-app-border bg-app-chat-bg/40 text-app-text hover:border-app-border-strong hover:bg-app-chat-hover/50'
+                              }`}
                           >
-                            <FiCheck className="text-sm" />
+                            <span className="flex min-w-0 items-center gap-2.5">
+                              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${option.dot}`} />
+                              <span className="truncate">{option.label}</span>
+                            </span>
+                            {isActive ? (
+                              <span className="ml-2 shrink-0 text-[10px] font-bold uppercase tracking-wide text-accent">
+                                Active
+                              </span>
+                            ) : null}
                           </button>
-                        </div>
-                      </div>
+                        );
+                      })}
+                    </div>
+                    <label className="mb-1.5 mt-5 block text-sm font-semibold text-app-text">
+                      Status message
+                    </label>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="What's on your mind?"
+                        value={statusMessage}
+                        onChange={(event) => handleStatusMessageChange(event.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && statusMessageChanged) {
+                            void handleSaveStatusMessage();
+                          }
+                        }}
+                        className="w-full rounded-xl border border-app-border bg-app-chat-bg px-3 py-2.5 pr-10 text-sm text-app-text focus:border-accent focus:outline-none"
+                      />
+                      <button
+                        type="button"
+                        disabled={!statusMessageChanged || saving}
+                        onClick={() => void handleSaveStatusMessage()}
+                        className={`absolute right-2.5 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-1 focus:ring-offset-app-chat-bg ${statusMessageChanged
+                            ? 'text-accent hover:bg-accent/10'
+                            : 'cursor-default text-app-muted/70'
+                          }`}
+                        aria-label="Save status message"
+                      >
+                        <FiCheck className="text-base" aria-hidden="true" />
+                      </button>
                     </div>
                   </SectionCard>
                 </section>
@@ -1147,39 +1240,41 @@ export function ProfileSettingsView({
             )}
 
             {activeTab === 'appearance' && (
-              <section>
-                <h4 className="mb-3 text-sm font-semibold text-app-text">Theme</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <button
-                    type="button"
-                    onClick={() => { setTheme('light'); toast.success('Light theme applied.'); }}
-                    className={`flex items-center gap-3 rounded-xl border p-4 text-left transition-colors ${
-                      theme === 'light' ? 'border-accent bg-accent/5' : 'border-app-border bg-app-surface hover:border-app-muted'
-                    }`}
-                  >
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white border border-gray-200 text-gray-800">
-                      <FiSun className="text-lg" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-app-text">Light mode</p>
-                    </div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => { setTheme('dark'); toast.success('Dark theme applied.'); }}
-                    className={`flex items-center gap-3 rounded-xl border p-4 text-left transition-colors ${
-                      theme === 'dark' ? 'border-accent bg-accent/5' : 'border-app-border bg-app-surface hover:border-app-muted'
-                    }`}
-                  >
-                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#111111] border border-gray-700 text-gray-200">
-                      <FiMoon className="text-lg" />
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold text-app-text">Dark mode</p>
-                    </div>
-                  </button>
-                </div>
-              </section>
+              <div className="space-y-8">
+                <section>
+                  <h4 className="mb-3 text-sm font-semibold text-app-text">Theme</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <button
+                      type="button"
+                      onClick={() => { setTheme('light'); toast.success('Light theme applied.'); }}
+                      className={`flex items-center gap-3 rounded-xl border p-4 text-left transition-colors ${theme === 'light' ? 'border-accent bg-accent/5' : 'border-app-border bg-app-surface hover:border-app-muted'
+                        }`}
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-white border border-gray-200 text-gray-800">
+                        <FiSun className="text-lg" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-app-text">Light mode</p>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setTheme('dark'); toast.success('Dark theme applied.'); }}
+                      className={`flex items-center gap-3 rounded-xl border p-4 text-left transition-colors ${theme === 'dark' ? 'border-accent bg-accent/5' : 'border-app-border bg-app-surface hover:border-app-muted'
+                        }`}
+                    >
+                      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-[#111111] border border-gray-700 text-gray-200">
+                        <FiMoon className="text-lg" />
+                      </div>
+                      <div>
+                        <p className="text-sm font-semibold text-app-text">Dark mode</p>
+                      </div>
+                    </button>
+                  </div>
+                </section>
+
+
+              </div>
             )}
 
             {activeTab === 'notifications' && (
@@ -1294,58 +1389,19 @@ export function ProfileSettingsView({
             )}
 
             {activeTab === 'privacy' && (
-              <>
-                <section>
-                  <h4 className="mb-3 text-sm font-semibold text-app-text">Visibility</h4>
-                  <SectionCard className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <FiEye className="text-app-muted text-lg" />
-                        <div>
-                          <p className="text-sm font-semibold text-app-text">Online status & read receipts</p>
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleOnlineStatusToggle()}
-                        className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 ${settings.shareOnlineStatus ? 'bg-accent' : 'bg-app-border'}`}
-                      >
-                        <span className="sr-only">Toggle online status</span>
-                        <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition duration-200 ease-in-out ${settings.shareOnlineStatus ? 'translate-x-2' : '-translate-x-2'}`} />
-                      </button>
-                    </div>
-                  </SectionCard>
-                </section>
-
-                <section>
-                  <h4 className="mb-3 text-sm font-semibold text-app-text">Blocked users</h4>
-                  <SectionCard className="p-4">
-                    {blockedLoading ? (
-                      <p className="text-sm text-app-muted text-center py-2">Loading blocked users...</p>
-                    ) : blockedUsers.length === 0 ? (
-                      <p className="text-sm text-app-muted text-center py-2">No blocked users.</p>
-                    ) : (
-                      <div className="space-y-3">
-                        {blockedUsers.map((user) => (
-                          <div key={user.id} className="flex items-center justify-between bg-app-chat-bg p-3 rounded-lg border border-app-border/50">
-                            <div className="min-w-0">
-                              <p className="truncate text-sm font-medium text-app-text">{user.username}</p>
-                            </div>
-                            <button
-                              type="button"
-                              disabled={unblockingId === user.id}
-                              className="shrink-0 rounded border border-app-border px-3 py-1.5 text-xs font-semibold hover:bg-app-chat-hover disabled:opacity-50"
-                              onClick={() => void handleUnblockUser(user.id, user.username)}
-                            >
-                              {unblockingId === user.id ? 'Unblocking...' : 'Unblock'}
-                            </button>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </SectionCard>
-                </section>
-              </>
+              <PrivacySettings
+                settings={settings}
+                setSettings={setSettings}
+                blockedUsers={blockedUsers}
+                blockedLoading={blockedLoading}
+                unblockingId={unblockingId}
+                handleUnblockUser={handleUnblockUser}
+                onUserUpdated={onUserUpdated}
+                onUnauthorized={onUnauthorized}
+              />
+            )}
+            {activeTab === 'updates' && (
+              <UpdatesSettings />
             )}
           </div>
         </div>

@@ -12,6 +12,8 @@ import {
   InviteRegisterPage,
   RegisterPage,
 } from './AuthFlowPages';
+import NotificationOverlay from './NotificationOverlay';
+import { ErrorBoundary } from './ErrorBoundary';
 
 type Screen =
   | 'checking'
@@ -24,8 +26,18 @@ type Screen =
   | 'reset'
   | 'invite';
 
+window.addEventListener('error', (e) => {
+  window.electronAPI?.logRendererDebug?.(`[App Error]: ${e.message} at ${e.filename}:${e.lineno}:${e.colno}`);
+  console.error('[App Error]', e);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  window.electronAPI?.logRendererDebug?.(`[App Unhandled Rejection]: ${e.reason}`);
+  console.error('[App Unhandled Rejection]', e);
+});
+
 function App() {
   const [screen, setScreen] = useState<Screen>('checking');
+  window.electronAPI?.logRendererDebug?.("App rendered with screen: " + screen + " URL: " + window.location.href);
   const [forgotEmail, setForgotEmail] = useState('');
   const [forgotStep, setForgotStep] = useState<'email' | 'code' | 'password'>('email');
   const [inviteToken, setInviteToken] = useState('');
@@ -83,6 +95,11 @@ function App() {
       return;
     }
 
+    if (params.get('route') === 'notification' || hashParams.get('route') === 'notification' || hashParams.has('route=notification')) {
+      setScreen('notification' as any);
+      return;
+    }
+
     if (invite) {
       setInviteToken(invite);
       setScreen('invite');
@@ -91,6 +108,10 @@ function App() {
 
     void checkUserSession();
   }, [checkUserSession]);
+
+  if (screen === ('notification' as any)) {
+    return <NotificationOverlay />;
+  }
 
   if (screen === 'checking') {
     return (

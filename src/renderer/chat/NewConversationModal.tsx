@@ -3,6 +3,7 @@ import { FiMessageSquare, FiUser, FiUsers, FiX } from 'react-icons/fi';
 import { FiStar } from 'react-icons/fi';
 import type { SearchPerson } from '../../shared/search';
 import type { FriendRelationship } from '../../shared/features';
+import { syncPeerBlockFromRelationship } from '../blockedUsersSync';
 import type { TeammateItem } from '../../shared/messages';
 import { validateSearchInput } from '../../shared/search';
 import {
@@ -127,6 +128,7 @@ export function NewConversationModal({
     setRelationshipLoading(false);
 
     if (response.ok) {
+      syncPeerBlockFromRelationship(userId, response.data);
       setRelationship(response.data);
       return;
     }

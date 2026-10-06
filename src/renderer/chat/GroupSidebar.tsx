@@ -6,6 +6,7 @@ import {
   mapContactPresenceStatus,
   presenceDotClass,
 } from '../../shared/contact';
+import { shouldRedactUserIdentity } from '../../shared/blocking';
 import { resolveAvatarUrl } from '../../shared/profile';
 import { loadUserPresence } from '../chatApi';
 import { Avatar } from './ChatIcons';
@@ -35,11 +36,12 @@ import {
 import { formatConversationTimestamp } from './format';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
-
 type GroupSidebarProps = {
   conversation: ConversationItem;
   hubDetails?: Record<string, unknown> | null;
   currentUserId: string | null;
+  blockedUserIds?: ReadonlySet<string>;
+  blockedByPeerIds?: ReadonlySet<string>;
   onClose: () => void;
   onConversationUpdated: () => void;
   onNotificationsSnoozedChange?: (snoozed: boolean) => void;
@@ -200,11 +202,15 @@ export function GroupSidebar({
   conversation,
   hubDetails = null,
   currentUserId,
+  blockedUserIds,
+  blockedByPeerIds,
   onClose,
   onConversationUpdated,
   onNotificationsSnoozedChange,
   onHubDeleted,
 }: GroupSidebarProps) {
+  const blockedUsers = blockedUserIds ?? new Set<string>();
+  const blockedByPeers = blockedByPeerIds ?? new Set<string>();
   const confirm = useConfirm();
   const toast = useToast();
   const initialState = deriveHubPanelState(hubDetails, conversation, currentUserId);
@@ -617,17 +623,32 @@ export function GroupSidebar({
             </span>
             <div className="space-y-3">
               {hubAdmins.map((admin) => {
-                const liveStatus = presenceByUserId.get(admin.id) ?? mapContactPresenceStatus(admin.status);
-                const presenceLabel = formatContactPresenceLabel(liveStatus, admin.lastSeenAt);
+                const redactIdentity = shouldRedactUserIdentity(
+                  admin.id,
+                  blockedUsers,
+                  blockedByPeers,
+                );
+                const liveStatus = redactIdentity
+                  ? null
+                  : presenceByUserId.get(admin.id) ?? mapContactPresenceStatus(admin.status);
+                const presenceLabel = redactIdentity
+                  ? ''
+                  : formatContactPresenceLabel(liveStatus, admin.lastSeenAt);
 
                 return (
                   <div key={admin.id} className="flex items-start gap-3 rounded-2xl border border-app-border/60 bg-app-card/60 p-3 shadow-xs">
                     <div className="relative shrink-0">
-                      <Avatar imageUrl={admin.avatarUrl} initials={admin.avatarInitials} size="md" />
-                      <span
-                        className={`absolute right-0 bottom-0 h-3 w-3 rounded-full ring-2 ring-app-surface ${presenceDotClass(liveStatus)}`}
-                        aria-hidden="true"
+                      <Avatar
+                        imageUrl={redactIdentity ? null : admin.avatarUrl}
+                        initials={admin.avatarInitials}
+                        size="md"
                       />
+                      {!redactIdentity ? (
+                        <span
+                          className={`absolute right-0 bottom-0 h-3 w-3 rounded-full ring-2 ring-app-surface ${presenceDotClass(liveStatus)}`}
+                          aria-hidden="true"
+                        />
+                      ) : null}
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
@@ -636,7 +657,9 @@ export function GroupSidebar({
                           Admin
                         </span>
                       </div>
-                      <p className="mt-0.5 text-xs text-app-muted">{presenceLabel}</p>
+                      {!redactIdentity && presenceLabel ? (
+                        <p className="mt-0.5 text-xs text-app-muted">{presenceLabel}</p>
+                      ) : null}
                       {admin.bio ? (
                         <p className="mt-1 text-xs leading-relaxed text-app-muted">{admin.bio}</p>
                       ) : null}
@@ -655,21 +678,38 @@ export function GroupSidebar({
             </span>
             <div className="space-y-2">
               {hubRegularMembers.map((member) => {
-                const liveStatus = presenceByUserId.get(member.id) ?? mapContactPresenceStatus(member.status);
-                const presenceLabel = formatContactPresenceLabel(liveStatus, member.lastSeenAt);
+                const redactIdentity = shouldRedactUserIdentity(
+                  member.id,
+                  blockedUsers,
+                  blockedByPeers,
+                );
+                const liveStatus = redactIdentity
+                  ? null
+                  : presenceByUserId.get(member.id) ?? mapContactPresenceStatus(member.status);
+                const presenceLabel = redactIdentity
+                  ? ''
+                  : formatContactPresenceLabel(liveStatus, member.lastSeenAt);
 
                 return (
                   <div key={member.id} className="flex items-center gap-3 rounded-2xl border border-app-border/60 bg-app-card/50 px-3.5 py-2.5 transition-colors hover:bg-app-card">
                     <div className="relative shrink-0">
-                      <Avatar imageUrl={member.avatarUrl} initials={member.avatarInitials} size="sm" />
-                      <span
-                        className={`absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full ring-2 ring-app-surface ${presenceDotClass(liveStatus)}`}
-                        aria-hidden="true"
+                      <Avatar
+                        imageUrl={redactIdentity ? null : member.avatarUrl}
+                        initials={member.avatarInitials}
+                        size="sm"
                       />
+                      {!redactIdentity ? (
+                        <span
+                          className={`absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full ring-2 ring-app-surface ${presenceDotClass(liveStatus)}`}
+                          aria-hidden="true"
+                        />
+                      ) : null}
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-app-text">{member.name}</p>
-                      <p className="text-xs text-app-muted">{presenceLabel}</p>
+                      {!redactIdentity && presenceLabel ? (
+                        <p className="text-xs text-app-muted">{presenceLabel}</p>
+                      ) : null}
                     </div>
                   </div>
                 );

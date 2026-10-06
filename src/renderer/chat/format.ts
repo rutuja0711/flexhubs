@@ -19,6 +19,25 @@ export function formatSavedMessageTime(value: string): string {
   });
 }
 
+export function formatScheduledAt(value: string): string {
+  if (!value) {
+    return '';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const day = date.getDate();
+  const month = MONTHS[date.getMonth()] ?? '';
+  const hours = String(date.getHours()).padStart(2, '0');
+  const minutes = String(date.getMinutes()).padStart(2, '0');
+
+  return `${day} ${month}, ${hours}:${minutes}`;
+}
+
 export function formatConversationTimestamp(value: string): string {
   if (!value) {
     return '';

@@ -5,11 +5,13 @@ import type { GlobalSearchResult, SearchPerson } from '../../shared/search';
 import { validateSearchQuery, filterTeammatesWithoutDirectChat } from '../../shared/chat';
 import { validateSearchInput } from '../../shared/search';
 import { loadGlobalSearch } from '../chatApi';
-import { BellIcon, NotificationBadge, PlusIcon } from './ChatIcons';
+import { FiMoon, FiSun } from 'react-icons/fi';
+import { useTheme } from '../theme/ThemeProvider';
+import { PlusIcon } from './ChatIcons';
 import { ConversationList } from './ConversationList';
+import type { ConversationContextMenuActions } from './ConversationContextMenu';
 import { GlobalSearchResults } from './GlobalSearchResults';
 import { NewConversationModal } from './NewConversationModal';
-import { NotificationsPanel } from './NotificationsPanel';
 import { SearchField } from './SearchField';
 import { TeammatesSection } from './TeammatesSection';
 type ChatTab = 'all' | ConversationKind;
@@ -21,32 +23,27 @@ type ChatSidebarProps = {
   conversations: ConversationItem[];
   typingPreviews?: Record<string, string>;
   teammates: TeammateItem[];
-  unreadCount: number;
   loading: boolean;
   error: string;
   selectedId: string | null;
-  notificationsOpen: boolean;
-  notificationsLoading: boolean;
-  notificationsError: string;
-  panelNotifications: import('../../shared/messages').NotificationItem[];
-  panelPendingFriends: import('../../shared/messages').PendingFriendItem[];
   onSelect: (id: string) => void;
   onPrefetch?: (id: string) => void;
   onRetry: () => void;
-  onToggleNotifications: () => void;
-  onCloseNotifications: () => void;
   onTeammateSelect: (memberId: string) => void;
+  onTeammateAddFriend: (memberId: string) => Promise<void>;
   onSelectPerson: (person: SearchPerson) => void;
   onMessageSelf: () => void;
-  onNotificationClick: (notification: import('../../shared/messages').NotificationItem) => void;
   newConversationOpen: boolean;
   onNewConversationOpenChange: (open: boolean) => void;
   onMessageUser: (userId: string) => void;
   onNavigate?: (view: import('../../shared/nav').MainView) => void;
   onCreateHub: (name: string, memberIds: string[]) => Promise<{ ok: boolean; error?: string }>;
   onCreateGroup?: (name: string, memberIds: string[]) => Promise<{ ok: boolean; error?: string }>;
-  onTogglePin?: (conversationId: string, isPinned: boolean) => void;
-  pinningConversationId?: string | null;
+  conversationMenuActions?: ConversationContextMenuActions;
+  conversationMenuBusy?: boolean;
+  blockedUserIds?: ReadonlySet<string>;
+  blockedByPeerIds?: ReadonlySet<string>;
+  onPrepareConversationContextMenu?: () => void;
   openingTeammateId?: string | null;
   directChatMetadata?: Record<string, DirectChatMetadata>;
 };
@@ -58,32 +55,27 @@ export function ChatSidebar({
   conversations,
   typingPreviews = {},
   teammates,
-  unreadCount,
   loading,
   error,
   selectedId,
-  notificationsOpen,
-  notificationsLoading,
-  notificationsError,
-  panelNotifications,
-  panelPendingFriends,
   onSelect,
   onPrefetch,
   onRetry,
-  onToggleNotifications,
-  onCloseNotifications,
   onTeammateSelect,
+  onTeammateAddFriend,
   onSelectPerson,
   onMessageSelf,
-  onNotificationClick,
   newConversationOpen,
   onNewConversationOpenChange,
   onMessageUser,
   onNavigate,
   onCreateHub,
   onCreateGroup,
-  onTogglePin,
-  pinningConversationId = null,
+  conversationMenuActions,
+  conversationMenuBusy = false,
+  blockedUserIds,
+  blockedByPeerIds,
+  onPrepareConversationContextMenu,
   openingTeammateId = null,
   directChatMetadata = {},
 }: ChatSidebarProps) {
@@ -94,7 +86,7 @@ export function ChatSidebar({
   const [globalSearchLoading, setGlobalSearchLoading] = useState(false);
   const [globalSearchError, setGlobalSearchError] = useState('');
   const [globalResults, setGlobalResults] = useState<GlobalSearchResult | null>(null);
-  const notificationsContainerRef = useRef<HTMLDivElement>(null);
+  const { theme, toggleTheme } = useTheme();
   const tabContainerRef = useRef<HTMLDivElement>(null);
   const tabRefs = useRef<Record<ChatTab, HTMLButtonElement | null>>({
     all: null,
@@ -213,8 +205,10 @@ export function ChatSidebar({
     }).length;
   }, [activeTab, conversations, isGlobalSearch]);
 
+  const showTeammatesSection = activeTab === 'all' || activeTab === 'direct';
+
   const availableTeammates = useMemo(() => {
-    if (isGlobalSearch || activeTab !== 'direct') {
+    if (isGlobalSearch || !showTeammatesSection) {
       return [];
     }
 
@@ -235,7 +229,7 @@ export function ChatSidebar({
       const haystack = `${teammate.name} ${teammate.username}`.toLowerCase();
       return haystack.includes(query);
     });
-  }, [activeTab, conversations, directChatMetadata, isGlobalSearch, searchQuery, teammates]);
+  }, [conversations, directChatMetadata, isGlobalSearch, searchQuery, showTeammatesSection, teammates]);
 
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
@@ -265,7 +259,7 @@ export function ChatSidebar({
   return (
     <aside className="relative z-[40] flex h-full w-[330px] shrink-0 flex-col border-r border-app-border bg-app-chat-sidebar transition-colors">
       <div className="border-b border-app-border px-4 py-3.5">
-        <div ref={notificationsContainerRef} className="relative mb-3.5">
+        <div className="mb-3.5">
           <div className="flex items-start justify-between gap-3">
             <button
               type="button"
@@ -288,27 +282,17 @@ export function ChatSidebar({
 
             <button
               type="button"
-              aria-label={`Notifications${unreadCount > 0 ? `, ${unreadCount} unread` : ''}`}
-              aria-expanded={notificationsOpen}
-              className="relative flex h-8 w-8 shrink-0 items-center justify-center overflow-visible rounded-xl text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95"
-              onClick={onToggleNotifications}
+              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+              className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95"
+              onClick={toggleTheme}
             >
-              <BellIcon />
-              <NotificationBadge count={unreadCount} ringClass="ring-app-chat-sidebar" />
+              {theme === 'dark' ? (
+                <FiSun className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden="true" />
+              ) : (
+                <FiMoon className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden="true" />
+              )}
             </button>
           </div>
-
-          {notificationsOpen ? (
-            <NotificationsPanel
-              notifications={panelNotifications}
-              pendingFriends={panelPendingFriends}
-              loading={notificationsLoading}
-              error={notificationsError}
-              containerRef={notificationsContainerRef}
-              onClose={onCloseNotifications}
-              onNotificationClick={onNotificationClick}
-            />
-          ) : null}
         </div>
 
         <div className="flex items-center gap-2">
@@ -342,11 +326,10 @@ export function ChatSidebar({
         <div className="border-b border-app-border px-4 py-2">
           <div
             ref={tabContainerRef}
-            className="relative flex p-1 rounded-xl border border-app-border bg-app-surface-input/80 dark:bg-app-inset gap-1 z-0 shadow-inner shadow-black/5"
+            className="relative z-0 flex gap-0.5 rounded-full border border-app-border/80 bg-app-surface-input/70 p-0.5 shadow-inner shadow-black/5 dark:bg-app-inset/90"
           >
-            {/* Smooth Dynamic Sliding Pill */}
-            <div 
-              className="pointer-events-none absolute top-1 bottom-1 rounded-lg bg-white dark:bg-app-elevated shadow-sm transition-all duration-250 ease-[cubic-bezier(0.2,0.8,0.2,1)]"
+            <div
+              className="pointer-events-none absolute top-0.5 bottom-0.5 rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-all duration-250 ease-[cubic-bezier(0.2,0.8,0.2,1)] dark:bg-app-elevated dark:ring-white/5"
               style={{
                 transform: `translateX(${tabIndicator.left}px)`,
                 width: `${tabIndicator.width}px`,
@@ -359,7 +342,7 @@ export function ChatSidebar({
                 tabRefs.current.all = el;
               }}
               type="button"
-              className={`flex-1 relative z-10 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ${
+              className={`relative z-10 min-w-0 flex-1 select-none whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] font-semibold leading-none tracking-tight transition-colors duration-200 sm:px-3 sm:text-xs ${
                 activeTab === 'all'
                   ? 'text-app-text'
                   : 'text-app-muted hover:text-app-text'
@@ -373,7 +356,7 @@ export function ChatSidebar({
                 tabRefs.current.direct = el;
               }}
               type="button"
-              className={`flex-1 relative z-10 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ${
+              className={`relative z-10 min-w-0 flex-1 select-none whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] font-semibold leading-none tracking-tight transition-colors duration-200 sm:px-3 sm:text-xs ${
                 activeTab === 'direct'
                   ? 'text-app-text'
                   : 'text-app-muted hover:text-app-text'
@@ -387,7 +370,7 @@ export function ChatSidebar({
                 tabRefs.current.hub = el;
               }}
               type="button"
-              className={`flex-1 relative z-10 rounded-lg px-3 py-1.5 text-xs font-semibold tracking-tight transition-colors duration-200 select-none ${
+              className={`relative z-10 min-w-0 flex-1 select-none whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] font-semibold leading-none tracking-tight transition-colors duration-200 sm:px-3 sm:text-xs ${
                 activeTab === 'hub'
                   ? 'text-app-text'
                   : 'text-app-muted hover:text-app-text'
@@ -452,19 +435,24 @@ export function ChatSidebar({
               selectedId={selectedId}
               onSelect={onSelect}
               onPrefetch={onPrefetch}
-              onTogglePin={onTogglePin}
-              pinningConversationId={pinningConversationId}
+              menuActions={conversationMenuActions}
+              menuBusy={conversationMenuBusy}
+              blockedUserIds={blockedUserIds}
+              onPrepareContextMenu={onPrepareConversationContextMenu}
               emptyMessage={
-                activeTab === 'direct' && availableTeammates.length > 0 && !searchQuery.trim()
+                showTeammatesSection && availableTeammates.length > 0 && !searchQuery.trim()
                   ? 'Pick a teammate below to start chatting.'
                   : emptyMessage
               }
             />
-            {activeTab === 'direct' ? (
+            {showTeammatesSection ? (
               <TeammatesSection
                 teammates={availableTeammates}
                 openingTeammateId={openingTeammateId}
+                blockedUserIds={blockedUserIds}
+                blockedByPeerIds={blockedByPeerIds}
                 onSelect={onTeammateSelect}
+                onAddFriend={onTeammateAddFriend}
               />
             ) : null}
           </>

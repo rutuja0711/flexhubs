@@ -1,11 +1,15 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { FiSearch, FiUserPlus, FiX } from 'react-icons/fi';
-import type { CalendarMentionableUser } from '../../shared/extras';
+import type { CalendarHubOption, CalendarMentionableUser } from '../../shared/extras';
 import {
   dateTimeLocalToIso,
   defaultEventDateTimeLocal,
   isEventAtLeastOneMinuteFromNow,
+  mergeCalendarPeopleWithInvitees,
+  mergeHubConversationIds,
   mergeMentionUserIds,
+  parseHubConversationIdsFromText,
+  parseMentionUserIdsFromText,
 } from '../../shared/extras';
 import { loadOrganizationMembers } from '../chatApi';
 import { createCalendarEvent, loadCalendarMentionableUsers } from '../extrasApi';
@@ -20,7 +24,21 @@ type NewEventModalProps = {
   conversationId?: string | null;
   editEvent?: import('../../shared/features').CalendarEventItem | null;
   initialDate?: Date | null;
+  hubOptions?: CalendarHubOption[];
 };
+
+function channelIdsForHubConversations(
+  conversationIds: string[],
+  hubs: CalendarHubOption[],
+): string[] {
+  return [
+    ...new Set(
+      conversationIds
+        .map((id) => hubs.find((hub) => hub.conversationId === id)?.channelId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+}
 
 function activeMentionQuery(value: string, cursor: number | null): string | null {
   if (cursor === null) {
@@ -41,6 +59,7 @@ export function NewEventModal({
   conversationId = null,
   editEvent = null,
   initialDate = null,
+  hubOptions = [],
 }: NewEventModalProps) {
   const notesRef = useRef<HTMLTextAreaElement>(null);
   const [title, setTitle] = useState('');
@@ -48,17 +67,25 @@ export function NewEventModal({
   const [description, setDescription] = useState('');
   const [mentionUsers, setMentionUsers] = useState<CalendarMentionableUser[]>([]);
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [removedInviteeIds, setRemovedInviteeIds] = useState<string[]>([]);
   const [peopleQuery, setPeopleQuery] = useState('');
+  const [hubQuery, setHubQuery] = useState('');
+  const [selectedHubConversationIds, setSelectedHubConversationIds] = useState<string[]>([]);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
-
+  const initialDateMs = initialDate?.getTime() ?? null;
+  const hubOptionsRef = useRef(hubOptions);
+  hubOptionsRef.current = hubOptions;
   useEffect(() => {
     if (!open) {
+      setMembersLoading(false);
       return;
     }
+
+    let cancelled = false;
 
     setTitle(editEvent?.title ?? '');
     
@@ -79,25 +106,45 @@ export function NewEventModal({
       setStartsAtLocal(defaultEventDateTimeLocal());
     }
     
-    setDescription(editEvent?.description ?? '');
-    
-    const inviteeIds = editEvent?.invitees?.map(i => i.userId).filter((id): id is string => id !== null) ?? [];
-    setSelectedUserIds(inviteeIds);
+    setDescription(editEvent?.description ?? editEvent?.notes ?? '');
+
+    const inviteeIdsFromEvent = (editEvent?.invitees ?? [])
+      .map((invitee) => invitee.userId)
+      .filter((id): id is string => Boolean(id));
+    setSelectedUserIds([
+      ...new Set([...inviteeIdsFromEvent, ...(editEvent?.mentionUserIds ?? [])]),
+    ]);
+    setRemovedInviteeIds([]);
+    const hubIdsFromEvent = [
+      ...(editEvent?.taggedHubs?.map((hub) => hub.conversationId).filter(Boolean) ?? []),
+      editEvent?.conversationId,
+      !editEvent && conversationId ? conversationId : null,
+    ].filter((id): id is string => Boolean(id));
+    setSelectedHubConversationIds([...new Set(hubIdsFromEvent)]);
     setPeopleQuery('');
+    setHubQuery('');
     setMentionQuery(null);
     setError('');
     setMembersError('');
+    setMembersLoading(true);
     void loadCalendarMentionableUsers().then(async (result) => {
       let finalUsers: CalendarMentionableUser[] = [];
-      
+
       if (!result.ok) {
         if (onUnauthorized(result.status)) {
-          setMembersLoading(false);
+          if (!cancelled) {
+            setMembersLoading(false);
+          }
           return;
         }
 
-        setMembersError(result.error);
+        if (!cancelled) {
+          setMembersError(result.error);
+        }
         const fallback = await loadOrganizationMembers();
+        if (cancelled) {
+          return;
+        }
         if (fallback.ok) {
           finalUsers = fallback.data.map((member) => ({
             id: member.id,
@@ -109,6 +156,9 @@ export function NewEventModal({
         finalUsers = result.data;
       } else {
         const fallback = await loadOrganizationMembers();
+        if (cancelled) {
+          return;
+        }
         if (fallback.ok) {
           finalUsers = fallback.data.map((member) => ({
             id: member.id,
@@ -118,43 +168,138 @@ export function NewEventModal({
         }
       }
 
-      setMentionUsers(finalUsers);
-      setMembersLoading(false);
-
-      if (editEvent?.invitees) {
-        const ids = editEvent.invitees.map(inv => {
-          if (inv.userId) return inv.userId;
-          const found = finalUsers.find(u => u.username === inv.username || u.name === inv.name);
-          return found?.id;
-        }).filter((id): id is string => !!id);
-        
-        // Only set if we found IDs to avoid clearing already selected ones
-        if (ids.length > 0) {
-          setSelectedUserIds(prev => Array.from(new Set([...prev, ...ids])));
-        }
+      if (cancelled) {
+        return;
       }
-    });
-  }, [open, onUnauthorized]);
 
-  const selectedUsers = useMemo(
-    () => mentionUsers.filter((user) => selectedUserIds.includes(user.id)),
-    [mentionUsers, selectedUserIds],
+      const { people, selectedUserIds: inviteeUserIds } = mergeCalendarPeopleWithInvitees(
+        finalUsers,
+        editEvent?.invitees,
+      );
+      const descriptionText = editEvent?.description ?? editEvent?.notes ?? '';
+      const mentionIdsFromNotes = parseMentionUserIdsFromText(descriptionText, people);
+      const hubIdsFromNotes = parseHubConversationIdsFromText(
+        descriptionText,
+        hubOptionsRef.current,
+      );
+      const selectedIds = [...new Set([
+        ...inviteeUserIds,
+        ...mentionIdsFromNotes,
+        ...(editEvent?.mentionUserIds || [])
+      ])];
+
+      setMentionUsers(people);
+      setSelectedUserIds(selectedIds);
+      setSelectedHubConversationIds((current) => [
+        ...new Set([...current, ...hubIdsFromNotes]),
+      ]);
+      setMembersLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId, editEvent?.id, initialDateMs, open, onUnauthorized]);
+
+  const displayedInvitees = useMemo(() => {
+    const byId = new Map<string, CalendarMentionableUser>();
+
+    const addUser = (user: CalendarMentionableUser) => {
+      byId.set(user.id, user);
+    };
+
+    for (const [index, invitee] of (editEvent?.invitees ?? []).entries()) {
+      const username = invitee.username?.trim() || '';
+      const name = invitee.name?.trim() || invitee.username?.trim() || 'Teammate';
+      const id = invitee.userId ?? `invitee-${index}-${username || name}`;
+      if (removedInviteeIds.includes(id)) {
+        continue;
+      }
+      const fromPeople =
+        (invitee.userId
+          ? mentionUsers.find((user) => user.id === invitee.userId)
+          : null) ??
+        (username
+          ? mentionUsers.find(
+              (user) => user.username.toLowerCase() === username.toLowerCase(),
+            )
+          : null) ??
+        (name
+          ? mentionUsers.find((user) => user.name.toLowerCase() === name.toLowerCase())
+          : null);
+
+      addUser(
+        fromPeople ?? {
+          id,
+          username: username || name,
+          name,
+        },
+      );
+    }
+
+    for (const id of selectedUserIds) {
+      const user = mentionUsers.find((entry) => entry.id === id);
+      if (user) {
+        addUser(user);
+      }
+    }
+
+    return [...byId.values()];
+  }, [editEvent?.invitees, mentionUsers, removedInviteeIds, selectedUserIds]);
+
+  const peopleSearchActive = peopleQuery.trim().length > 0;
+
+  const selectedHubs = useMemo(
+    () => hubOptions.filter((hub) => selectedHubConversationIds.includes(hub.conversationId)),
+    [hubOptions, selectedHubConversationIds],
   );
+
+  const displayedHubTags = useMemo(() => {
+    if (selectedHubs.length > 0) {
+      return selectedHubs;
+    }
+
+    if (!editEvent?.taggedHubs?.length) {
+      return [];
+    }
+
+    return editEvent.taggedHubs.map((hub, index) => ({
+      conversationId: hub.conversationId ?? `hub-tag-${index}`,
+      channelId: hub.channelId ?? null,
+      name: hub.name,
+      slug: hub.slug ?? hub.name,
+    }));
+  }, [editEvent?.taggedHubs, selectedHubs]);
+
+  const filteredHubs = useMemo(() => {
+    const query = hubQuery.trim().toLowerCase();
+    if (!query) {
+      return [];
+    }
+
+    return hubOptions
+      .filter((hub) => !selectedHubConversationIds.includes(hub.conversationId))
+      .filter(
+        (hub) =>
+          hub.name.toLowerCase().includes(query) ||
+          hub.slug.toLowerCase().includes(query),
+      )
+      .slice(0, 8);
+  }, [hubOptions, hubQuery, selectedHubConversationIds]);
 
   const filteredPeople = useMemo(() => {
     const query = peopleQuery.trim().toLowerCase();
+    if (!query) {
+      return [];
+    }
+
     return mentionUsers
       .filter((user) => !selectedUserIds.includes(user.id))
-      .filter((user) => {
-        if (!query) {
-          return true;
-        }
-
-        return (
+      .filter(
+        (user) =>
           user.name.toLowerCase().includes(query) ||
-          user.username.toLowerCase().includes(query)
-        );
-      })
+          user.username.toLowerCase().includes(query),
+      )
       .slice(0, 8);
   }, [mentionUsers, peopleQuery, selectedUserIds]);
 
@@ -195,6 +340,14 @@ export function NewEventModal({
     }
 
     const mentionUserIds = mergeMentionUserIds(description, mentionUsers, selectedUserIds);
+    const hubConversationIds = mergeHubConversationIds(
+      description,
+      hubOptions,
+      selectedHubConversationIds,
+    );
+    const mentionChannelIds = channelIdsForHubConversations(hubConversationIds, hubOptions);
+    const primaryConversationId =
+      hubConversationIds[0] ?? conversationId ?? editEvent?.conversationId ?? undefined;
 
     setSaving(true);
     let result;
@@ -207,6 +360,9 @@ export function NewEventModal({
         startsAt,
         description: description.trim(),
         mentionUserIds,
+        conversationId: primaryConversationId ?? null,
+        conversationIds: hubConversationIds,
+        mentionChannelIds,
       });
     } else {
       result = await createCalendarEvent({
@@ -214,7 +370,9 @@ export function NewEventModal({
         startsAt,
         description: description.trim(),
         mentionUserIds,
-        conversationId: conversationId ?? undefined,
+        conversationId: primaryConversationId,
+        conversationIds: hubConversationIds,
+        mentionChannelIds,
       });
     }
     
@@ -239,6 +397,22 @@ export function NewEventModal({
 
   const removePerson = (userId: string) => {
     setSelectedUserIds((current) => current.filter((id) => id !== userId));
+    setRemovedInviteeIds((current) =>
+      current.includes(userId) ? current : [...current, userId],
+    );
+  };
+
+  const addHub = (hub: CalendarHubOption) => {
+    setSelectedHubConversationIds((current) =>
+      current.includes(hub.conversationId) ? current : [...current, hub.conversationId],
+    );
+    setHubQuery('');
+  };
+
+  const removeHub = (hubConversationId: string) => {
+    setSelectedHubConversationIds((current) =>
+      current.filter((id) => id !== hubConversationId),
+    );
   };
 
   const insertMention = (user: CalendarMentionableUser) => {
@@ -321,53 +495,54 @@ export function NewEventModal({
           </div>
 
           <div>
-            <label className="mb-1.5 block text-xs font-medium text-app-muted">
-              Share with
+            <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-app-muted">
+              Tag people
             </label>
             <div className="rounded-2xl border border-app-border bg-app-card p-3.5">
-              {selectedUsers.length > 0 ? (
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {selectedUsers.map((user) => (
-                    <span
-                      key={user.id}
-                      className="inline-flex items-center gap-1.5 rounded-xl border border-app-border bg-app-card px-2.5 py-1 text-xs text-app-text font-medium shadow-xs"
-                    >
-                      {user.name}
-                      <button
-                        type="button"
-                        aria-label={`Remove ${user.name}`}
-                        className="text-app-muted hover:text-accent-soft transition-colors"
-                        onClick={() => removePerson(user.id)}
-                      >
-                        <FiX className="h-3 w-3" />
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p className="mb-3 text-xs text-app-muted">
-                  Only you see this event until you add teammates.
-                </p>
-              )}
-
               <div className="relative">
                 <FiSearch className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-app-muted" />
                 <input
                   type="text"
                   value={peopleQuery}
                   onChange={(event) => setPeopleQuery(event.target.value)}
-                  placeholder="Search teammates to invite"
-                  className="w-full rounded-xl border border-app-border bg-app-surface-input py-2 pr-3 pl-9 text-xs text-app-text outline-none focus:border-accent transition-all"
+                  placeholder="Search teammates to invite..."
+                  className="w-full rounded-full border border-app-border bg-app-surface-input py-2.5 pr-3 pl-9 text-xs text-app-text outline-none focus:border-accent focus:ring-1 focus:ring-accent/20"
                 />
               </div>
 
-              {membersLoading ? (
-                <p className="mt-3 text-xs text-app-muted">Loading teammates...</p>
+              <div className="mt-3 min-h-8 flex flex-wrap gap-2">
+                {displayedInvitees.map((user) => (
+                  <span
+                    key={user.id}
+                    className="inline-flex items-center gap-2 rounded-full border border-accent/35 bg-accent/15 px-3 py-1.5 text-xs font-medium text-app-text"
+                  >
+                    <FiUserPlus className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" />
+                    @{user.username || user.name}
+                    <button
+                      type="button"
+                      aria-label={`Remove ${user.name}`}
+                      className="text-accent hover:text-accent-hover transition-colors"
+                      onClick={() => removePerson(user.id)}
+                    >
+                      <FiX className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+
+              <p className="mt-3 text-xs text-app-muted">
+                Only tagged people will see this event besides you.
+              </p>
+
+              {membersError ? (
+                <p className="mt-2 text-xs text-accent-soft">{membersError}</p>
               ) : null}
-              {!membersLoading && membersError ? (
-                <p className="mt-3 text-xs text-accent-soft">{membersError}</p>
+
+              {peopleSearchActive && membersLoading ? (
+                <p className="mt-2 text-xs text-app-muted">Loading teammates…</p>
               ) : null}
-              {!membersLoading && filteredPeople.length > 0 ? (
+
+              {peopleSearchActive && !membersLoading && filteredPeople.length > 0 ? (
                 <div className="mt-2 overflow-hidden rounded-xl border border-app-border bg-app-card">
                   {filteredPeople.map((user) => (
                     <button
@@ -385,6 +560,71 @@ export function NewEventModal({
               ) : null}
             </div>
           </div>
+
+          {hubOptions.length > 0 ? (
+            <div>
+              <label className="mb-1.5 block text-xs font-medium text-app-muted">
+                Tag hubs
+              </label>
+              <div className="rounded-2xl border border-app-border bg-app-card p-3.5">
+                <div className="relative">
+                  <FiSearch className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-app-muted" />
+                  <input
+                    type="text"
+                    value={hubQuery}
+                    onChange={(event) => setHubQuery(event.target.value)}
+                    placeholder="Search hubs to tag..."
+                    className="w-full rounded-xl border border-app-border bg-app-surface-input py-2.5 pr-3 pl-9 text-xs text-app-text outline-none focus:border-accent focus:ring-1 focus:ring-accent/20 transition-all"
+                  />
+                </div>
+
+                {displayedHubTags.length > 0 ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {displayedHubTags.map((hub) => (
+                      <span
+                        key={hub.conversationId}
+                        className="inline-flex items-center gap-2 rounded-full border border-violet-500/35 bg-violet-500/15 px-3 py-1.5 text-xs font-medium text-app-text"
+                      >
+                        <span className="text-violet-400" aria-hidden="true">
+                          #
+                        </span>
+                        {hub.name}
+                        <button
+                          type="button"
+                          aria-label={`Remove ${hub.name}`}
+                          className="text-violet-400 hover:text-violet-300 transition-colors"
+                          onClick={() => removeHub(hub.conversationId)}
+                        >
+                          <FiX className="h-3.5 w-3.5" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+
+                <p className="mt-3 text-xs text-app-muted">
+                  Tagged hubs see this event on their calendar. You can also type #hub-name in notes.
+                </p>
+
+                {filteredHubs.length > 0 ? (
+                  <div className="mt-2 overflow-hidden rounded-xl border border-app-border bg-app-card">
+                    {filteredHubs.map((hub) => (
+                      <button
+                        key={hub.conversationId}
+                        type="button"
+                        className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs hover:bg-app-inset transition-colors"
+                        onClick={() => addHub(hub)}
+                      >
+                        <span className="font-semibold text-violet-400">#</span>
+                        <span className="font-semibold text-app-text">{hub.name}</span>
+                        <span className="text-app-muted">@{hub.slug}</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
           <div className="relative">
             <label className="mb-1.5 block text-xs font-medium text-app-muted">

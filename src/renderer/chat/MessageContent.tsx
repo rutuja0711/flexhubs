@@ -1,17 +1,20 @@
 import type { ReactNode } from 'react';
-import { FiFile } from 'react-icons/fi';
 import type { MessageItem } from '../../shared/messages';
 import {
   DELETED_MESSAGE_TEXT,
   formatMessagePreview,
   isCallLogMessage,
   isDeletedMessage,
+  isDownloadableFileMedia,
   isPollMessage,
   isStickerMessage,
   isVideoMediaItem,
+  isVoiceMediaAttachment,
   parseCallLogContent,
 } from '../../shared/messages';
 import { RemoteImage } from '../RemoteImage';
+import { FileAttachmentCard } from './FileAttachmentCard';
+import { VoiceNoteBubble } from './VoiceNoteBubble';
 import { RemoteVideo } from '../RemoteVideo';
 import { SendingProgressRing } from '../ui/SendingProgressRing';
 import { openMediaPreview } from './MediaPreviewHost';
@@ -27,6 +30,7 @@ type MessageContentProps = {
   currentUserId?: string | null;
   isSending?: boolean;
   sendProgress?: number | null;
+  isOwn?: boolean;
 };
 
 function SendingMediaOverlay({ progress }: { progress?: number | null }) {
@@ -50,29 +54,48 @@ function wrapWithSendOverlay(node: ReactNode, isSending: boolean, sendProgress?:
   );
 }
 
-function renderMentionText(content: string): ReactNode {
-  const parts = content.split(/(@[a-zA-Z0-9._-]+)/g);
+function renderFormattedText(content: string): ReactNode {
+  const parts = content.split(/((?:https?:\/\/[^\s]+)|(?:@[a-zA-Z0-9._-]+))/g);
 
-  return parts.map((part, index) =>
-    part.startsWith('@') ? (
-      <span key={`${part}-${index}`} className="font-semibold text-accent-soft">
-        {part}
-      </span>
-    ) : (
-      part
-    ),
-  );
+  return parts.map((part, index) => {
+    if (part.startsWith('http://') || part.startsWith('https://')) {
+      return (
+        <a
+          key={`${part}-${index}`}
+          href={part}
+          className="text-accent hover:underline break-all cursor-pointer"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (window.electronAPI?.openExternalUrl) {
+              void window.electronAPI.openExternalUrl(part);
+            }
+          }}
+        >
+          {part}
+        </a>
+      );
+    }
+    if (part.startsWith('@')) {
+      return (
+        <span key={`${part}-${index}`} className="font-semibold text-accent-soft">
+          {part}
+        </span>
+      );
+    }
+    return part;
+  });
 }
 
 function highlightContent(content: string, term: string): ReactNode {
   if (!term.trim()) {
-    return renderMentionText(content);
+    return renderFormattedText(content);
   }
 
   const index = content.toLowerCase().indexOf(term.toLowerCase());
 
   if (index < 0) {
-    return renderMentionText(content);
+    return renderFormattedText(content);
   }
 
   const before = content.slice(0, index);
@@ -81,9 +104,9 @@ function highlightContent(content: string, term: string): ReactNode {
 
   return (
     <>
-      {renderMentionText(before)}
+      {renderFormattedText(before)}
       <mark className="rounded bg-accent/25 px-0.5 text-app-text">{match}</mark>
-      {renderMentionText(after)}
+      {renderFormattedText(after)}
     </>
   );
 }
@@ -106,6 +129,7 @@ export function MessageContent({
   currentUserId = null,
   isSending = false,
   sendProgress = null,
+  isOwn = false,
 }: MessageContentProps) {
   if (isDeletedMessage(message)) {
     if (compact) {
@@ -151,45 +175,44 @@ export function MessageContent({
   const stickerMessage = isStickerMessage(message);
   const normalizedContent =
     message.content.trim() === 'sticker' ? '' : message.content.trim();
-  const visibleText = media.some((item) => item.url === normalizedContent) ? '' : normalizedContent;
+  let visibleText = media.some((item) => item.url === normalizedContent) ? '' : normalizedContent;
+  if (
+    visibleText &&
+    media.some(
+      (item) =>
+        item.name &&
+        item.name.trim().localeCompare(visibleText.trim(), undefined, { sensitivity: 'accent' }) === 0,
+    )
+  ) {
+    visibleText = '';
+  }
+
+  const mediaFrameClass = 'w-full max-w-sm';
+  const hasCaption = Boolean(visibleText);
 
   return (
-    <div className="space-y-2">
+    <div className="w-fit max-w-full space-y-2">
       {media.map((item) => {
-        if (item.kind === 'file' && !isVideoMediaItem(item)) {
-          const fileNode = (
-            <a
-              href={isSending ? undefined : item.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              download={item.name ?? undefined}
-              className={`flex max-w-sm items-center gap-3 rounded-2xl border border-app-border/60 bg-app-surface/90 backdrop-blur-sm px-3.5 py-2.5 text-inherit shadow-sm transition-all ${
-                isSending ? 'pointer-events-none opacity-95' : 'hover:bg-app-chat-hover hover:border-app-border-strong/60'
-              }`}
-              onClick={isSending ? (event) => event.preventDefault() : undefined}
-            >
-              <span className="relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/15 text-accent-soft shadow-inner shadow-accent/20">
-                {isSending ? (
-                  <SendingProgressRing
-                    progress={sendProgress}
-                    size={28}
-                    showLabel={false}
-                    className="text-accent-soft"
-                  />
-                ) : (
-                  <FiFile className="h-5 w-5" />
-                )}
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate text-sm font-semibold tracking-tight">{item.name ?? 'File'}</span>
-                <span className="text-[11px] font-medium text-app-muted">
-                  {isSending ? 'Sending…' : 'Tap to download'}
-                </span>
-              </span>
-            </a>
+        if (isVoiceMediaAttachment(item, message.messageType) && item.url) {
+          return (
+            <div key={item.url} className="max-w-full">
+              <VoiceNoteBubble src={item.url} isOwn={isOwn} />
+            </div>
           );
+        }
 
-          return <div key={item.url}>{fileNode}</div>;
+        if (isDownloadableFileMedia(item) && !isVideoMediaItem(item)) {
+          return (
+            <div key={item.url}>
+              <FileAttachmentCard
+                url={item.url}
+                name={item.name ?? 'File'}
+                isSending={isSending}
+                sendProgress={sendProgress}
+                isOwn={isOwn}
+              />
+            </div>
+          );
         }
 
         const isSticker = stickerMessage || item.kind === 'sticker';
@@ -204,7 +227,7 @@ export function MessageContent({
               src={item.kind === 'gif' ? item.url : previewUrl}
               alt={item.name ?? 'Sticker'}
               loading="lazy"
-              className="max-h-40 max-w-full bg-transparent object-contain"
+              className={`max-h-40 w-full max-w-sm bg-transparent object-contain ${isSending ? 'min-h-[120px] min-w-[120px]' : ''}`}
             />,
             isSending,
             sendProgress,
@@ -212,10 +235,12 @@ export function MessageContent({
         }
 
         const mediaBody = (
-          <div className="overflow-hidden rounded-2xl ring-1 ring-black/10 dark:ring-white/10 shadow-sm">
+          <div
+            className={`overflow-hidden rounded-2xl ring-1 ring-black/10 dark:ring-white/10 shadow-sm ${mediaFrameClass} ${isSending ? 'min-h-[160px] min-w-[160px] bg-black/5 dark:bg-white/5 flex items-center justify-center' : ''}`}
+          >
             {isVideo ? (
               <div
-                className="js-media-preview-item block max-w-full"
+                className="js-media-preview-item block w-full"
                 data-media-url={item.url}
                 data-media-name={item.name ?? ''}
                 data-media-kind="video"
@@ -237,14 +262,14 @@ export function MessageContent({
                   playsInline
                   muted={isSending}
                   preload="metadata"
-                  className="block max-h-72 max-w-full rounded-2xl bg-app-chat-hover object-contain"
+                  className="block h-auto max-h-72 w-full rounded-2xl bg-app-chat-hover object-contain"
                 />
               </div>
             ) : isPreviewable ? (
               <button
                 type="button"
                 disabled={isSending}
-                className={`block max-w-full text-left transition-transform js-media-preview-item ${
+                className={`block w-full text-left transition-transform js-media-preview-item ${
                   isSending ? 'cursor-default' : 'cursor-zoom-in hover:scale-[1.01]'
                 }`}
                 data-media-url={item.url}
@@ -262,7 +287,7 @@ export function MessageContent({
                   src={item.kind === 'gif' ? item.url : previewUrl}
                   alt={item.name ?? mediaLabel(item.kind)}
                   loading="lazy"
-                  className="max-h-72 max-w-full rounded-2xl bg-transparent object-contain"
+                  className="max-h-72 w-full rounded-2xl bg-transparent object-contain"
                 />
               </button>
             ) : (
@@ -270,7 +295,7 @@ export function MessageContent({
                 src={item.kind === 'gif' ? item.url : previewUrl}
                 alt={item.name ?? mediaLabel(item.kind)}
                 loading="lazy"
-                className="max-h-72 max-w-full rounded-2xl bg-transparent object-contain"
+                className="max-h-72 w-full rounded-2xl bg-transparent object-contain"
               />
             )}
           </div>
@@ -285,11 +310,17 @@ export function MessageContent({
 
       {visibleText ? (
         compact ? (
-          <span className="whitespace-pre-wrap break-words break-all">
+          <span
+            className={`block min-w-0 whitespace-pre-wrap break-words ${hasCaption && media.length > 0 ? 'max-w-sm' : ''}`}
+          >
             {highlightContent(visibleText, highlightTerm)}
           </span>
         ) : (
-          <p className="whitespace-pre-wrap break-words break-all">{highlightContent(visibleText, highlightTerm)}</p>
+          <p
+            className={`min-w-0 whitespace-pre-wrap break-words ${hasCaption && media.length > 0 ? 'max-w-sm px-3.5 pt-2' : ''}`}
+          >
+            {highlightContent(visibleText, highlightTerm)}
+          </p>
         )
       ) : null}
     </div>
