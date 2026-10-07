@@ -90,7 +90,11 @@ import {
   fetchMessageSearch,
   fetchUserSearch,
 } from './main/searchApi';
-import { showCustomDesktopNotification } from './main/notifications/notificationWindow';
+import {
+  closeNotificationWindow,
+  setNotificationHostWindowProvider,
+  showCustomDesktopNotification,
+} from './main/notifications/notificationWindow';
 import {
   setRealtimeHandlers,
   startRealtimeStream,
@@ -192,6 +196,7 @@ import {
 } from './main/callSignalingMain';
 
 let mainWindow: BrowserWindow | null = null;
+let isQuitting = false;
 let callPresentationActive = false;
 let savedMainBounds: Electron.Rectangle | null = null;
 let savedCallWindowBounds: Electron.Rectangle | null = null;
@@ -1395,8 +1400,27 @@ const createWindow = (): void => {
     setUpdaterMainWindow(null);
     mainWindow = null;
     stopRealtimeStream();
+    closeNotificationWindow();
   });
+
+  mainWindow.on('hide', () => {
+    closeNotificationWindow();
+  });
+
+  if (process.platform === 'darwin') {
+    mainWindow.on('close', (event) => {
+      if (isQuitting) {
+        return;
+      }
+
+      event.preventDefault();
+      closeNotificationWindow();
+      mainWindow?.hide();
+    });
+  }
 };
+
+setNotificationHostWindowProvider(() => mainWindow);
 
 function isAllowedSessionPermission(permission: string): boolean {
   return (
@@ -1745,7 +1769,11 @@ app.whenReady().then(() => {
               }
               mainWindow.show();
               mainWindow.focus();
-              mainWindow.webContents.send('desktop:notify-click', payload.tag ?? '');
+              mainWindow.webContents.send('desktop:notify-click', {
+                tag: payload.tag ?? '',
+                conversationId: payload.conversationId ?? null,
+                messageId: payload.messageId ?? null,
+              });
             }
           });
           resolve({ ok: true });
@@ -1759,17 +1787,23 @@ app.whenReady().then(() => {
   createWindow();
 
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    if (!mainWindow || mainWindow.isDestroyed()) {
       createWindow();
-    } else if (mainWindow) {
-      mainWindow.show();
-      mainWindow.focus();
-      mainWindow.center();
+      return;
     }
+
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+
+    mainWindow.focus();
+    mainWindow.center();
   });
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
+  closeNotificationWindow();
   console.log('[FlexHubs] Application before-quit.');
 });
 

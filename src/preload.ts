@@ -785,9 +785,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendNotificationAction: (action: string) => ipcRenderer.send('notification:action', action),
   logRendererDebug: (message: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('renderer:debug-log', message).catch(() => ({ ok: false })),
-  onDesktopNotificationClick: (callback: (tag: string) => void): (() => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, tag: string) => {
-      callback(tag);
+  onDesktopNotificationClick: (
+    callback: (detail: string | { tag?: string; conversationId?: string | null; messageId?: string | null }) => void,
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      detail: string | { tag?: string; conversationId?: string | null; messageId?: string | null },
+    ) => {
+      callback(detail);
     };
 
     ipcRenderer.on('desktop:notify-click', handler);

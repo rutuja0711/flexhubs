@@ -104,11 +104,58 @@ Follow **[SIGNING.md](./SIGNING.md)** to add Apple + Windows code signing secret
 | **macOS** | `FlexHubs-Desktop.dmg` — drag to Applications | No separate installer wizard. **First app launch** shows FlexHubs Terms & Privacy acceptance (packaged builds only). |
 | **Windows** | `FlexHubs-Desktop-Setup.exe` (Squirrel) | Per-user install to `%LocalAppData%\FlexHubsDesktop` — **no custom install folder wizard** (Squirrel limitation). **First app launch** shows the same terms acceptance. |
 
-To rebuild installers locally:
+## Build installers (developers)
 
-- **Mac DMG:** `npm run make:mac` → `out/make/` (or staged `FlexHubs-Desktop.dmg`)
-- **Windows Setup.exe:** run on Windows or CI: `npm run make:win` → `out/make/squirrel.windows/x64/*.exe`
+### Prerequisites
 
-CI (push to `main`) builds both and uploads to the **`desktop-latest`** GitHub Release.
+- **Node.js 20** and **npm**
+- Repo cloned, then from the project root:
 
-Legal copy for installers is also in `assets/desktop-eula.txt`.
+```bash
+npm ci
+```
+
+Optional (CI / production API): set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in the environment before `make` if your build pipeline requires them (GitHub Actions uses repository secrets).
+
+### Mac DMG (on a Mac)
+
+```bash
+npm run make:mac
+```
+
+**Output:** `out/make/FlexHubs-Desktop.dmg` (~190 MB, universal Intel + Apple Silicon)
+
+**Share with testers:** send only the `.dmg` file. They drag **FlexHubs Desktop** into **Applications** (see Mac steps above). First launch shows in-app Terms & Privacy (packaged builds).
+
+Unsigned builds: testers may need **Open Anyway** or `xattr -cr` (see Mac table above). For no Gatekeeper prompts, configure signing per **[SIGNING.md](./SIGNING.md)**.
+
+### Windows Setup.exe (cannot be built on Mac)
+
+Squirrel.Windows installers must be built on **Windows** or in **GitHub Actions**:
+
+**On a Windows PC:**
+
+```bash
+npm ci
+npm run make:win
+```
+
+**Output:** `out/make/squirrel.windows/x64/FlexHubs-Desktop-Setup.exe` (name may match `setupExe` in `forge.config.ts`)
+
+**From CI (recommended):** push to **`main`** (or run **Build Desktop App** workflow manually). Artifacts are uploaded to the GitHub Release tag **`desktop-latest`**:
+
+| File | Platform |
+|------|----------|
+| `FlexHubs-Desktop.dmg` | macOS |
+| `FlexHubs-Desktop-Setup.exe` | Windows |
+
+Download from: **GitHub → Releases → `desktop-latest`**.
+
+### What a proper release includes
+
+1. **Mac:** `FlexHubs-Desktop.dmg` only (not the `.app` from `out/` alone).
+2. **Windows:** `FlexHubs-Desktop-Setup.exe` only (not old `.msi` or portable zips).
+3. **First run:** legal gate + login; mic/camera/screen permissions when using calls.
+4. **Updates:** app checks for updates via `electron-updater` (GitHub releases when configured).
+
+Legal copy for installers is in `assets/desktop-eula.txt`.

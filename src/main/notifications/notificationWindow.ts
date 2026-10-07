@@ -7,12 +7,24 @@ declare const MAIN_WINDOW_VITE_NAME: string | undefined;
 let notificationWindow: BrowserWindow | null = null;
 let timeoutId: NodeJS.Timeout | null = null;
 let currentOnClick: (() => void) | null = null;
+let hostWindowProvider: (() => BrowserWindow | null) | null = null;
+
+export function setNotificationHostWindowProvider(
+  provider: () => BrowserWindow | null,
+): void {
+  hostWindowProvider = provider;
+}
 
 export function showCustomDesktopNotification(
   payload: any,
   onClickCallback?: () => void,
 ) {
   currentOnClick = onClickCallback || null;
+  const hostWindow = hostWindowProvider?.() ?? null;
+
+  if (hostWindow?.isDestroyed()) {
+    return;
+  }
 
   if (!notificationWindow) {
     const primaryDisplay = screen.getPrimaryDisplay();
@@ -20,7 +32,7 @@ export function showCustomDesktopNotification(
     const { x: workAreaX, y: workAreaY } = primaryDisplay.workArea;
 
     const winWidth = 400;
-    const winHeight = 150;
+    const winHeight = 168;
 
     const x = workAreaX + width - winWidth - 20;
     const y = workAreaY + 20;
@@ -36,9 +48,11 @@ export function showCustomDesktopNotification(
       movable: false,
       alwaysOnTop: true,
       skipTaskbar: true,
-      hasShadow: false,
-      focusable: false,
+      hasShadow: true,
+      focusable: true,
+      acceptFirstMouse: true,
       show: false,
+      ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         contextIsolation: true,
@@ -72,6 +86,9 @@ export function showCustomDesktopNotification(
     });
   } else {
     notificationWindow.webContents.send('notification:render', payload);
+    if (!notificationWindow.isVisible()) {
+      notificationWindow.showInactive();
+    }
   }
 
   if (timeoutId) {
@@ -92,8 +109,8 @@ export function closeNotificationWindow() {
 
 // Handle clicks from the notification window
 ipcMain.on('notification:action', (_event, actionType: string) => {
-  if (actionType === 'click' && currentOnClick) {
-    currentOnClick();
-  }
+  const clickHandler = actionType === 'click' ? currentOnClick : null;
+  currentOnClick = null;
   closeNotificationWindow();
+  clickHandler?.();
 });

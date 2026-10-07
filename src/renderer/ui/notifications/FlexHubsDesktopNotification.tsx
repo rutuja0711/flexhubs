@@ -86,7 +86,6 @@ export function FlexHubsDesktopNotification({ data }: { data: FlexHubsNotificati
       isUnread={data.isUnread}
       onClick={() => {
         onClick?.();
-        onDismiss?.();
       }}
     >
       {data.isSystem ? (

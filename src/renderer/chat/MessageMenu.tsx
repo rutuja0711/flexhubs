@@ -1,6 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FiMoreHorizontal } from 'react-icons/fi';
+import {
+  FiBookmark,
+  FiCornerUpLeft,
+  FiDownload,
+  FiEdit2,
+  FiMessageSquare,
+  FiMoreHorizontal,
+  FiShare2,
+  FiTrash2,
+} from 'react-icons/fi';
+import { PinIcon } from './ChatIcons';
+import type { ReactNode } from 'react';
 
 type MessageMenuProps = {
   isOwn: boolean;
@@ -27,6 +38,7 @@ type MenuItem = {
   label: string;
   onClick: () => void;
   tone?: 'default' | 'danger';
+  icon: ReactNode;
 };
 
 const MENU_WIDTH = 212;
@@ -61,40 +73,109 @@ export function MessageMenu({
     action();
   };
 
+  const iconClass = 'h-4 w-4 shrink-0 opacity-80';
+
   const items: MenuItem[] = isDeleted
     ? [
-        { label: 'Delete for me', onClick: () => run(onDeleteForMe), tone: 'danger' },
+        {
+          label: 'Delete for me',
+          onClick: () => run(onDeleteForMe),
+          tone: 'danger',
+          icon: <FiTrash2 className={iconClass} aria-hidden />,
+        },
       ]
     : isSending
       ? ([
           ...(hasDownloadableMedia && onDownload
-            ? [{ label: 'Download', onClick: () => run(onDownload) }]
+            ? [
+                {
+                  label: 'Download',
+                  onClick: () => run(onDownload),
+                  icon: <FiDownload className={iconClass} aria-hidden />,
+                },
+              ]
             : []),
-          { label: 'Delete for me', onClick: () => run(onDeleteForMe), tone: 'danger' },
+          {
+            label: 'Delete for me',
+            onClick: () => run(onDeleteForMe),
+            tone: 'danger',
+            icon: <FiTrash2 className={iconClass} aria-hidden />,
+          },
           ...(isOwn
             ? [
                 {
                   label: 'Delete for everyone',
                   onClick: () => run(onDeleteForEveryone),
                   tone: 'danger' as const,
+                  icon: <FiTrash2 className={iconClass} aria-hidden />,
                 },
               ]
             : []),
         ] as MenuItem[])
     : ([
-        { label: 'Reply', onClick: () => run(onReply) },
+        {
+          label: 'Reply',
+          onClick: () => run(onReply),
+          icon: <FiCornerUpLeft className={iconClass} aria-hidden />,
+        },
         ...(showReplyInThread
-          ? [{ label: 'Reply in thread', onClick: () => run(onReplyInThread) }]
+          ? [
+              {
+                label: 'Reply in thread',
+                onClick: () => run(onReplyInThread),
+                icon: <FiMessageSquare className={iconClass} aria-hidden />,
+              },
+            ]
           : []),
-        ...(isOwn ? [{ label: 'Edit', onClick: () => run(onEdit) }] : []),
-        { label: 'Forward', onClick: () => run(onForward) },
-        { label: isPinned ? 'Unpin' : 'Pin', onClick: () => run(onPinToggle) },
-        ...(isSaved
-          ? [{ label: 'Unsave', onClick: () => run(onUnsave) }]
-          : [{ label: 'Save', onClick: () => run(onSave) }]),
-        { label: 'Delete for me', onClick: () => run(onDeleteForMe), tone: 'danger' },
         ...(isOwn
-          ? [{ label: 'Delete for everyone', onClick: () => run(onDeleteForEveryone), tone: 'danger' }]
+          ? [
+              {
+                label: 'Edit',
+                onClick: () => run(onEdit),
+                icon: <FiEdit2 className={iconClass} aria-hidden />,
+              },
+            ]
+          : []),
+        {
+          label: 'Forward',
+          onClick: () => run(onForward),
+          icon: <FiShare2 className={iconClass} aria-hidden />,
+        },
+        {
+          label: isPinned ? 'Unpin' : 'Pin',
+          onClick: () => run(onPinToggle),
+          icon: <PinIcon size={14} className={iconClass} />,
+        },
+        ...(isSaved
+          ? [
+              {
+                label: 'Unsave',
+                onClick: () => run(onUnsave),
+                icon: <FiBookmark className={`${iconClass} fill-current`} aria-hidden />,
+              },
+            ]
+          : [
+              {
+                label: 'Save',
+                onClick: () => run(onSave),
+                icon: <FiBookmark className={iconClass} aria-hidden />,
+              },
+            ]),
+        {
+          label: 'Delete for me',
+          onClick: () => run(onDeleteForMe),
+          tone: 'danger',
+          icon: <FiTrash2 className={iconClass} aria-hidden />,
+        },
+        ...(isOwn
+          ? [
+              {
+                label: 'Delete for everyone',
+                onClick: () => run(onDeleteForEveryone),
+                tone: 'danger',
+                icon: <FiTrash2 className={iconClass} aria-hidden />,
+              },
+            ]
           : []),
       ] as MenuItem[]);
 
@@ -161,14 +242,15 @@ export function MessageMenu({
             <button
               type="button"
               role="menuitem"
-              className={`flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-medium transition-colors duration-150 ${
+              className={`flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium transition-colors duration-150 ${
                 item.tone === 'danger'
                   ? 'text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/40 hover:text-rose-700 dark:hover:text-rose-300'
                   : 'text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft'
               }`}
               onClick={item.onClick}
             >
-              {item.label}
+              {item.icon}
+              <span className="min-w-0 flex-1">{item.label}</span>
             </button>
           </div>
         );

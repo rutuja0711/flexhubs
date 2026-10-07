@@ -567,7 +567,11 @@ declare global {
         payload: any
       ) => Promise<{ ok: boolean; error?: string }>;
       logRendererDebug: (message: string) => Promise<{ ok: boolean }>;
-      onDesktopNotificationClick: (callback: (tag: string) => void) => () => void;
+      onDesktopNotificationClick: (
+        callback: (
+          detail: string | { tag?: string; conversationId?: string | null; messageId?: string | null },
+        ) => void,
+      ) => () => void;
       onNotificationRender: (callback: (payload: any) => void) => () => void;
       sendNotificationAction: (action: string) => void;
       checkForUpdates: () => Promise<{

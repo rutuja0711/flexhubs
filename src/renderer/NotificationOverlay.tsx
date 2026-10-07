@@ -11,11 +11,6 @@ export default function NotificationOverlay() {
     
     // Provide a small drag region if needed, but frameless usually handles it.
     
-    const cleanup = window.electronAPI?.onDesktopNotificationClick?.(() => {
-        // Not used directly here since we send IPC from main
-    });
-
-    // Listen for new payloads from main process
     const handleRender = (payload: FlexHubsNotificationData) => {
       setNotification({
         ...payload,
@@ -24,18 +19,14 @@ export default function NotificationOverlay() {
         },
         onDismiss: () => {
           window.electronAPI?.sendNotificationAction?.('dismiss');
-        }
+        },
       });
     };
 
     const cleanupRender = window.electronAPI?.onNotificationRender?.(handleRender);
 
     return () => {
-       cleanupRender?.();
-    };
-
-    return () => {
-       // cleanup
+      cleanupRender?.();
     };
   }, []);
 
@@ -44,8 +35,13 @@ export default function NotificationOverlay() {
   }
 
   return (
-    <div className="h-screen w-screen overflow-hidden p-2 flex items-start justify-end" style={{ WebkitAppRegion: 'no-drag' } as any}>
-      <FlexHubsDesktopNotification data={notification} />
+    <div
+      className="flex h-full w-full items-start justify-end overflow-hidden p-2 pointer-events-none"
+      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+    >
+      <div className="pointer-events-auto">
+        <FlexHubsDesktopNotification data={notification} />
+      </div>
     </div>
   );
 }

@@ -145,6 +145,7 @@ import {
   peekNewNotifications,
   markNotificationSeen,
   seedNotificationSnapshot,
+  registerNotificationNavigationFallback,
   showCalendarEventReminder,
   showIncomingMessageDesktopNotification,
 } from './desktopNotifications';
@@ -3463,6 +3464,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   }, [loadCalendarData, loadData, refreshBlockedUserIds, refreshUnreadCount, syncNotifications]);
 
   useEffect(() => {
+    return registerNotificationNavigationFallback(({ conversationId, messageId }) => {
+      if (!conversationId) {
+        return;
+      }
+
+      setMainView('chat');
+      handleSelectConversationRef.current(conversationId, messageId ?? undefined);
+    });
+  }, []);
+
+  useEffect(() => {
     if (mainView !== 'chat') {
       return;
     }
@@ -3828,7 +3840,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const handleNotificationClick = (notification: NotificationItem) => {
     markNotificationSeen(notification);
-    const action = resolveNotificationAction(notification, conversations);
+    const action = resolveNotificationAction(notification, conversationsRef.current);
 
     void markNotificationRead(notification.id).then((result) => {
       if (!result.ok) {
@@ -3851,7 +3863,19 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     if (action.kind === 'chat') {
-      handleSelectConversation(action.conversationId, action.messageId);
+      setMainView('chat');
+      handleSelectConversation(action.conversationId, action.messageId ?? undefined);
+      return;
+    }
+
+    const fallbackConversationId = resolveNotificationConversationId(
+      notification,
+      conversationsRef.current,
+    );
+
+    if (fallbackConversationId) {
+      setMainView('chat');
+      handleSelectConversation(fallbackConversationId, notification.messageId ?? undefined);
     }
   };
 

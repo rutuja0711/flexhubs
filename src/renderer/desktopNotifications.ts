@@ -17,6 +17,28 @@ const recentConversationAlerts = new Map<string, number>();
 const CONVERSATION_ALERT_COOLDOWN_MS = 10_000;
 const pendingClicks = new Map<string, () => void>();
 let clickListenerBound = false;
+
+export type DesktopNotificationClickDetail = {
+  tag?: string;
+  conversationId?: string | null;
+  messageId?: string | null;
+};
+
+let notificationNavigationFallback: ((detail: DesktopNotificationClickDetail) => void) | null =
+  null;
+
+export function registerNotificationNavigationFallback(
+  handler: (detail: DesktopNotificationClickDetail) => void,
+): () => void {
+  bindNativeNotificationClicks();
+  notificationNavigationFallback = handler;
+
+  return () => {
+    if (notificationNavigationFallback === handler) {
+      notificationNavigationFallback = null;
+    }
+  };
+}
 let shouldPlayMessageSound: (() => boolean) | null = null;
 const playedSoundMessageIds = new Set<string>();
 
@@ -157,10 +179,24 @@ function bindNativeNotificationClicks(): void {
   }
 
   clickListenerBound = true;
-  window.electronAPI.onDesktopNotificationClick((tag) => {
-    const onClick = pendingClicks.get(tag);
-    pendingClicks.delete(tag);
-    onClick?.();
+  window.electronAPI.onDesktopNotificationClick((detail: string | DesktopNotificationClickDetail) => {
+    const normalized: DesktopNotificationClickDetail =
+      typeof detail === 'string' ? { tag: detail } : detail ?? {};
+    const tag = normalized.tag ?? '';
+    const onClick = tag ? pendingClicks.get(tag) : undefined;
+
+    if (tag) {
+      pendingClicks.delete(tag);
+    }
+
+    if (onClick) {
+      onClick();
+      return;
+    }
+
+    if (normalized.conversationId) {
+      notificationNavigationFallback?.(normalized);
+    }
   });
 }
 
@@ -258,6 +294,7 @@ async function openDesktopNotification(
   tag: string,
   onClick: () => void,
   payload?: any,
+  navigation?: { conversationId?: string | null; messageId?: string | null },
 ): Promise<boolean> {
   bindNativeNotificationClicks();
 
@@ -266,6 +303,14 @@ async function openDesktopNotification(
 
     const data = payload || { title, body, tag };
     data.tag = tag;
+
+    if (navigation?.conversationId) {
+      data.conversationId = navigation.conversationId;
+    }
+
+    if (navigation?.messageId) {
+      data.messageId = navigation.messageId;
+    }
 
     void window.electronAPI.showDesktopNotification(data).then((result) => {
       if (result.ok) {
@@ -400,6 +445,11 @@ export async function showDesktopNotification(
     body,
     notification.messageId ? `message-${notification.messageId}` : notificationKey,
     onClick,
+    undefined,
+    {
+      conversationId: notification.conversationId,
+      messageId: notification.messageId,
+    },
   );
 
   finalizeAlertKeys(alertKeys, delivered);
@@ -536,7 +586,17 @@ export async function showIncomingMessageDesktopNotification(
 
   const payload = mapMessageToNotificationData(message, conversation?.title, conversation?.kind === 'hub' || conversation?.kind === 'group');
   payload.avatarUrl = avatarUrl || payload.avatarUrl;
-  const delivered = await openDesktopNotification(title, body, `message-${message.id}`, onClick, payload);
+  const delivered = await openDesktopNotification(
+    title,
+    body,
+    `message-${message.id}`,
+    onClick,
+    payload,
+    {
+      conversationId: conversationId ?? null,
+      messageId: message.id,
+    },
+  );
 
   finalizeAlertKeys(alertKeys, delivered);
 
