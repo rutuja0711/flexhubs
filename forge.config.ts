@@ -86,7 +86,7 @@ const config: ForgeConfig = {
           }),
         ]
       : []),
-    new MakerZIP({}, ['win32']),
+    new MakerZIP({}, ['darwin', 'win32']),
   ],
   plugins: [
     new VitePlugin({

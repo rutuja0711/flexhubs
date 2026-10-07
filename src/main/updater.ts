@@ -25,6 +25,7 @@ function sendToRenderer(channel: string, ...args: unknown[]): void {
 function ensureAutoUpdaterConfigured(): void {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowPrerelease = true;
 
   // Configure the GitHub repository where updates will be published
   autoUpdater.setFeedURL({
@@ -32,6 +33,39 @@ function ensureAutoUpdaterConfigured(): void {
     owner: 'rutuja0711',
     repo: 'flexhubs',
   });
+}
+
+/** User-safe message; full details stay in main-process logs only. */
+export function sanitizeUpdaterError(raw: string): string {
+  const message = raw.trim();
+  console.warn('[FlexHubs] Updater error:', message);
+
+  const lower = message.toLowerCase();
+
+  if (
+    lower.includes('404') ||
+    lower.includes('not found') ||
+    lower.includes('channel_file_not_found') ||
+    lower.includes('latest-mac.yml') ||
+    lower.includes('latest.yml')
+  ) {
+    return 'No update feed is available yet. Check again after the next desktop release is published on GitHub.';
+  }
+
+  if (lower.includes('timed out') || lower.includes('timeout')) {
+    return 'Update check timed out. Try again later.';
+  }
+
+  if (
+    lower.includes('network') ||
+    lower.includes('offline') ||
+    lower.includes('enotfound') ||
+    lower.includes('econnrefused')
+  ) {
+    return 'Could not reach the update server. Check your internet connection and try again.';
+  }
+
+  return 'Unable to check for updates right now. Please try again later.';
 }
 
 function attachAutoUpdaterListeners(): void {
@@ -59,7 +93,7 @@ function attachAutoUpdaterListeners(): void {
   });
 
   autoUpdater.on('error', (err) => {
-    sendToRenderer('updater:error', err.message);
+    sendToRenderer('updater:error', sanitizeUpdaterError(err.message));
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
@@ -114,7 +148,10 @@ function waitForUpdateCheckOutcome(): Promise<
     };
 
     const onError = (error: Error) => {
-      finish({ kind: 'error', message: error.message || 'Update check failed.' });
+      finish({
+        kind: 'error',
+        message: sanitizeUpdaterError(error.message || 'Update check failed.'),
+      });
     };
 
     const timeoutId = setTimeout(() => {
@@ -152,8 +189,9 @@ function registerUpdaterIpcHandlers(): void {
       const outcome = await pendingOutcome;
 
       if (outcome.kind === 'error') {
-        sendToRenderer('updater:error', outcome.message);
-        return { ok: false, error: outcome.message };
+        const userMessage = sanitizeUpdaterError(outcome.message);
+        sendToRenderer('updater:error', userMessage);
+        return { ok: false, error: userMessage };
       }
 
       if (outcome.kind === 'available') {
@@ -171,7 +209,8 @@ function registerUpdaterIpcHandlers(): void {
       sendToRenderer('updater:update-not-available', { version: outcome.version });
       return { ok: true, status: 'up-to-date', data: { version: outcome.version } };
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Update check failed.';
+      const raw = error instanceof Error ? error.message : 'Update check failed.';
+      const message = sanitizeUpdaterError(raw);
       sendToRenderer('updater:error', message);
       return { ok: false, error: message };
     }
@@ -186,8 +225,8 @@ function registerUpdaterIpcHandlers(): void {
       await autoUpdater.downloadUpdate();
       return { ok: true as const };
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Update download failed.';
-      return { ok: false as const, error: message };
+      const raw = error instanceof Error ? error.message : 'Update download failed.';
+      return { ok: false as const, error: sanitizeUpdaterError(raw) };
     }
   });
 

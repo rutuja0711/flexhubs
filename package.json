@@ -13,7 +13,8 @@
     "make:mac": "electron-forge make --platform=darwin --arch universal",
     "make:win": "electron-forge make --platform=win32 --arch x64",
     "package:win": "electron-forge package --platform=win32",
-    "generate:install-gif": "python3 scripts/generate-install-loading-gif.py"
+    "generate:install-gif": "python3 scripts/generate-install-loading-gif.py",
+    "generate:updater-metadata": "node scripts/ci/generate-updater-metadata.mjs"
   },
   "license": "MIT",
   "devDependencies": {

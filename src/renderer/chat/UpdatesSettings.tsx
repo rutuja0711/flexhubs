@@ -27,8 +27,6 @@ export function UpdatesSettings() {
   const [latestVersion, setLatestVersion] = useState<string>('');
   const [releaseNotes, setReleaseNotes] = useState<string>('');
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
-  const [errorMessage, setErrorMessage] = useState<string>('');
-
   const isElectron = !!window.electronAPI;
 
   const applyCheckResult = useCallback((result: CheckUpdatesResult) => {
@@ -38,7 +36,6 @@ export function UpdatesSettings() {
 
     if (!result.ok) {
       setUpdateState('error');
-      setErrorMessage(result.error || 'Failed to check for updates.');
       return;
     }
 
@@ -79,8 +76,6 @@ export function UpdatesSettings() {
       return;
     }
 
-    setErrorMessage('');
-    
     // Only show checking state immediately if requested (e.g. manual click)
     // Otherwise, delay it to prevent flashing on fast auto-checks
     let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -102,7 +97,6 @@ export function UpdatesSettings() {
       await minWaitPromise;
       if (timeout) clearTimeout(timeout);
       setUpdateState('error');
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to check for updates.');
     }
   }, [applyCheckResult]);
 
@@ -150,9 +144,8 @@ export function UpdatesSettings() {
       }
     });
 
-    const unsubError = api.onUpdaterEvent('error', (err: string) => {
+    const unsubError = api.onUpdaterEvent('error', () => {
       setUpdateState('error');
-      setErrorMessage(err);
     });
 
     const unsubProgress = api.onUpdaterEvent('download-progress', (progress: { percent?: number }) => {
@@ -183,7 +176,6 @@ export function UpdatesSettings() {
     const result = await window.electronAPI.downloadUpdate();
     if (!result.ok) {
       setUpdateState('error');
-      setErrorMessage(result.error || 'Failed to download update.');
     }
   };
 
@@ -245,12 +237,6 @@ export function UpdatesSettings() {
             {updateState === 'offline' && (
               <p className="text-sm text-app-text mb-4">
                 You&apos;re currently offline. Please connect to the internet and try again.
-              </p>
-            )}
-
-            {updateState === 'error' && (
-              <p className="text-sm text-red-400 mb-4 bg-red-500/10 p-3 rounded-lg border border-red-500/20">
-                {errorMessage || 'Unable to download or install the update. Please try again.'}
               </p>
             )}
 

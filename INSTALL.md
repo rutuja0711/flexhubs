@@ -146,16 +146,21 @@ npm run make:win
 
 | File | Platform |
 |------|----------|
-| `FlexHubs-Desktop.dmg` | macOS |
+| `FlexHubs-Desktop.dmg` | macOS (manual install) |
+| `FlexHubs-Desktop-mac.zip` | macOS (in-app auto-update) |
+| `latest-mac.yml` | macOS update metadata |
 | `FlexHubs-Desktop-Setup.exe` | Windows |
+| `latest.yml` | Windows update metadata |
 
 Download from: **GitHub → Releases → `desktop-latest`**.
 
 ### What a proper release includes
 
-1. **Mac:** `FlexHubs-Desktop.dmg` only (not the `.app` from `out/` alone).
-2. **Windows:** `FlexHubs-Desktop-Setup.exe` only (not old `.msi` or portable zips).
+1. **Mac:** `FlexHubs-Desktop.dmg` for first install; CI also uploads `FlexHubs-Desktop-mac.zip` + `latest-mac.yml` for Update Center.
+2. **Windows:** `FlexHubs-Desktop-Setup.exe` + `latest.yml` (not old `.msi` or portable zips).
 3. **First run:** legal gate + login; mic/camera/screen permissions when using calls.
-4. **Updates:** app checks for updates via `electron-updater` (GitHub releases when configured).
+4. **Updates:** installed builds check **`desktop-latest`** on GitHub via `electron-updater`. Bump **`version`** in `package.json` before merging when you want users to see a new version (same version → “up to date” even if CI rebuilt).
+
+CI generates `latest-mac.yml` / `latest.yml` with `scripts/ci/generate-updater-metadata.mjs` after each successful `make`.
 
 Legal copy for installers is in `assets/desktop-eula.txt`.
