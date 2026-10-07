@@ -2,7 +2,7 @@ import { memo, useCallback, useRef, useState } from 'react';
 import { FiMoreHorizontal } from 'react-icons/fi';
 import type { ConversationItem } from '../../shared/chat';
 import { formatConversationTimestamp } from './format';
-import { Avatar, PinIcon, PresenceDot } from './ChatIcons';
+import { Avatar, StackedAvatar, PinIcon, PresenceDot } from './ChatIcons';
 import {
   ConversationContextMenu,
   type ConversationContextMenuActions,
@@ -75,7 +75,11 @@ export const ConversationRow = memo(function ConversationRow({
         onFocus={() => onPrefetch?.(conversation.id)}
       >
         <div className="relative shrink-0">
-          <Avatar imageUrl={conversation.avatarUrl} initials={conversation.avatarInitials} />
+          {conversation.kind === 'hub' && conversation.memberAvatars && conversation.memberAvatars.length > 0 ? (
+            <StackedAvatar avatars={conversation.memberAvatars} totalCount={conversation.totalMemberCount || conversation.memberAvatars.length} />
+          ) : (
+            <Avatar imageUrl={conversation.avatarUrl} initials={conversation.avatarInitials} />
+          )}
           <PresenceDot status={conversation.status} />
           {conversation.unreadCount > 0 ? (
             <span

@@ -104,11 +104,9 @@ export function ChatSidebar({
       const activeEl = tabRefs.current[activeTab];
       const container = tabContainerRef.current;
       if (activeEl && container) {
-        const containerRect = container.getBoundingClientRect();
-        const tabRect = activeEl.getBoundingClientRect();
         setTabIndicator({
-          left: tabRect.left - containerRect.left,
-          width: tabRect.width,
+          left: activeEl.offsetLeft,
+          width: activeEl.offsetWidth,
           ready: true,
         });
       }
@@ -329,7 +327,7 @@ export function ChatSidebar({
             className="relative z-0 flex gap-0.5 rounded-full border border-app-border/80 bg-app-surface-input/70 p-0.5 shadow-inner shadow-black/5 dark:bg-app-inset/90"
           >
             <div
-              className="pointer-events-none absolute top-0.5 bottom-0.5 rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-all duration-250 ease-[cubic-bezier(0.2,0.8,0.2,1)] dark:bg-app-elevated dark:ring-white/5"
+              className="pointer-events-none absolute left-0 top-0.5 bottom-0.5 rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-all duration-250 ease-[cubic-bezier(0.2,0.8,0.2,1)] dark:bg-app-elevated dark:ring-white/5"
               style={{
                 transform: `translateX(${tabIndicator.left}px)`,
                 width: `${tabIndicator.width}px`,

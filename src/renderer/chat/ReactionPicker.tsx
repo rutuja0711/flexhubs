@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FiSmile } from 'react-icons/fi';
+import { FiPlus, FiSmile } from 'react-icons/fi';
 import {
   QUICK_REACTIONS,
   REACTION_EMOJI_CATEGORIES,
@@ -17,6 +17,7 @@ const PICKER_MAX_HEIGHT = 360;
 
 export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
   const [open, setOpen] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const [activeCategory, setActiveCategory] = useState(0);
   const [customEmoji, setCustomEmoji] = useState('');
   const [pickerPosition, setPickerPosition] = useState({ top: 0, left: 0 });
@@ -102,21 +103,7 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
       role="dialog"
       aria-label="Choose a reaction"
     >
-      <div className="shrink-0 border-b border-app-border/40 px-3 py-2">
-        <div className="flex flex-wrap gap-1">
-          {QUICK_REACTIONS.map((emoji) => (
-            <button
-              key={emoji}
-              type="button"
-              aria-label={`React with ${emoji}`}
-              className="flex h-8 w-8 items-center justify-center rounded-xl text-xl transition-transform hover:scale-110 active:scale-95 hover:bg-app-chat-hover"
-              onClick={() => selectEmoji(emoji)}
-            >
-              {emoji}
-            </button>
-          ))}
-        </div>
-      </div>
+      {/* Removed QUICK_REACTIONS from popover per user request */}
 
       <div className="shrink-0 flex gap-1 overflow-x-auto border-b border-app-border/40 px-2 py-1.5 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
         {REACTION_EMOJI_CATEGORIES.map((category, index) => (
@@ -167,7 +154,11 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
   ) : null;
 
   return (
-    <>
+    <div 
+      className="relative flex items-center"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <button
         ref={buttonRef}
         type="button"
@@ -175,15 +166,49 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
         aria-expanded={open}
         aria-haspopup="dialog"
         className={`flex h-7 w-7 items-center justify-center rounded-lg transition-all duration-150 ${
-          open
+          open || hovered
             ? 'bg-accent/15 text-accent dark:text-accent-soft shadow-sm'
             : 'text-app-muted hover:text-app-text hover:bg-black/[0.06] dark:hover:bg-white/[0.1] active:scale-95'
         }`}
-        onClick={() => setOpen((current) => !current)}
       >
         <FiSmile className="text-sm" />
       </button>
+
+      {hovered && !open ? (
+        <div className={`absolute bottom-full pb-2 ${align === 'right' ? 'right-0' : 'left-0'} z-[9999]`}>
+          <div className="flex items-center gap-0.5 rounded-2xl border border-app-border/80 bg-app-elevated/95 backdrop-blur-xl px-1.5 py-1 shadow-2xl animate-pop-in">
+            {QUICK_REACTIONS.map((emoji) => (
+              <button
+                key={emoji}
+                type="button"
+                aria-label={`React with ${emoji}`}
+                className="flex h-8 w-8 items-center justify-center rounded-xl text-xl transition-transform hover:scale-110 active:scale-95 hover:bg-app-chat-hover"
+                onClick={() => {
+                  setHovered(false);
+                  onSelect(emoji);
+                }}
+              >
+                {emoji}
+              </button>
+            ))}
+            <div className="mx-1 h-4 w-px bg-app-border/50" />
+            <button
+              type="button"
+              aria-label="More reactions"
+              className="flex h-8 w-8 items-center justify-center rounded-xl text-app-muted hover:text-app-text hover:bg-app-chat-hover transition-colors active:scale-95"
+              onClick={(e) => {
+                e.stopPropagation();
+                setHovered(false);
+                setOpen(true);
+              }}
+            >
+              <FiPlus className="text-lg" />
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {panel ? createPortal(panel, document.body) : null}
-    </>
+    </div>
   );
 }

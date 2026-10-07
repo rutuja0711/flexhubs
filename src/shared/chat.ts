@@ -24,6 +24,8 @@ export type ConversationItem = {
   peerUserId: string | null;
   channelId: string | null;
   notificationsSnoozed?: boolean;
+  memberAvatars?: { url: string | null; initials: string }[];
+  totalMemberCount?: number;
 };
 
 export type ConversationsPayload = {
@@ -990,6 +992,39 @@ export function normalizeConversation(
     peerUserId: readDirectPeerUserId(source, viewerId),
     channelId: readHubChannelId(source),
     notificationsSnoozed: readConversationSnoozed(source),
+    ...readConversationMembers(source),
+  };
+}
+
+function readConversationMembers(source: Record<string, unknown>): {
+  memberAvatars?: { url: string | null; initials: string }[];
+  totalMemberCount?: number;
+} {
+  const hub = asRecord(source.hub);
+  if (!hub) return {};
+
+  let membersList: unknown[] = [];
+  if (Array.isArray(hub.groupMembers)) {
+    membersList = hub.groupMembers;
+  } else if (Array.isArray(hub.members)) {
+    membersList = hub.members;
+  } else if (Array.isArray(source.members)) {
+    membersList = source.members;
+  }
+
+  if (membersList.length === 0) return {};
+
+  const avatars = membersList
+    .map((m) => asRecord(m))
+    .filter((m): m is Record<string, unknown> => m !== null)
+    .map((member) => {
+      const user = asRecord(member.user) || member;
+      return readAvatar(user, '');
+    });
+
+  return {
+    memberAvatars: avatars,
+    totalMemberCount: membersList.length,
   };
 }
 

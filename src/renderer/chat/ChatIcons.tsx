@@ -342,3 +342,52 @@ export function Avatar({
     </div>
   );
 }
+
+export function StackedAvatar({
+  avatars,
+  totalCount,
+}: {
+  avatars: { url: string | null; initials: string }[];
+  totalCount: number;
+}) {
+  const displayAvatars = avatars.slice(0, 3);
+  const extraCount = totalCount > 3 ? totalCount - 3 : 0;
+
+  return (
+    <div className="relative h-10 w-10 shrink-0">
+      {displayAvatars.length === 1 && (
+        <div className="absolute inset-0">
+          <Avatar imageUrl={displayAvatars[0].url} initials={displayAvatars[0].initials} />
+        </div>
+      )}
+      {displayAvatars.length === 2 && (
+        <>
+          <div className="absolute left-0 top-0 z-10 h-[26px] w-[26px] overflow-hidden rounded-full ring-2 ring-white">
+            <Avatar imageUrl={displayAvatars[0].url} initials={displayAvatars[0].initials} size="sm" />
+          </div>
+          <div className="absolute bottom-0 right-0 z-20 h-[26px] w-[26px] overflow-hidden rounded-full ring-2 ring-white">
+            <Avatar imageUrl={displayAvatars[1].url} initials={displayAvatars[1].initials} size="sm" />
+          </div>
+        </>
+      )}
+      {displayAvatars.length >= 3 && (
+        <>
+          <div className="absolute left-0 top-0 z-10 h-6 w-6 overflow-hidden rounded-full ring-2 ring-white">
+            <Avatar imageUrl={displayAvatars[0].url} initials={displayAvatars[0].initials} size="sm" />
+          </div>
+          <div className="absolute right-0 top-1 z-20 h-6 w-6 overflow-hidden rounded-full ring-2 ring-white">
+            <Avatar imageUrl={displayAvatars[1].url} initials={displayAvatars[1].initials} size="sm" />
+          </div>
+          <div className="absolute bottom-0 left-1 z-30 h-6 w-6 overflow-hidden rounded-full ring-2 ring-white">
+            <Avatar imageUrl={displayAvatars[2].url} initials={displayAvatars[2].initials} size="sm" />
+          </div>
+        </>
+      )}
+      {extraCount > 0 && (
+        <div className="absolute bottom-0 right-0 z-40 flex h-5 w-5 items-center justify-center rounded-full bg-gray-100 text-[10px] font-bold text-gray-600 ring-2 ring-white">
+          +{extraCount}
+        </div>
+      )}
+    </div>
+  );
+}
