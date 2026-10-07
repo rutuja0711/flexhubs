@@ -786,6 +786,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   sendNotificationAction: (action: string) => ipcRenderer.send('notification:action', action),
   sendNotificationReady: () => ipcRenderer.send('notification:ready'),
+  onNotificationToast: (callback: (payload: any) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, payload: any) => callback(payload);
+    ipcRenderer.on('notification:toast', handler);
+    return () => ipcRenderer.removeListener('notification:toast', handler);
+  },
+  sendDesktopToastClick: (detail: {
+    tag?: string;
+    conversationId?: string | null;
+    messageId?: string | null;
+  }) => ipcRenderer.send('desktop:toast-click', detail),
   setNotificationWindowSize: (size: { width: number; height: number }) =>
     ipcRenderer.send('notification:set-bounds', size),
   logRendererDebug: (message: string): Promise<{ ok: boolean }> =>

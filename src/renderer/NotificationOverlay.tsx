@@ -1,4 +1,4 @@
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { FlexHubsDesktopNotification, FlexHubsNotificationData } from './ui/notifications/FlexHubsDesktopNotification';
 
 function normalizePayload(raw: Partial<FlexHubsNotificationData> & { tag?: string }): FlexHubsNotificationData {
@@ -27,7 +27,6 @@ function normalizePayload(raw: Partial<FlexHubsNotificationData> & { tag?: strin
 
 export default function NotificationOverlay() {
   const [notification, setNotification] = useState<FlexHubsNotificationData | null>(null);
-  const cardShellRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     document.documentElement.classList.add('notification-shell');
@@ -46,37 +45,16 @@ export default function NotificationOverlay() {
     };
   }, []);
 
-  useLayoutEffect(() => {
-    if (!notification || !cardShellRef.current) {
-      return;
-    }
-
-    const node = cardShellRef.current;
-    const reportSize = () => {
-      const rect = node.getBoundingClientRect();
-      const width = Math.ceil(rect.width + 16);
-      const height = Math.ceil(rect.height + 16);
-      window.electronAPI?.setNotificationWindowSize?.({ width, height });
-    };
-
-    reportSize();
-    const observer = new ResizeObserver(reportSize);
-    observer.observe(node);
-    return () => observer.disconnect();
-  }, [notification]);
-
   if (!notification) {
     return null;
   }
 
   return (
     <div
-      className="flex h-full w-full items-start justify-end overflow-hidden p-2 pointer-events-none"
+      className="flex h-full w-full items-start justify-end overflow-hidden p-2"
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
     >
-      <div ref={cardShellRef} className="pointer-events-auto">
-        <FlexHubsDesktopNotification data={notification} />
-      </div>
+      <FlexHubsDesktopNotification data={notification} />
     </div>
   );
 }

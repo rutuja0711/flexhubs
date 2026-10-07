@@ -90,10 +90,10 @@ import {
   fetchMessageSearch,
   fetchUserSearch,
 } from './main/searchApi';
+import { deliverDesktopNotification } from './main/notifications/deliverDesktopNotification';
 import {
   closeNotificationWindow,
   setNotificationHostWindowProvider,
-  showCustomDesktopNotification,
 } from './main/notifications/notificationWindow';
 import {
   setRealtimeHandlers,
@@ -1401,6 +1401,7 @@ const createWindow = (): void => {
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
     mainWindow?.center();
+    applyApplicationIcon();
   });
 
   mainWindow.on('enter-full-screen', () => {
@@ -1430,7 +1431,7 @@ const createWindow = (): void => {
   });
 
   mainWindow.on('hide', () => {
-    closeNotificationWindow();
+    applyApplicationIcon();
   });
 
   if (process.platform === 'darwin') {
@@ -1442,6 +1443,7 @@ const createWindow = (): void => {
       event.preventDefault();
       closeNotificationWindow();
       mainWindow?.hide();
+      applyApplicationIcon();
     });
   }
 };
@@ -1800,29 +1802,48 @@ app.whenReady().then(() => {
     return { ok: true };
   });
 
+  const focusMainWindowFromNotification = (payload: {
+    tag?: string;
+    conversationId?: string | null;
+    messageId?: string | null;
+  }) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.show();
+      mainWindow.focus();
+      applyApplicationIcon();
+      mainWindow.webContents.send('desktop:notify-click', {
+        tag: payload.tag ?? '',
+        conversationId: payload.conversationId ?? null,
+        messageId: payload.messageId ?? null,
+      });
+    }
+  };
+
+  ipcMain.on('desktop:toast-click', (_event, payload: { tag?: string; conversationId?: string | null; messageId?: string | null }) => {
+    focusMainWindowFromNotification(payload ?? {});
+  });
+
   ipcMain.handle(
     'desktop:notify',
     (_event, payload: any) =>
       new Promise<{ ok: boolean; error?: string }>((resolve) => {
         try {
-          showCustomDesktopNotification(payload, () => {
-            if (mainWindow) {
-              if (mainWindow.isMinimized()) {
-                mainWindow.restore();
-              }
-              mainWindow.show();
-              mainWindow.focus();
-              mainWindow.webContents.send('desktop:notify-click', {
-                tag: payload.tag ?? '',
-                conversationId: payload.conversationId ?? null,
-                messageId: payload.messageId ?? null,
-              });
-            }
-          });
-          resolve({ ok: true });
+          const onClick = () => {
+            focusMainWindowFromNotification({
+              tag: payload?.tag ?? '',
+              conversationId: payload?.conversationId ?? null,
+              messageId: payload?.messageId ?? null,
+            });
+          };
+
+          const result = deliverDesktopNotification(mainWindow, payload ?? {}, onClick);
+          resolve({ ok: result.ok });
         } catch (error) {
-          console.warn('[FlexHubs] Custom notification failed:', error);
-          resolve({ ok: false, error: 'Failed to show custom notification' });
+          console.warn('[FlexHubs] Desktop notification failed:', error);
+          resolve({ ok: false, error: 'Failed to show notification' });
         }
       }),
   );
@@ -1830,6 +1851,8 @@ app.whenReady().then(() => {
   createWindow();
 
   app.on('activate', () => {
+    applyApplicationIcon();
+
     if (!mainWindow || mainWindow.isDestroyed()) {
       createWindow();
       return;
@@ -1841,6 +1864,11 @@ app.whenReady().then(() => {
 
     mainWindow.focus();
     mainWindow.center();
+    applyApplicationIcon();
+  });
+
+  app.on('browser-window-focus', () => {
+    applyApplicationIcon();
   });
 });
 

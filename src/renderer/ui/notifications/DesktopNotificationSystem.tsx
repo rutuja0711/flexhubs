@@ -93,7 +93,7 @@ export function NotificationCard({
   const layoutClass =
     variant === 'activity'
       ? 'w-full max-w-none cursor-pointer border-transparent bg-transparent p-2 shadow-none hover:bg-app-card/50'
-      : 'pointer-events-auto w-[380px] max-w-[90vw] cursor-pointer border-app-border bg-app-surface/95 p-3.5 shadow-2xl backdrop-blur-xl hover:border-accent/35 hover:bg-app-elevated/95 animate-in fade-in slide-in-from-right-4 duration-200';
+      : 'pointer-events-auto w-[380px] max-w-[90vw] cursor-pointer border-app-border bg-app-surface/95 p-3.5 shadow-2xl backdrop-blur-xl hover:border-accent/35 hover:bg-app-elevated/95';
 
   return (
     <div

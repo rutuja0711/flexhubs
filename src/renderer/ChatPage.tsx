@@ -150,6 +150,7 @@ import {
   showIncomingMessageDesktopNotification,
 } from './desktopNotifications';
 import { FlexHubsDesktopNotification, mapMessageToNotificationData } from './ui/notifications/FlexHubsDesktopNotification';
+import { DesktopToastHost } from './ui/notifications/DesktopToastHost';
 import {
   ensureDesktopNotificationsReady,
   shouldDeliverDesktopNotifications,
@@ -6022,6 +6023,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       className={`flex h-full bg-app-chat-bg ${callImmersiveMode ? 'overflow-hidden bg-[#101114]' : ''}`}
     >
       <MediaPreviewHost />
+      <DesktopToastHost />
       <CallOverlay
         session={callManager.session}
         busy={callManager.busy}

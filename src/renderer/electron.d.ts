@@ -576,6 +576,16 @@ declare global {
       onNotificationRender: (callback: (payload: any) => void) => () => void;
       sendNotificationAction: (action: string) => void;
       sendNotificationReady: () => void;
+      onNotificationToast: (callback: (payload: import('./ui/notifications/FlexHubsDesktopNotification').FlexHubsNotificationData & {
+        tag?: string;
+        conversationId?: string | null;
+        messageId?: string | null;
+      }) => void) => (() => void);
+      sendDesktopToastClick: (detail: {
+        tag?: string;
+        conversationId?: string | null;
+        messageId?: string | null;
+      }) => void;
       setNotificationWindowSize?: (size: { width: number; height: number }) => void;
       checkForUpdates: () => Promise<{
         ok: boolean;

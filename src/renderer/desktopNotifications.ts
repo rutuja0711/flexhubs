@@ -238,14 +238,7 @@ export function markMessageNotificationShown(messageId: string): void {
 }
 
 function wasAlreadyShown(notification: NotificationItem): boolean {
-  if (collectNotificationAlertKeys(notification).some((key) => isAlertKeyKnown(key))) {
-    return true;
-  }
-
-  return (
-    isIncomingMessageNotification(notification) &&
-    wasConversationRecentlyAlerted(notification.conversationId)
-  );
+  return collectNotificationAlertKeys(notification).some((key) => isAlertKeyKnown(key));
 }
 
 function rememberShownNotification(notification: NotificationItem): void {

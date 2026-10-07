@@ -11,11 +11,11 @@ let hostWindowProvider: (() => BrowserWindow | null) | null = null;
 let pendingPayload: unknown = null;
 let overlayReady = false;
 
-const NOTIFICATION_MARGIN = 20;
-const NOTIFICATION_DEFAULT_WIDTH = 396;
-const NOTIFICATION_DEFAULT_HEIGHT = 112;
+const NOTIFICATION_MARGIN = 16;
+const NOTIFICATION_WIDTH = 388;
+const NOTIFICATION_HEIGHT = 108;
 
-function positionNotificationWindow(width: number, height: number): void {
+function positionNotificationWindow(): void {
   if (!notificationWindow || notificationWindow.isDestroyed()) {
     return;
   }
@@ -24,10 +24,13 @@ function positionNotificationWindow(width: number, height: number): void {
   const { width: workAreaWidth } = primaryDisplay.workAreaSize;
   const { x: workAreaX, y: workAreaY } = primaryDisplay.workArea;
 
-  const x = workAreaX + workAreaWidth - width - NOTIFICATION_MARGIN;
+  const x = workAreaX + workAreaWidth - NOTIFICATION_WIDTH - NOTIFICATION_MARGIN;
   const y = workAreaY + NOTIFICATION_MARGIN;
 
-  notificationWindow.setBounds({ x, y, width, height }, false);
+  notificationWindow.setBounds(
+    { x, y, width: NOTIFICATION_WIDTH, height: NOTIFICATION_HEIGHT },
+    false,
+  );
 }
 
 export function setNotificationHostWindowProvider(
@@ -46,18 +49,15 @@ function flushPayloadToOverlay(): void {
   }
 
   notificationWindow.webContents.send('notification:render', pendingPayload);
+  positionNotificationWindow();
 
   const win = notificationWindow;
   setTimeout(() => {
     if (win.isDestroyed()) {
       return;
     }
-    if (process.platform === 'darwin') {
-      win.show();
-    } else {
-      win.showInactive();
-    }
-  }, 50);
+    win.showInactive();
+  }, 40);
 }
 
 function deliverPayload(payload: unknown): void {
@@ -93,15 +93,16 @@ export function showCustomDesktopNotification(
     const { width, height } = primaryDisplay.workAreaSize;
     const { x: workAreaX, y: workAreaY } = primaryDisplay.workArea;
 
-    const winWidth = 400;
-    const winHeight = 168;
-
-    const x = workAreaX + width - winWidth - 20;
-    const y = workAreaY + 20;
+    const x = workAreaX + width - NOTIFICATION_WIDTH - NOTIFICATION_MARGIN;
+    const y = workAreaY + NOTIFICATION_MARGIN;
 
     notificationWindow = new BrowserWindow({
-      width: winWidth,
-      height: winHeight,
+      width: NOTIFICATION_WIDTH,
+      height: NOTIFICATION_HEIGHT,
+      minWidth: NOTIFICATION_WIDTH,
+      maxWidth: NOTIFICATION_WIDTH,
+      minHeight: NOTIFICATION_HEIGHT,
+      maxHeight: NOTIFICATION_HEIGHT,
       x,
       y,
       frame: false,
@@ -111,10 +112,9 @@ export function showCustomDesktopNotification(
       alwaysOnTop: true,
       skipTaskbar: true,
       hasShadow: true,
-      focusable: true,
+      focusable: false,
       acceptFirstMouse: true,
       show: false,
-      ...(process.platform === 'darwin' ? { type: 'panel' as const } : {}),
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         contextIsolation: true,
@@ -150,7 +150,7 @@ export function showCustomDesktopNotification(
 
   timeoutId = setTimeout(() => {
     closeNotificationWindow();
-  }, 5000);
+  }, 7000);
 }
 
 export function closeNotificationWindow() {
@@ -174,27 +174,6 @@ ipcMain.on('notification:ready', (event) => {
 
   overlayReady = true;
   flushPayloadToOverlay();
-});
-
-ipcMain.on('notification:set-bounds', (event, size: { width?: number; height?: number }) => {
-  if (!notificationWindow || notificationWindow.isDestroyed()) {
-    return;
-  }
-
-  if (event.sender.id !== notificationWindow.webContents.id) {
-    return;
-  }
-
-  const nextWidth = Math.min(
-    Math.max(Math.ceil(Number(size?.width) || NOTIFICATION_DEFAULT_WIDTH), 280),
-    420,
-  );
-  const nextHeight = Math.min(
-    Math.max(Math.ceil(Number(size?.height) || NOTIFICATION_DEFAULT_HEIGHT), 88),
-    320,
-  );
-
-  positionNotificationWindow(nextWidth, nextHeight);
 });
 
 ipcMain.on('notification:action', (_event, actionType: string) => {
