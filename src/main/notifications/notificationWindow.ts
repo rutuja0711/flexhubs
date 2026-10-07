@@ -122,7 +122,9 @@ export function showCustomDesktopNotification(
       },
     });
 
-    notificationWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    if (process.platform !== 'darwin') {
+      notificationWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    }
 
     if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
       void notificationWindow.loadURL(`${MAIN_WINDOW_VITE_DEV_SERVER_URL}?route=notification`);

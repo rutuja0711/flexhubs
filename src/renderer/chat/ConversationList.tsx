@@ -73,7 +73,7 @@ export const ConversationRow = memo(function ConversationRow({
         onClick={() => onSelect(conversation.id)}
         onFocus={() => onPrefetch?.(conversation.id)}
       >
-        <div className="relative shrink-0 overflow-visible">
+        <div className="relative box-content shrink-0 overflow-visible p-0.5">
           {conversation.kind === 'hub' ? (
             <StackedAvatar
               avatars={
@@ -90,7 +90,10 @@ export const ConversationRow = memo(function ConversationRow({
           ) : (
             <Avatar imageUrl={conversation.avatarUrl} initials={conversation.avatarInitials} />
           )}
-          <PresenceDot status={conversation.status} />
+          <PresenceDot
+            status={conversation.status}
+            surround={selected ? 'elevated' : 'sidebar'}
+          />
           {conversation.unreadCount > 0 ? (
             <span
               className={`absolute -right-1 -top-1 z-10 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[0.625rem] font-bold leading-none text-white shadow-sm shadow-accent/40 ring-2 ${

@@ -285,12 +285,23 @@ const STATUS_COLORS = {
   offline: 'bg-[#666666]',
 } as const;
 
+export type PresenceDotSurround = 'sidebar' | 'elevated' | 'surface';
+
+const SURROUND_BORDER_CLASS: Record<PresenceDotSurround, string> = {
+  sidebar: 'border-app-chat-sidebar',
+  elevated: 'border-app-elevated',
+  surface: 'border-app-surface',
+};
+
 export function PresenceDot({
   status,
   size = 'md',
+  surround = 'sidebar',
 }: {
   status: keyof typeof STATUS_COLORS | null;
   size?: 'sm' | 'md' | 'lg';
+  /** Background behind the dot — border matches this so the dot isn’t clipped in production builds. */
+  surround?: PresenceDotSurround;
 }) {
   if (!status) {
     return null;
@@ -301,7 +312,7 @@ export function PresenceDot({
 
   return (
     <span
-      className={`absolute -right-px -bottom-px z-20 ${dotSize} rounded-full ring-[2.5px] ring-app-chat-sidebar shadow-[0_0_0_1px_rgba(0,0,0,0.35)] ${STATUS_COLORS[status]}`}
+      className={`pointer-events-none absolute bottom-0 right-0 z-30 box-border ${dotSize} rounded-full border-2 ${SURROUND_BORDER_CLASS[surround]} ${STATUS_COLORS[status]}`}
       aria-hidden="true"
     />
   );

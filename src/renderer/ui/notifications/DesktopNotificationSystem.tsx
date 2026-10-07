@@ -1,5 +1,6 @@
 import React, { ReactNode } from 'react';
 import { AppLogoMark } from '../../brand/AppLogo';
+import { Avatar } from '../../chat/ChatIcons';
 import { RemoteImage } from '../../RemoteImage';
 import { FiFileText, FiPlay, FiCalendar, FiPhoneMissed, FiCheck, FiX, FiVideo, FiPhone } from 'react-icons/fi';
 import { BsMicFill } from 'react-icons/bs';
@@ -44,20 +45,27 @@ export function NotificationAvatar({
   icon?: ReactNode;
   compact?: boolean;
 }) {
+  if (avatarUrl || (initials && !icon)) {
+    return (
+      <div className="relative shrink-0">
+        <Avatar
+          imageUrl={avatarUrl ?? null}
+          initials={initials?.trim() || 'U'}
+          size="md"
+          loading="eager"
+        />
+      </div>
+    );
+  }
+
   return (
     <div className="relative shrink-0">
       <div
-        className={`relative z-0 flex items-center justify-center overflow-hidden rounded-[12px] bg-app-chat-hover font-semibold text-app-text ${
-          compact ? 'h-10 w-10 text-sm' : 'h-12 w-12 text-[16px] sm:h-14 sm:w-14 sm:rounded-[14px] sm:text-[18px]'
+        className={`relative z-0 flex items-center justify-center overflow-hidden rounded-full bg-app-chat-hover font-semibold text-app-text ${
+          compact ? 'h-10 w-10 text-sm' : 'h-12 w-12 text-[16px] sm:h-14 sm:w-14 sm:text-[18px]'
         }`}
       >
-        {avatarUrl ? (
-          <RemoteImage src={avatarUrl} className="h-full w-full object-cover" />
-        ) : icon ? (
-          <div className="text-xl text-app-text">{icon}</div>
-        ) : (
-          initials
-        )}
+        {icon ? <div className="text-xl text-app-text">{icon}</div> : initials}
       </div>
     </div>
   );

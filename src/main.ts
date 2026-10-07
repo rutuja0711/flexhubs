@@ -1863,7 +1863,6 @@ app.whenReady().then(() => {
     }
 
     mainWindow.focus();
-    mainWindow.center();
     applyApplicationIcon();
   });
 

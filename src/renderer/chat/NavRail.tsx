@@ -150,7 +150,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
               size="sm"
             />
             <span
-              className={`absolute -right-px -bottom-px z-20 h-3 w-3 rounded-full ring-[2.5px] ring-app-chat-rail shadow-[0_0_0_1px_rgba(0,0,0,0.35)] ${userPresenceDotClass(presenceStatus)}`}
+              className={`pointer-events-none absolute bottom-0 right-0 z-30 box-border h-3 w-3 rounded-full border-2 border-app-chat-rail ${userPresenceDotClass(presenceStatus)}`}
               aria-hidden="true"
             />
             {hasUpdateBadge && (
