@@ -66,6 +66,13 @@ export async function performLogout(): Promise<void> {
   }
 
   clearAuth();
+
+  try {
+    const { ensureMainWindowVisible } = await import('./callWindowApi');
+    ensureMainWindowVisible();
+  } catch {
+    // Desktop shell may be unavailable in tests.
+  }
 }
 
 export function getStoredUser(): unknown | null {

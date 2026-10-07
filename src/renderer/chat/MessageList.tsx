@@ -171,6 +171,7 @@ type MessageRowProps = {
   allowMessageAppear?: boolean;
   conversationDetails?: Record<string, unknown> | null;
   conversationKind?: string;
+  hideIncomingSenderMeta?: boolean;
   sendProgressByMessageId?: Record<string, number>;
 };
 
@@ -366,6 +367,7 @@ const MessageRow = memo(function MessageRow({
   allowMessageAppear = false,
   conversationDetails = null,
   conversationKind,
+  hideIncomingSenderMeta = false,
   sendProgressByMessageId = {},
 }: MessageRowProps) {
   const reactionGroups = groupMessageReactions(message.reactions, currentUserId);
@@ -402,6 +404,18 @@ const MessageRow = memo(function MessageRow({
   const hasMedia = (message.media?.length ?? 0) > 0;
   const isTextOnly = !isPoll && !isCallLog && !isMediaOnly && !hasMedia;
   const bubbleHasMediaCaption = hasMedia && !isMediaOnly;
+  const detailsKind = String(
+    conversationDetails?.kind ?? conversationDetails?.type ?? conversationDetails?.conversationType ?? '',
+  ).toLowerCase();
+  const isDirectChat =
+    hideIncomingSenderMeta ||
+    conversationKind === 'direct' ||
+    detailsKind === 'direct' ||
+    detailsKind === 'dm' ||
+    detailsKind === 'private' ||
+    conversationDetails?.isDirect === true ||
+    conversationDetails?.isDm === true;
+  const showIncomingSenderMeta = !message.isOwn && !isDirectChat;
 
   const handleDownloadSendingMedia = async () => {
     const item = message.media?.[0];
@@ -442,7 +456,7 @@ const MessageRow = memo(function MessageRow({
   return (
     <div
       data-message-id={message.id}
-      className={`message-row group flex gap-3 ${message.isOwn ? 'flex-row-reverse' : 'flex-row'} ${
+      className={`message-row group flex ${showIncomingSenderMeta ? 'gap-3' : 'gap-0'} ${message.isOwn ? 'flex-row-reverse' : 'flex-row'} ${
         allowMessageAppear && isAppearingMessage(message)
           ? message.isOwn
             ? 'message-appear message-appear-own'
@@ -452,11 +466,11 @@ const MessageRow = memo(function MessageRow({
         isHighlighted ? 'message-target-highlight rounded-2xl p-2' : ''
       }`}
     >
-      {!message.isOwn ? (
+      {showIncomingSenderMeta ? (
         <Avatar imageUrl={message.senderAvatarUrl ?? null} initials={message.senderInitials} size="sm" />
       ) : null}
       <div className={`flex max-w-[70%] flex-col ${message.isOwn ? 'items-end' : 'items-start'}`}>
-        {!message.isOwn ? (
+        {showIncomingSenderMeta ? (
           <p className="mb-1 text-xs font-semibold text-app-muted">{message.senderName}</p>
         ) : null}
         {message.replyToMessage || message.replyToMessageId ? (
@@ -706,6 +720,8 @@ type MessageListProps = {
   showReactionAuthors?: boolean;
   conversationDetails?: Record<string, unknown> | null;
   conversationKind?: string;
+  /** Hide avatar + name on incoming messages (direct / 1:1 chats). */
+  hideIncomingSenderMeta?: boolean;
   onSummarizeUnread?: () => void;
   sendProgressByMessageId?: Record<string, number>;
   /** True when the signed-in user blocked the direct-chat peer (not shown to the blocked party). */
@@ -747,6 +763,7 @@ export function MessageList({
   showReactionAuthors = false,
   conversationDetails = null,
   conversationKind,
+  hideIncomingSenderMeta = false,
   onSummarizeUnread,
   sendProgressByMessageId = {},
   peerBlockedByCurrentUser = false,
@@ -853,6 +870,29 @@ export function MessageList({
     container.addEventListener('scroll', onScroll, { passive: true });
     return () => container.removeEventListener('scroll', onScroll);
   }, [hasMoreOlder, loadingOlder, onLoadOlder]);
+
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+
+    if (
+      !container ||
+      !onLoadOlder ||
+      !hasMoreOlder ||
+      loadingOlder ||
+      showInitialLoading ||
+      loadOlderScrollSnapshotRef.current
+    ) {
+      return;
+    }
+
+    if (container.scrollHeight <= container.clientHeight + 8) {
+      loadOlderScrollSnapshotRef.current = {
+        scrollHeight: container.scrollHeight,
+        scrollTop: container.scrollTop,
+      };
+      onLoadOlder();
+    }
+  }, [hasMoreOlder, loadingOlder, messages.length, onLoadOlder, showInitialLoading]);
 
   useEffect(() => {
     if (loadingOlder || !loadOlderScrollSnapshotRef.current) {
@@ -1056,6 +1096,7 @@ export function MessageList({
               allowMessageAppear={allowMessageAppear}
               conversationDetails={conversationDetails}
               conversationKind={conversationKind}
+              hideIncomingSenderMeta={hideIncomingSenderMeta}
               sendProgressByMessageId={sendProgressByMessageId}
             />
           );

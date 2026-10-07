@@ -256,8 +256,12 @@ export function normalizeSavedMessages(payload: unknown): SavedMessageItem[] {
         senderName: senderName ?? '',
         conversationId:
           readString(record.conversationId) ??
+          readString(asRecord(record.conversation)?.id) ??
           (message ? readString(message.conversationId) : null),
-        messageId: message ? readString(message.id) : null,
+        messageId:
+          readString(record.messageId) ??
+          readString(record.message_id) ??
+          (message ? readString(message.id) : null),
         mediaUrl,
       };
     });

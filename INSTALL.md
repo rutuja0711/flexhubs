@@ -163,4 +163,25 @@ Download from: **GitHub → Releases → `desktop-latest`**.
 
 CI generates `latest-mac.yml` / `latest.yml` with `scripts/ci/generate-updater-metadata.mjs` after each successful `make`.
 
+---
+
+## Voice & video calls (production vs `npm start`)
+
+Calls need **two** things that `npm start` often has but a **downloaded DMG/Setup.exe** may not:
+
+| Requirement | Local dev (`npm start`) | Production installer |
+|-------------|-------------------------|---------------------|
+| **Supabase realtime (call invites / ringing)** | Usually from your repo **`.env`**: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (same as the web app’s `NEXT_PUBLIC_SUPABASE_*`) | Baked in at **build time**. GitHub Actions must set repository secrets **`VITE_SUPABASE_URL`** and **`VITE_SUPABASE_ANON_KEY`** before `npm run make:mac` / `make:win`. If those secrets are missing, chat may work but **calls fail** with a generic error. |
+| **Call media token** | `POST https://flexhubs.in/api/calls/token` (or your `VITE_API_BASE_URL`) | Same API — production app uses `https://flexhubs.in/api` unless the build injected another base URL. |
+| **Microphone / camera** | macOS prompts **Electron** | Packaged app prompts **FlexHubs Desktop** — enable in **System Settings → Privacy & Security → Microphone / Camera**. |
+
+**If calls work locally but not from the installed app:**
+
+1. Confirm GitHub repo **Settings → Secrets and variables → Actions** includes `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (copy from the web app env).
+2. Push to `main` (or re-run **Build Desktop App**) so a **new** `desktop-latest` release is produced, then reinstall.
+3. On Mac, allow **FlexHubs Desktop** (not Electron) for mic/camera.
+4. Optional: your API can return `supabaseUrl` and `supabaseAnonKey` in the **`GET /realtime/token`** JSON so desktop builds work even without baked-in env vars.
+
+**Quick local production test:** `VITE_SUPABASE_URL=... VITE_SUPABASE_ANON_KEY=... npm run make:mac` and install that DMG — if calls work, CI secrets were the issue.
+
 Legal copy for installers is in `assets/desktop-eula.txt`.

@@ -203,25 +203,55 @@ let savedCallWindowBounds: Electron.Rectangle | null = null;
 let callWindowWasNativeFullscreen = false;
 const DEFAULT_MIN_SIZE = { width: 960, height: 640 };
 function resolveAssetsDir(): string {
-  return app.isPackaged
-    ? path.join(process.resourcesPath, 'assets')
-    : path.join(__dirname, '..', '..', 'assets');
+  if (app.isPackaged) {
+    return path.join(process.resourcesPath, 'assets');
+  }
+
+  const fromAppPath = path.join(app.getAppPath(), 'assets');
+  if (fs.existsSync(fromAppPath)) {
+    return fromAppPath;
+  }
+
+  return path.join(__dirname, '..', '..', 'assets');
 }
 
 function resolveAppIconPngPath(): string {
-  return path.join(resolveAssetsDir(), 'logo-symbol.png');
+  const assetsDir = resolveAssetsDir();
+  const candidates = [
+    path.join(assetsDir, 'logo-symbol.png'),
+    path.join(assetsDir, 'icon.png'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return candidates[0];
 }
 
 function resolveAppIconImage(): Electron.NativeImage | undefined {
-  const iconPath = resolveAppIconPngPath();
+  const assetsDir = resolveAssetsDir();
+  const candidates = [
+    path.join(assetsDir, 'logo-symbol.png'),
+    path.join(assetsDir, 'logo-symbol.icns'),
+    path.join(assetsDir, 'icon.png'),
+    path.join(assetsDir, 'icon.icns'),
+  ];
 
-  if (!fs.existsSync(iconPath)) {
-    return undefined;
+  for (const iconPath of candidates) {
+    if (!fs.existsSync(iconPath)) {
+      continue;
+    }
+
+    const icon = nativeImage.createFromPath(iconPath);
+    if (!icon.isEmpty()) {
+      return icon;
+    }
   }
 
-  const icon = nativeImage.createFromPath(iconPath);
-
-  return icon.isEmpty() ? undefined : icon;
+  return undefined;
 }
 
 function resolveAppIconIcnsPath(): string | undefined {
@@ -1208,16 +1238,12 @@ ipcMain.handle('window:move-call-by', (_event, deltaX: number, deltaY: number) =
 });
 
 ipcMain.handle('window:focus-call', () => {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return { ok: false as const };
-  }
+  ensureMainWindowVisible();
+  return { ok: true as const };
+});
 
-  if (mainWindow.isMinimized()) {
-    mainWindow.restore();
-  }
-
-  mainWindow.show();
-  mainWindow.focus();
+ipcMain.handle('window:ensure-visible', () => {
+  ensureMainWindowVisible();
   return { ok: true as const };
 });
 
@@ -1615,20 +1641,33 @@ function restoreCallWindowBounds(): void {
     return;
   }
 
-  if (mainWindow.isFullScreen()) {
-    mainWindow.setFullScreen(false);
-  }
-
-  if (mainWindow.isMaximized()) {
-    mainWindow.unmaximize();
+  if (callWindowWasNativeFullscreen) {
+    if (mainWindow.isFullScreen()) {
+      mainWindow.setFullScreen(false);
+    }
+    callWindowWasNativeFullscreen = false;
   }
 
   if (savedCallWindowBounds) {
     mainWindow.setBounds(savedCallWindowBounds);
     savedCallWindowBounds = null;
   }
+}
 
-  callWindowWasNativeFullscreen = false;
+function ensureMainWindowVisible(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+
+  mainWindow.focus();
 }
 
 function notifyCallWindowPresentation(mode: string): void {
@@ -1644,21 +1683,26 @@ function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
     return;
   }
 
-  callPresentationActive = active && mode !== 'idle';
-
   if (!active || mode === 'idle') {
+    const hadCallPresentation = callPresentationActive;
+    callPresentationActive = false;
+
     if (savedMainBounds) {
       mainWindow.setMinimumSize(DEFAULT_MIN_SIZE.width, DEFAULT_MIN_SIZE.height);
       mainWindow.setBounds(savedMainBounds);
       savedMainBounds = null;
     }
 
-    restoreCallWindowBounds();
+    if (hadCallPresentation || savedCallWindowBounds || callWindowWasNativeFullscreen) {
+      restoreCallWindowBounds();
+    }
+
     mainWindow.setAlwaysOnTop(false);
     mainWindow.setVisibleOnAllWorkspaces(false);
-    callPresentationActive = false;
     return;
   }
+
+  callPresentationActive = true;
 
   // Incoming ring: show the in-app overlay without resizing/unmaximizing the window.
   if (mode === 'ringing') {
@@ -1686,7 +1730,6 @@ function setCallWindowPresentation(active: boolean, mode = 'floating'): void {
     savedMainBounds = null;
   }
 
-  restoreCallWindowBounds();
   notifyCallWindowPresentation(mode);
 }
 

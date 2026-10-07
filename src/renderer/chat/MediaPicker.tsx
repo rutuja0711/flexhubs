@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { FiSearch, FiUpload, FiX } from 'react-icons/fi';
 import type { GifPickerItem } from '../../shared/gifs';
 import { createUploadedStickerItem } from '../../shared/gifs';
@@ -13,8 +13,6 @@ import { addCustomSticker, readCustomStickers } from '../customStickersStorage';
 import { uploadChatFile } from '../extrasApi';
 import { RemoteImage } from '../RemoteImage';
 import { readRecentEmojis, rememberRecentEmoji } from './recentEmojis';
-import EmojiPicker, { Theme } from 'emoji-picker-react';
-import { useTheme } from '../theme/ThemeProvider';
 
 export type MediaPickerTab = 'gif' | 'emoji' | 'sticker';
 
@@ -57,8 +55,8 @@ export function MediaPicker({
   onSelectEmoji,
   initialTab = 'emoji',
 }: MediaPickerProps) {
-  const { theme } = useTheme();
   const [tab, setTab] = useState<MediaPickerTab>(initialTab);
+  const [emojiCategoryIndex, setEmojiCategoryIndex] = useState(0);
   const [query, setQuery] = useState('');
   const [items, setItems] = useState<GifPickerItem[]>([]);
   const [myStickers, setMyStickers] = useState<GifPickerItem[]>([]);
@@ -104,6 +102,7 @@ export function MediaPicker({
     setError('');
     setMyStickers(readCustomStickers());
     setRecentEmojis(readRecentEmojis());
+    setEmojiCategoryIndex(0);
   }, [initialTab, open]);
 
   useEffect(() => {
@@ -209,14 +208,34 @@ export function MediaPicker({
     onSelectEmoji(emoji);
   };
 
+  const emojiGridEmojis = useMemo(() => {
+    const trimmedQuery = query.trim().toLowerCase();
 
+    if (!trimmedQuery) {
+      return REACTION_EMOJI_CATEGORIES[emojiCategoryIndex]?.emojis ?? [];
+    }
+
+    const matchingCategories = REACTION_EMOJI_CATEGORIES.filter((category) =>
+      category.label.toLowerCase().includes(trimmedQuery),
+    );
+
+    if (matchingCategories.length === 0) {
+      return [];
+    }
+
+    return [...new Set(matchingCategories.flatMap((category) => category.emojis))];
+  }, [emojiCategoryIndex, query]);
 
   if (!open) {
     return null;
   }
 
   const searchPlaceholder =
-    tab === 'gif' ? 'Search GIFs...' : tab === 'sticker' ? 'Search stickers...' : 'Search emoji...';
+    tab === 'gif'
+      ? 'Search GIFs...'
+      : tab === 'sticker'
+        ? 'Search stickers...'
+        : 'Search categories (e.g. Smileys)...';
 
   return (
     <div
@@ -230,7 +249,7 @@ export function MediaPicker({
         type="file"
         accept={STICKER_ACCEPT}
         className="hidden"
-        onChange={(event) => {
+        onChange={(event: ChangeEvent<HTMLInputElement>) => {
           void handleStickerFileChange(event);
         }}
       />
@@ -260,32 +279,81 @@ export function MediaPicker({
         </button>
       </div>
 
-      {tab !== 'emoji' ? (
-        <div className="flex items-center gap-2 px-3 pb-3">
-          <div className="relative min-w-0 flex-1">
-            <FiSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-app-muted" />
-            <input
-              type="search"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={searchPlaceholder}
-              className="w-full rounded-xl border border-app-border bg-app-surface py-2 pl-9 pr-3 text-sm text-app-text outline-none placeholder:text-app-placeholder focus:border-accent"
-            />
-          </div>
-        </div>
-      ) : null}
-
-      {tab === 'emoji' ? (
-        <div className="w-full">
-          <EmojiPicker
-            onEmojiClick={(emojiObject) => handleEmojiPick(emojiObject.emoji)}
-            width="100%"
-            height={360}
-            theme={theme === 'dark' ? Theme.DARK : Theme.LIGHT}
+      <div className="flex items-center gap-2 px-3 pb-3">
+        <div className="relative min-w-0 flex-1">
+          <FiSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-app-muted" />
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder={searchPlaceholder}
+            className="w-full rounded-xl border border-app-border bg-app-surface py-2 pl-9 pr-3 text-sm text-app-text outline-none placeholder:text-app-placeholder focus:border-accent"
           />
         </div>
+      </div>
+
+      {tab === 'emoji' ? (
+        <div className="h-72 overflow-y-auto p-3 pt-0">
+          {recentEmojis.length > 0 && !query.trim() ? (
+            <div className="mb-3">
+              <p className="mb-2 text-sm font-medium text-app-muted">Recent</p>
+              <div className="grid grid-cols-8 gap-0.5">
+                {recentEmojis.map((emoji) => (
+                  <button
+                    key={`recent-${emoji}`}
+                    type="button"
+                    aria-label={`Insert ${emoji}`}
+                    className="emoji-glyph flex h-9 w-9 items-center justify-center rounded-lg text-[22px] leading-none transition-transform hover:scale-110 hover:bg-app-chat-hover active:scale-95"
+                    onClick={() => handleEmojiPick(emoji)}
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
+
+          {!query.trim() ? (
+            <div className="mb-2 flex gap-1 overflow-x-auto pb-1 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+              {REACTION_EMOJI_CATEGORIES.map((category, index) => (
+                <button
+                  key={category.label}
+                  type="button"
+                  className={`shrink-0 rounded-full px-3 py-1 text-xs font-semibold transition-colors ${
+                    emojiCategoryIndex === index
+                      ? 'bg-accent/20 text-accent-soft'
+                      : 'bg-app-surface text-app-muted hover:bg-app-chat-hover hover:text-app-text'
+                  }`}
+                  onClick={() => setEmojiCategoryIndex(index)}
+                >
+                  {category.label}
+                </button>
+              ))}
+            </div>
+          ) : null}
+
+          {emojiGridEmojis.length === 0 ? (
+            <p className="py-4 text-center text-sm text-app-muted">
+              {query.trim() ? 'No categories match. Try Smileys, Food, Hearts…' : 'No emojis in this category.'}
+            </p>
+          ) : (
+            <div className="grid grid-cols-8 gap-0.5">
+              {emojiGridEmojis.map((emoji, index) => (
+                <button
+                  key={`${query}-${emojiCategoryIndex}-${emoji}-${index}`}
+                  type="button"
+                  aria-label={`Insert ${emoji}`}
+                  className="emoji-glyph flex h-9 w-9 items-center justify-center rounded-lg text-[22px] leading-none transition-transform hover:scale-110 hover:bg-app-chat-hover active:scale-95"
+                  onClick={() => handleEmojiPick(emoji)}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
       ) : (
-        <div className="h-72 overflow-y-auto p-3">
+        <div className="h-72 overflow-y-auto p-3 pt-0">
           {tab === 'sticker' ? (
             <div className="mb-3">
               <p className="mb-2 text-sm font-medium text-app-muted">My stickers</p>

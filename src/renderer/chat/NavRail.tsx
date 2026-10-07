@@ -56,6 +56,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
   const activeNavIndex = navItemKeys.indexOf(activeView);
   const isRailViewActive = activeNavIndex !== -1;
   const showSuperAdminNav = userIsSuperAdmin(user);
+  const menuIconClass = 'h-4 w-4 shrink-0 text-app-muted';
 
   return (
     <aside className="relative z-[80] flex w-[76px] shrink-0 flex-col items-center overflow-visible border-r border-app-border bg-app-chat-rail py-4 transition-colors">
@@ -149,7 +150,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
               size="sm"
             />
             <span
-              className={`absolute right-0 bottom-0 h-3 w-3 rounded-full ring-2 ring-app-chat-rail shadow-sm ${userPresenceDotClass(presenceStatus)}`}
+              className={`absolute -right-px -bottom-px z-20 h-3 w-3 rounded-full ring-[2.5px] ring-app-chat-rail shadow-[0_0_0_1px_rgba(0,0,0,0.35)] ${userPresenceDotClass(presenceStatus)}`}
               aria-hidden="true"
             />
             {hasUpdateBadge && (
@@ -171,8 +172,8 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
                   onNavigate('profile');
                 }}
               >
-                <div className="flex items-center gap-2.5 flex-1 min-w-0">
-                  <FiSettings className="shrink-0 text-sm text-app-muted" />
+                <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                  <FiSettings className={menuIconClass} strokeWidth={1.75} aria-hidden="true" />
                   <span className="truncate">Profile & settings</span>
                 </div>
                 {hasUpdateBadge && <span className="h-2 w-2 rounded-full bg-accent animate-pulse shrink-0" />}
@@ -185,7 +186,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
                   onNavigate('organization');
                 }}
               >
-                <BuildingIcon />
+                <BuildingIcon className={menuIconClass} size={16} />
                 <span>Organization</span>
               </button>
               {showSuperAdminNav ? (
@@ -197,7 +198,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
                     onNavigate('superadmin');
                   }}
                 >
-                  <FiShield className="shrink-0 text-sm text-app-muted" />
+                  <FiShield className={menuIconClass} strokeWidth={1.75} aria-hidden="true" />
                   <span>Super Admin</span>
                 </button>
               ) : null}
@@ -209,7 +210,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
                   toggleTheme();
                 }}
               >
-                <FiSun className="shrink-0 text-sm text-app-muted" />
+                <FiSun className={menuIconClass} strokeWidth={1.75} aria-hidden="true" />
                 <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
               </button>
               <div className="my-1 h-px bg-app-border" />
@@ -221,7 +222,11 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
                   if (onLogout) onLogout();
                 }}
               >
-                <FiLogOut className="shrink-0 text-sm" />
+                <FiLogOut
+                  className="h-4 w-4 shrink-0 text-rose-600 dark:text-rose-400"
+                  strokeWidth={1.75}
+                  aria-hidden="true"
+                />
                 <span>Sign out</span>
               </button>
             </div>

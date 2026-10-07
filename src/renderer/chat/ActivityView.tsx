@@ -1,30 +1,25 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ConversationItem } from '../../shared/chat';
 import {
   resolveFriendRequestUserId,
   type NotificationItem,
   type PendingFriendItem,
 } from '../../shared/messages';
-import { isNotificationClickable } from '../../shared/messages';
-import { validateSearchQuery } from '../../shared/chat';
 import { formatNotificationDisplayBody } from '../../shared/calls';
-import { formatConversationTimestamp } from './format';
-import { SearchIcon, Avatar } from './ChatIcons';
+import { SearchIcon } from './ChatIcons';
+import {
+  FlexHubsDesktopNotification,
+  mapActivityListItemToFlexHubsData,
+} from '../ui/notifications/FlexHubsDesktopNotification';
 import {
   FiCheck,
-  FiMoreHorizontal,
-  FiCalendar,
-  FiImage,
-  FiMic,
-  FiFileText,
   FiHeart,
   FiX,
   FiBarChart2,
-  FiMessageSquare,
   FiAtSign,
   FiCornerDownRight,
   FiUserPlus,
-  FiUsers
+  FiChevronDown,
 } from 'react-icons/fi';
 
 const FILTERS = [
@@ -95,190 +90,128 @@ function ActivityRowContent({
   item,
   conversations,
   onRespondFriend,
-  isProcessing
+  isProcessing,
 }: {
   item: ActivityListItem;
   conversations: ConversationItem[];
   onRespondFriend?: (id: string, status: 'ACCEPTED' | 'DECLINED') => void;
   isProcessing?: boolean;
 }) {
-  const matchedConv = item.notification?.conversationId
-    ? conversations.find(c => c.id === item.notification?.conversationId)
-    : null;
+  const presentation = mapActivityListItemToFlexHubsData(item, conversations, {
+    onRespondFriend,
+    isProcessing,
+  });
 
-  let mainTitle = item.title;
-  let bodyText = item.body;
-  let useHubAvatar = false;
-  let extractedNameForAvatar = '';
+  return <FlexHubsDesktopNotification variant="activity" data={presentation} />;
+}
 
-  // Extract name for avatar lookup if we need a user avatar
-  if (item.kind === 'reaction') {
-    extractedNameForAvatar = mainTitle.split('reacted')[0].split('+')[0].trim();
-  } else if (item.kind === 'mention') {
-    if (bodyText.includes('mentioned you:')) {
-      extractedNameForAvatar = bodyText.split('mentioned you:')[0].trim();
-      bodyText = bodyText.split('mentioned you:')[1].trim();
-    } else if (item.title.includes('mentioned you')) {
-      extractedNameForAvatar = item.title.split('mentioned you')[0].trim();
-    } else if (bodyText.includes(':')) {
-      extractedNameForAvatar = bodyText.split(':')[0].trim();
+function ActivitySplitFilterPicker({
+  value,
+  tone,
+  ariaLabel,
+  onChange,
+}: {
+  value: ActivityFilter;
+  tone: 'violet' | 'sky';
+  ariaLabel: string;
+  onChange: (filter: ActivityFilter) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const selected = FILTERS.find((filter) => filter.id === value) ?? FILTERS[0];
+
+  useEffect(() => {
+    if (!open) {
+      return;
     }
-  } else if (bodyText.includes(':')) {
-    extractedNameForAvatar = bodyText.split(':')[0].trim();
-  }
 
-  if (matchedConv && matchedConv.kind !== 'direct') {
-    if (item.kind === 'message' || item.kind === 'file' || item.kind === 'photo' || item.kind === 'voice' || item.kind === 'mention') {
-      if (item.kind === 'mention') {
-        mainTitle = `${extractedNameForAvatar || 'Someone'} mentioned you`;
-        bodyText = `${bodyText} · ${matchedConv.title}`;
-      } else {
-        mainTitle = matchedConv.title;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setOpen(false);
       }
-      useHubAvatar = true;
-    } else if (item.kind === 'reply') {
-      if (item.title === 'Reply') {
-        let name = 'Someone';
-        if (bodyText.includes('replied to you:')) {
-          name = bodyText.split('replied to you:')[0].trim();
-          bodyText = bodyText.split('replied to you:')[1].trim();
-        } else if (bodyText.includes(':')) {
-          name = bodyText.split(':')[0].trim();
+    };
+
+    document.addEventListener('mousedown', handlePointerDown);
+    return () => document.removeEventListener('mousedown', handlePointerDown);
+  }, [open]);
+
+  const toneStyle =
+    tone === 'violet'
+      ? {
+          dot: 'bg-violet-400',
+          triggerBorder: 'border-violet-500/35 hover:border-violet-500/55',
+          triggerRing: 'focus-visible:ring-violet-500/35',
+          menuActive: 'bg-violet-500/12 text-app-text',
+          check: 'text-violet-400',
         }
-        mainTitle = `${name} replied in ${matchedConv.title}`;
-        if (!bodyText.startsWith(`${name}:`)) {
-          bodyText = `${name}: ${bodyText}`;
-        }
-      } else {
-        const nameMatch = item.title.match(/^(.*?) replied/i);
-        if (nameMatch) {
-          mainTitle = `${nameMatch[1]} replied in ${matchedConv.title}`;
-        }
-      }
-      useHubAvatar = true;
-    } else if (item.kind === 'reaction') {
-      if (!bodyText.includes('·')) {
-        bodyText = `${bodyText} · ${matchedConv.title}`;
-      }
-      useHubAvatar = false;
-    } else if (item.kind === 'calendar') {
-      useHubAvatar = true;
-    }
-  } else {
-    // Direct or system
-    if (item.title === 'New Message') {
-      mainTitle = matchedConv ? matchedConv.title : (extractedNameForAvatar || 'New Message');
-    } else if (item.title === 'Reply') {
-      mainTitle = matchedConv ? matchedConv.title : 'Reply';
-      if (bodyText.includes('replied to you:')) {
-        bodyText = bodyText.replace('replied to you:', ':');
-      }
-    } else if (item.title === 'Request accepted') {
-      if (bodyText.includes('accepted your friend request')) {
-        const name = bodyText.split('accepted your friend request')[0].trim();
-        mainTitle = `${name} accepted your friend request`;
-        bodyText = '';
-        extractedNameForAvatar = name;
-      }
-    } else if (item.kind === 'request') {
-      mainTitle = 'Friend request';
-      if (!bodyText) {
-        bodyText = `${extractedNameForAvatar || 'Someone'} sent you a friend request`;
-      }
-    } else if (item.kind === 'hub-invite') {
-      mainTitle = 'Hub invitation';
-    }
-  }
-
-  let avatarUrl = null;
-  let initials = 'U';
-
-  if (useHubAvatar && matchedConv) {
-    avatarUrl = matchedConv.avatarUrl;
-    initials = matchedConv.avatarInitials;
-  } else {
-    const matchedUser = conversations.find(c => c.kind === 'direct' && c.title === (extractedNameForAvatar || mainTitle));
-    if (matchedUser) {
-      avatarUrl = matchedUser.avatarUrl;
-      initials = matchedUser.avatarInitials;
-    } else {
-      initials = (extractedNameForAvatar || mainTitle).substring(0, 2).toUpperCase() || 'U';
-    }
-  }
+      : {
+          dot: 'bg-sky-400',
+          triggerBorder: 'border-sky-500/35 hover:border-sky-500/55',
+          triggerRing: 'focus-visible:ring-sky-500/35',
+          menuActive: 'bg-sky-500/12 text-app-text',
+          check: 'text-sky-400',
+        };
 
   return (
-    <div className="flex w-full items-start justify-between gap-4 py-2 px-2 hover:bg-app-card/40 rounded-xl transition-colors cursor-pointer group">
-      <div className="flex items-start gap-4 flex-1 min-w-0">
-        <div className="relative shrink-0 mt-0.5">
-          {item.kind === 'request' ? (
-            <div className="h-10 w-10 rounded-full bg-accent/10 flex items-center justify-center text-accent">
-              <FiUserPlus className="h-4 w-4" />
-            </div>
-          ) : item.kind === 'hub-invite' ? (
-            <div className="h-10 w-10 rounded-full bg-accent/10 flex items-center justify-center text-accent">
-              <FiUsers className="h-4 w-4" />
-            </div>
-          ) : (
-            <Avatar imageUrl={avatarUrl} initials={initials} size="md" />
-          )}
-        </div>
-
-        <div className="flex flex-col min-w-0 flex-1 justify-center">
-          <p className="text-[14px] text-app-text font-semibold truncate flex items-center gap-2">
-            {mainTitle}
-            {item.isUnread && <span className="h-1.5 w-1.5 rounded-full bg-accent shrink-0" />}
-          </p>
-          {bodyText && (
-            <div className="text-[13px] text-app-muted font-normal mt-0.5">
-              <span className={`line-clamp-2 leading-relaxed ${item.kind === 'reaction' ? 'italic' : ''}`}>
-                {bodyText}
-              </span>
-            </div>
-          )}
-
-          {item.kind === 'request' && item.respondUserId ? (
-            <div className="flex gap-2 shrink-0 mt-3">
-              <button
-                type="button"
-                disabled={isProcessing}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (onRespondFriend && item.respondUserId) {
-                    onRespondFriend(item.respondUserId, 'ACCEPTED');
-                  }
-                }}
-                className="px-4 py-1.5 rounded-full bg-accent text-white text-xs font-semibold hover:bg-accent/90 transition-colors shadow-sm disabled:opacity-50"
-              >
-                {isProcessing ? '...' : 'Accept'}
-              </button>
-              <button
-                type="button"
-                disabled={isProcessing}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (onRespondFriend && item.respondUserId) {
-                    onRespondFriend(item.respondUserId, 'DECLINED');
-                  }
-                }}
-                className="px-4 py-1.5 rounded-full bg-app-surface border border-app-border text-app-text text-xs font-semibold hover:bg-app-card transition-colors disabled:opacity-50"
-              >
-                {isProcessing ? '...' : 'Decline'}
-              </button>
-            </div>
-          ) : null}
-        </div>
-      </div>
-
-      <div className="flex items-center gap-4 shrink-0 pt-1">
-        <span className="text-xs text-app-muted w-14 text-right shrink-0">
-          {formatConversationTimestamp(item.createdAt)}
+    <div ref={rootRef} className="relative min-w-0 flex-1">
+      <button
+        type="button"
+        aria-label={ariaLabel}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => setOpen((current) => !current)}
+        className={`flex w-full items-center gap-2.5 rounded-xl border bg-app-surface-input/90 px-3 py-2.5 text-left shadow-sm transition-colors ${toneStyle.triggerBorder} focus-visible:outline-none focus-visible:ring-2 ${toneStyle.triggerRing}`}
+      >
+        <span className={`h-2 w-2 shrink-0 rounded-full ${toneStyle.dot}`} aria-hidden="true" />
+        {selected.icon ? (
+          <span className="shrink-0 text-app-muted">{selected.icon}</span>
+        ) : null}
+        <span className="min-w-0 flex-1 truncate text-[13px] font-semibold text-app-text">
+          {selected.label}
         </span>
-        {item.kind !== 'request' && (
-          <button className="px-3 py-1.5 rounded-full bg-accent/5 text-accent text-[11px] font-bold hover:bg-accent/10 transition-colors shrink-0 opacity-0 group-hover:opacity-100 focus:opacity-100">
-            {item.kind === 'calendar' ? 'View event' : 'Open'}
-          </button>
-        )}
-      </div>
+        <FiChevronDown
+          className={`h-4 w-4 shrink-0 text-app-muted transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+          aria-hidden="true"
+        />
+      </button>
+
+      {open ? (
+        <ul
+          role="listbox"
+          aria-label={ariaLabel}
+          className="absolute left-0 right-0 top-[calc(100%+6px)] z-50 max-h-64 overflow-y-auto rounded-xl border border-app-border bg-app-elevated p-1 shadow-2xl shadow-black/25 backdrop-blur-xl"
+        >
+          {FILTERS.map((filter) => {
+            const isSelected = filter.id === value;
+            return (
+              <li key={filter.id} role="option" aria-selected={isSelected}>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(filter.id);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2.5 text-left text-[13px] font-medium transition-colors ${
+                    isSelected
+                      ? toneStyle.menuActive
+                      : 'text-app-text hover:bg-app-inset'
+                  }`}
+                >
+                  {filter.icon ? (
+                    <span className={isSelected ? 'text-app-text' : 'text-app-muted'}>
+                      {filter.icon}
+                    </span>
+                  ) : null}
+                  <span className="flex-1">{filter.label}</span>
+                  {isSelected ? (
+                    <FiCheck className={`h-4 w-4 shrink-0 ${toneStyle.check}`} aria-hidden="true" />
+                  ) : null}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
     </div>
   );
 }
@@ -312,28 +245,57 @@ export function ActivityView({
   // We keep track of the two quick-access priority filters
   const [priority1, setPriority1] = useState<ActivityFilter>('Mentions');
   const [priority2, setPriority2] = useState<ActivityFilter>('Replies');
-  const [lastUpdatedSlot, setLastUpdatedSlot] = useState<1 | 2>(2);
+  const [splitAssignTarget, setSplitAssignTarget] = useState<1 | 2>(2);
   const [viewMode, setViewMode] = useState<'list' | 'split'>('list');
+  const [showSplitPriorityGuide, setShowSplitPriorityGuide] = useState(false);
 
   const [processingId, setProcessingId] = useState<string | null>(null);
 
+  const enableSplitView = () => {
+    setViewMode('split');
+    setShowSplitPriorityGuide(true);
+    setSplitAssignTarget(2);
+  };
+
+  const enableListView = () => {
+    setViewMode('list');
+    setShowSplitPriorityGuide(false);
+  };
+
   const handleFilterClick = (filterId: ActivityFilter) => {
     if (viewMode === 'split') {
+      setShowSplitPriorityGuide(true);
+
       if (filterId === priority1) {
-        setLastUpdatedSlot(1);
-      } else if (filterId === priority2) {
-        setLastUpdatedSlot(2);
-      } else {
-        if (lastUpdatedSlot === 1) {
-          setPriority2(filterId);
-          setLastUpdatedSlot(2);
-        } else {
-          setPriority1(filterId);
-          setLastUpdatedSlot(1);
-        }
+        setSplitAssignTarget(1);
+        return;
       }
+      if (filterId === priority2) {
+        setSplitAssignTarget(2);
+        return;
+      }
+
+      if (splitAssignTarget === 1) {
+        setPriority1(filterId);
+        setSplitAssignTarget(2);
+      } else {
+        setPriority2(filterId);
+        setSplitAssignTarget(1);
+      }
+      return;
+    }
+
+    setActiveFilter(filterId);
+  };
+
+  const assignSplitColumn = (slot: 1 | 2, filterId: ActivityFilter) => {
+    setShowSplitPriorityGuide(true);
+    if (slot === 1) {
+      setPriority1(filterId);
+      setSplitAssignTarget(2);
     } else {
-      setActiveFilter(filterId);
+      setPriority2(filterId);
+      setSplitAssignTarget(1);
     }
   };
 
@@ -510,72 +472,103 @@ export function ActivityView({
             />
 
           </div>
-          <div className="flex bg-app-card border border-app-border rounded-xl p-0.5 shrink-0 shadow-sm">
+          <div
+            className="flex shrink-0 rounded-xl border border-app-border bg-app-card p-0.5 shadow-sm"
+            role="group"
+            aria-label="Activity layout"
+          >
             <button
-              onClick={() => setViewMode('list')}
-              className={`p-1.5 rounded-lg transition-colors ${viewMode === 'list' ? 'bg-app-inset text-app-text shadow-sm' : 'text-app-muted hover:text-app-text'}`}
+              type="button"
+              title="Single list"
+              aria-pressed={viewMode === 'list'}
+              onClick={enableListView}
+              className={`rounded-lg p-1.5 transition-colors ${viewMode === 'list' ? 'bg-app-inset text-app-text shadow-sm' : 'text-app-muted hover:text-app-text'}`}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
             </button>
             <button
-              onClick={() => setViewMode('split')}
-              className={`p-1.5 rounded-lg transition-colors ${viewMode === 'split' ? 'bg-app-inset text-app-text shadow-sm' : 'text-app-muted hover:text-app-text'}`}
+              type="button"
+              title="Priority split view"
+              aria-pressed={viewMode === 'split'}
+              onClick={enableSplitView}
+              className={`rounded-lg p-1.5 transition-colors ${viewMode === 'split' ? 'bg-app-inset text-app-text shadow-sm' : 'text-app-muted hover:text-app-text'}`}
             >
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="3" width="7" height="18" rx="1"></rect><rect x="14" y="3" width="7" height="18" rx="1"></rect></svg>
             </button>
           </div>
         </div>
 
-        <div className="flex items-center justify-between">
-          <div className="flex gap-2 overflow-x-auto no-scrollbar pb-2">
-            {FILTERS.map(filter => {
-              if (viewMode === 'split') {
-                const isSelected = filter.id === priority1 || filter.id === priority2;
-                return (
-                  <button
-                    key={filter.id}
-                    onClick={() => handleFilterClick(filter.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border transition-all ${isSelected
-                        ? 'border-accent bg-accent/5 text-accent shadow-sm'
-                        : 'border-app-border/80 bg-app-surface text-app-muted hover:bg-app-card hover:text-app-text'
-                      }`}
-                  >
-                    <div className={`h-2.5 w-2.5 rounded-full flex items-center justify-center border transition-all ${isSelected ? 'border-accent' : 'border-app-muted/60'
-                      }`}>
-                      {isSelected && <div className="h-1.5 w-1.5 rounded-full bg-accent" />}
-                    </div>
-                    <span className="text-[13px] font-medium">{filter.label}</span>
-                  </button>
-                );
-              } else {
-                const isActive = activeFilter === filter.id;
-                let count = 0;
-                if (filter.id === 'All') count = combinedItems.filter(i => i.isUnread).length;
-                else if (filter.id === 'Unread') count = unreadCount;
-                else if (filter.id === 'Requests') count = combinedItems.filter(i => i.kind === 'request' && i.isUnread).length;
-                else if (filter.id === 'Reactions') count = combinedItems.filter(i => i.kind === 'reaction' && i.isUnread).length;
-                else if (filter.id === 'Mentions') count = combinedItems.filter(i => i.kind === 'mention' && i.isUnread).length;
-                else if (filter.id === 'Replies') count = combinedItems.filter(i => i.kind === 'reply' && i.isUnread).length;
+        {viewMode === 'split' && showSplitPriorityGuide ? (
+          <div className="mb-4 flex items-start gap-3 rounded-2xl border border-accent/25 bg-accent/10 px-4 py-3.5">
+            <FiBarChart2 className="mt-0.5 h-4 w-4 shrink-0 text-accent" aria-hidden="true" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[13px] font-semibold text-app-text">See your priority messages</p>
+              <p className="mt-0.5 text-xs leading-relaxed text-app-muted">
+                Pick two tabs below — they appear in the left and right columns. Tap a tab again to
+                choose which column to update next, or use the column menus to change a panel.
+              </p>
+            </div>
+          </div>
+        ) : null}
 
-                return (
-                  <button
-                    key={filter.id}
-                    onClick={() => handleFilterClick(filter.id)}
-                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-[13px] font-medium transition-all ${isActive
-                        ? 'border-accent/40 bg-accent/5 text-accent shadow-sm'
-                        : 'border-app-border/80 bg-app-surface text-app-muted hover:bg-app-card hover:text-app-text'
-                      }`}
-                  >
-                    {filter.icon && <span className="opacity-70">{filter.icon}</span>}
-                    {filter.label}
-                    {(count > 0 && filter.id !== 'Unread') && (
-                      <span className="ml-0.5 text-accent font-bold">
-                        {count}
-                      </span>
-                    )}
-                  </button>
-                )
+        <div
+          className="flex items-center justify-between"
+          role="tablist"
+          aria-label={viewMode === 'split' ? 'Assign activity filters to columns' : 'Filter activity'}
+        >
+          <div className="flex gap-2 overflow-x-auto pb-2 no-scrollbar">
+            {FILTERS.map((filter) => {
+              const splitSlot =
+                filter.id === priority1 ? 1 : filter.id === priority2 ? 2 : null;
+              const isActive = viewMode === 'list' && activeFilter === filter.id;
+
+              let count = 0;
+              if (filter.id === 'All') count = combinedItems.filter((i) => i.isUnread).length;
+              else if (filter.id === 'Unread') count = unreadCount;
+              else if (filter.id === 'Requests') {
+                count = combinedItems.filter((i) => i.kind === 'request' && i.isUnread).length;
+              } else if (filter.id === 'Reactions') {
+                count = combinedItems.filter((i) => i.kind === 'reaction' && i.isUnread).length;
+              } else if (filter.id === 'Mentions') {
+                count = combinedItems.filter((i) => i.kind === 'mention' && i.isUnread).length;
+              } else if (filter.id === 'Replies') {
+                count = combinedItems.filter((i) => i.kind === 'reply' && i.isUnread).length;
               }
+
+              const isSplitSelected = splitSlot !== null;
+
+              return (
+                <button
+                  key={filter.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={viewMode === 'list' ? isActive : isSplitSelected}
+                  onClick={() => handleFilterClick(filter.id)}
+                  className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-[13px] font-medium transition-all ${
+                    viewMode === 'list'
+                      ? isActive
+                        ? 'border-accent bg-accent text-white shadow-sm shadow-accent/25'
+                        : 'border-app-border/80 bg-app-surface text-app-muted hover:border-app-border-strong hover:bg-app-card hover:text-app-text'
+                      : isSplitSelected
+                        ? splitSlot === 1
+                          ? 'border-violet-500/50 bg-violet-500/10 text-app-text shadow-sm'
+                          : 'border-sky-500/50 bg-sky-500/10 text-app-text shadow-sm'
+                        : 'border-app-border/80 bg-app-surface text-app-muted hover:border-app-border-strong hover:bg-app-card hover:text-app-text'
+                  }`}
+                >
+                  {filter.icon ? <span className={isActive ? 'text-white/90' : 'opacity-70'}>{filter.icon}</span> : null}
+                  {filter.label}
+                  {viewMode === 'list' && count > 0 && filter.id !== 'Unread' ? (
+                    <span
+                      className={`ml-0.5 rounded-full px-1.5 text-[11px] font-bold ${
+                        isActive ? 'bg-white/20 text-white' : 'text-accent'
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  ) : null}
+                </button>
+              );
             })}
           </div>
         </div>
@@ -625,21 +618,28 @@ export function ActivityView({
         ) : (
           <>
             {/* Priority 1 Column */}
-            <div className="flex-1 bg-app-surface border border-app-border/80 rounded-2xl overflow-hidden flex flex-col shadow-sm">
-              <div className="px-5 py-4 border-b border-app-border/60 bg-app-card/30 flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-accent" />
-                <h2 className="font-bold text-app-text text-[14px]">{priority1}</h2>
+            <div className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-violet-500/25 bg-app-surface shadow-sm">
+              <div className="border-b border-app-border/60 bg-app-card/30 px-4 py-3">
+                <ActivitySplitFilterPicker
+                  value={priority1}
+                  tone="violet"
+                  ariaLabel="Left column filter"
+                  onChange={(filterId) => assignSplitColumn(1, filterId)}
+                />
               </div>
               <div className="flex-1 overflow-y-auto p-2">
                 {renderSplitColumn(priority1)}
               </div>
             </div>
 
-            {/* Priority 2 Column */}
-            <div className="flex-1 bg-app-surface border border-app-border/80 rounded-2xl overflow-hidden flex flex-col shadow-sm">
-              <div className="px-5 py-4 border-b border-app-border/60 bg-app-card/30 flex items-center gap-2">
-                <div className="h-2 w-2 rounded-full bg-accent" />
-                <h2 className="font-bold text-app-text text-[14px]">{priority2}</h2>
+            <div className="flex flex-1 flex-col overflow-hidden rounded-2xl border border-sky-500/25 bg-app-surface shadow-sm">
+              <div className="border-b border-app-border/60 bg-app-card/30 px-4 py-3">
+                <ActivitySplitFilterPicker
+                  value={priority2}
+                  tone="sky"
+                  ariaLabel="Right column filter"
+                  onChange={(filterId) => assignSplitColumn(2, filterId)}
+                />
               </div>
               <div className="flex-1 overflow-y-auto p-2">
                 {renderSplitColumn(priority2)}

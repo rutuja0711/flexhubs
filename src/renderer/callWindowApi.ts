@@ -17,6 +17,10 @@ export function focusCallWindow(): void {
   void window.electronAPI?.focusCallWindow?.();
 }
 
+export function ensureMainWindowVisible(): void {
+  void window.electronAPI?.ensureMainWindowVisible?.();
+}
+
 export function moveCallWindowBy(deltaX: number, deltaY: number): void {
   void window.electronAPI?.moveCallWindowBy?.(deltaX, deltaY);
 }

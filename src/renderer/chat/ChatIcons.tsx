@@ -285,14 +285,23 @@ const STATUS_COLORS = {
   offline: 'bg-[#666666]',
 } as const;
 
-export function PresenceDot({ status }: { status: keyof typeof STATUS_COLORS | null }) {
+export function PresenceDot({
+  status,
+  size = 'md',
+}: {
+  status: keyof typeof STATUS_COLORS | null;
+  size?: 'sm' | 'md' | 'lg';
+}) {
   if (!status) {
     return null;
   }
 
+  const dotSize =
+    size === 'sm' ? 'h-2.5 w-2.5' : size === 'lg' ? 'h-3.5 w-3.5' : 'h-3 w-3';
+
   return (
     <span
-      className={`absolute right-0 bottom-0 h-3 w-3 rounded-full ring-2 ring-app-chat-sidebar shadow-sm ${STATUS_COLORS[status]}`}
+      className={`absolute -right-px -bottom-px z-20 ${dotSize} rounded-full ring-[2.5px] ring-app-chat-sidebar shadow-[0_0_0_1px_rgba(0,0,0,0.35)] ${STATUS_COLORS[status]}`}
       aria-hidden="true"
     />
   );
@@ -362,14 +371,28 @@ export function StackedAvatar({
   totalCount: number;
 }) {
   const displayAvatars = avatars.slice(0, 3);
-  const extraCount = totalCount > 3 ? totalCount - 3 : 0;
+  const extraCount = Math.max(0, totalCount - displayAvatars.length);
+  const showGroupStack = displayAvatars.length === 1 && totalCount > 1;
 
   return (
     <div className="relative h-10 w-10 shrink-0">
-      {displayAvatars.length === 1 && (
+      {displayAvatars.length === 1 && !showGroupStack && (
         <div className="absolute inset-0">
           <Avatar imageUrl={displayAvatars[0].url} initials={displayAvatars[0].initials} loading="eager" />
         </div>
+      )}
+      {showGroupStack && (
+        <>
+          <div className="absolute left-0 top-0 z-10 h-[26px] w-[26px] overflow-hidden rounded-full ring-2 ring-app-surface">
+            <Avatar
+              imageUrl={displayAvatars[0].url}
+              initials={displayAvatars[0].initials}
+              size="sm"
+              loading="eager"
+            />
+          </div>
+          <div className="absolute bottom-0 right-0 z-20 h-[26px] w-[26px] overflow-hidden rounded-full ring-2 ring-app-surface bg-app-inset" />
+        </>
       )}
       {displayAvatars.length === 2 && (
         <>

@@ -72,6 +72,11 @@ export function loadRealtimeConfig(): Promise<ApiResult<RealtimeClientConfig>> {
       if (merged) {
         return { ok: true, data: merged };
       }
+
+      const direct = apiResult.data;
+      if (direct?.accessToken && direct.supabaseUrl && direct.supabaseAnonKey) {
+        return { ok: true, data: direct };
+      }
     }
 
     const { supabaseUrl, supabaseAnonKey } = readSupabasePublicConfig(env);
@@ -88,7 +93,7 @@ export function loadRealtimeConfig(): Promise<ApiResult<RealtimeClientConfig>> {
         error:
           injected.url && injected.key
             ? 'Call signaling is not available right now. Please try again later.'
-            : 'Call signaling is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env, then restart the app.',
+            : 'Call signaling is not configured. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to .env for local dev, or set the same values as GitHub Actions secrets when building the production DMG/Setup.exe.',
       };
     }
 

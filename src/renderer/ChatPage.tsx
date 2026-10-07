@@ -123,7 +123,7 @@ import { clearProfileCache, readPeerProfile, writePeerProfile } from './profileC
 import { useConfirm } from './ui/ConfirmDialog';
 import { useToast } from './ui/Toast';
 import type { ConversationItem, DirectChatMetadata } from '../shared/chat';
-import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationByAnyId, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, readConversationSnoozeState, sanitizeDirectDisplayName, withConversationSnoozed, buildConversationSnoozePayload, formatConversationSnoozeUntil, resolveConversationForMessage, resolveTypingConversationId, buildConversationListPreview, areConversationSidebarListsEqual } from '../shared/chat';
+import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationByAnyId, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, readConversationSnoozeState, sanitizeDirectDisplayName, withConversationSnoozed, buildConversationSnoozePayload, formatConversationSnoozeUntil, resolveConversationForMessage, resolveTypingConversationId, buildConversationListPreview, areConversationSidebarListsEqual, mergeConversationMemberPreview } from '../shared/chat';
 import { enrichCallHistoryItems, type CallHistoryItem } from '../shared/calls';
 import type {
   MessageItem,
@@ -133,7 +133,7 @@ import type {
 } from '../shared/messages';
 import type { GifPickerItem } from '../shared/gifs';
 import type { ConversationBootstrap } from '../shared/messages';
-import { applyMessageReadReceipts, applyReactionPatch, buildScheduleMessageBody, clearThreadReplyRegistry, enrichMessageReplies, extractPeerLastReadMessageIds, filterMainChatMessages, findFirstUnreadMessageId, formatMessagePreview, isAlreadyDeletedForEveryoneError, markMessageDeletedForEveryone, mergeMessageListsChronologically, mergeMessageUpdates, mergeServerMessagesWithLocal, readLastReadMessageId, registerThreadReplyMessage, resolveMessageReadBy, resolveNotificationAction, resolveNotificationConversationId, resolveThreadRootId } from '../shared/messages';
+import { applyMessageReadReceipts, applyReactionPatch, buildScheduleMessageBody, clearThreadReplyRegistry, compareMessagesChronologically, enrichMessageReplies, extractPeerLastReadMessageIds, filterMainChatMessages, findFirstUnreadMessageId, formatMessagePreview, isAlreadyDeletedForEveryoneError, markMessageDeletedForEveryone, mergeMessageListsChronologically, mergeMessageUpdates, mergeServerMessagesWithLocal, readLastReadMessageId, registerThreadReplyMessage, resolveMessageReadBy, resolveNotificationAction, resolveNotificationConversationId, resolveThreadRootId } from '../shared/messages';
 import type { AiTextResult } from '../shared/extras';
 import { hoursToSnoozePreset, inferFlexIntent } from '../shared/extras';
 import type { ProfileSettings } from '../shared/profile';
@@ -348,7 +348,9 @@ function commitMessages(
     return readBy.length > 0 ? { ...message, readBy } : message;
   });
 
-  return enrichMessageReplies(filterMainChatMessages(withReaders));
+  return enrichMessageReplies(filterMainChatMessages(withReaders)).sort(
+    compareMessagesChronologically,
+  );
 }
 
 function appendMessage(current: MessageItem[], message: MessageItem, userId: string | null): MessageItem[] {
@@ -697,7 +699,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const draftRef = useRef('');
   const draftPreviewsRef = useRef<Record<string, string>>({});
   const threadCacheRef = useRef<ThreadCacheStore>({});
+  const activeHubDetailsRef = useRef<Record<string, unknown> | null>(null);
   const prefetchInFlightRef = useRef<Set<string>>(new Set());
+  const hubAvatarHydrateInFlightRef = useRef<Set<string>>(new Set());
   const prefetchTimerRef = useRef<Record<string, number>>({});
   const bootstrapStartedRef = useRef(false);
   const isTypingActiveRef = useRef(false);
@@ -1019,6 +1023,70 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     [applyDraftPreviews],
   );
 
+  const patchHubMemberPreview = useCallback(
+    (conversationId: string, conversationRecord: Record<string, unknown>) => {
+      setConversations((current) =>
+        commitConversationList(
+          current.map((conversation) =>
+            conversation.id === conversationId
+              ? mergeConversationMemberPreview(conversation, conversationRecord)
+              : conversation,
+          ),
+          { seedFromApi: false, currentUserId: userIdRef.current },
+        ),
+      );
+    },
+    [commitConversationList],
+  );
+
+  const hydrateHubMemberAvatars = useCallback(
+    (items: ConversationItem[]) => {
+      for (const conversation of items) {
+        if (conversation.kind !== 'hub') {
+          continue;
+        }
+
+        const avatarCount = conversation.memberAvatars?.length ?? 0;
+        const needsMoreAvatars = avatarCount < 3;
+        const needsMemberCount =
+          (conversation.totalMemberCount ?? 0) <= Math.max(avatarCount, 1);
+
+        if (!needsMoreAvatars && !needsMemberCount) {
+          continue;
+        }
+
+        const cachedThread = getThreadCacheEntry(threadCacheRef.current, conversation.id);
+
+        if (cachedThread?.activeHubDetails) {
+          patchHubMemberPreview(conversation.id, cachedThread.activeHubDetails);
+          continue;
+        }
+
+        if (
+          hubAvatarHydrateInFlightRef.current.has(conversation.id) ||
+          prefetchInFlightRef.current.has(conversation.id)
+        ) {
+          continue;
+        }
+
+        hubAvatarHydrateInFlightRef.current.add(conversation.id);
+
+        void loadConversationBootstrap(conversation.id)
+          .then((result) => {
+            if (!result.ok) {
+              return;
+            }
+
+            patchHubMemberPreview(conversation.id, result.data.conversation);
+          })
+          .finally(() => {
+            hubAvatarHydrateInFlightRef.current.delete(conversation.id);
+          });
+      }
+    },
+    [patchHubMemberPreview],
+  );
+
   const upsertConversation = useCallback(
     (items: ConversationItem[], conversation: ConversationItem) => {
       const without = items.filter((item) => item.id !== conversation.id);
@@ -1129,6 +1197,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         pinnedMessageIds: string[];
         activeHubDetails: Record<string, unknown> | null;
         draft: string;
+        hasMoreOlderMessages?: boolean;
       },
     ) => {
       writeThreadCacheEntry(threadCacheRef.current, conversationId, entry);
@@ -1144,7 +1213,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     setMessages(filterMainChatMessages(cached.messages));
-    setHasMoreOlderMessages(cached.messages.length >= MESSAGE_HISTORY_PAGE_SIZE);
+    setHasMoreOlderMessages(
+      cached.hasMoreOlderMessages ?? cached.messages.length >= MESSAGE_HISTORY_PAGE_SIZE,
+    );
     setActiveHubDetails(cached.activeHubDetails);
     setPinnedMessageIds(cached.pinnedMessageIds);
     setDraft(cached.draft);
@@ -2038,12 +2109,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    setConversations(
-      commitConversationList(conversationsResult.data.conversations, {
-        currentUserId: getUserId(currentUser),
-      }),
-    );
+    const initialConversations = commitConversationList(conversationsResult.data.conversations, {
+      currentUserId: getUserId(currentUser),
+    });
+    setConversations(initialConversations);
     seedDirectChatMetadata(conversationsResult.data.conversations);
+    hydrateHubMemberAvatars(initialConversations);
 
     if (unreadCountResult.ok) {
       setUnreadCount(unreadCountResult.data.count);
@@ -2087,7 +2158,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     } finally {
       setLoading(false);
     }
-  }, [commitConversationList, handleUnauthorized, refreshPresence]);
+  }, [commitConversationList, handleUnauthorized, hydrateHubMemberAvatars, refreshPresence]);
 
   const loadThread = useCallback(
     async (conversationId: string) => {
@@ -2151,7 +2222,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         );
         setPinnedMessageIds(bootstrapResult.data.pinnedMessageIds);
         setMessages(nextMessages);
-        setHasMoreOlderMessages(resolveHasMoreMessagesFromBootstrap(bootstrapResult.data));
+        const resolvedHasMoreOlder =
+          cached?.hasMoreOlderMessages ??
+          resolveHasMoreMessagesFromBootstrap(bootstrapResult.data);
+        setHasMoreOlderMessages(resolvedHasMoreOlder);
         void hydrateThreadReplyRegistry(conversationId, bootstrapResult.data.messages).then(() => {
           if (conversationId !== selectedIdRef.current) {
             return;
@@ -2236,7 +2310,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             Boolean(conversationSnoozeRef.current[conversationId]),
           ),
           draft: nextDraft,
+          hasMoreOlderMessages: resolvedHasMoreOlder,
         });
+
+        patchHubMemberPreview(conversationId, bootstrapResult.data.conversation);
 
         if (memberIds.length > 0) {
           void refreshPresence(memberIds);
@@ -2262,7 +2339,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
       }
     },
-    [applyDraftPreviews, clearConversationUnread, commitConversationList, handleUnauthorized, hydrateConversationSnooze, prefetchDirectPeerProfile, rememberDirectChatMetadata, refreshPresence, refreshUnreadCount, setDraftPreviewForConversation, syncThreadCache, user],
+    [applyDraftPreviews, clearConversationUnread, commitConversationList, handleUnauthorized, hydrateConversationSnooze, patchHubMemberPreview, prefetchDirectPeerProfile, rememberDirectChatMetadata, refreshPresence, refreshUnreadCount, setDraftPreviewForConversation, syncThreadCache, user],
   );
 
   const callManager = useCallManager({
@@ -2378,7 +2455,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    const oldest = messagesRef.current[0];
+    const sortedCurrent = [...messagesRef.current].sort(compareMessagesChronologically);
+    const oldest = sortedCurrent[0];
 
     if (!oldest) {
       return;
@@ -2397,10 +2475,15 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
 
+      const conversationRecord =
+        activeHubDetailsRef.current ??
+        getThreadCacheEntry(threadCacheRef.current, conversationId)?.activeHubDetails ??
+        null;
+
       const olderMessages = commitMessages(
         result.data.messages,
         getUserId(user),
-        activeHubDetails,
+        conversationRecord,
       );
 
       if (olderMessages.length === 0) {
@@ -2419,7 +2502,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         setLoadingOlderMessages(false);
       }
     }
-  }, [activeHubDetails, user]);
+  }, [user]);
 
   useEffect(() => {
     hasMoreOlderMessagesRef.current = hasMoreOlderMessages;
@@ -2478,6 +2561,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
                 ),
               ),
               draft: draftContent,
+              hasMoreOlderMessages: resolveHasMoreMessagesFromBootstrap(bootstrapResult.data),
             });
 
             const memberIds = extractConversationMemberIds(bootstrapResult.data.conversation);
@@ -2497,13 +2581,15 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
                 'Direct message';
               prefetchDirectPeerProfile(peerUserId, conversationId, peerTitle);
             }
+
+            patchHubMemberPreview(conversationId, bootstrapResult.data.conversation);
           })
           .finally(() => {
             prefetchInFlightRef.current.delete(conversationId);
           });
       }, 120);
     },
-    [prefetchDirectPeerProfile, user],
+    [patchHubMemberPreview, prefetchDirectPeerProfile, user],
   );
 
   const loadSavedData = useCallback(async (options?: { silent?: boolean }) => {
@@ -2654,6 +2740,42 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     setHubsLoading(false);
   }, [handleUnauthorized]);
 
+  useEffect(() => {
+    if (hubsChannels.length === 0) {
+      return;
+    }
+
+    setConversations((current) =>
+      commitConversationList(
+        current.map((conversation) => {
+          if (conversation.kind !== 'hub') {
+            return conversation;
+          }
+
+          const channel =
+            hubsChannels.find((item) => item.id === conversation.channelId) ??
+            hubsChannels.find((item) => item.id === conversation.id);
+
+          if (!channel || channel.memberCount <= 0) {
+            return conversation;
+          }
+
+          const totalMemberCount = Math.max(
+            conversation.totalMemberCount ?? 0,
+            channel.memberCount,
+          );
+
+          if (totalMemberCount === conversation.totalMemberCount) {
+            return conversation;
+          }
+
+          return { ...conversation, totalMemberCount };
+        }),
+        { seedFromApi: false, currentUserId: userIdRef.current },
+      ),
+    );
+  }, [commitConversationList, hubsChannels]);
+
   const refreshConversations = useCallback(async () => {
     const result = await loadConversations();
 
@@ -2665,10 +2787,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       setConversations((current) => {
         const next = commitConversationList(mergeConversationLists(current, result.data.conversations));
 
+        if (!areConversationSidebarListsEqual(current, next)) {
+          hydrateHubMemberAvatars(next);
+        }
+
         return areConversationSidebarListsEqual(current, next) ? current : next;
       });
     }
-  }, [commitConversationList, handleUnauthorized]);
+  }, [commitConversationList, handleUnauthorized, hydrateHubMemberAvatars]);
 
   const openHubFromNotification = useCallback(
     async (channelId: string | null, inviteId: string | null) => {
@@ -3603,6 +3729,78 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     void loadThread(selectedId);
   }, [selectedId, loadThread]);
 
+  const focusMessageHydratingRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!focusMessageId || !selectedId || threadLoading) {
+      return;
+    }
+
+    if (messages.some((message) => message.id === focusMessageId)) {
+      focusMessageHydratingRef.current = null;
+      return;
+    }
+
+    const hydrateKey = `${selectedId}:${focusMessageId}`;
+    if (focusMessageHydratingRef.current === hydrateKey) {
+      return;
+    }
+
+    focusMessageHydratingRef.current = hydrateKey;
+    let cancelled = false;
+
+    void loadMessageById(selectedId, focusMessageId).then((result) => {
+      if (cancelled || selectedIdRef.current !== selectedId) {
+        return;
+      }
+
+      if (!result.ok) {
+        focusMessageHydratingRef.current = null;
+        if (handleUnauthorized(result.status)) {
+          return;
+        }
+        toast.error('Could not open that message in the chat.');
+        setFocusMessageId(null);
+        return;
+      }
+
+      const userId = getUserId(user);
+      const [targetMessage] = commitMessages(
+        [result.data],
+        userId,
+        activeHubDetailsRef.current ?? activeHubDetails,
+      );
+
+      if (!targetMessage) {
+        focusMessageHydratingRef.current = null;
+        return;
+      }
+
+      setMessages((current) => {
+        if (current.some((message) => message.id === focusMessageId)) {
+          return current;
+        }
+
+        return enrichMessageReplies(
+          mergeMessageListsChronologically(current, [targetMessage]),
+        );
+      });
+      focusMessageHydratingRef.current = null;
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeHubDetails,
+    focusMessageId,
+    handleUnauthorized,
+    messages,
+    selectedId,
+    threadLoading,
+    user,
+  ]);
+
   useEffect(() => {
     if (!selectedId || threadLoading) {
       return;
@@ -3613,8 +3811,22 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       pinnedMessageIds,
       activeHubDetails,
       draft,
+      hasMoreOlderMessages,
     });
-  }, [activeHubDetails, draft, messages, pinnedMessageIds, selectedId, syncThreadCache, threadLoading]);
+  }, [
+    activeHubDetails,
+    draft,
+    hasMoreOlderMessages,
+    messages,
+    pinnedMessageIds,
+    selectedId,
+    syncThreadCache,
+    threadLoading,
+  ]);
+
+  useEffect(() => {
+    activeHubDetailsRef.current = activeHubDetails;
+  }, [activeHubDetails]);
 
   useEffect(
     () => () => {
@@ -3698,11 +3910,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const handleOpenInChat = (conversationId: string | null, messageId?: string | null) => {
     if (!conversationId) {
-      toast.error('This file is not linked to a conversation.');
+      toast.error('This item is not linked to a conversation.');
       return;
     }
 
-    handleSelectConversation(conversationId, messageId ?? null);
+    if (!messageId) {
+      toast.error('Could not find the original message.');
+      handleSelectConversation(conversationId);
+      return;
+    }
+
+    handleSelectConversation(conversationId, messageId);
   };
 
   const handleOpenDirectChat = useCallback(

@@ -516,6 +516,7 @@ declare global {
       setCallAlwaysOnTop: (enabled: boolean, mode?: string) => Promise<{ ok: true }>;
       moveCallWindowBy: (deltaX: number, deltaY: number) => Promise<{ ok: boolean }>;
       focusCallWindow: () => Promise<{ ok: true }>;
+      ensureMainWindowVisible: () => Promise<{ ok: true }>;
       onCallWindowPresentationChanged: (callback: (mode: string) => void) => () => void;
       logCall: (
         token: string,
@@ -574,6 +575,8 @@ declare global {
       ) => () => void;
       onNotificationRender: (callback: (payload: any) => void) => () => void;
       sendNotificationAction: (action: string) => void;
+      sendNotificationReady: () => void;
+      setNotificationWindowSize?: (size: { width: number; height: number }) => void;
       checkForUpdates: () => Promise<{
         ok: boolean;
         status?: 'skipped' | 'up-to-date' | 'available';

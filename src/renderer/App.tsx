@@ -14,6 +14,7 @@ import {
 } from './AuthFlowPages';
 import NotificationOverlay from './NotificationOverlay';
 import { ErrorBoundary } from './ErrorBoundary';
+import { ensureMainWindowVisible } from './callWindowApi';
 
 type Screen =
   | 'checking'
@@ -108,6 +109,12 @@ function App() {
 
     void checkUserSession();
   }, [checkUserSession]);
+
+  useEffect(() => {
+    if (screen === 'login' || screen === 'chat' || screen === 'checking') {
+      ensureMainWindowVisible();
+    }
+  }, [screen]);
 
   if (screen === ('notification' as any)) {
     return <NotificationOverlay />;

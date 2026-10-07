@@ -370,7 +370,6 @@ export function mergeMentionUserIds(
   users: CalendarMentionableUser[],
   selectedUserIds: string[],
 ): string[] {
-  const validIds = new Set(users.map((user) => user.id));
   const merged = new Set<string>();
 
   for (const id of parseMentionUserIdsFromText(description, users)) {
@@ -378,9 +377,10 @@ export function mergeMentionUserIds(
   }
 
   for (const id of selectedUserIds) {
-    if (validIds.has(id)) {
-      merged.add(id);
+    if (!id || id.startsWith('invitee:') || id.startsWith('invitee-')) {
+      continue;
     }
+    merged.add(id);
   }
 
   return [...merged];
@@ -388,6 +388,12 @@ export function mergeMentionUserIds(
 
 function normalizeInvitee(record: Record<string, unknown>): CalendarEventInvitee | null {
   const user = asRecord(record.user) ?? asRecord(record.member) ?? record;
+  const userId =
+    readString(user.id) ??
+    readString(record.userId) ??
+    readString(record.memberId) ??
+    readString(record.id) ??
+    null;
   const username =
     readString(record.username) ??
     readString(user.username) ??
@@ -404,21 +410,67 @@ function normalizeInvitee(record: Record<string, unknown>): CalendarEventInvitee
     readString(record.response) ??
     'PENDING';
 
-  if (!username && !name && !readString(user.id) && !readString(record.userId)) {
+  if (!userId && !username && !name) {
     return null;
   }
 
   return {
     username,
-    name,
-    userId:
-      readString(user.id) ??
-      readString(record.userId) ??
-      readString(record.id) ??
-      null,
+    name: name || username || 'Teammate',
+    userId,
     status: status.toUpperCase(),
     avatarUrl: resolveAvatarUrl(user) ?? resolveAvatarUrl(record),
   };
+}
+
+function extractCalendarMentionUserIds(record: Record<string, unknown>): string[] {
+  const data = asRecord(record.data);
+  const ids = new Set<string>();
+  const sources = [record, data].filter((item): item is Record<string, unknown> => item !== null);
+  const keys = [
+    'mentionUserIds',
+    'inviteeIds',
+    'inviteeUserIds',
+    'mentionedUserIds',
+    'taggedUserIds',
+  ];
+
+  for (const source of sources) {
+    for (const key of keys) {
+      const value = source[key];
+      if (!Array.isArray(value)) {
+        continue;
+      }
+
+      for (const entry of value) {
+        if (typeof entry === 'string' || typeof entry === 'number') {
+          const id = String(entry).trim();
+          if (id) {
+            ids.add(id);
+          }
+          continue;
+        }
+
+        const item = asRecord(entry);
+        if (!item) {
+          continue;
+        }
+
+        const nestedUser = asRecord(item.user) ?? asRecord(item.member);
+        const id =
+          readString(item.userId) ??
+          readString(item.memberId) ??
+          readString(item.id) ??
+          (nestedUser ? readString(nestedUser.id) : null);
+
+        if (id) {
+          ids.add(id);
+        }
+      }
+    }
+  }
+
+  return [...ids];
 }
 
 function extractCalendarTaggedHubs(record: Record<string, unknown>): CalendarTaggedHub[] {
@@ -511,9 +563,12 @@ function extractCalendarInvitees(record: Record<string, unknown>): CalendarEvent
     'responses',
     'mentions',
     'invitees',
+    'inviteeIds',
     'participants',
     'attendees',
     'mentionUsers',
+    'mentionedUsers',
+    'taggedUsers',
     'mentionUserIds',
     'mentionResponses',
     'calendarResponses',
@@ -929,6 +984,12 @@ export function normalizeCalendarEventsDetailed(payload: unknown): CalendarEvent
         record.isCreator === true ||
         record.createdByMe === true;
       const invitees = extractCalendarInvitees(record);
+      const mentionUserIds = [
+        ...new Set([
+          ...extractCalendarMentionUserIds(record),
+          ...invitees.map((invitee) => invitee.userId).filter((id): id is string => Boolean(id)),
+        ]),
+      ];
       const canRespond = !isOwner && myResponseStatus === 'PENDING';
       const taggedHubs = extractCalendarTaggedHubs(record);
       const conversationId =
@@ -957,9 +1018,7 @@ export function normalizeCalendarEventsDetailed(payload: unknown): CalendarEvent
           readString(record.date) ??
           '',
         endsAt: readString(record.endsAt) ?? readString(record.endAt) ?? null,
-        mentionUserIds: Array.isArray(record.mentionUserIds)
-          ? record.mentionUserIds.map(String)
-          : [],
+        mentionUserIds,
         createdAt:
           readString(record.createdAt) ??
           readString(record.updatedAt) ??

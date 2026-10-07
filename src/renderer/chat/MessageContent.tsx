@@ -236,7 +236,7 @@ export function MessageContent({
 
         const mediaBody = (
           <div
-            className={`overflow-hidden rounded-2xl ring-1 ring-black/10 dark:ring-white/10 shadow-sm ${mediaFrameClass} ${isSending ? 'min-h-[160px] min-w-[160px] bg-black/5 dark:bg-white/5 flex items-center justify-center' : ''}`}
+            className={`overflow-hidden rounded-2xl ${isVideo ? 'ring-1 ring-black/10 dark:ring-white/10 shadow-sm' : ''} ${mediaFrameClass} ${isSending ? 'min-h-[160px] min-w-[160px] bg-black/5 dark:bg-white/5 flex items-center justify-center' : ''}`}
           >
             {isVideo ? (
               <div

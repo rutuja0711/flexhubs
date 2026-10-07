@@ -137,7 +137,25 @@ function shouldUseMeetingJoinRequest(error: string, status?: number, code?: stri
   );
 }
 
-function formatCallApiError(_error: string, status?: number): string {
+function formatCallApiError(error: string, status?: number): string {
+  const message = error.trim();
+
+  if (
+    message.includes('Call signaling is not configured') ||
+    message.includes('VITE_SUPABASE') ||
+    message.includes('NEXT_PUBLIC_SUPABASE')
+  ) {
+    return 'Calls are not configured in this desktop build. Install the latest FlexHubs Desktop from GitHub Releases, or rebuild with Supabase env vars (see INSTALL.md).';
+  }
+
+  if (message.includes('Call token response was missing')) {
+    return 'The call server returned an incomplete response. Try again in a moment or contact support if this continues.';
+  }
+
+  if (message.includes('Realtime config missing') || message.includes('Realtime token missing')) {
+    return 'Call signaling is unavailable from the server. Try signing out and back in.';
+  }
+
   if (status === 401 || status === 403) {
     return 'Could not start this call. Please sign in again and try.';
   }
@@ -148,6 +166,10 @@ function formatCallApiError(_error: string, status?: number): string {
 
   if (status != null && status >= 500) {
     return 'Calls are temporarily unavailable. Please try again later.';
+  }
+
+  if (message && message !== 'Request failed. Please try again.') {
+    return message;
   }
 
   return 'Could not start this call. Please try again.';
@@ -225,8 +247,23 @@ function isCallPermissionMessage(message: string): boolean {
   );
 }
 
-function formatCallSignalingError(): string {
-  return 'Could not connect call notifications. Please try again later.';
+function formatCallSignalingError(cause?: string): string {
+  const message = cause?.trim() ?? '';
+
+  if (
+    message.includes('Call signaling is not configured') ||
+    message.includes('VITE_SUPABASE') ||
+    message.includes('NEXT_PUBLIC_SUPABASE') ||
+    message.includes('supabaseUrl')
+  ) {
+    return 'Calls are not configured in this desktop build. Install the latest FlexHubs Desktop from GitHub Releases, or set GitHub Actions secrets VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY and rebuild.';
+  }
+
+  if (message.includes('subscribe timeout') || message.includes('CHANNEL_ERROR')) {
+    return 'Could not connect to call signaling. Check your network or VPN, then try again.';
+  }
+
+  return message || 'Could not connect call notifications. Please try again later.';
 }
 
 function readCanModerateMeeting(token: CallTokenResult | null, isInitiator: boolean): boolean {
@@ -1567,7 +1604,9 @@ export function useCallManager({
 
       return true;
     } catch (error) {
-      reportError(formatCallSignalingError());
+      reportError(
+        formatCallSignalingError(error instanceof Error ? error.message : String(error ?? '')),
+      );
       return false;
     }
   }, [currentUserId, reportError]);

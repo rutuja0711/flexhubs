@@ -36,7 +36,6 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.109.0",
     "electron-updater": "^6.8.9",
-    "emoji-picker-react": "^4.20.7",
     "livekit-client": "^2.22.3",
     "mediasoup-client": "^3.18.7",
     "react": "^19.1.0",

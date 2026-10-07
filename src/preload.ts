@@ -712,6 +712,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   moveCallWindowBy: (deltaX: number, deltaY: number): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('window:move-call-by', deltaX, deltaY),
   focusCallWindow: (): Promise<{ ok: true }> => ipcRenderer.invoke('window:focus-call'),
+  ensureMainWindowVisible: (): Promise<{ ok: true }> =>
+    ipcRenderer.invoke('window:ensure-visible'),
   onCallWindowPresentationChanged: (callback: (mode: string) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, mode: string) => {
       callback(mode);
@@ -783,6 +785,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('notification:render', handler);
   },
   sendNotificationAction: (action: string) => ipcRenderer.send('notification:action', action),
+  sendNotificationReady: () => ipcRenderer.send('notification:ready'),
+  setNotificationWindowSize: (size: { width: number; height: number }) =>
+    ipcRenderer.send('notification:set-bounds', size),
   logRendererDebug: (message: string): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('renderer:debug-log', message).catch(() => ({ ok: false })),
   onDesktopNotificationClick: (

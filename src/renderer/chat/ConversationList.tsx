@@ -73,9 +73,20 @@ export const ConversationRow = memo(function ConversationRow({
         onClick={() => onSelect(conversation.id)}
         onFocus={() => onPrefetch?.(conversation.id)}
       >
-        <div className="relative shrink-0">
-          {conversation.kind === 'hub' && conversation.memberAvatars && conversation.memberAvatars.length > 0 ? (
-            <StackedAvatar avatars={conversation.memberAvatars} totalCount={conversation.totalMemberCount || conversation.memberAvatars.length} />
+        <div className="relative shrink-0 overflow-visible">
+          {conversation.kind === 'hub' ? (
+            <StackedAvatar
+              avatars={
+                conversation.memberAvatars && conversation.memberAvatars.length > 0
+                  ? conversation.memberAvatars
+                  : [{ url: conversation.avatarUrl, initials: conversation.avatarInitials }]
+              }
+              totalCount={
+                conversation.totalMemberCount ??
+                conversation.memberAvatars?.length ??
+                1
+              }
+            />
           ) : (
             <Avatar imageUrl={conversation.avatarUrl} initials={conversation.avatarInitials} />
           )}

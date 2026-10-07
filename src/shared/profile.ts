@@ -125,6 +125,63 @@ function initialsFromName(name: string): string {
 
 export type UserPresenceStatus = 'ONLINE' | 'AWAY' | 'BUSY' | 'DND' | 'OFFLINE';
 
+const PRIVACY_VISIBILITY_UI_TO_API: Record<string, string> = {
+  Everyone: 'EVERYONE',
+  'Organization only': 'ORGANIZATION_ONLY',
+  'Organization members': 'ORGANIZATION_MEMBERS',
+  Nobody: 'NOBODY',
+};
+
+const PRIVACY_VISIBILITY_API_TO_UI: Record<string, string> = {
+  EVERYONE: 'Everyone',
+  ORGANIZATION_ONLY: 'Organization only',
+  ORGANIZATION: 'Organization only',
+  ORG_ONLY: 'Organization only',
+  ORGANIZATION_MEMBERS: 'Organization members',
+  ORG_MEMBERS: 'Organization members',
+  MEMBERS: 'Organization members',
+  NOBODY: 'Nobody',
+  NONE: 'Nobody',
+};
+
+/** Map privacy dropdown labels to API enum strings. */
+export function mapPrivacyStringToApi(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  if (PRIVACY_VISIBILITY_UI_TO_API[trimmed]) {
+    return PRIVACY_VISIBILITY_UI_TO_API[trimmed];
+  }
+
+  const upper = trimmed.toUpperCase().replace(/[\s-]+/g, '_');
+  if (PRIVACY_VISIBILITY_API_TO_UI[upper]) {
+    return upper;
+  }
+
+  return trimmed;
+}
+
+/** Map API privacy enum strings to UI dropdown labels. */
+export function normalizePrivacyStringFromApi(value: string | null | undefined): string | null {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  if (PRIVACY_VISIBILITY_UI_TO_API[trimmed]) {
+    return trimmed;
+  }
+
+  const upper = trimmed.toUpperCase().replace(/[\s-]+/g, '_');
+  if (PRIVACY_VISIBILITY_API_TO_UI[upper]) {
+    return PRIVACY_VISIBILITY_API_TO_UI[upper];
+  }
+
+  return trimmed;
+}
+
 export type ProfileSettings = {
   shareOnlineStatus: boolean;
   showLastActive?: boolean;
@@ -923,10 +980,23 @@ export function buildProfileUpdatePayload(
 
   if (typeof updates.allowDirectMessagesFrom === 'string') {
     payload.allowDirectMessagesFrom = updates.allowDirectMessagesFrom;
+    payload.profileVisibility = mapPrivacyStringToApi(updates.profileVisibility);
+  }
+
+  if (typeof updates.emailVisibility === 'string') {
+    payload.emailVisibility = mapPrivacyStringToApi(updates.emailVisibility);
+  }
+
+  if (typeof updates.statusVisibility === 'string') {
+    payload.statusVisibility = mapPrivacyStringToApi(updates.statusVisibility);
+  }
+
+  if (typeof updates.allowDirectMessagesFrom === 'string') {
+    payload.allowDirectMessagesFrom = mapPrivacyStringToApi(updates.allowDirectMessagesFrom);
   }
 
   if (typeof updates.callPrivacy === 'string') {
-    payload.callPrivacy = updates.callPrivacy;
+    payload.callPrivacy = mapPrivacyStringToApi(updates.callPrivacy);
   }
 
   if (typeof updates.messageSoundEnabled === 'boolean') {
@@ -1205,6 +1275,62 @@ export function applyNotificationPreferenceUpdate(
     };
   }
 
+  if (updates.shareOnlineStatus !== undefined) {
+    next = { ...next, shareOnlineStatus: updates.shareOnlineStatus };
+  }
+
+  if (updates.showLastActive !== undefined) {
+    next = { ...next, showLastActive: updates.showLastActive };
+  }
+
+  if (updates.readReceipts !== undefined) {
+    next = { ...next, readReceipts: updates.readReceipts };
+  }
+
+  if (updates.profileVisibility !== undefined) {
+    next = {
+      ...next,
+      profileVisibility:
+        normalizePrivacyStringFromApi(updates.profileVisibility) ?? updates.profileVisibility,
+    };
+  }
+
+  if (updates.emailVisibility !== undefined) {
+    next = {
+      ...next,
+      emailVisibility:
+        normalizePrivacyStringFromApi(updates.emailVisibility) ?? updates.emailVisibility,
+    };
+  }
+
+  if (updates.statusVisibility !== undefined) {
+    next = {
+      ...next,
+      statusVisibility:
+        normalizePrivacyStringFromApi(updates.statusVisibility) ?? updates.statusVisibility,
+    };
+  }
+
+  if (updates.allowDirectMessagesFrom !== undefined) {
+    next = {
+      ...next,
+      allowDirectMessagesFrom:
+        normalizePrivacyStringFromApi(updates.allowDirectMessagesFrom) ??
+        updates.allowDirectMessagesFrom,
+    };
+  }
+
+  if (updates.callPrivacy !== undefined) {
+    next = {
+      ...next,
+      callPrivacy: normalizePrivacyStringFromApi(updates.callPrivacy) ?? updates.callPrivacy,
+    };
+  }
+
+  if (updates.dndEnabled !== undefined) {
+    next = { ...next, dndEnabled: updates.dndEnabled };
+  }
+
   return next;
 }
 
@@ -1244,23 +1370,23 @@ export function buildNotificationSettingsPayload(
   }
 
   if (updates.profileVisibility !== undefined) {
-    payload.profileVisibility = updates.profileVisibility;
+    payload.profileVisibility = mapPrivacyStringToApi(updates.profileVisibility);
   }
 
   if (updates.emailVisibility !== undefined) {
-    payload.emailVisibility = updates.emailVisibility;
+    payload.emailVisibility = mapPrivacyStringToApi(updates.emailVisibility);
   }
 
   if (updates.statusVisibility !== undefined) {
-    payload.statusVisibility = updates.statusVisibility;
+    payload.statusVisibility = mapPrivacyStringToApi(updates.statusVisibility);
   }
 
   if (updates.allowDirectMessagesFrom !== undefined) {
-    payload.allowDirectMessagesFrom = updates.allowDirectMessagesFrom;
+    payload.allowDirectMessagesFrom = mapPrivacyStringToApi(updates.allowDirectMessagesFrom);
   }
 
   if (updates.callPrivacy !== undefined) {
-    payload.callPrivacy = updates.callPrivacy;
+    payload.callPrivacy = mapPrivacyStringToApi(updates.callPrivacy);
   }
 
   if (updates.dndEnabled !== undefined) {

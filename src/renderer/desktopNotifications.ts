@@ -6,7 +6,10 @@ import { getUserId } from '../shared/user';
 import { getStoredUser } from './authApi';
 import { APP_LOGO_SYMBOL_SRC } from './brand/logoAssets';
 import { playMessageNotificationSound } from './messageSound';
-import { mapMessageToNotificationData } from './ui/notifications/FlexHubsDesktopNotification';
+import {
+  mapMessageToNotificationData,
+  mapNotificationItemToFlexHubsData,
+} from './ui/notifications/FlexHubsDesktopNotification';
 
 let notificationSnapshotReady = false;
 const knownNotificationKeys = new Set<string>();
@@ -303,6 +306,10 @@ async function openDesktopNotification(
 
     const data = payload || { title, body, tag };
     data.tag = tag;
+    data.id = data.id ?? tag;
+    data.timestamp = data.timestamp ?? new Date().toISOString();
+    data.title = data.title ?? title;
+    data.body = data.body ?? body;
 
     if (navigation?.conversationId) {
       data.conversationId = navigation.conversationId;
@@ -440,12 +447,22 @@ export async function showDesktopNotification(
     maybePlayAlertSound(notification.messageId ?? undefined);
   }
 
+  const presentation = mapNotificationItemToFlexHubsData(notification, {
+    conversations: [],
+  });
+
+  presentation.title = title;
+  presentation.body = body;
+  presentation.isUnread = !notification.isRead;
+
+  const tag = notification.messageId ? `message-${notification.messageId}` : notificationKey;
+
   const delivered = await openDesktopNotification(
     title,
     body,
-    notification.messageId ? `message-${notification.messageId}` : notificationKey,
+    tag,
     onClick,
-    undefined,
+    { ...presentation, tag },
     {
       conversationId: notification.conversationId,
       messageId: notification.messageId,
@@ -584,8 +601,12 @@ export async function showIncomingMessageDesktopNotification(
   rememberConversationAlert(conversationId);
   maybePlayAlertSound(message.id);
 
-  const payload = mapMessageToNotificationData(message, conversation?.title, conversation?.kind === 'hub' || conversation?.kind === 'group');
+  const payload = mapMessageToNotificationData(message, conversation?.title, conversation?.kind === 'hub');
   payload.avatarUrl = avatarUrl || payload.avatarUrl;
+  payload.title = title;
+  payload.body = body;
+  payload.id = message.id;
+  payload.timestamp = message.createdAt;
   const delivered = await openDesktopNotification(
     title,
     body,

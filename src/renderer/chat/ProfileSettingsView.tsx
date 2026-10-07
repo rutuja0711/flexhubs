@@ -66,6 +66,12 @@ import {
   refreshBlockedUsersFromApi,
   setBlockedUserIdsFromList,
 } from '../blockedUsersSync';
+import {
+  mergePrivacySettings,
+  pickPrivacySettings,
+  readStoredPrivacySettings,
+  writeStoredPrivacySettings,
+} from '../privacySettingsStorage';
 import { clearProfileCache, readProfileCache, writeProfileCache } from '../profileCache';
 
 type ProfileSettingsViewProps = {
@@ -294,6 +300,7 @@ export function ProfileSettingsView({
       setSettings(next);
       setProfile((current) => {
         if (current) {
+          writeStoredPrivacySettings(current.id, pickPrivacySettings(next));
           writeProfileCache({
             profile: current,
             settings: next,
@@ -307,8 +314,8 @@ export function ProfileSettingsView({
   );
 
   const refreshProfile = useCallback(async (options?: { silent?: boolean }) => {
-    const cached = readProfileCache();
-    const hasCachedProfile = Boolean(cached?.profile);
+    const cachedBeforeFetch = readProfileCache();
+    const hasCachedProfile = Boolean(cachedBeforeFetch?.profile);
 
     if (!options?.silent && !hasCachedProfile) {
       setLoading(true);
@@ -347,9 +354,18 @@ export function ProfileSettingsView({
     }
 
     const userPayload = userResult.data.user ?? userResult.data;
-    const mergedSettings = mergeProfileSettingsFromUser(userPayload, settingsResult.data);
+    let mergedSettings = mergeProfileSettingsFromUser(userPayload, settingsResult.data);
     const nextProfile = normalizeUserProfile(userPayload, mergedSettings);
-    const nextStyles = stylesResult.ok ? stylesResult.data : cached?.avatarStyles ?? [];
+    const nextStyles = stylesResult.ok ? stylesResult.data : cachedBeforeFetch?.avatarStyles ?? [];
+
+    if (cachedBeforeFetch?.settings) {
+      mergedSettings = mergePrivacySettings(mergedSettings, cachedBeforeFetch.settings);
+    }
+
+    const storedPrivacy = readStoredPrivacySettings(nextProfile.id);
+    if (storedPrivacy) {
+      mergedSettings = mergePrivacySettings(mergedSettings, storedPrivacy);
+    }
 
     applyProfileSnapshot(nextProfile, mergedSettings, nextStyles);
     setAvatarUrl(nextProfile.avatarUrl ?? getUserAvatarUrl(userPayload));
@@ -369,7 +385,13 @@ export function ProfileSettingsView({
     const cached = readProfileCache();
 
     if (cached) {
-      applyProfileSnapshot(cached.profile, cached.settings, cached.avatarStyles);
+      let settingsFromCache = cached.settings;
+      const storedPrivacy = readStoredPrivacySettings(cached.profile.id);
+      if (storedPrivacy) {
+        settingsFromCache = mergePrivacySettings(settingsFromCache, storedPrivacy);
+      }
+
+      applyProfileSnapshot(cached.profile, settingsFromCache, cached.avatarStyles);
       setAvatarUrl(cached.profile.avatarUrl);
       setLoading(false);
     }
@@ -532,13 +554,24 @@ export function ProfileSettingsView({
     const next = !previous;
     setSettings({ ...settings, shareOnlineStatus: next });
     setActionError('');
-    const profileResult = await saveUserProfile({ shareOnlineStatus: next });
+    const [notifResult, profileResult] = await Promise.all([
+      saveNotificationSettings({ shareOnlineStatus: next }),
+      saveUserProfile({ shareOnlineStatus: next }),
+    ]);
 
-    if (!profileResult.ok && !onUnauthorized(profileResult.status)) {
+    if (!notifResult.ok && !profileResult.ok && !onUnauthorized(notifResult.status || profileResult.status)) {
       setSettings({ ...settings, shareOnlineStatus: previous });
-      setActionError(profileResult.error);
-      toast.error(profileResult.error);
+      const errorMessage = notifResult.error || profileResult.error || 'Unable to update online status.';
+      setActionError(errorMessage);
+      toast.error(errorMessage);
       return;
+    }
+
+    if (notifResult.ok && notifResult.data) {
+      setSettings(notifResult.data);
+      if (profile) {
+        writeProfileCache({ profile, settings: notifResult.data, avatarStyles });
+      }
     }
 
     toast.success(next ? 'Online status sharing turned on.' : 'Online status sharing turned off.');
@@ -967,22 +1000,25 @@ export function ProfileSettingsView({
                 {/* Profile summary */}
                 <SectionCard className="flex flex-col gap-6 p-6 sm:flex-row sm:items-start sm:gap-8">
                   <div className="flex shrink-0 flex-col items-center gap-3 sm:items-start">
-                    <div className="relative">
-                      <div className="relative flex h-[4.5rem] w-[4.5rem] items-center justify-center overflow-hidden rounded-full bg-app-chat-hover ring-1 ring-app-border/60">
-                        <span className="absolute inset-0 flex items-center justify-center text-lg font-bold text-app-text">
-                          {initials}
-                        </span>
+                    <div className="relative h-[4.5rem] w-[4.5rem]">
+                      <div className="h-full w-full overflow-hidden rounded-full bg-app-chat-hover">
                         {previewAvatarUrl ? (
                           <RemoteImage
                             src={previewAvatarUrl}
                             alt=""
                             loading="eager"
-                            className="relative z-10 h-full w-full object-cover"
+                            wrapperClassName="flex h-full w-full"
+                            className="h-full w-full object-cover"
                           />
-                        ) : null}
+                        ) : (
+                          <span className="flex h-full w-full items-center justify-center text-lg font-bold text-app-text">
+                            {initials}
+                          </span>
+                        )}
                       </div>
-                      <div
-                        className={`absolute -right-0.5 -bottom-0.5 h-3.5 w-3.5 rounded-full ring-2 ring-app-surface ${statusDotClass(statusUi)}`}
+                      <span
+                        className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-app-surface ${statusDotClass(statusUi)}`}
+                        aria-hidden="true"
                       />
                     </div>
                     <span
@@ -1115,11 +1151,13 @@ export function ProfileSettingsView({
                     {avatarTab === 'upload' ? (
                       <div className="flex items-center gap-4">
                         {avatarUrl ? (
-                          <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full bg-blue-400">
-                            <span className="absolute inset-0 flex items-center justify-center text-sm font-bold text-app-text">
-                              {initials}
-                            </span>
-                            <RemoteImage src={avatarUrl} alt="" className="relative z-10 h-full w-full object-cover" />
+                          <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full bg-app-chat-hover">
+                            <RemoteImage
+                              src={avatarUrl}
+                              alt=""
+                              wrapperClassName="flex h-full w-full"
+                              className="h-full w-full object-cover"
+                            />
                           </div>
                         ) : null}
                         <button

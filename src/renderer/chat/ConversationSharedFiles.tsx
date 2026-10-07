@@ -102,11 +102,11 @@ export function ConversationSharedFiles({
   return (
     <section className="pb-2">
       <div className="mb-3 flex items-center justify-between gap-2 px-1 mt-1">
-        <span className="text-[10px] font-bold tracking-wider text-[#64748b] uppercase">
+        <span className="text-[10px] font-bold tracking-wider text-app-muted uppercase">
           Media, links and docs
         </span>
         {activeItems.length > 0 ? (
-          <span className="text-[12px] text-[#64748b]">{activeItems.length}</span>
+          <span className="text-[12px] text-app-muted">{activeItems.length}</span>
         ) : null}
       </div>
 
@@ -117,8 +117,8 @@ export function ConversationSharedFiles({
             type="button"
             className={`rounded-[10px] px-4 py-[5px] text-[13px] capitalize transition-colors ${
               activeTab === tab
-                ? 'border border-[#e2d5d8] bg-[#f4e8e8] text-[#4b5563]'
-                : 'text-[#64748b] hover:bg-[#f0f4f8] hover:text-[#4b5563]'
+                ? 'border border-app-border bg-app-inset text-app-text'
+                : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
             }`}
             onClick={() => setActiveTab(tab)}
           >
@@ -135,8 +135,8 @@ export function ConversationSharedFiles({
             {error}
           </p>
         ) : visibleItems.length === 0 ? (
-          <div className="rounded-[12px] border border-dashed border-[#e2d5d8] py-8 flex flex-col items-center justify-center">
-            <span className="text-[13px] text-[#64748b]">No {activeTab} shared yet.</span>
+          <div className="rounded-[12px] border border-dashed border-app-border py-8 flex flex-col items-center justify-center">
+            <span className="text-[13px] text-app-muted">No {activeTab} shared yet.</span>
           </div>
         ) : activeTab === 'media' ? (
           <div className="grid grid-cols-4 gap-2 max-h-[300px] overflow-y-auto">
@@ -171,10 +171,10 @@ export function ConversationSharedFiles({
                 className="flex w-full items-center gap-3 rounded-[12px] border border-app-border/40 bg-transparent px-3 py-2.5 text-left transition-colors hover:bg-app-chat-hover"
                 onClick={() => openSharedItem(item)}
               >
-                <div className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px] bg-[#f4e8e8] text-[#972c44]">
+                <div className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[10px] bg-accent/15 text-accent-soft">
                   {activeTab === 'links' ? <FiLink className="text-[15px]" /> : <FiFile className="text-[15px]" />}
                 </div>
-                <span className="min-w-0 flex-1 truncate text-[13px] text-[#1e293b]">{item.name}</span>
+                <span className="min-w-0 flex-1 truncate text-[13px] text-app-text">{item.name}</span>
                 <FiChevronRight className="shrink-0 text-app-muted text-sm" />
               </button>
             ))}

@@ -213,8 +213,14 @@ export function NewEventModal({
         ...(editEvent?.mentionUserIds || [])
       ])];
 
-      setMentionUsers(people);
-      setSelectedUserIds(selectedIds);
+      setMentionUsers((current) => {
+        const byId = new Map(current.map((person) => [person.id, person]));
+        for (const person of people) {
+          byId.set(person.id, person);
+        }
+        return [...byId.values()];
+      });
+      setSelectedUserIds((current) => [...new Set([...current, ...selectedIds])]);
       setSelectedHubConversationIds((current) => [
         ...new Set([...current, ...hubIdsFromNotes]),
       ]);
@@ -224,80 +230,81 @@ export function NewEventModal({
     return () => {
       cancelled = true;
     };
-  }, [conversationId, editEvent?.id, initialDateMs, open, onUnauthorized]);
+  }, [
+    conversationId,
+    editEvent?.id,
+    editEvent?.invitees,
+    editEvent?.mentionUserIds,
+    initialDateMs,
+    open,
+    onUnauthorized,
+  ]);
 
   const displayedInvitees = useMemo(() => {
     const byId = new Map<string, CalendarMentionableUser>();
+    const inviteeByUserId = new Map(
+      (editEvent?.invitees ?? [])
+        .filter((invitee) => invitee.userId)
+        .map((invitee) => [invitee.userId as string, invitee]),
+    );
 
     const addUser = (user: CalendarMentionableUser) => {
+      if (removedInviteeIds.includes(user.id)) {
+        return;
+      }
       byId.set(user.id, user);
     };
 
-    for (const [index, invitee] of (editEvent?.invitees ?? []).entries()) {
-      const username = invitee.username?.trim() || '';
-      const name = invitee.name?.trim() || invitee.username?.trim() || 'Teammate';
-      const id = invitee.userId ?? `invitee-${index}-${username || name}`;
-      if (removedInviteeIds.includes(id)) {
-        continue;
+    const resolvePerson = (id: string): CalendarMentionableUser => {
+      const fromPeople = mentionUsers.find((entry) => entry.id === id);
+      if (fromPeople) {
+        return fromPeople;
       }
-      const fromPeople =
-        (invitee.userId
-          ? mentionUsers.find((user) => user.id === invitee.userId)
-          : null) ??
-        (username
-          ? mentionUsers.find(
-              (user) => user.username.toLowerCase() === username.toLowerCase(),
-            )
-          : null) ??
-        (name
-          ? mentionUsers.find((user) => user.name.toLowerCase() === name.toLowerCase())
-          : null);
 
-      addUser(
-        fromPeople ?? {
+      const invitee = inviteeByUserId.get(id);
+      if (invitee) {
+        const username = invitee.username?.trim() || '';
+        const name = invitee.name?.trim() || username || 'Teammate';
+        return {
           id,
           username: username || name,
           name,
-        },
-      );
+        };
+      }
+
+      return {
+        id,
+        username: 'member',
+        name: 'Tagged member',
+      };
+    };
+
+    for (const id of selectedUserIds) {
+      if (!id) {
+        continue;
+      }
+      addUser(resolvePerson(id));
+    }
+
+    for (const [index, invitee] of (editEvent?.invitees ?? []).entries()) {
+      const username = invitee.username?.trim() || '';
+      const name = invitee.name?.trim() || username || 'Teammate';
+      const id =
+        invitee.userId ??
+        (username ? `invitee:${username.toLowerCase()}` : `invitee-${index}-${name.toLowerCase()}`);
+
+      if (byId.has(id)) {
+        continue;
+      }
+
+      addUser(resolvePerson(id));
     }
 
     for (const id of editEvent?.mentionUserIds ?? []) {
-      if (!id || removedInviteeIds.includes(id)) {
+      if (!id || byId.has(id)) {
         continue;
       }
-
-      if (byId.has(id)) {
-        continue;
-      }
-
-      const fromPeople = mentionUsers.find((entry) => entry.id === id);
-      addUser(
-        fromPeople ?? {
-          id,
-          username: 'member',
-          name: 'Tagged member',
-        },
-      );
-    }
-
-    for (const id of selectedUserIds) {
-      if (removedInviteeIds.includes(id)) {
-        continue;
-      }
-
-      if (byId.has(id)) {
-        continue;
-      }
-
-      const user = mentionUsers.find((entry) => entry.id === id);
-      addUser(
-        user ?? {
-          id,
-          username: 'member',
-          name: 'Tagged member',
-        },
-      );
+      addUser(resolvePerson(id));
     }
 
     return [...byId.values()];

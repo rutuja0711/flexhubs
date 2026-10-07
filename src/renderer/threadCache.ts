@@ -5,6 +5,7 @@ export type ThreadCacheEntry = {
   pinnedMessageIds: string[];
   activeHubDetails: Record<string, unknown> | null;
   draft: string;
+  hasMoreOlderMessages?: boolean;
   fetchedAt: number;
 };
 

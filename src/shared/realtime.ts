@@ -1,3 +1,4 @@
+import { readEmbeddedSupabaseBuildConfig } from './supabaseEnv';
 import { readUserStatusMessage, readUserStatusMessageUpdate } from './profile';
 import { normalizeMessage, parseMessageReactions, type MessageItem, type MessageReaction } from './messages';
 
@@ -305,9 +306,60 @@ export type RealtimeClientConfig = {
   supabaseAnonKey: string;
 };
 
-// Same values as the web app NEXT_PUBLIC_SUPABASE_* env vars (for call signaling).
-export const FLEXHUBS_SUPABASE_URL = '';
-export const FLEXHUBS_SUPABASE_ANON_KEY = '';
+function isSupabaseProjectUrl(value: string): boolean {
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return host.endsWith('.supabase.co') || host === 'supabase.co';
+  } catch {
+    return false;
+  }
+}
+
+function readSupabaseUrlFromRealtimePayload(record: Record<string, unknown> | null): string | null {
+  if (!record) {
+    return null;
+  }
+
+  const explicit =
+    readString(record.supabaseUrl) ??
+    readString(record.projectUrl) ??
+    readString(record.supabaseProjectUrl);
+
+  if (explicit) {
+    return explicit;
+  }
+
+  for (const key of ['url', 'realtimeUrl'] as const) {
+    const candidate = readString(record[key]);
+
+    if (candidate && isSupabaseProjectUrl(candidate)) {
+      return candidate;
+    }
+  }
+
+  const embedded = readEmbeddedSupabaseBuildConfig().supabaseUrl;
+  return embedded || null;
+}
+
+function readSupabaseAnonKeyFromRealtimePayload(record: Record<string, unknown> | null): string | null {
+  if (!record) {
+    return null;
+  }
+
+  const explicit =
+    readString(record.supabaseAnonKey) ??
+    readString(record.anonKey) ??
+    readString(record.publicKey) ??
+    readString(record.apiKey) ??
+    readString(record.supabaseKey);
+
+  if (explicit) {
+    return explicit;
+  }
+
+  const embedded = readEmbeddedSupabaseBuildConfig().supabaseAnonKey;
+  return embedded || null;
+}
 
 export function extractRealtimeClientConfig(payload: unknown): RealtimeClientConfig | null {
   const accessToken = extractRealtimeAccessToken(payload);
@@ -317,21 +369,8 @@ export function extractRealtimeClientConfig(payload: unknown): RealtimeClientCon
   }
 
   const record = asRecord(payload);
-
-  const supabaseUrl =
-    readString(record?.supabaseUrl) ??
-    readString(record?.url) ??
-    readString(record?.realtimeUrl) ??
-    readString(record?.projectUrl) ??
-    (FLEXHUBS_SUPABASE_URL || null);
-
-  const supabaseAnonKey =
-    readString(record?.supabaseAnonKey) ??
-    readString(record?.anonKey) ??
-    readString(record?.publicKey) ??
-    readString(record?.apiKey) ??
-    readString(record?.supabaseKey) ??
-    (FLEXHUBS_SUPABASE_ANON_KEY || null);
+  const supabaseUrl = readSupabaseUrlFromRealtimePayload(record);
+  const supabaseAnonKey = readSupabaseAnonKeyFromRealtimePayload(record);
 
   if (!supabaseUrl || !supabaseAnonKey) {
     return null;

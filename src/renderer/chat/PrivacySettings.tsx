@@ -18,7 +18,9 @@ import {
 } from 'react-icons/fi';
 import { useToast } from '../ui/Toast';
 
-import type { ProfileSettings } from '../../shared/profile';
+import type { NotificationPreferenceUpdate, ProfileSettings } from '../../shared/profile';
+import { applyNotificationPreferenceUpdate } from '../../shared/profile';
+import { mergePrivacySettings } from '../privacySettingsStorage';
 import { saveUserProfile, saveNotificationSettings } from '../chatApi';
 
 function SectionCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
@@ -75,29 +77,28 @@ export function PrivacySettings({
     setUpdatingField(String(field));
     persistSettings(optimistic);
 
-    const profileResult = await saveUserProfile({ [field]: nextValue });
-    let saved = profileResult.ok;
+    const preferenceUpdate = { [field]: nextValue } as NotificationPreferenceUpdate;
 
-    if (!saved) {
-      const notifResult = await saveNotificationSettings({
-        [field]: nextValue,
-      } as import('../../shared/profile').NotificationPreferenceUpdate);
-      saved = notifResult.ok;
-      if (notifResult.ok && notifResult.data) {
-        persistSettings({ ...optimistic, ...notifResult.data });
-      }
-    } else {
-      void saveNotificationSettings({
-        [field]: nextValue,
-      } as import('../../shared/profile').NotificationPreferenceUpdate);
+    const [notifResult, profileResult] = await Promise.all([
+      saveNotificationSettings(preferenceUpdate),
+      saveUserProfile({ [field]: nextValue }),
+    ]);
+
+    const saved = notifResult.ok || profileResult.ok;
+    let merged = applyNotificationPreferenceUpdate(optimistic, preferenceUpdate);
+
+    if (notifResult.ok && notifResult.data) {
+      merged = mergePrivacySettings(notifResult.data, merged);
     }
 
     if (!saved) {
       persistSettings({ ...settings, [field]: previousValue } as ProfileSettings);
-      if (!onUnauthorized(profileResult.status || 401)) {
+      const status = notifResult.ok ? profileResult.status : notifResult.status;
+      if (!onUnauthorized(status || 401)) {
         toast.error('Failed to update privacy settings. Please try again.');
       }
     } else {
+      persistSettings(merged);
       toast.success('Privacy settings updated');
       onUserUpdated?.();
     }

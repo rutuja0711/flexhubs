@@ -386,7 +386,7 @@ export function ContactInfoPanel({
                   <FiMail className="text-base" />
                   <span className="text-[13px]">Email</span>
                 </div>
-                <span className="text-[13px] text-[#972c44] font-medium truncate">{profile.email}</span>
+                <span className="text-[13px] text-accent-soft font-medium truncate">{profile.email}</span>
               </div>
             )}
             {profile?.createdAt && (
@@ -403,7 +403,7 @@ export function ContactInfoPanel({
           </div>
         </Accordion>
 
-        <Accordion title="Shared files" defaultOpen trailing={<span className="text-[12px] font-medium text-[#972c44]">See all</span>}>
+        <Accordion title="Shared files" defaultOpen trailing={<span className="text-[12px] font-medium text-accent-soft">See all</span>}>
           <div className="pt-2">
             <ConversationSharedFiles conversationId={conversation.id} />
           </div>
@@ -418,11 +418,11 @@ export function ContactInfoPanel({
                 {pinnedMessages.map((msg) => (
                   <button
                     key={msg.id}
-                    className="flex flex-col gap-1 rounded-[12px] border border-[#e2d5d8] bg-[#f8f9fa] px-3 py-2.5 text-left transition-colors hover:bg-[#f0f4f8]"
+                    className="flex flex-col gap-1 rounded-[12px] border border-app-border bg-app-inset px-3 py-2.5 text-left transition-colors hover:bg-app-chat-hover"
                     onClick={() => onJumpToMessage?.(msg.id)}
                   >
                     <span className="text-[12px] font-semibold text-accent truncate w-full">{msg.senderName || 'Pinned message'}</span>
-                    <span className="text-[13px] text-[#1e293b] line-clamp-2 w-full leading-snug">{msg.content || 'Attachment'}</span>
+                    <span className="text-[13px] text-app-text line-clamp-2 w-full leading-snug">{msg.content || 'Attachment'}</span>
                   </button>
                 ))}
               </div>

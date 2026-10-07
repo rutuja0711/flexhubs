@@ -622,7 +622,7 @@ export function mergeServerMessagesWithLocal(
   const olderOnly = localMessages.filter((message) => !serverIds.has(message.id));
 
   if (olderOnly.length === 0) {
-    return mergedServer;
+    return [...mergedServer].sort(compareMessagesChronologically);
   }
 
   return mergeMessageListsChronologically(olderOnly, mergedServer);
@@ -2189,14 +2189,16 @@ export function normalizeBootstrap(payload: unknown): ConversationBootstrap {
     record?.hasNextPage === true ||
     record?.has_more === true;
 
+  const messages = enrichMessageReplies(
+    messagesRaw
+      .map(asRecord)
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map(normalizeMessage),
+  ).sort(compareMessagesChronologically);
+
   return {
     conversation,
-    messages: enrichMessageReplies(
-      messagesRaw
-        .map(asRecord)
-        .filter((item): item is Record<string, unknown> => item !== null)
-        .map(normalizeMessage),
-    ),
+    messages,
     hasMoreMessages: hasMoreMessages || undefined,
     pinnedMessageIds: pinnedRaw
       .map((item) => {
@@ -2228,7 +2230,7 @@ export function normalizeMessageHistoryPage(
       .map(asRecord)
       .filter((item): item is Record<string, unknown> => item !== null)
       .map(normalizeMessage),
-  );
+  ).sort(compareMessagesChronologically);
 
   const explicitHasMore =
     record?.hasMore === true ||

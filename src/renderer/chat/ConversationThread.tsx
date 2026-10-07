@@ -401,11 +401,18 @@ export function ConversationThread({
   );
 
   useEffect(() => {
-    if (focusMessageId) {
-      jumpToMessage(focusMessageId);
-      onFocusMessageHandled?.();
+    if (!focusMessageId) {
+      return;
     }
-  }, [focusMessageId, jumpToMessage, onFocusMessageHandled]);
+
+    const messageInThread = mainChatMessages.some((message) => message.id === focusMessageId);
+    if (!messageInThread) {
+      return;
+    }
+
+    jumpToMessage(focusMessageId);
+    onFocusMessageHandled?.();
+  }, [focusMessageId, jumpToMessage, mainChatMessages, onFocusMessageHandled]);
 
   const handlePinnedBannerJump = () => {
     if (!featuredPinnedMessage) {
@@ -962,6 +969,10 @@ export function ConversationThread({
         conversationId={conversation.id}
         conversationDetails={conversationDetails ?? hubDetails ?? null}
         conversationKind={conversation.kind}
+        hideIncomingSenderMeta={
+          conversation.kind === 'direct' ||
+          (Boolean(conversation.peerUserId) && conversation.kind !== 'hub')
+        }
         onVotePoll={onVotePoll}
         showReactionAuthors={conversation.kind === 'hub'}
         peerBlockedByCurrentUser={peerBlockedByCurrentUser}

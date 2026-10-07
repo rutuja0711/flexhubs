@@ -990,6 +990,15 @@ function flattenConversationRecord(record: Record<string, unknown>): Record<stri
     'membership',
     'member',
     'currentMember',
+    'hub',
+    'channel',
+    'group',
+    'members',
+    'groupMembers',
+    'participants',
+    'users',
+    'memberCount',
+    'participantCount',
   ] as const) {
     if (record[key] !== undefined && record[key] !== null) {
       merged[key] = record[key];
@@ -1041,30 +1050,122 @@ function readConversationMembers(source: Record<string, unknown>): {
   totalMemberCount?: number;
 } {
   const hub = asRecord(source.hub);
-  if (!hub) return {};
+  const channel = asRecord(source.channel);
+  const group = asRecord(source.group);
+  const nestedCount = asRecord(source._count) ?? asRecord(source.count);
 
-  let membersList: unknown[] = [];
-  if (Array.isArray(hub.groupMembers)) {
-    membersList = hub.groupMembers;
-  } else if (Array.isArray(hub.members)) {
-    membersList = hub.members;
-  } else if (Array.isArray(source.members)) {
-    membersList = source.members;
+  const memberSources = [source, hub, channel, group].filter(
+    (entry): entry is Record<string, unknown> => entry !== null,
+  );
+
+  const membersList: Record<string, unknown>[] = [];
+  const seenMemberKeys = new Set<string>();
+
+  for (const record of memberSources) {
+    for (const member of collectHubMembers(record)) {
+      const user = asRecord(member.user) ?? asRecord(member.profile) ?? member;
+      const memberKey =
+        readString(user.id) ??
+        readString(member.userId) ??
+        readString(member.id) ??
+        `${membersList.length}`;
+
+      if (seenMemberKeys.has(memberKey)) {
+        continue;
+      }
+
+      seenMemberKeys.add(memberKey);
+      membersList.push(member);
+    }
   }
 
-  if (membersList.length === 0) return {};
+  const totalMemberCount =
+    readNumber(source.memberCount) ??
+    readNumber(source.participantCount) ??
+    readNumber(source.membersCount) ??
+    readNumber(hub?.memberCount) ??
+    readNumber(hub?.membersCount) ??
+    readNumber(channel?.memberCount) ??
+    readNumber(group?.memberCount) ??
+    readNumber(nestedCount?.members) ??
+    readNumber(nestedCount?.memberCount) ??
+    (membersList.length > 0 ? membersList.length : null);
+
+  const viewerUserId = readViewerUserId(source);
 
   const avatars = membersList
-    .map((m) => asRecord(m))
-    .filter((m): m is Record<string, unknown> => m !== null)
     .map((member) => {
-      const user = asRecord(member.user) || member;
-      return readAvatar(user, '');
+      const user = asRecord(member.user) ?? asRecord(member.profile) ?? member;
+      const avatar = readAvatar(user, viewerUserId);
+      const memberUrl = resolveAvatarUrl(member);
+
+      if (!avatar.url && memberUrl) {
+        return { url: memberUrl, initials: avatar.initials };
+      }
+
+      return avatar;
+    })
+    .filter((avatar, index, list) => {
+      const signature = `${avatar.url ?? ''}:${avatar.initials}`;
+      return list.findIndex((item) => `${item.url ?? ''}:${item.initials}` === signature) === index;
     });
+
+  if (avatars.length === 0 && inferKind(source) === 'hub') {
+    const fallback = readAvatar(source, viewerUserId);
+    if (fallback.url || fallback.initials) {
+      return {
+        memberAvatars: [fallback],
+        totalMemberCount: totalMemberCount ?? 1,
+      };
+    }
+  }
+
+  if (avatars.length === 0) {
+    return totalMemberCount && totalMemberCount > 0 ? { totalMemberCount } : {};
+  }
 
   return {
     memberAvatars: avatars,
-    totalMemberCount: membersList.length,
+    totalMemberCount: totalMemberCount ?? avatars.length,
+  };
+}
+
+export function readConversationMemberPreview(record: Record<string, unknown>): {
+  memberAvatars?: { url: string | null; initials: string }[];
+  totalMemberCount?: number;
+} {
+  return readConversationMembers(flattenConversationRecord(record));
+}
+
+export function mergeConversationMemberPreview(
+  conversation: ConversationItem,
+  record: Record<string, unknown>,
+): ConversationItem {
+  if (conversation.kind !== 'hub') {
+    return conversation;
+  }
+
+  const preview = readConversationMemberPreview(record);
+  const existingAvatars = conversation.memberAvatars ?? [];
+  const nextAvatars = preview.memberAvatars ?? [];
+  const existingTotal = conversation.totalMemberCount ?? existingAvatars.length;
+  const nextTotal = preview.totalMemberCount ?? nextAvatars.length;
+  const mergedTotal = Math.max(existingTotal, nextTotal);
+
+  if (nextAvatars.length === 0 && mergedTotal <= existingTotal) {
+    return mergedTotal > existingTotal
+      ? { ...conversation, totalMemberCount: mergedTotal }
+      : conversation;
+  }
+
+  const useNextAvatars =
+    nextAvatars.length > existingAvatars.length ||
+    (nextAvatars.length === existingAvatars.length && nextTotal >= existingTotal);
+
+  return {
+    ...conversation,
+    memberAvatars: useNextAvatars ? nextAvatars : existingAvatars,
+    totalMemberCount: mergedTotal,
   };
 }
 

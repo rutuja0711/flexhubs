@@ -10,6 +10,7 @@ type RemoteImageProps = {
   src: string | null | undefined;
   alt?: string;
   className?: string;
+  wrapperClassName?: string;
   loading?: 'eager' | 'lazy';
   onError?: () => void;
 };
