@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { normalizeUploadUrl } from '../shared/profile';
-import { fetchMediaBlob, isFlexHubsHostedMediaUrl } from './mediaBlob';
+import {
+  isFlexHubsHostedAssetUrl,
+  peekAuthenticatedMediaUrl,
+  resolveAuthenticatedMediaUrl,
+} from './authenticatedMedia';
 
 type RemoteVideoProps = {
   src: string | null | undefined;
@@ -9,9 +13,8 @@ type RemoteVideoProps = {
   playsInline?: boolean;
   muted?: boolean;
   preload?: 'none' | 'metadata' | 'auto';
+  loading?: 'eager' | 'lazy';
 };
-
-const resolvedSrcCache = new Map<string, string>();
 
 function canUseDirectly(url: string): boolean {
   return url.startsWith('blob:') || url.startsWith('data:');
@@ -24,19 +27,47 @@ export function RemoteVideo({
   playsInline = true,
   muted = false,
   preload = 'metadata',
+  loading = 'lazy',
 }: RemoteVideoProps) {
+  const hostRef = useRef<HTMLDivElement>(null);
+  const [shouldLoad, setShouldLoad] = useState(loading === 'eager');
   const [displaySrc, setDisplaySrc] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
 
   useEffect(() => {
-    if (!src?.trim()) {
+    if (loading === 'eager') {
+      setShouldLoad(true);
+      return;
+    }
+
+    const node = hostRef.current;
+    if (!node || typeof IntersectionObserver === 'undefined') {
+      setShouldLoad(true);
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          setShouldLoad(true);
+          observer.disconnect();
+        }
+      },
+      { root: null, rootMargin: '120px', threshold: 0.01 },
+    );
+
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [loading, src]);
+
+  useEffect(() => {
+    if (!shouldLoad || !src?.trim()) {
       setDisplaySrc(null);
       setFailed(false);
       return;
     }
 
     const normalized = normalizeUploadUrl(src.trim());
-    let objectUrl = '';
     let cancelled = false;
 
     setFailed(false);
@@ -46,28 +77,24 @@ export function RemoteVideo({
       return;
     }
 
-    const cached = resolvedSrcCache.get(normalized);
+    const cached = peekAuthenticatedMediaUrl(normalized);
     if (cached) {
       setDisplaySrc(cached);
       return;
     }
 
-    if (!isFlexHubsHostedMediaUrl(normalized)) {
+    if (!isFlexHubsHostedAssetUrl(normalized)) {
       setDisplaySrc(normalized);
       return;
     }
 
     setDisplaySrc(null);
 
-    void fetchMediaBlob(normalized)
-      .then((blob) => {
-        if (cancelled) {
-          return;
+    void resolveAuthenticatedMediaUrl(normalized)
+      .then((objectUrl) => {
+        if (!cancelled) {
+          setDisplaySrc(objectUrl);
         }
-
-        objectUrl = URL.createObjectURL(blob);
-        resolvedSrcCache.set(normalized, objectUrl);
-        setDisplaySrc(objectUrl);
       })
       .catch(() => {
         if (!cancelled) {
@@ -78,39 +105,23 @@ export function RemoteVideo({
 
     return () => {
       cancelled = true;
-      if (objectUrl && !resolvedSrcCache.has(normalized)) {
-        URL.revokeObjectURL(objectUrl);
-      }
     };
-  }, [src]);
+  }, [shouldLoad, src]);
 
-  if (failed) {
-    return (
-      <div
-        className={`flex min-h-[120px] min-w-[200px] items-center justify-center rounded-2xl bg-app-chat-hover px-4 text-center text-xs text-app-muted ${className}`}
-      >
-        Unable to load video preview.
-      </div>
-    );
-  }
-
-  if (!displaySrc) {
-    return (
-      <div
-        className={`min-h-[160px] min-w-[220px] animate-pulse rounded-2xl bg-app-chat-hover ${className}`}
-        aria-hidden="true"
-      />
-    );
+  if (failed || !displaySrc) {
+    return <div ref={hostRef} className={className} aria-hidden />;
   }
 
   return (
-    <video
-      src={displaySrc}
-      controls={controls}
-      playsInline={playsInline}
-      muted={muted}
-      preload={preload}
-      className={className}
-    />
+    <div ref={hostRef}>
+      <video
+        src={displaySrc}
+        className={className}
+        controls={controls}
+        playsInline={playsInline}
+        muted={muted}
+        preload={preload}
+      />
+    </div>
   );
 }

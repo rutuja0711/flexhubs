@@ -94,3 +94,21 @@ Use **`FlexHubs-Desktop-Setup.exe`** only — no portable zip builds.
 ## Permanent fix (no warnings for all users)
 
 Follow **[SIGNING.md](./SIGNING.md)** to add Apple + Windows code signing secrets to GitHub Actions. CI will then publish signed `FlexHubs-Desktop.dmg` and `FlexHubs-Desktop-Setup.exe` without Gatekeeper/SmartScreen warnings.
+
+---
+
+## Production install experience
+
+| Platform | Installer | Terms & path |
+|----------|-----------|----------------|
+| **macOS** | `FlexHubs-Desktop.dmg` — drag to Applications | No separate installer wizard. **First app launch** shows FlexHubs Terms & Privacy acceptance (packaged builds only). |
+| **Windows** | `FlexHubs-Desktop-Setup.exe` (Squirrel) | Per-user install to `%LocalAppData%\FlexHubsDesktop` — **no custom install folder wizard** (Squirrel limitation). **First app launch** shows the same terms acceptance. |
+
+To rebuild installers locally:
+
+- **Mac DMG:** `npm run make:mac` → `out/make/` (or staged `FlexHubs-Desktop.dmg`)
+- **Windows Setup.exe:** run on Windows or CI: `npm run make:win` → `out/make/squirrel.windows/x64/*.exe`
+
+CI (push to `main`) builds both and uploads to the **`desktop-latest`** GitHub Release.
+
+Legal copy for installers is also in `assets/desktop-eula.txt`.

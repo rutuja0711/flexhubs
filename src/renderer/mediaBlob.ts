@@ -1,36 +1,10 @@
 import { normalizeUploadUrl } from '../shared/profile';
-import { getStoredToken } from './authApi';
+import {
+  fetchAuthenticatedMediaBlob,
+  isFlexHubsHostedAssetUrl,
+} from './authenticatedMedia';
 
-export function isFlexHubsHostedMediaUrl(url: string): boolean {
-  return /^https:\/\/flexhubs\.in\//i.test(normalizeUploadUrl(url.trim()));
-}
-
-async function fetchHostedMediaBlob(
-  normalized: string,
-  onProgress?: (loaded: number, total: number | null) => void,
-): Promise<Blob> {
-  const token = getStoredToken();
-  if (!token || !window.electronAPI?.fetchAuthenticatedMedia) {
-    throw new Error('Unable to load this file.');
-  }
-
-  onProgress?.(0, null);
-
-  const result = await window.electronAPI.fetchAuthenticatedMedia(token, normalized);
-  if (!result.ok) {
-    throw new Error(result.error);
-  }
-
-  const binary = atob(result.data.base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-
-  const blob = new Blob([bytes], { type: result.data.mimeType || 'application/octet-stream' });
-  onProgress?.(blob.size, blob.size);
-  return blob;
-}
+export { isFlexHubsHostedAssetUrl, isFlexHubsHostedAssetUrl as isFlexHubsHostedMediaUrl };
 
 async function fetchPublicMediaBlob(
   normalized: string,
@@ -81,8 +55,11 @@ export async function fetchMediaBlobWithProgress(
 ): Promise<Blob> {
   const normalized = normalizeUploadUrl(url.trim());
 
-  if (isFlexHubsHostedMediaUrl(normalized)) {
-    return fetchHostedMediaBlob(normalized, onProgress);
+  if (isFlexHubsHostedAssetUrl(normalized)) {
+    onProgress?.(0, null);
+    const blob = await fetchAuthenticatedMediaBlob(normalized);
+    onProgress?.(blob.size, blob.size);
+    return blob;
   }
 
   return fetchPublicMediaBlob(normalized, onProgress);

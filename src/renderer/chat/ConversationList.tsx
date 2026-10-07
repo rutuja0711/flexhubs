@@ -30,8 +30,7 @@ export const ConversationRow = memo(function ConversationRow({
   onOpenMenu,
   onCloseMenu,
   menuBusy = false,
-  index = 0,
-}: ConversationRowProps & { index?: number }) {
+}: ConversationRowProps) {
   const displayTitle = conversation.isSelf ? `${conversation.title} (Yourself)` : conversation.title;
   const rowRef = useRef<HTMLDivElement>(null);
 
@@ -53,7 +52,7 @@ export const ConversationRow = memo(function ConversationRow({
   return (
     <div
       ref={rowRef}
-      className={`group relative flex w-full items-center gap-3 rounded-[16px] px-3 py-2.5 transition-all duration-200 animate-slide-in stagger-${(index % 5) + 1} opacity-0 ${
+      className={`group relative flex w-full items-center gap-3 rounded-[16px] px-3 py-2.5 transition-colors duration-150 ${
         selected
           ? 'bg-app-elevated border border-accent/25 shadow-sm'
           : 'border border-transparent hover:bg-app-chat-hover/70'
@@ -223,10 +222,9 @@ export function ConversationList({
   return (
     <>
       <div className="flex flex-col gap-0.5 px-2 pb-4">
-        {conversations.map((conversation, index) => (
+        {conversations.map((conversation) => (
           <ConversationRow
             key={conversation.id}
-            index={index}
             conversation={conversation}
             typingPreview={typingPreviews[conversation.id]}
             selected={selectedId === conversation.id}

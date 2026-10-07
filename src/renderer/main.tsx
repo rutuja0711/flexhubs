@@ -4,6 +4,8 @@ import { applyAccentColor, resolveInitialAccentColor } from '../shared/colorThem
 import { applyTheme, resolveInitialTheme } from '../shared/theme';
 import './global.css';
 import App from './App';
+import { DesktopLegalGate } from './DesktopLegalGate';
+import { ErrorBoundary } from './ErrorBoundary';
 import { ThemeProvider } from './theme/ThemeProvider';
 import { ConfirmProvider } from './ui/ConfirmDialog';
 import { ToastProvider } from './ui/Toast';
@@ -21,7 +23,11 @@ if (rootElement) {
       <ThemeProvider>
         <ToastProvider>
           <ConfirmProvider>
-            <App />
+            <ErrorBoundary>
+              <DesktopLegalGate>
+                <App />
+              </DesktopLegalGate>
+            </ErrorBoundary>
           </ConfirmProvider>
         </ToastProvider>
       </ThemeProvider>

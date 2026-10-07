@@ -33,6 +33,7 @@ const config: ForgeConfig = {
       FileDescription: 'FlexHubs Desktop Application',
       InternalName: 'FlexHubs Desktop',
       OriginalFilename: 'FlexHubs Desktop.exe',
+      LegalCopyright: 'Copyright © Flexodyn Solutions. All rights reserved.',
     },
     ...(isDarwinHost
       ? {

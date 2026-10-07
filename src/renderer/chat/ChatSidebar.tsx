@@ -382,13 +382,13 @@ export function ChatSidebar({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-        {loading ? (
+        {loading && conversations.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-app-muted" role="status">
             Loading conversations...
           </div>
         ) : null}
 
-        {!loading && error ? (
+        {!loading && error && conversations.length === 0 ? (
           <div className="px-4 py-6" role="alert">
             <p className="mb-3 text-sm leading-snug text-accent-soft">{error}</p>
             <button
@@ -401,7 +401,7 @@ export function ChatSidebar({
           </div>
         ) : null}
 
-        {!loading && !error && isGlobalSearch ? (
+        {(!loading || conversations.length > 0) && !error && isGlobalSearch ? (
           globalSearchLoading ? (
             <p className="px-4 py-8 text-center text-sm text-app-muted" role="status">
               Searching...
@@ -419,7 +419,7 @@ export function ChatSidebar({
           ) : null
         ) : null}
 
-        {!loading && !error && !isGlobalSearch ? (
+        {(!loading || conversations.length > 0) && !error && !isGlobalSearch ? (
           <>
             {filteredConversations.length === 0 && hiddenOnOtherTabCount > 0 ? (
               <p className="px-4 pb-2 text-xs text-app-muted">

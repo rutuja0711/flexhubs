@@ -93,6 +93,24 @@ export async function loadConversationBootstrap(
   return withToken((token) => window.electronAPI.getConversationBootstrap(token, conversationId));
 }
 
+export async function loadConversationMessages(
+  conversationId: string,
+  options?: { before?: string; limit?: number },
+): Promise<ApiResult<import('../shared/messages').MessageHistoryPage>> {
+  if (!window.electronAPI?.getConversationMessages) {
+    return unavailable();
+  }
+
+  return withToken((token) =>
+    window.electronAPI.getConversationMessages(
+      token,
+      conversationId,
+      options?.before,
+      options?.limit,
+    ),
+  );
+}
+
 export async function hydrateThreadReplyRegistry(
   conversationId: string,
   messages: import('../shared/messages').MessageItem[],

@@ -38,6 +38,7 @@ import {
   deleteMessage,
   editMessage,
   fetchConversationBootstrap,
+  fetchConversationMessages,
   fetchMessageDraft,
   fetchMessageThread,
   clearMessageDraft,
@@ -514,6 +515,11 @@ ipcMain.handle('chat:conversations', (_event, token: string, viewerUserId?: stri
 ipcMain.handle('chat:unread-count', (_event, token: string) => fetchUnreadCount(token));
 ipcMain.handle('chat:conversation-bootstrap', (_event, token: string, conversationId: string) =>
   fetchConversationBootstrap(token, conversationId),
+);
+ipcMain.handle(
+  'chat:conversation-messages',
+  (_event, token: string, conversationId: string, before?: string, limit?: number) =>
+    fetchConversationMessages(token, conversationId, { before, limit }),
 );
 ipcMain.handle('chat:message-draft', (_event, token: string, conversationId: string) =>
   fetchMessageDraft(token, conversationId),
@@ -1211,6 +1217,13 @@ ipcMain.handle('window:focus-call', () => {
 });
 
 ipcMain.handle('app:get-name', () => readMediaAppName());
+ipcMain.handle('app:get-desktop-legal-context', () => ({
+  isPackaged: app.isPackaged,
+  version: app.getVersion(),
+}));
+ipcMain.handle('app:quit', () => {
+  app.quit();
+});
 
 ipcMain.handle('calls:log', (_event, token: string, payloadJson: string) => {
   try {

@@ -171,6 +171,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     conversationId: string,
   ): Promise<ApiResult<ConversationBootstrap>> =>
     ipcRenderer.invoke('chat:conversation-bootstrap', token, conversationId),
+  getConversationMessages: (
+    token: string,
+    conversationId: string,
+    before?: string,
+    limit?: number,
+  ): Promise<ApiResult<import('./shared/messages').MessageHistoryPage>> =>
+    ipcRenderer.invoke('chat:conversation-messages', token, conversationId, before, limit),
   getMessageThread: (
     token: string,
     conversationId: string,
@@ -594,7 +601,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     base64Data: string,
   ): Promise<ApiResult<{ url: string }>> =>
     ipcRenderer.invoke('user:upload-image', token, fileName, mimeType, base64Data),
-  fetchAuthenticatedMedia: (token: string, url: string): Promise<ApiResult<{ mimeType: string; base64: string }>> =>
+  fetchAuthenticatedMedia: (
+    token: string,
+    url: string,
+  ): Promise<ApiResult<{ mimeType: string; bytes: Uint8Array }>> =>
     ipcRenderer.invoke('media:fetch-authenticated', token, url),
   openExternalUrl: (url: string): Promise<ApiResult<{ ok: true }>> =>
     ipcRenderer.invoke('shell:open-external', url),
@@ -798,6 +808,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('updater:download'),
   quitAndInstallUpdate: (): Promise<void> => ipcRenderer.invoke('updater:quit-and-install'),
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('updater:get-version'),
+  getDesktopLegalContext: (): Promise<{ isPackaged: boolean; version: string }> =>
+    ipcRenderer.invoke('app:get-desktop-legal-context'),
+  quitDesktopApp: (): Promise<void> => ipcRenderer.invoke('app:quit'),
   getHardwareAccelerationDisabled: (): Promise<boolean> => ipcRenderer.invoke('app:get-hardware-acceleration-disabled'),
   setHardwareAccelerationDisabled: (disabled: boolean): Promise<void> => ipcRenderer.invoke('app:set-hardware-acceleration-disabled', disabled),
   relaunchApp: (): Promise<void> => ipcRenderer.invoke('app:relaunch'),

@@ -14,7 +14,7 @@ export function isFlexHubsHostedAssetUrl(url: string): boolean {
 export async function fetchAuthenticatedMedia(
   token: string,
   rawUrl: string,
-): Promise<ApiResult<{ mimeType: string; base64: string }>> {
+): Promise<ApiResult<{ mimeType: string; bytes: Uint8Array }>> {
   const url = normalizeUploadUrl(rawUrl.trim());
 
   if (!url) {
@@ -40,14 +40,14 @@ export async function fetchAuthenticatedMedia(
       };
     }
 
-    const buffer = Buffer.from(await response.arrayBuffer());
+    const arrayBuffer = await response.arrayBuffer();
     const mimeType = response.headers.get('content-type')?.split(';')[0]?.trim() || 'application/octet-stream';
 
     return {
       ok: true,
       data: {
         mimeType,
-        base64: buffer.toString('base64'),
+        bytes: new Uint8Array(arrayBuffer),
       },
     };
   } catch {

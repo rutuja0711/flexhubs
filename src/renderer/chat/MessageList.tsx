@@ -677,6 +677,9 @@ type MessageListProps = {
   scrollToMessageId?: string | null;
   scrollRequestKey?: number;
   scrollRestoreKey?: number;
+  hasMoreOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
   unreadAnchorMessageId?: string | null;
   onScrollToMessageComplete?: (messageId: string) => void;
   currentUserId: string | null;
@@ -718,6 +721,9 @@ export function MessageList({
   scrollToMessageId = null,
   scrollRequestKey = 0,
   scrollRestoreKey = 0,
+  hasMoreOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
   unreadAnchorMessageId = null,
   onScrollToMessageComplete,
   currentUserId,
@@ -752,24 +758,20 @@ export function MessageList({
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomAnchorRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
-  const lastContentHeightRef = useRef(0);
+  const lastMessageIdRef = useRef<string | null>(null);
+  const loadOlderScrollSnapshotRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(
+    null,
+  );
   const showInitialLoading = loading && messages.length === 0;
   const showRefreshing = loading && messages.length > 0;
 
   useEffect(() => {
-    setAllowMessageAppear(false);
-  }, [conversationId]);
-
-  useEffect(() => {
     if (showInitialLoading) {
+      setAllowMessageAppear(false);
       return;
     }
 
-    const timer = window.setTimeout(() => {
-      setAllowMessageAppear(true);
-    }, 400);
-
-    return () => window.clearTimeout(timer);
+    setAllowMessageAppear(true);
   }, [conversationId, showInitialLoading]);
   const listEntries = useMemo(
     () => buildMessageListEntries(messages, unreadAnchorMessageId),
@@ -813,29 +815,9 @@ export function MessageList({
 
   useEffect(() => {
     stickToBottomRef.current = true;
-    lastContentHeightRef.current = 0;
+    lastMessageIdRef.current = null;
+    loadOlderScrollSnapshotRef.current = null;
   }, [conversationId]);
-
-  useEffect(() => {
-    if (!scrollRestoreKey) {
-      return;
-    }
-
-    stickToBottomRef.current = true;
-    lastContentHeightRef.current = 0;
-
-    let innerFrame = 0;
-    const outerFrame = window.requestAnimationFrame(() => {
-      innerFrame = window.requestAnimationFrame(() => {
-        scrollToBottom('auto');
-      });
-    });
-
-    return () => {
-      window.cancelAnimationFrame(outerFrame);
-      window.cancelAnimationFrame(innerFrame);
-    };
-  }, [scrollRestoreKey, scrollToBottom]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -852,37 +834,52 @@ export function MessageList({
       const distanceFromBottom =
         container.scrollHeight - container.scrollTop - container.clientHeight;
       stickToBottomRef.current = distanceFromBottom < 150;
+
+      if (
+        onLoadOlder &&
+        hasMoreOlder &&
+        !loadingOlder &&
+        container.scrollTop < 120 &&
+        !loadOlderScrollSnapshotRef.current
+      ) {
+        loadOlderScrollSnapshotRef.current = {
+          scrollHeight: container.scrollHeight,
+          scrollTop: container.scrollTop,
+        };
+        onLoadOlder();
+      }
     };
 
     container.addEventListener('scroll', onScroll, { passive: true });
     return () => container.removeEventListener('scroll', onScroll);
-  }, [messages.length]);
+  }, [hasMoreOlder, loadingOlder, onLoadOlder]);
 
   useEffect(() => {
-    const content = contentRef.current;
-    if (!content) {
+    if (loadingOlder || !loadOlderScrollSnapshotRef.current) {
       return;
     }
 
-    const observer = new ResizeObserver((entries) => {
-      const entry = entries[0];
-      const nextHeight = entry?.contentRect.height ?? 0;
-      const previousHeight = lastContentHeightRef.current;
-      lastContentHeightRef.current = nextHeight;
+    const snapshot = loadOlderScrollSnapshotRef.current;
+    loadOlderScrollSnapshotRef.current = null;
+    const container = scrollContainerRef.current;
 
-      const container = scrollContainerRef.current;
-      const contentGrew = previousHeight > 0 && nextHeight > previousHeight + 80;
-      const stuckNearTopAfterGrow =
-        contentGrew && container != null && container.scrollTop < 120 && stickToBottomRef.current;
+    if (!container) {
+      return;
+    }
 
-      if (stuckNearTopAfterGrow || stickToBottomRef.current) {
-        scrollToBottom('auto');
-      }
+    let innerFrame = 0;
+    const outerFrame = window.requestAnimationFrame(() => {
+      innerFrame = window.requestAnimationFrame(() => {
+        const delta = container.scrollHeight - snapshot.scrollHeight;
+        container.scrollTop = snapshot.scrollTop + delta;
+      });
     });
 
-    observer.observe(content);
-    return () => observer.disconnect();
-  }, [scrollToBottom]);
+    return () => {
+      window.cancelAnimationFrame(outerFrame);
+      window.cancelAnimationFrame(innerFrame);
+    };
+  }, [loadingOlder, messages]);
 
   useEffect(() => {
     if (showInitialLoading || messages.length === 0) {
@@ -890,16 +887,32 @@ export function MessageList({
     }
 
     const lastMessage = messages[messages.length - 1];
+    const lastId = lastMessage?.id ?? null;
+    const previousLastId = lastMessageIdRef.current;
+    const isInitialLoad = previousLastId === null;
+    const appendedNewMessage = Boolean(lastId && previousLastId && lastId !== previousLastId);
+    lastMessageIdRef.current = lastId;
+
     const isOwnNewMessage =
       lastMessage?.isOwn === true ||
       lastMessage?.id.startsWith('local-') ||
       (lastMessage ? isAppearingMessage(lastMessage) && lastMessage.isOwn : false);
 
-    if (scrollToMessageId && !isOwnNewMessage && !stickToBottomRef.current) {
+    if (
+      scrollToMessageId &&
+      !isInitialLoad &&
+      !isOwnNewMessage &&
+      !stickToBottomRef.current
+    ) {
       return;
     }
 
-    if (!isOwnNewMessage && !stickToBottomRef.current) {
+    const shouldScroll =
+      isInitialLoad ||
+      isOwnNewMessage ||
+      (appendedNewMessage && stickToBottomRef.current);
+
+    if (!shouldScroll) {
       return;
     }
 
@@ -992,6 +1005,11 @@ export function MessageList({
         className="message-list-scroll flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 py-4"
       >
         <div ref={contentRef} className="flex flex-col gap-4">
+        {loadingOlder ? (
+          <div className="flex justify-center py-2 text-xs text-app-muted" role="status">
+            Loading earlier messages…
+          </div>
+        ) : null}
         {listEntries.map((entry) => {
           if (entry.kind === 'date') {
             return <DateDivider key={entry.key} label={entry.label} />;

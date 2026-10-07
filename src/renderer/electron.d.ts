@@ -139,6 +139,12 @@ declare global {
         token: string,
         conversationId: string,
       ) => Promise<ApiResult<ConversationBootstrap>>;
+      getConversationMessages: (
+        token: string,
+        conversationId: string,
+        before?: string,
+        limit?: number,
+      ) => Promise<ApiResult<import('../shared/messages').MessageHistoryPage>>;
       getMessageThread: (
         token: string,
         conversationId: string,
@@ -454,7 +460,7 @@ declare global {
       fetchAuthenticatedMedia: (
         token: string,
         url: string,
-      ) => Promise<ApiResult<{ mimeType: string; base64: string }>>;
+      ) => Promise<ApiResult<{ mimeType: string; bytes: Uint8Array }>>;
       openExternalUrl: (url: string) => Promise<ApiResult<{ ok: true }>>;
       getOrganizationMembersDetailed: (
         token: string,
@@ -575,6 +581,8 @@ declare global {
       downloadUpdate: () => Promise<{ ok: boolean; error?: string }>;
       quitAndInstallUpdate: () => Promise<void>;
       getAppVersion: () => Promise<string>;
+      getDesktopLegalContext: () => Promise<{ isPackaged: boolean; version: string }>;
+      quitDesktopApp: () => Promise<void>;
       getHardwareAccelerationDisabled: () => Promise<boolean>;
       setHardwareAccelerationDisabled: (disabled: boolean) => Promise<void>;
       relaunchApp: () => Promise<void>;

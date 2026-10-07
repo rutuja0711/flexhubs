@@ -95,6 +95,9 @@ type ConversationThreadProps = {
   focusMessageId?: string | null;
   unreadAnchorMessageId?: string | null;
   scrollRestoreKey?: number;
+  hasMoreOlder?: boolean;
+  loadingOlder?: boolean;
+  onLoadOlder?: () => void;
   onFocusMessageHandled?: () => void;
   onStartVoiceCall?: () => void;
   onStartVideoCall?: () => void;
@@ -149,6 +152,9 @@ export function ConversationThread({
   focusMessageId = null,
   unreadAnchorMessageId = null,
   scrollRestoreKey = 0,
+  hasMoreOlder = false,
+  loadingOlder = false,
+  onLoadOlder,
   onFocusMessageHandled,
   onStartVoiceCall,
   onStartVideoCall,
@@ -900,6 +906,9 @@ export function ConversationThread({
         scrollToMessageId={bannerScrollTargetId}
         scrollRequestKey={scrollRequestKey}
         scrollRestoreKey={scrollRestoreKey}
+        hasMoreOlder={hasMoreOlder}
+        loadingOlder={loadingOlder}
+        onLoadOlder={onLoadOlder}
         unreadAnchorMessageId={unreadAnchorMessageId}
         onJumpToMessage={jumpToMessage}
         onScrollToMessageComplete={(messageId) => {

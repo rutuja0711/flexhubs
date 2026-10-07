@@ -19,7 +19,6 @@ import {
 import { useToast } from '../ui/Toast';
 
 import type { ProfileSettings } from '../../shared/profile';
-import { resolveSnoozeSelectValue, resolveDndSelectValue } from '../../shared/profile';
 import { saveUserProfile, saveNotificationSettings } from '../chatApi';
 
 function SectionCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
@@ -32,7 +31,7 @@ function SectionCard({ children, className = '' }: { children: React.ReactNode; 
 
 interface PrivacySettingsProps {
   settings: ProfileSettings | null;
-  setSettings: (s: ProfileSettings) => void;
+  persistSettings: (settings: ProfileSettings) => void;
   blockedUsers: { id: string; username: string }[];
   blockedLoading: boolean;
   unblockingId: string | null;
@@ -43,7 +42,7 @@ interface PrivacySettingsProps {
 
 export function PrivacySettings({
   settings,
-  setSettings,
+  persistSettings,
   blockedUsers,
   blockedLoading,
   unblockingId,
@@ -62,53 +61,57 @@ export function PrivacySettings({
     );
   }
 
-  const handleToggle = async (field: keyof ProfileSettings) => {
-    if (updatingField) return;
+  const persistPrivacyField = async (
+    field: keyof ProfileSettings,
+    nextValue: boolean | string,
+  ) => {
+    if (updatingField) {
+      return;
+    }
+
     const previousValue = settings[field];
-    const nextValue = !previousValue;
-    
-    setUpdatingField(field);
-    setSettings({ ...settings, [field]: nextValue });
+    const optimistic = { ...settings, [field]: nextValue } as ProfileSettings;
 
-    const [resProfile, resNotif] = await Promise.all([
-      saveUserProfile({ [field]: nextValue }),
-      saveNotificationSettings({
+    setUpdatingField(String(field));
+    persistSettings(optimistic);
+
+    const profileResult = await saveUserProfile({ [field]: nextValue });
+    let saved = profileResult.ok;
+
+    if (!saved) {
+      const notifResult = await saveNotificationSettings({
         [field]: nextValue,
-      })
-    ]);
+      } as import('../../shared/profile').NotificationPreferenceUpdate);
+      saved = notifResult.ok;
+      if (notifResult.ok && notifResult.data) {
+        persistSettings({ ...optimistic, ...notifResult.data });
+      }
+    } else {
+      void saveNotificationSettings({
+        [field]: nextValue,
+      } as import('../../shared/profile').NotificationPreferenceUpdate);
+    }
 
-    if (!resProfile.ok && !resNotif.ok && !onUnauthorized(resProfile.status || 500)) {
-      setSettings({ ...settings, [field]: previousValue });
-      toast.error('Failed to update privacy settings. Please try again.');
+    if (!saved) {
+      persistSettings({ ...settings, [field]: previousValue } as ProfileSettings);
+      if (!onUnauthorized(profileResult.status || 401)) {
+        toast.error('Failed to update privacy settings. Please try again.');
+      }
     } else {
       toast.success('Privacy settings updated');
+      onUserUpdated?.();
     }
-    
+
     setUpdatingField(null);
   };
 
-  const handleDropdown = async (field: keyof ProfileSettings, value: string) => {
-    if (updatingField) return;
+  const handleToggle = async (field: keyof ProfileSettings) => {
     const previousValue = settings[field];
-    
-    setUpdatingField(field);
-    setSettings({ ...settings, [field]: value });
+    await persistPrivacyField(field, !previousValue);
+  };
 
-    const [resProfile, resNotif] = await Promise.all([
-      saveUserProfile({ [field]: value }),
-      saveNotificationSettings({
-        [field]: value,
-      })
-    ]);
-
-    if (!resProfile.ok && !resNotif.ok && !onUnauthorized(resProfile.status || 500)) {
-      setSettings({ ...settings, [field]: previousValue });
-      toast.error('Failed to update privacy settings. Please try again.');
-    } else {
-      toast.success('Privacy settings updated');
-    }
-    
-    setUpdatingField(null);
+  const handleDropdown = async (field: keyof ProfileSettings, value: string) => {
+    await persistPrivacyField(field, value);
   };
 
   const ToggleRow = ({
@@ -195,7 +198,7 @@ export function PrivacySettings({
             <span className="truncate">{currentValue}</span>
             <FiChevronDown className={`shrink-0 ml-2 text-app-muted transition-transform ${isOpen ? 'rotate-180' : ''}`} />
           </button>
-          
+
           {isOpen && (
             <div className="absolute right-0 z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-app-border bg-app-surface py-1 shadow-lg ring-1 ring-black ring-opacity-5">
               {options.map((opt) => (

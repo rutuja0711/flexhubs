@@ -23,6 +23,7 @@ import {
   apiStatusToUi,
   applyNotificationPreferenceUpdate,
   buildGeneratedAvatarUrl,
+  mergeProfileSettingsFromUser,
   normalizeUserProfile,
   resolveDndSelectValue,
   resolveSnoozeSelectValue,
@@ -288,6 +289,23 @@ export function ProfileSettingsView({
     [],
   );
 
+  const persistSettings = useCallback(
+    (next: ProfileSettings) => {
+      setSettings(next);
+      setProfile((current) => {
+        if (current) {
+          writeProfileCache({
+            profile: current,
+            settings: next,
+            avatarStyles,
+          });
+        }
+        return current;
+      });
+    },
+    [avatarStyles],
+  );
+
   const refreshProfile = useCallback(async (options?: { silent?: boolean }) => {
     const cached = readProfileCache();
     const hasCachedProfile = Boolean(cached?.profile);
@@ -329,15 +347,16 @@ export function ProfileSettingsView({
     }
 
     const userPayload = userResult.data.user ?? userResult.data;
-    const nextProfile = normalizeUserProfile(userPayload, settingsResult.data);
+    const mergedSettings = mergeProfileSettingsFromUser(userPayload, settingsResult.data);
+    const nextProfile = normalizeUserProfile(userPayload, mergedSettings);
     const nextStyles = stylesResult.ok ? stylesResult.data : cached?.avatarStyles ?? [];
 
-    applyProfileSnapshot(nextProfile, settingsResult.data, nextStyles);
+    applyProfileSnapshot(nextProfile, mergedSettings, nextStyles);
     setAvatarUrl(nextProfile.avatarUrl ?? getUserAvatarUrl(userPayload));
 
     writeProfileCache({
       profile: nextProfile,
-      settings: settingsResult.data,
+      settings: mergedSettings,
       avatarStyles: nextStyles,
     });
 
@@ -1391,7 +1410,7 @@ export function ProfileSettingsView({
             {activeTab === 'privacy' && (
               <PrivacySettings
                 settings={settings}
-                setSettings={setSettings}
+                persistSettings={persistSettings}
                 blockedUsers={blockedUsers}
                 blockedLoading={blockedLoading}
                 unblockingId={unblockingId}

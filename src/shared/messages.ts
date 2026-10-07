@@ -274,7 +274,38 @@ export type ConversationBootstrap = {
   messages: MessageItem[];
   pinnedMessageIds: string[];
   isFavorite: boolean;
+  hasMoreMessages?: boolean;
 };
+
+export type MessageHistoryPage = {
+  messages: MessageItem[];
+  hasMore: boolean;
+};
+
+export function compareMessagesChronologically(left: MessageItem, right: MessageItem): number {
+  const leftTime = Date.parse(left.createdAt);
+  const rightTime = Date.parse(right.createdAt);
+
+  if (!Number.isNaN(leftTime) && !Number.isNaN(rightTime) && leftTime !== rightTime) {
+    return leftTime - rightTime;
+  }
+
+  return left.id.localeCompare(right.id);
+}
+
+export function mergeMessageListsChronologically(
+  ...lists: MessageItem[][]
+): MessageItem[] {
+  const byId = new Map<string, MessageItem>();
+
+  for (const list of lists) {
+    for (const message of list) {
+      byId.set(message.id, message);
+    }
+  }
+
+  return [...byId.values()].sort(compareMessagesChronologically);
+}
 
 export type MessageDraft = {
   content: string;
@@ -575,9 +606,10 @@ export function mergeServerMessagesWithLocal(
     return serverMessages;
   }
 
+  const serverIds = new Set(serverMessages.map((message) => message.id));
   const localById = new Map(localMessages.map((message) => [message.id, message]));
 
-  return serverMessages.map((serverMessage) => {
+  const mergedServer = serverMessages.map((serverMessage) => {
     const localMessage = localById.get(serverMessage.id);
 
     if (!localMessage) {
@@ -586,6 +618,14 @@ export function mergeServerMessagesWithLocal(
 
     return mergeMessageUpdates(serverMessage, localMessage);
   });
+
+  const olderOnly = localMessages.filter((message) => !serverIds.has(message.id));
+
+  if (olderOnly.length === 0) {
+    return mergedServer;
+  }
+
+  return mergeMessageListsChronologically(olderOnly, mergedServer);
 }
 
 export function mergeMessageUpdates(
@@ -2142,6 +2182,13 @@ export function normalizeBootstrap(payload: unknown): ConversationBootstrap {
     conversation?.isFavorite === true ||
     conversation?.favorite === true;
 
+  const hasMoreMessages =
+    record?.hasMoreMessages === true ||
+    record?.messagesHasMore === true ||
+    record?.hasMore === true ||
+    record?.hasNextPage === true ||
+    record?.has_more === true;
+
   return {
     conversation,
     messages: enrichMessageReplies(
@@ -2150,6 +2197,7 @@ export function normalizeBootstrap(payload: unknown): ConversationBootstrap {
         .filter((item): item is Record<string, unknown> => item !== null)
         .map(normalizeMessage),
     ),
+    hasMoreMessages: hasMoreMessages || undefined,
     pinnedMessageIds: pinnedRaw
       .map((item) => {
         if (typeof item === 'string') {
@@ -2162,6 +2210,46 @@ export function normalizeBootstrap(payload: unknown): ConversationBootstrap {
       .filter((item): item is string => Boolean(item)),
     isFavorite,
   };
+}
+
+export function normalizeMessageHistoryPage(
+  payload: unknown,
+  options?: { limit?: number },
+): MessageHistoryPage {
+  const record = asRecord(payload);
+  const messagesRaw = extractArray(payload, ['messages', 'items']).length
+    ? extractArray(payload, ['messages', 'items'])
+    : Array.isArray(payload)
+      ? payload
+      : extractArray(record?.messages, ['items', 'data']);
+
+  const messages = enrichMessageReplies(
+    messagesRaw
+      .map(asRecord)
+      .filter((item): item is Record<string, unknown> => item !== null)
+      .map(normalizeMessage),
+  );
+
+  const explicitHasMore =
+    record?.hasMore === true ||
+    record?.hasMoreMessages === true ||
+    record?.messagesHasMore === true ||
+    record?.hasNextPage === true ||
+    record?.has_more === true;
+
+  const explicitNoMore =
+    record?.hasMore === false ||
+    record?.hasMoreMessages === false ||
+    record?.messagesHasMore === false ||
+    record?.hasNextPage === false ||
+    record?.has_more === false;
+
+  const limit = options?.limit;
+  const hasMore =
+    explicitHasMore ||
+    (!explicitNoMore && typeof limit === 'number' && limit > 0 && messages.length >= limit);
+
+  return { messages, hasMore };
 }
 
 function extractThreadMessageItems(payload: unknown): unknown[] {

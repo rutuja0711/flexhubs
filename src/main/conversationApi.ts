@@ -8,9 +8,11 @@ import {
   normalizeBootstrap,
   normalizeDraft,
   normalizeMessage,
+  normalizeMessageHistoryPage,
   normalizeMessageReadReceipts,
   normalizeMessageThread,
 } from '../shared/messages';
+import type { MessageHistoryPage } from '../shared/messages';
 import { normalizeScheduledMessage, normalizeScheduledMessages } from '../shared/extras';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './apiRequest';
 
@@ -29,6 +31,37 @@ export async function fetchConversationBootstrap(
   }
 
   return { ok: true, data: normalizeBootstrap(result.data) };
+}
+
+const DEFAULT_MESSAGE_HISTORY_LIMIT = 50;
+
+export async function fetchConversationMessages(
+  token: string,
+  conversationId: string,
+  options?: { before?: string; limit?: number },
+): Promise<ApiResult<MessageHistoryPage>> {
+  const limit = options?.limit ?? DEFAULT_MESSAGE_HISTORY_LIMIT;
+  const params = new URLSearchParams();
+  params.set('limit', String(limit));
+
+  if (options?.before) {
+    params.set('before', options.before);
+  }
+
+  const result = await apiGet<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/messages?${params.toString()}`,
+    token,
+    'Conversation Messages API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return {
+    ok: true,
+    data: normalizeMessageHistoryPage(result.data, { limit }),
+  };
 }
 
 export async function fetchMessageThread(

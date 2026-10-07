@@ -530,13 +530,53 @@ export function applyDraftPreviewToConversation(
     conversation.messagePreview,
     draftPreview,
   );
+  const normalizedDraft = draftPreview?.trim() || null;
+
+  if (
+    conversation.draftPreview === normalizedDraft &&
+    conversation.subtitle === subtitle &&
+    conversation.isDraftPreview === isDraftPreview
+  ) {
+    return conversation;
+  }
 
   return {
     ...conversation,
-    draftPreview: draftPreview?.trim() || null,
+    draftPreview: normalizedDraft,
     subtitle,
     isDraftPreview,
   };
+}
+
+export function areConversationSidebarListsEqual(
+  left: ConversationItem[],
+  right: ConversationItem[],
+): boolean {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+
+    if (
+      a.id !== b.id ||
+      a.title !== b.title ||
+      a.subtitle !== b.subtitle ||
+      a.timestamp !== b.timestamp ||
+      a.unreadCount !== b.unreadCount ||
+      a.isPinned !== b.isPinned ||
+      a.status !== b.status ||
+      a.avatarUrl !== b.avatarUrl ||
+      a.draftPreview !== b.draftPreview ||
+      a.isDraftPreview !== b.isDraftPreview
+    ) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 export function seedDraftPreviewCache(

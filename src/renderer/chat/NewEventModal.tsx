@@ -111,10 +111,35 @@ export function NewEventModal({
     const inviteeIdsFromEvent = (editEvent?.invitees ?? [])
       .map((invitee) => invitee.userId)
       .filter((id): id is string => Boolean(id));
-    setSelectedUserIds([
+    const initialSelectedIds = [
       ...new Set([...inviteeIdsFromEvent, ...(editEvent?.mentionUserIds ?? [])]),
-    ]);
+    ];
+    setSelectedUserIds(initialSelectedIds);
     setRemovedInviteeIds([]);
+
+    const seedPeopleFromInvitees = (editEvent?.invitees ?? []).map((invitee, index) => {
+      const username = invitee.username?.trim() || '';
+      const name = invitee.name?.trim() || username || 'Teammate';
+      const id =
+        invitee.userId ??
+        (username ? `invitee:${username.toLowerCase()}` : `invitee-${index}-${name.toLowerCase()}`);
+      return { id, username: username || name, name };
+    });
+
+    for (const userId of editEvent?.mentionUserIds ?? []) {
+      if (!userId || seedPeopleFromInvitees.some((person) => person.id === userId)) {
+        continue;
+      }
+      seedPeopleFromInvitees.push({
+        id: userId,
+        username: 'member',
+        name: 'Tagged member',
+      });
+    }
+
+    if (seedPeopleFromInvitees.length > 0) {
+      setMentionUsers(seedPeopleFromInvitees);
+    }
     const hubIdsFromEvent = [
       ...(editEvent?.taggedHubs?.map((hub) => hub.conversationId).filter(Boolean) ?? []),
       editEvent?.conversationId,
@@ -237,15 +262,46 @@ export function NewEventModal({
       );
     }
 
-    for (const id of selectedUserIds) {
-      const user = mentionUsers.find((entry) => entry.id === id);
-      if (user) {
-        addUser(user);
+    for (const id of editEvent?.mentionUserIds ?? []) {
+      if (!id || removedInviteeIds.includes(id)) {
+        continue;
       }
+
+      if (byId.has(id)) {
+        continue;
+      }
+
+      const fromPeople = mentionUsers.find((entry) => entry.id === id);
+      addUser(
+        fromPeople ?? {
+          id,
+          username: 'member',
+          name: 'Tagged member',
+        },
+      );
+    }
+
+    for (const id of selectedUserIds) {
+      if (removedInviteeIds.includes(id)) {
+        continue;
+      }
+
+      if (byId.has(id)) {
+        continue;
+      }
+
+      const user = mentionUsers.find((entry) => entry.id === id);
+      addUser(
+        user ?? {
+          id,
+          username: 'member',
+          name: 'Tagged member',
+        },
+      );
     }
 
     return [...byId.values()];
-  }, [editEvent?.invitees, mentionUsers, removedInviteeIds, selectedUserIds]);
+  }, [editEvent?.invitees, editEvent?.mentionUserIds, mentionUsers, removedInviteeIds, selectedUserIds]);
 
   const peopleSearchActive = peopleQuery.trim().length > 0;
 

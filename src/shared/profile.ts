@@ -225,7 +225,6 @@ export function userPresenceDotClass(status: UserPresenceStatus): string {
 export function normalizeNotificationSettings(payload: unknown): ProfileSettings {
   const root = asRecord(payload) ?? {};
   const record = asRecord(root.settings) ?? root;
-  console.log('RAW NOTIFICATION SETTINGS PAYLOAD:', JSON.stringify(payload, null, 2));
 
   const snoozedUntil =
     readString(record.snoozeUntil) ??
@@ -270,6 +269,63 @@ export function normalizeNotificationSettings(payload: unknown): ProfileSettings
     snoozeUntil: snoozedUntil,
     snoozeDuration: readString(record.snoozeDuration),
     snoozedForever: readBoolean(record.snoozedForever) ?? false,
+  };
+}
+
+/** Overlay privacy/presence fields stored on the user profile onto notification settings. */
+export function mergeProfileSettingsFromUser(
+  user: unknown,
+  settings: ProfileSettings,
+): ProfileSettings {
+  const record = asRecord(user) ?? {};
+  const nested =
+    asRecord(record.settings) ??
+    asRecord(record.notificationSettings) ??
+    asRecord(record.privacySettings) ??
+    asRecord(record.preferences) ??
+    {};
+
+  const pickBoolean = (...values: unknown[]): boolean | undefined => {
+    for (const value of values) {
+      const parsed = readBoolean(value);
+      if (parsed !== null) {
+        return parsed;
+      }
+    }
+    return undefined;
+  };
+
+  const pickString = (...values: unknown[]): string | undefined => {
+    for (const value of values) {
+      const parsed = readString(value);
+      if (parsed) {
+        return parsed;
+      }
+    }
+    return undefined;
+  };
+
+  return {
+    ...settings,
+    shareOnlineStatus:
+      pickBoolean(record.shareOnlineStatus, record.sharePresence, nested.shareOnlineStatus) ??
+      settings.shareOnlineStatus,
+    showLastActive:
+      pickBoolean(record.showLastActive, record.lastActiveVisible, nested.showLastActive) ??
+      settings.showLastActive,
+    readReceipts:
+      pickBoolean(record.readReceipts, record.readReceiptsEnabled, nested.readReceipts) ??
+      settings.readReceipts,
+    profileVisibility:
+      pickString(record.profileVisibility, nested.profileVisibility) ?? settings.profileVisibility,
+    emailVisibility:
+      pickString(record.emailVisibility, nested.emailVisibility) ?? settings.emailVisibility,
+    statusVisibility:
+      pickString(record.statusVisibility, nested.statusVisibility) ?? settings.statusVisibility,
+    allowDirectMessagesFrom:
+      pickString(record.allowDirectMessagesFrom, nested.allowDirectMessagesFrom) ??
+      settings.allowDirectMessagesFrom,
+    callPrivacy: pickString(record.callPrivacy, nested.callPrivacy) ?? settings.callPrivacy,
   };
 }
 
