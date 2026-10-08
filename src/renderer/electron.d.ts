@@ -130,6 +130,12 @@ declare global {
         token: string,
         conversationId: string,
       ) => Promise<ApiResult<{ summary: string }>>;
+      prepareChatFileDrag: (
+        token: string,
+        url: string,
+        fileName: string,
+      ) => Promise<{ ok: true; filePath: string } | { ok: false; error: string }>;
+      startChatFileDragFromPath: (filePath: string) => void;
       translateUnreadMessages: (
         token: string,
         conversationId: string,

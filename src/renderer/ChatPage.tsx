@@ -114,13 +114,17 @@ import { MeetingStartedBanner } from './call/MeetingStartedBanner';
 import { OrganizationView } from './chat/OrganizationView';
 import { SuperAdminView } from './chat/SuperAdminView';
 import { OrganizationInviteModal } from './chat/OrganizationInviteModal';
-import { NotificationStatusBanner } from './chat/NotificationStatusBanner';
 import { PlanComplianceBanner } from './chat/PlanComplianceBanner';
 import { loadOrgSubscription, loadPlanCompliance } from './organizationApi';
 import {
   readPersistedConversationSnooze,
   writePersistedConversationSnooze,
 } from './conversationSnoozeStorage';
+import {
+  getConversationScrollSnapshot,
+  setConversationScrollSnapshot,
+  type ConversationScrollSnapshot,
+} from './conversationScrollCache';
 import {
   readPersistedDirectChatMetadata,
   readPlanComplianceDismissed,
@@ -158,7 +162,6 @@ import {
   showIncomingMessageDesktopNotification,
 } from './desktopNotifications';
 import { FlexHubsDesktopNotification, mapMessageToNotificationData } from './ui/notifications/FlexHubsDesktopNotification';
-import { DesktopToastHost } from './ui/notifications/DesktopToastHost';
 import {
   ensureDesktopNotificationsReady,
   shouldDeliverDesktopNotifications,
@@ -833,11 +836,19 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       void window.electronAPI?.checkForUpdates().catch(() => undefined);
     }, 5000);
 
+    let lastUpdateToastVersion = '';
+
     const unsubAvailable = window.electronAPI.onUpdaterEvent('update-available', (info: any) => {
       setUpdateAvailable(true);
       setUpdateViewed(false);
-      
-      toast.info(`Version ${info?.version || 'new'} is ready to download.`, {
+
+      const versionLabel = String(info?.version || '').trim() || 'new';
+      if (lastUpdateToastVersion === versionLabel) {
+        return;
+      }
+      lastUpdateToastVersion = versionLabel;
+
+      toast.info(`Version ${versionLabel} is ready to download.`, {
         action: {
           label: 'View Update',
           onClick: () => {
@@ -846,7 +857,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           },
         },
       });
-
     });
 
     // Remind user / check for updates every hour (3600000 ms)
@@ -1640,6 +1650,18 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       }
     });
   }, [selectedConversation?.id, selectedConversation?.kind, selectedConversation?.peerUserId]);
+
+  const syncNotificationSettings = useCallback((next: ProfileSettings) => {
+    notificationSettingsRef.current = next;
+    setNotificationSettings(next);
+  }, []);
+
+  const handleSaveConversationScroll = useCallback(
+    (conversationId: string, snapshot: ConversationScrollSnapshot) => {
+      setConversationScrollSnapshot(conversationId, snapshot);
+    },
+    [],
+  );
 
   const shouldSuppressNotificationAlerts = useCallback((): boolean => {
     const settings = notificationSettingsRef.current;
@@ -5897,6 +5919,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }}
           hasUpdateBadge={updateAvailable && !updateViewed}
           onUpdateViewed={() => setUpdateViewed(true)}
+          onNotificationSettingsChange={syncNotificationSettings}
           initialTab={profileInitialTab}
         />
       );
@@ -6029,6 +6052,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }}
           focusMessageId={focusMessageId}
           unreadAnchorMessageId={threadUnreadAnchorId}
+          initialScrollSnapshot={
+            selectedId ? getConversationScrollSnapshot(selectedId) ?? null : null
+          }
+          onSaveScrollPosition={(snapshot) => {
+            if (selectedId) {
+              handleSaveConversationScroll(selectedId, snapshot);
+            }
+          }}
           hasMoreOlder={hasMoreOlderMessages}
           loadingOlder={loadingOlderMessages}
           onLoadOlder={() => {
@@ -6109,7 +6140,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       className={`flex h-full bg-app-chat-bg ${callImmersiveMode ? 'overflow-hidden bg-[#101114]' : ''}`}
     >
       <MediaPreviewHost />
-      <DesktopToastHost />
       <CallOverlay
         session={callManager.session}
         busy={callManager.busy}
@@ -6220,6 +6250,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           void handleOpenDirectChat(userId);
         }}
         onNavigate={handleNavigate}
+        notificationSettings={notificationSettings}
+        onOpenNotificationSettings={() => {
+          setProfileInitialTab('notifications');
+          handleNavigate('profile');
+        }}
         onCreateHub={async (name, memberIds) => {
           const result = await createHubChannel({ name, memberIds });
 
@@ -6284,12 +6319,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
               void callManager.joinGroupMeeting(targetConversation, meeting);
             }}
             onDismiss={callManager.dismissMeetingBanner}
-          />
-        ) : null}
-        {mainView === 'chat' && notificationSettings ? (
-          <NotificationStatusBanner
-            settings={notificationSettings}
-            onOpenSettings={() => handleNavigate('profile')}
           />
         ) : null}
         {mainView === 'chat' &&

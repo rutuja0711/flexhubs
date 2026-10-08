@@ -1146,6 +1146,36 @@ function closestDurationPreset(
   return closest;
 }
 
+/** Compact label for snooze/DND banners (e.g. "8 Oct, 18:35"). Returns null if not in the future. */
+export function formatNotificationQuietUntil(until: string | null | undefined): string | null {
+  if (!until) {
+    return null;
+  }
+
+  const timestamp = new Date(until).getTime();
+
+  if (!Number.isFinite(timestamp) || timestamp <= Date.now()) {
+    return null;
+  }
+
+  return new Date(until).toLocaleString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export function isAppSnoozeActive(
+  settings: Pick<ProfileSettings, 'snoozeUntil' | 'snoozedForever'>,
+): boolean {
+  if (settings.snoozedForever) {
+    return true;
+  }
+
+  return formatNotificationQuietUntil(settings.snoozeUntil) !== null;
+}
+
 export function resolveSnoozeSelectValue(settings: ProfileSettings): string {
   const untilMs = settings.snoozeUntil ? new Date(settings.snoozeUntil).getTime() : NaN;
   const hasFutureUntil = !Number.isNaN(untilMs) && untilMs > Date.now();

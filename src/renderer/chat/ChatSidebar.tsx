@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ConversationItem, ConversationKind, DirectChatMetadata } from '../../shared/chat';
+import type { ProfileSettings } from '../../shared/profile';
+import { NotificationStatusBanner } from './NotificationStatusBanner';
 import type { TeammateItem } from '../../shared/messages';
 import type { GlobalSearchResult, SearchPerson } from '../../shared/search';
 import { validateSearchQuery, filterTeammatesWithoutDirectChat } from '../../shared/chat';
@@ -46,6 +48,8 @@ type ChatSidebarProps = {
   onPrepareConversationContextMenu?: () => void;
   openingTeammateId?: string | null;
   directChatMetadata?: Record<string, DirectChatMetadata>;
+  notificationSettings?: ProfileSettings | null;
+  onOpenNotificationSettings?: () => void;
 };
 
 export function ChatSidebar({
@@ -78,6 +82,8 @@ export function ChatSidebar({
   onPrepareConversationContextMenu,
   openingTeammateId = null,
   directChatMetadata = {},
+  notificationSettings = null,
+  onOpenNotificationSettings,
 }: ChatSidebarProps) {
   const [activeTab, setActiveTab] = useState<ChatTab>('all');
   const [composeMode, setComposeMode] = useState<'direct' | 'hub' | 'group'>('direct');
@@ -379,6 +385,13 @@ export function ChatSidebar({
             </button>
           </div>
         </div>
+      ) : null}
+
+      {notificationSettings && onOpenNotificationSettings ? (
+        <NotificationStatusBanner
+          settings={notificationSettings}
+          onOpenSettings={onOpenNotificationSettings}
+        />
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">

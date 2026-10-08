@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { FiDownload } from 'react-icons/fi';
 import { fetchMediaBlobWithProgress } from '../mediaBlob';
 import { SendingProgressRing } from '../ui/SendingProgressRing';
+import { beginChatFileDrag, warmChatFileDragPath } from './startChatFileDrag';
 
 type FileAttachmentCardProps = {
   url: string;
@@ -114,6 +115,14 @@ export function FileAttachmentCard({
     setDownloaded(readPersistedDownloaded(url));
   }, [url]);
 
+  useEffect(() => {
+    if (isSending || !url || url.startsWith('blob:')) {
+      return;
+    }
+
+    void warmChatFileDragPath(url, name);
+  }, [isSending, name, url]);
+
   const metaLine = buildMetaLine(extension, knownSizeBytes);
   const showDownloadAction = !downloaded || isSending || downloadError;
   const showSendProgress = isSending;
@@ -177,9 +186,20 @@ export function FileAttachmentCard({
   const progressBarWidth =
     typeof ringProgress === 'number' ? ringProgress : showDownloadProgress ? undefined : 0;
 
+  const canDrag =
+    Boolean(window.electronAPI?.startChatFileDragFromPath) &&
+    !isSending &&
+    Boolean(url) &&
+    !url.startsWith('blob:');
+
   return (
     <div
-      className={`relative min-w-[min(100%,280px)] max-w-sm overflow-hidden rounded-xl ${insetClass} px-3 py-2.5`}
+      draggable={canDrag}
+      title={canDrag ? 'Drag to Desktop, Finder, or another app' : undefined}
+      className={`relative min-w-[min(100%,280px)] max-w-sm overflow-hidden rounded-xl ${insetClass} px-3 py-2.5 ${
+        canDrag ? 'cursor-grab active:cursor-grabbing' : ''
+      }`}
+      onDragStart={(event) => beginChatFileDrag(event, url, name, { disabled: isSending })}
     >
       <div className="flex items-center gap-2.5">
         <DocumentTypeIcon extension={extension} />

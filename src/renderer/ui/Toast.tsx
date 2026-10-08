@@ -60,7 +60,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     (message: string, tone: ToastTone, options?: ToastOptions) => {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
-      setToasts((current) => [{ id, message, tone, action: options?.action }, ...current]);
+      setToasts([{ id, message, tone, action: options?.action }]);
 
       const timeout = options?.action ? 5000 : 3500;
       window.setTimeout(() => {

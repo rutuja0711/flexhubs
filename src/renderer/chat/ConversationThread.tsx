@@ -28,6 +28,7 @@ import {
 } from '../../shared/chat';
 import type { GifPickerItem } from '../../shared/gifs';
 import type { MessageItem } from '../../shared/messages';
+import type { ConversationScrollSnapshot } from '../conversationScrollCache';
 import {
   filterMainChatMessages,
   isThreadReply,
@@ -47,7 +48,7 @@ import {
 } from '../chatApi';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
-import { PinIcon, SearchIcon } from './ChatIcons';
+import { PinIcon, SearchIcon, SparkleIcon } from './ChatIcons';
 import { ForwardMessageModal } from './ForwardMessageModal';
 import { InConversationSearchBar } from './InConversationSearchBar';
 import { MessageInput } from './MessageInput';
@@ -96,6 +97,8 @@ type ConversationThreadProps = {
   focusMessageId?: string | null;
   unreadAnchorMessageId?: string | null;
   scrollRestoreKey?: number;
+  initialScrollSnapshot?: ConversationScrollSnapshot | null;
+  onSaveScrollPosition?: (snapshot: ConversationScrollSnapshot) => void;
   hasMoreOlder?: boolean;
   loadingOlder?: boolean;
   onLoadOlder?: () => void;
@@ -153,6 +156,8 @@ export function ConversationThread({
   focusMessageId = null,
   unreadAnchorMessageId = null,
   scrollRestoreKey = 0,
+  initialScrollSnapshot = null,
+  onSaveScrollPosition,
   hasMoreOlder = false,
   loadingOlder = false,
   onLoadOlder,
@@ -782,6 +787,22 @@ export function ConversationThread({
                   </span>
                   <span className="text-app-muted">{pinnedMessages.length > 0 ? pinnedMessages.length : '›'}</span>
                 </button>
+                {onSummarizeUnread ? (
+                  <button
+                    type="button"
+                    disabled={menuBusy}
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onSummarizeUnread();
+                    }}
+                    className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
+                  >
+                    <span className="flex items-center gap-2">
+                      <SparkleIcon className="h-4 w-4 shrink-0 text-app-muted" />
+                      Summarize recent messages
+                    </span>
+                  </button>
+                ) : null}
                 {notificationsSnoozed ? (
                   <button
                     type="button"
@@ -938,6 +959,8 @@ export function ConversationThread({
         pendingScrollToMessageId={focusMessageId}
         scrollRequestKey={scrollRequestKey}
         scrollRestoreKey={scrollRestoreKey}
+        initialScrollSnapshot={initialScrollSnapshot}
+        onSaveScrollPosition={onSaveScrollPosition}
         hasMoreOlder={hasMoreOlder}
         loadingOlder={loadingOlder}
         onLoadOlder={onLoadOlder}
@@ -975,7 +998,6 @@ export function ConversationThread({
         }}
         onEditMessage={onEditMessage}
         onDeleteMessage={onDeleteMessage}
-        onSummarizeUnread={onSummarizeUnread}
         sendProgressByMessageId={sendProgressByMessageId}
         onForwardMessage={setForwardMessageId}
         onPinMessage={onPinMessage}

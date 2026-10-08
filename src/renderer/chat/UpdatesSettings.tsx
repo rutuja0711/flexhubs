@@ -27,6 +27,7 @@ export function UpdatesSettings() {
   const [latestVersion, setLatestVersion] = useState<string>('');
   const [releaseNotes, setReleaseNotes] = useState<string>('');
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
+  const [errorMessage, setErrorMessage] = useState<string>('');
   const isElectron = !!window.electronAPI;
 
   const applyCheckResult = useCallback((result: CheckUpdatesResult) => {
@@ -36,8 +37,11 @@ export function UpdatesSettings() {
 
     if (!result.ok) {
       setUpdateState('error');
+      setErrorMessage(result.error?.trim() || 'Unable to check for updates right now.');
       return;
     }
+
+    setErrorMessage('');
 
     if (result.status === 'skipped' || result.skipped) {
       setUpdateState('up-to-date');
@@ -97,6 +101,7 @@ export function UpdatesSettings() {
       await minWaitPromise;
       if (timeout) clearTimeout(timeout);
       setUpdateState('error');
+      setErrorMessage('Unable to check for updates right now.');
     }
   }, [applyCheckResult]);
 
@@ -144,8 +149,17 @@ export function UpdatesSettings() {
       }
     });
 
-    const unsubError = api.onUpdaterEvent('error', () => {
+    const unsubError = api.onUpdaterEvent('error', (payload: { message?: string } | string) => {
       setUpdateState('error');
+      const message =
+        typeof payload === 'string'
+          ? payload
+          : typeof payload?.message === 'string'
+            ? payload.message
+            : '';
+      if (message.trim()) {
+        setErrorMessage(message.trim());
+      }
     });
 
     const unsubProgress = api.onUpdaterEvent('download-progress', (progress: { percent?: number }) => {
@@ -176,6 +190,7 @@ export function UpdatesSettings() {
     const result = await window.electronAPI.downloadUpdate();
     if (!result.ok) {
       setUpdateState('error');
+      setErrorMessage(result.error?.trim() || 'Update download failed. Try again or install from the DMG.');
     }
   };
 
@@ -238,6 +253,10 @@ export function UpdatesSettings() {
               <p className="text-sm text-app-text mb-4">
                 You&apos;re currently offline. Please connect to the internet and try again.
               </p>
+            )}
+
+            {updateState === 'error' && errorMessage && (
+              <p className="text-sm text-app-text mb-4">{errorMessage}</p>
             )}
 
             {updateState === 'available' && releaseNotes && (

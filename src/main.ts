@@ -3,6 +3,8 @@ import {
   BrowserWindow,
   desktopCapturer,
   ipcMain,
+  Menu,
+  type MenuItemConstructorOptions,
   nativeImage,
   nativeTheme,
   Notification,
@@ -142,6 +144,7 @@ import {
   uploadProfileImage,
 } from './main/userApi';
 import { fetchAuthenticatedMedia } from './main/mediaApi';
+import { prepareFileDragFromUrl, startPreparedFileDrag } from './main/startFileDrag';
 import {
   fetchTrendingGifs,
   searchGifs,
@@ -207,7 +210,6 @@ import {
 } from './main/callSignalingMain';
 
 let mainWindow: BrowserWindow | null = null;
-let isQuitting = false;
 let callPresentationActive = false;
 let savedMainBounds: Electron.Rectangle | null = null;
 let savedCallWindowBounds: Electron.Rectangle | null = null;
@@ -619,6 +621,12 @@ ipcMain.handle('superadmin:suspend', (_event, token: string, organizationId: str
 ipcMain.handle('chat:summarize-unread', (_event, token: string, conversationId: string) =>
   summarizeUnreadMessages(token, conversationId),
 );
+ipcMain.handle('desktop:prepare-file-drag', (_event, token: string, url: string, fileName: string) =>
+  prepareFileDragFromUrl(token, url, fileName),
+);
+ipcMain.on('desktop:start-file-drag-path', (event, filePath: string) => {
+  startPreparedFileDrag(event.sender, filePath);
+});
 ipcMain.handle('chat:translate-unread', (_event, token: string, conversationId: string) =>
   translateUnreadMessages(token, conversationId),
 );
@@ -1551,18 +1559,6 @@ const createWindow = (): void => {
     updateDisplaySleepBlocker();
   });
 
-  if (process.platform === 'darwin') {
-    mainWindow.on('close', (event) => {
-      if (isQuitting) {
-        return;
-      }
-
-      event.preventDefault();
-      closeNotificationWindow();
-      mainWindow?.hide();
-      applyApplicationIcon();
-    });
-  }
 };
 
 setNotificationHostWindowProvider(() => mainWindow);
@@ -1945,6 +1941,7 @@ app.whenReady().then(() => {
       }),
   );
 
+  setupApplicationMenu();
   createWindow();
 
   app.on('activate', () => {
@@ -1969,7 +1966,6 @@ app.whenReady().then(() => {
 });
 
 app.on('before-quit', () => {
-  isQuitting = true;
   closeNotificationWindow();
   console.log('[FlexHubs] Application before-quit.');
 });
@@ -1977,8 +1973,54 @@ app.on('before-quit', () => {
 app.on('window-all-closed', () => {
   console.log('[FlexHubs] All windows closed.');
   stopRealtimeStream();
-
-  if (process.platform !== 'darwin') {
-    app.quit();
-  }
+  app.quit();
 });
+
+function setupApplicationMenu(): void {
+  const appName = app.getName();
+  const isMac = process.platform === 'darwin';
+  const template: MenuItemConstructorOptions[] = [];
+
+  if (isMac) {
+    template.push({
+      label: appName,
+      submenu: [
+        { role: 'about' },
+        { type: 'separator' },
+        { role: 'services' },
+        { type: 'separator' },
+        { role: 'hide' },
+        { role: 'hideOthers' },
+        { role: 'unhide' },
+        { type: 'separator' },
+        { role: 'quit' },
+      ],
+    });
+  }
+
+  template.push({
+    label: 'Edit',
+    submenu: [
+      { role: 'undo' },
+      { role: 'redo' },
+      { type: 'separator' },
+      { role: 'cut' },
+      { role: 'copy' },
+      { role: 'paste' },
+      { role: 'selectAll' },
+    ],
+  });
+
+  template.push({
+    label: 'Window',
+    submenu: [
+      { role: 'minimize' },
+      { role: 'zoom' },
+      ...(isMac
+        ? [{ type: 'separator' as const }, { role: 'front' as const }]
+        : [{ role: 'close' as const }]),
+    ],
+  });
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}

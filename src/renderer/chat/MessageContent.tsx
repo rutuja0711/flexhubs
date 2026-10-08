@@ -20,6 +20,7 @@ import { SendingProgressRing } from '../ui/SendingProgressRing';
 import { openMediaPreview } from './MediaPreviewHost';
 import { PollMessage } from './PollMessage';
 import { CallMessage } from './CallMessage';
+import { beginChatFileDrag, warmChatFileDragPath } from './startChatFileDrag';
 
 type MessageContentProps = {
   message: Pick<MessageItem, 'content' | 'media' | 'messageType' | 'deletedForEveryone' | 'poll'>;
@@ -109,6 +110,14 @@ function highlightContent(content: string, term: string): ReactNode {
       {renderFormattedText(after)}
     </>
   );
+}
+
+function canDragChatMedia(url: string | undefined, isSending: boolean): boolean {
+  if (!url || isSending || url.startsWith('blob:')) {
+    return false;
+  }
+
+  return Boolean(window.electronAPI?.startChatFileDragFromPath);
 }
 
 function mediaLabel(kind: string): string {
@@ -240,7 +249,21 @@ export function MessageContent({
           >
             {isVideo ? (
               <div
-                className="js-media-preview-item block w-full"
+                className={`js-media-preview-item block w-full ${
+                  canDragChatMedia(item.url, isSending) ? 'cursor-grab active:cursor-grabbing' : ''
+                }`}
+                draggable={canDragChatMedia(item.url, isSending)}
+                title={
+                  canDragChatMedia(item.url, isSending)
+                    ? 'Drag to Desktop, Finder, or another app'
+                    : undefined
+                }
+                onMouseEnter={() => {
+                  void warmChatFileDragPath(item.url, item.name ?? 'video.mp4');
+                }}
+                onDragStart={(event) =>
+                  beginChatFileDrag(event, item.url, item.name ?? 'video.mp4', { disabled: isSending })
+                }
                 data-media-url={item.url}
                 data-media-name={item.name ?? ''}
                 data-media-kind="video"
@@ -269,9 +292,25 @@ export function MessageContent({
               <button
                 type="button"
                 disabled={isSending}
+                draggable={canDragChatMedia(item.url, isSending)}
                 className={`block w-full text-left transition-transform js-media-preview-item ${
-                  isSending ? 'cursor-default' : 'cursor-zoom-in hover:scale-[1.01]'
+                  isSending
+                    ? 'cursor-default'
+                    : canDragChatMedia(item.url, isSending)
+                      ? 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
+                      : 'cursor-zoom-in hover:scale-[1.01]'
                 }`}
+                title={
+                  canDragChatMedia(item.url, isSending)
+                    ? 'Drag to Desktop, Finder, or another app'
+                    : undefined
+                }
+                onMouseEnter={() => {
+                  void warmChatFileDragPath(item.url, item.name ?? 'image');
+                }}
+                onDragStart={(event) =>
+                  beginChatFileDrag(event, item.url, item.name ?? 'image', { disabled: isSending })
+                }
                 data-media-url={item.url}
                 data-media-name={item.name ?? ''}
                 data-media-kind="image"

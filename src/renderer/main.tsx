@@ -9,6 +9,7 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { ThemeProvider } from './theme/ThemeProvider';
 import { ConfirmProvider } from './ui/ConfirmDialog';
 import { ToastProvider } from './ui/Toast';
+import { DesktopNotificationToastBridge } from './ui/notifications/DesktopNotificationToastBridge';
 
 const initialTheme = resolveInitialTheme();
 applyTheme(initialTheme);
@@ -22,6 +23,7 @@ if (rootElement) {
     <StrictMode>
       <ThemeProvider>
         <ToastProvider>
+          <DesktopNotificationToastBridge />
           <ConfirmProvider>
             <ErrorBoundary>
               <DesktopLegalGate>

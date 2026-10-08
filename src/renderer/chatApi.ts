@@ -46,6 +46,17 @@ export async function summarizeUnreadMessages(conversationId: string): Promise<A
   return withToken((token) => window.electronAPI.summarizeUnreadMessages(token, conversationId));
 }
 
+export async function prepareChatFileDrag(
+  url: string,
+  fileName: string,
+): Promise<{ ok: true; filePath: string } | { ok: false; error: string }> {
+  if (!window.electronAPI?.prepareChatFileDrag) {
+    return { ok: false, error: 'File drag is only available in the desktop app.' };
+  }
+
+  return withToken((token) => window.electronAPI.prepareChatFileDrag(token, url, fileName));
+}
+
 export async function translateUnreadMessages(conversationId: string): Promise<ApiResult<{ translation: string }>> {
   if (!window.electronAPI?.translateUnreadMessages) {
     return unavailable();

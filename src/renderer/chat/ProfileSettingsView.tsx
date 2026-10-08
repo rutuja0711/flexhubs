@@ -26,6 +26,8 @@ import {
   mergeProfileSettingsFromUser,
   normalizeUserProfile,
   resolveDndSelectValue,
+  formatNotificationQuietUntil,
+  isAppSnoozeActive,
   resolveSnoozeSelectValue,
   uiStatusToApi,
   type AvatarStyleItem,
@@ -81,6 +83,7 @@ type ProfileSettingsViewProps = {
   onUserUpdated?: () => void;
   hasUpdateBadge?: boolean;
   onUpdateViewed?: () => void;
+  onNotificationSettingsChange?: (settings: ProfileSettings) => void;
   initialTab?: 'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates';
 };
 
@@ -187,6 +190,7 @@ export function ProfileSettingsView({
   onUserUpdated,
   hasUpdateBadge,
   onUpdateViewed,
+  onNotificationSettingsChange,
   initialTab = 'profile',
 }: ProfileSettingsViewProps) {
   const { theme, setTheme } = useTheme();
@@ -297,8 +301,10 @@ export function ProfileSettingsView({
       if (nextStyles.length > 0) {
         setAvatarStyles(nextStyles);
       }
+
+      onNotificationSettingsChange?.(nextSettings);
     },
-    [],
+    [onNotificationSettingsChange],
   );
 
   const persistSettings = useCallback(
@@ -516,12 +522,14 @@ export function ProfileSettingsView({
     const previous = settings;
     const optimistic = applyNotificationPreferenceUpdate(settings, updates);
     setSettings(optimistic);
+    onNotificationSettingsChange?.(optimistic);
     setActionError('');
 
     const result = await saveNotificationSettings(updates);
 
     if (!result.ok) {
       setSettings(previous);
+      onNotificationSettingsChange?.(previous);
       if (!onUnauthorized(result.status)) {
         setActionError(result.error);
         toast.error(result.error);
@@ -530,6 +538,7 @@ export function ProfileSettingsView({
     }
 
     setSettings(result.data);
+    onNotificationSettingsChange?.(result.data);
     if (profile) {
       writeProfileCache({
         profile,
@@ -575,6 +584,7 @@ export function ProfileSettingsView({
 
     if (notifResult.ok && notifResult.data) {
       setSettings(notifResult.data);
+      onNotificationSettingsChange?.(notifResult.data);
       if (profile) {
         writeProfileCache({ profile, settings: notifResult.data, avatarStyles });
       }
@@ -1343,34 +1353,77 @@ export function ProfileSettingsView({
             {activeTab === 'notifications' && (
               <>
                 <section>
-                  <h4 className="mb-3 text-sm font-semibold text-app-text">Snooze & Do Not Disturb</h4>
-                  <SectionCard className="divide-y divide-app-border">
-                    <div className="flex items-center justify-between p-4 hover:bg-app-chat-hover/30 transition-colors rounded-t-xl">
+                  <h4 className="mb-1 text-sm font-semibold text-app-text">App snooze</h4>
+                  <p className="mb-3 text-xs leading-relaxed text-app-muted">
+                    Pause all notifications app-wide. Snooze individual hubs and groups from their chat header.
+                  </p>
+                  {isAppSnoozeActive(settings) ? (
+                    <div className="mb-4 rounded-xl border border-rose-200/90 bg-rose-50/95 p-3 shadow-sm shadow-rose-900/[0.04] dark:border-rose-900/55 dark:bg-rose-950/40 dark:shadow-black/20">
                       <div className="flex items-center gap-3">
-                        <FiBellOff className="text-app-muted text-lg" />
-                        <div>
-                          <p className="text-sm font-semibold text-app-text">App snooze</p>
-                          <p className="text-xs text-app-muted">
-                            {settings.snoozeUntil && new Date(settings.snoozeUntil).getTime() > Date.now()
-                              ? `Snoozed until ${new Date(settings.snoozeUntil).toLocaleString()}`
-                              : 'Notifications on'}
+                        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-rose-200/80 text-rose-900 dark:bg-rose-900/70 dark:text-rose-100">
+                          <FiBellOff className="text-lg" strokeWidth={1.75} aria-hidden="true" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-rose-950 dark:text-rose-50">
+                            Snooze all notifications
+                          </p>
+                          <p className="text-xs font-medium text-rose-800/80 dark:text-rose-200/75">
+                            {settings.snoozedForever
+                              ? 'Snoozed until you turn it off'
+                              : formatNotificationQuietUntil(settings.snoozeUntil)
+                                ? `Snoozed until ${formatNotificationQuietUntil(settings.snoozeUntil)}`
+                                : 'Snoozed'}
                           </p>
                         </div>
-                      </div>
-                      <div className="relative">
-                        <select
-                          value={snoozeValue}
-                          onChange={(e) => void handleSnoozeChange(e.target.value)}
-                          className="appearance-none rounded-lg border border-app-border bg-app-chat-bg px-3 py-1.5 pr-8 text-sm text-app-text focus:outline-none focus:border-accent"
-                        >
-                          {SNOOZE_OPTIONS.map((option) => (
-                            <option key={option.value} value={option.value}>{option.label}</option>
-                          ))}
-                        </select>
-                        <FiChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-app-muted" />
+                        <div className="relative shrink-0">
+                          <select
+                            value={snoozeValue}
+                            onChange={(e) => void handleSnoozeChange(e.target.value)}
+                            aria-label="App snooze duration"
+                            className="appearance-none rounded-lg border border-rose-300/80 bg-white/90 px-3 py-1.5 pr-8 text-sm font-medium text-rose-950 focus:outline-none focus:border-accent dark:border-rose-800/80 dark:bg-rose-950/60 dark:text-rose-50"
+                          >
+                            {SNOOZE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <FiChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-rose-800/70 dark:text-rose-200/70" />
+                        </div>
                       </div>
                     </div>
-                    <div className="flex items-center justify-between p-4 hover:bg-app-chat-hover/30 transition-colors rounded-b-xl">
+                  ) : (
+                    <SectionCard className="mb-4">
+                      <div className="flex items-center justify-between p-4">
+                        <div className="flex items-center gap-3">
+                          <FiBellOff className="text-app-muted text-lg" aria-hidden="true" />
+                          <div>
+                            <p className="text-sm font-semibold text-app-text">Snooze all notifications</p>
+                            <p className="text-xs text-app-muted">Notifications on</p>
+                          </div>
+                        </div>
+                        <div className="relative">
+                          <select
+                            value={snoozeValue}
+                            onChange={(e) => void handleSnoozeChange(e.target.value)}
+                            aria-label="App snooze duration"
+                            className="appearance-none rounded-lg border border-app-border bg-app-chat-bg px-3 py-1.5 pr-8 text-sm text-app-text focus:outline-none focus:border-accent"
+                          >
+                            {SNOOZE_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>
+                                {option.label}
+                              </option>
+                            ))}
+                          </select>
+                          <FiChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-app-muted" />
+                        </div>
+                      </div>
+                    </SectionCard>
+                  )}
+
+                  <h4 className="mb-3 text-sm font-semibold text-app-text">Do Not Disturb</h4>
+                  <SectionCard className="divide-y divide-app-border">
+                    <div className="flex items-center justify-between p-4 hover:bg-app-chat-hover/30 transition-colors rounded-xl">
                       <div className="flex items-center gap-3">
                         <FiMoon className="text-app-muted text-lg" />
                         <div>

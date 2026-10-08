@@ -18,11 +18,12 @@ import {
 import { loadMessageById } from '../chatApi';
 import { fetchMediaBlob } from '../mediaBlob';
 import { formatConversationTimestamp, formatMessageDayDivider, messageDayKey } from './format';
-import { Avatar, SparkleIcon } from './ChatIcons';
+import { Avatar } from './ChatIcons';
 import { MessageMenu } from './MessageMenu';
 import { ReactionChip } from './ReactionChip';
 import { ReactionPicker } from './ReactionPicker';
 import { MessageContent, MessageReplyPreview } from './MessageContent';
+import type { ConversationScrollSnapshot } from '../conversationScrollCache';
 
 function MessageListSurface({
   children,
@@ -693,6 +694,8 @@ type MessageListProps = {
   pendingScrollToMessageId?: string | null;
   scrollRequestKey?: number;
   scrollRestoreKey?: number;
+  initialScrollSnapshot?: ConversationScrollSnapshot | null;
+  onSaveScrollPosition?: (snapshot: ConversationScrollSnapshot) => void;
   hasMoreOlder?: boolean;
   loadingOlder?: boolean;
   onLoadOlder?: () => void;
@@ -724,7 +727,6 @@ type MessageListProps = {
   conversationKind?: string;
   /** Hide avatar + name on incoming messages (direct / 1:1 chats). */
   hideIncomingSenderMeta?: boolean;
-  onSummarizeUnread?: () => void;
   sendProgressByMessageId?: Record<string, number>;
   /** True when the signed-in user blocked the direct-chat peer (not shown to the blocked party). */
   peerBlockedByCurrentUser?: boolean;
@@ -740,6 +742,8 @@ export function MessageList({
   pendingScrollToMessageId = null,
   scrollRequestKey = 0,
   scrollRestoreKey = 0,
+  initialScrollSnapshot = null,
+  onSaveScrollPosition,
   hasMoreOlder = false,
   loadingOlder = false,
   onLoadOlder,
@@ -767,7 +771,6 @@ export function MessageList({
   conversationDetails = null,
   conversationKind,
   hideIncomingSenderMeta = false,
-  onSummarizeUnread,
   sendProgressByMessageId = {},
   peerBlockedByCurrentUser = false,
 }: MessageListProps) {
@@ -783,7 +786,24 @@ export function MessageList({
   const loadOlderScrollSnapshotRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(
     null,
   );
+  const restoredScrollForConversationRef = useRef<string | null>(null);
   const showInitialLoading = loading && messages.length === 0;
+
+  const persistScrollPosition = useCallback(() => {
+    if (!conversationId || !onSaveScrollPosition) {
+      return;
+    }
+
+    const container = scrollContainerRef.current;
+    if (!container) {
+      return;
+    }
+
+    onSaveScrollPosition({
+      scrollTop: container.scrollTop,
+      stickToBottom: stickToBottomRef.current,
+    });
+  }, [conversationId, onSaveScrollPosition]);
   const showRefreshing = loading && messages.length > 0;
 
   useEffect(() => {
@@ -865,13 +885,26 @@ export function MessageList({
     if (pendingScrollToMessageId) {
       stickToBottomRef.current = false;
       suppressAutoScrollRef.current = true;
+    } else if (initialScrollSnapshot && !initialScrollSnapshot.stickToBottom) {
+      stickToBottomRef.current = false;
+      suppressAutoScrollRef.current = false;
+    } else if (initialScrollSnapshot?.stickToBottom) {
+      stickToBottomRef.current = true;
+      suppressAutoScrollRef.current = false;
     } else {
       stickToBottomRef.current = true;
       suppressAutoScrollRef.current = false;
     }
     lastMessageIdRef.current = null;
     loadOlderScrollSnapshotRef.current = null;
-  }, [conversationId, pendingScrollToMessageId]);
+    restoredScrollForConversationRef.current = null;
+  }, [conversationId, initialScrollSnapshot, pendingScrollToMessageId]);
+
+  useEffect(() => {
+    return () => {
+      persistScrollPosition();
+    };
+  }, [conversationId, persistScrollPosition]);
 
   useEffect(() => {
     if (pendingScrollToMessageId || scrollToMessageId) {
@@ -906,6 +939,7 @@ export function MessageList({
       const distanceFromBottom =
         container.scrollHeight - container.scrollTop - container.clientHeight;
       stickToBottomRef.current = distanceFromBottom < 150;
+      persistScrollPosition();
 
       if (
         onLoadOlder &&
@@ -924,7 +958,7 @@ export function MessageList({
 
     container.addEventListener('scroll', onScroll, { passive: true });
     return () => container.removeEventListener('scroll', onScroll);
-  }, [hasMoreOlder, loadingOlder, onLoadOlder, pendingScrollToMessageId]);
+  }, [hasMoreOlder, loadingOlder, onLoadOlder, pendingScrollToMessageId, persistScrollPosition]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -996,6 +1030,43 @@ export function MessageList({
     const isInitialLoad = previousLastId === null;
     const appendedNewMessage = Boolean(lastId && previousLastId && lastId !== previousLastId);
 
+    const shouldRestoreScroll =
+      isInitialLoad &&
+      !pendingScrollToMessageId &&
+      !scrollToMessageId &&
+      conversationId &&
+      restoredScrollForConversationRef.current !== conversationId &&
+      initialScrollSnapshot &&
+      Number.isFinite(initialScrollSnapshot.scrollTop) &&
+      !initialScrollSnapshot.stickToBottom;
+
+    if (shouldRestoreScroll) {
+      restoredScrollForConversationRef.current = conversationId;
+      lastMessageIdRef.current = lastId;
+      stickToBottomRef.current = false;
+      suppressAutoScrollRef.current = true;
+
+      const targetTop = initialScrollSnapshot.scrollTop;
+      let innerFrame = 0;
+      const outerFrame = window.requestAnimationFrame(() => {
+        innerFrame = window.requestAnimationFrame(() => {
+          const container = scrollContainerRef.current;
+          if (container) {
+            const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+            container.scrollTop = Math.min(targetTop, maxTop);
+          }
+          window.setTimeout(() => {
+            suppressAutoScrollRef.current = false;
+          }, 250);
+        });
+      });
+
+      return () => {
+        window.cancelAnimationFrame(outerFrame);
+        window.cancelAnimationFrame(innerFrame);
+      };
+    }
+
     const isOwnNewMessage =
       lastMessage?.isOwn === true ||
       lastMessage?.id.startsWith('local-') ||
@@ -1044,8 +1115,10 @@ export function MessageList({
     };
   }, [
     conversationId,
+    initialScrollSnapshot,
     messages,
     pendingScrollToMessageId,
+    scrollRestoreKey,
     scrollToBottom,
     scrollToMessageId,
     showInitialLoading,
@@ -1097,16 +1170,6 @@ export function MessageList({
 
   return (
     <MessageListSurface>
-      {onSummarizeUnread && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[20] flex justify-center w-full pointer-events-none">
-          <button
-            onClick={onSummarizeUnread}
-            className="pointer-events-auto flex items-center gap-2 rounded-full bg-[#8c2a44] hover:bg-[#7a243a] px-4 py-2 text-[13px] font-semibold text-white shadow-md transition-colors"
-          >
-            <SparkleIcon className="h-4 w-4" /> Summarize recent messages
-          </button>
-        </div>
-      )}
       {showRefreshing ? (
         <div
           className="pointer-events-none absolute inset-x-0 top-0 z-10 h-0.5 overflow-hidden bg-app-border"

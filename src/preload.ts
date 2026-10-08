@@ -159,6 +159,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     conversationId: string,
   ): Promise<ApiResult<{ summary: string }>> =>
     ipcRenderer.invoke('chat:summarize-unread', token, conversationId),
+  prepareChatFileDrag: (
+    token: string,
+    url: string,
+    fileName: string,
+  ): Promise<{ ok: true; filePath: string } | { ok: false; error: string }> =>
+    ipcRenderer.invoke('desktop:prepare-file-drag', token, url, fileName),
+  startChatFileDragFromPath: (filePath: string): void => {
+    ipcRenderer.send('desktop:start-file-drag-path', filePath);
+  },
   translateUnreadMessages: (
     token: string,
     conversationId: string,

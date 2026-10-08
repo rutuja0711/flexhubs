@@ -101,7 +101,7 @@ function attachAutoUpdaterListeners(): void {
   });
 
   autoUpdater.on('error', (err) => {
-    sendToRenderer('updater:error', sanitizeUpdaterError(err.message));
+    sendToRenderer('updater:error', { message: sanitizeUpdaterError(err.message) });
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
@@ -190,7 +190,6 @@ function registerUpdaterIpcHandlers(): void {
 
     try {
       attachAutoUpdaterListeners();
-      sendToRenderer('updater:checking');
 
       const pendingOutcome = waitForUpdateCheckOutcome();
       await autoUpdater.checkForUpdates();
@@ -198,15 +197,10 @@ function registerUpdaterIpcHandlers(): void {
 
       if (outcome.kind === 'error') {
         const userMessage = sanitizeUpdaterError(outcome.message);
-        sendToRenderer('updater:error', userMessage);
         return { ok: false, error: userMessage };
       }
 
       if (outcome.kind === 'available') {
-        sendToRenderer('updater:update-available', {
-          version: outcome.version,
-          releaseNotes: outcome.releaseNotes,
-        });
         return {
           ok: true,
           status: 'available',
@@ -214,12 +208,10 @@ function registerUpdaterIpcHandlers(): void {
         };
       }
 
-      sendToRenderer('updater:update-not-available', { version: outcome.version });
       return { ok: true, status: 'up-to-date', data: { version: outcome.version } };
     } catch (error: unknown) {
       const raw = error instanceof Error ? error.message : 'Update check failed.';
       const message = sanitizeUpdaterError(raw);
-      sendToRenderer('updater:error', message);
       return { ok: false, error: message };
     }
   });
