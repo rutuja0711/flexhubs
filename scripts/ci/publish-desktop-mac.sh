@@ -47,7 +47,7 @@ gh release upload "$TAG" \
 
 echo ""
 echo "Verifying public update feed..."
-node scripts/ci/verify-update-feed.mjs
+node scripts/ci/verify-update-feed.mjs --verify-sha512
 
 echo ""
 echo "Published v${VERSION} to https://github.com/${REPO}/releases/tag/${TAG}"

@@ -184,6 +184,10 @@ jobs:
             out/latest-mac.yml \
             --repo "$repo" --clobber
 
+      - name: Verify Mac update feed and zip checksum
+        if: matrix.os == 'macos-latest' && github.ref == 'refs/heads/main'
+        run: node scripts/ci/verify-update-feed.mjs --verify-sha512
+
       - name: Publish Windows installer to GitHub Release
         if: matrix.os == 'windows-latest' && github.ref == 'refs/heads/main'
         shell: pwsh

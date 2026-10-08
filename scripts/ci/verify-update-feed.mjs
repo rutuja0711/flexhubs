@@ -76,6 +76,33 @@ async function main() {
   }
 
   console.log(`  zip URL:  ${assetUrl}`);
+
+  if (process.argv.includes('--verify-sha512')) {
+    const crypto = await import('node:crypto');
+    const shaMatch = text.match(/^sha512:\s*(.+)$/m);
+    if (!shaMatch) {
+      console.error('latest-mac.yml is missing sha512');
+      process.exit(1);
+    }
+    const expectedSha512 = shaMatch[1].trim();
+    console.log('');
+    console.log('Verifying asset sha512 (full download)...');
+    const bodyResponse = await fetch(assetUrl, { redirect: 'follow' });
+    if (!bodyResponse.ok) {
+      console.error(`Failed to download asset: HTTP ${bodyResponse.status}`);
+      process.exit(1);
+    }
+    const buffer = Buffer.from(await bodyResponse.arrayBuffer());
+    const actualSha512 = crypto.createHash('sha512').update(buffer).digest('base64');
+    if (actualSha512 !== expectedSha512) {
+      console.error('sha512 mismatch — latest-mac.yml does not match the uploaded zip.');
+      console.error(`  expected: ${expectedSha512}`);
+      console.error(`  actual:   ${actualSha512}`);
+      process.exit(1);
+    }
+    console.log(`  sha512:   OK (${buffer.length} bytes)`);
+  }
+
   console.log('');
   console.log('Update feed OK (public download works).');
 }

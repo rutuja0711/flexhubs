@@ -1,18 +1,34 @@
 import { autoUpdater } from 'electron-updater';
-import { BrowserWindow, ipcMain, app } from 'electron';
+import { BrowserWindow, ipcMain, app, shell } from 'electron';
 
 /** Rolling release tag on GitHub (see scripts/ci/publish-desktop-mac.sh and INSTALL.md). */
 const DESKTOP_RELEASE_FEED_URL =
   process.env.FLEXHUBS_UPDATE_FEED_URL?.trim() ||
   'https://github.com/rutuja0711/flexhubs/releases/download/desktop-latest';
 
+const DESKTOP_RELEASE_PAGE =
+  process.env.FLEXHUBS_RELEASE_PAGE_URL?.trim() ||
+  'https://github.com/rutuja0711/flexhubs/releases/tag/desktop-latest';
+
 let mainWindow: BrowserWindow | null = null;
+
+type UpdaterPhase = 'idle' | 'checking' | 'downloading';
+
+let updaterPhase: UpdaterPhase = 'idle';
+
+/** Last version reported by the feed (used when checks are skipped during download). */
+let lastKnownAvailableVersion: string | undefined;
 
 export type UpdaterCheckResult =
   | { ok: true; status: 'skipped'; currentVersion: string }
-  | { ok: true; status: 'up-to-date'; data?: { version?: string } }
-  | { ok: true; status: 'available'; data?: { version?: string; releaseNotes?: unknown } }
-  | { ok: false; error: string };
+  | { ok: true; status: 'up-to-date'; currentVersion: string; data?: { version?: string } }
+  | {
+      ok: true;
+      status: 'available';
+      currentVersion: string;
+      data?: { version?: string; releaseNotes?: unknown };
+    }
+  | { ok: false; error: string; currentVersion: string };
 
 function sendToRenderer(channel: string, ...args: unknown[]): void {
   const win = mainWindow;
@@ -29,12 +45,14 @@ function sendToRenderer(channel: string, ...args: unknown[]): void {
 
 function ensureAutoUpdaterConfigured(): void {
   autoUpdater.autoDownload = false;
+  // Defer Squirrel until quitAndInstall — if Squirrel runs during downloadUpdate() and fails
+  // (common with unsigned or Gatekeeper issues), the UI shows "Update failed" even after the zip downloaded.
   autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.autoRunAppAfterInstall = false;
   autoUpdater.allowDowngrade = false;
-  autoUpdater.allowPrerelease = true;
+  autoUpdater.allowPrerelease = false;
   autoUpdater.disableDifferentialDownload = true;
 
-  // Generic feed pinned to the rolling `desktop-latest` release (not "newest GitHub release by tag name").
   autoUpdater.setFeedURL({
     provider: 'generic',
     url: DESKTOP_RELEASE_FEED_URL,
@@ -60,6 +78,21 @@ export function sanitizeUpdaterError(raw: string): string {
     return 'No update feed is available yet. Check again after the next desktop release is published on GitHub.';
   }
 
+  if (lower.includes('sha512') || lower.includes('checksum') || lower.includes('hash')) {
+    return 'The update file failed verification. Install manually from the desktop-latest release (DMG on Mac, Setup.exe on Windows).';
+  }
+
+  if (
+    lower.includes('code signature') ||
+    lower.includes('codesign') ||
+    lower.includes('signed') ||
+    lower.includes('squirrel') ||
+    lower.includes('could not locate') ||
+    lower.includes('zip file not provided')
+  ) {
+    return 'This build could not apply the in-app update automatically. Download FlexHubs-Desktop.dmg (Mac) or FlexHubs-Desktop-Setup.exe (Windows) from the desktop-latest GitHub release and install over the existing app.';
+  }
+
   if (lower.includes('timed out') || lower.includes('timeout')) {
     return 'Update check timed out. Try again later.';
   }
@@ -68,12 +101,17 @@ export function sanitizeUpdaterError(raw: string): string {
     lower.includes('network') ||
     lower.includes('offline') ||
     lower.includes('enotfound') ||
-    lower.includes('econnrefused')
+    lower.includes('econnrefused') ||
+    lower.includes('enetunreach')
   ) {
     return 'Could not reach the update server. Check your internet connection and try again.';
   }
 
-  return 'Unable to check for updates right now. Please try again later.';
+  if (message.length > 0 && message.length <= 280) {
+    return message;
+  }
+
+  return 'Update failed. Try again, or install manually from the desktop-latest release on GitHub.';
 }
 
 function attachAutoUpdaterListeners(): void {
@@ -88,6 +126,9 @@ function attachAutoUpdaterListeners(): void {
   });
 
   autoUpdater.on('update-available', (info) => {
+    if (info.version) {
+      lastKnownAvailableVersion = info.version;
+    }
     sendToRenderer('updater:update-available', {
       version: info.version,
       releaseNotes: info.releaseNotes,
@@ -101,7 +142,12 @@ function attachAutoUpdaterListeners(): void {
   });
 
   autoUpdater.on('error', (err) => {
-    sendToRenderer('updater:error', { message: sanitizeUpdaterError(err.message) });
+    const userMessage = sanitizeUpdaterError(err.message);
+    if (updaterPhase === 'idle') {
+      console.warn('[FlexHubs] Ignoring background updater error:', err.message);
+      return;
+    }
+    sendToRenderer('updater:error', { message: userMessage });
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
@@ -120,6 +166,7 @@ function attachAutoUpdaterListeners(): void {
 }
 
 const UPDATE_CHECK_TIMEOUT_MS = 45_000;
+const UPDATE_DOWNLOAD_TIMEOUT_MS = 20 * 60_000;
 
 function waitForUpdateCheckOutcome(): Promise<
   | { kind: 'available'; version: string; releaseNotes?: unknown }
@@ -172,6 +219,99 @@ function waitForUpdateCheckOutcome(): Promise<
   });
 }
 
+function waitForUpdateDownloaded(): Promise<{ ok: true } | { ok: false; message: string }> {
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const finish = (result: { ok: true } | { ok: false; message: string }) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      autoUpdater.removeListener('update-downloaded', onDownloaded);
+      autoUpdater.removeListener('error', onError);
+      resolve(result);
+    };
+
+    const onDownloaded = () => {
+      finish({ ok: true });
+    };
+
+    const onError = (error: Error) => {
+      finish({ ok: false, message: sanitizeUpdaterError(error.message || 'Update download failed.') });
+    };
+
+    const timeoutId = setTimeout(() => {
+      finish({ ok: false, message: 'Update download timed out. Check your connection and try again.' });
+    }, UPDATE_DOWNLOAD_TIMEOUT_MS);
+
+    autoUpdater.once('update-downloaded', onDownloaded);
+    autoUpdater.once('error', onError);
+  });
+}
+
+async function runUpdateCheck(): Promise<UpdaterCheckResult> {
+  const currentVersion = app.getVersion();
+
+  if (!app.isPackaged) {
+    return { ok: true, status: 'skipped', currentVersion };
+  }
+
+  if (updaterPhase === 'downloading') {
+    return {
+      ok: true,
+      status: 'available',
+      currentVersion,
+      data: { version: lastKnownAvailableVersion ?? currentVersion },
+    };
+  }
+
+  if (updaterPhase === 'checking') {
+    return {
+      ok: true,
+      status: lastKnownAvailableVersion ? 'available' : 'up-to-date',
+      currentVersion,
+      data: { version: lastKnownAvailableVersion ?? currentVersion },
+    };
+  }
+
+  attachAutoUpdaterListeners();
+  updaterPhase = 'checking';
+
+  try {
+    const pendingOutcome = waitForUpdateCheckOutcome();
+    await autoUpdater.checkForUpdates();
+    const outcome = await pendingOutcome;
+
+    if (outcome.kind === 'error') {
+      return { ok: false, error: outcome.message, currentVersion };
+    }
+
+    if (outcome.kind === 'available') {
+      lastKnownAvailableVersion = outcome.version;
+      return {
+        ok: true,
+        status: 'available',
+        currentVersion,
+        data: { version: outcome.version, releaseNotes: outcome.releaseNotes },
+      };
+    }
+
+    return {
+      ok: true,
+      status: 'up-to-date',
+      currentVersion,
+      data: { version: outcome.version },
+    };
+  } catch (error: unknown) {
+    const raw = error instanceof Error ? error.message : 'Update check failed.';
+    return { ok: false, error: sanitizeUpdaterError(raw), currentVersion };
+  } finally {
+    updaterPhase = 'idle';
+  }
+}
+
 function registerUpdaterIpcHandlers(): void {
   const register = <T extends unknown[]>(
     channel: string,
@@ -181,52 +321,48 @@ function registerUpdaterIpcHandlers(): void {
     ipcMain.handle(channel, handler as (...args: unknown[]) => unknown);
   };
 
-  register('updater:check', async (): Promise<UpdaterCheckResult> => {
-    const currentVersion = app.getVersion();
-
-    if (!app.isPackaged) {
-      return { ok: true, status: 'skipped', currentVersion };
-    }
-
-    try {
-      attachAutoUpdaterListeners();
-
-      const pendingOutcome = waitForUpdateCheckOutcome();
-      await autoUpdater.checkForUpdates();
-      const outcome = await pendingOutcome;
-
-      if (outcome.kind === 'error') {
-        const userMessage = sanitizeUpdaterError(outcome.message);
-        return { ok: false, error: userMessage };
-      }
-
-      if (outcome.kind === 'available') {
-        return {
-          ok: true,
-          status: 'available',
-          data: { version: outcome.version, releaseNotes: outcome.releaseNotes },
-        };
-      }
-
-      return { ok: true, status: 'up-to-date', data: { version: outcome.version } };
-    } catch (error: unknown) {
-      const raw = error instanceof Error ? error.message : 'Update check failed.';
-      const message = sanitizeUpdaterError(raw);
-      return { ok: false, error: message };
-    }
-  });
+  register('updater:check', () => runUpdateCheck());
 
   register('updater:download', async () => {
     if (!app.isPackaged) {
       return { ok: false as const, error: 'Updates are only available in installed builds.' };
     }
 
+    if (updaterPhase === 'downloading') {
+      return { ok: false as const, error: 'A download is already in progress.' };
+    }
+
+    attachAutoUpdaterConfiguredOnly();
+    attachAutoUpdaterListeners();
+    updaterPhase = 'downloading';
+
     try {
+      const checkOutcome = waitForUpdateCheckOutcome();
+      await autoUpdater.checkForUpdates();
+      const checked = await checkOutcome;
+
+      if (checked.kind === 'error') {
+        return { ok: false as const, error: checked.message };
+      }
+
+      if (checked.kind !== 'available') {
+        return { ok: false as const, error: 'No update is available to download right now.' };
+      }
+
+      const pendingDownload = waitForUpdateDownloaded();
       await autoUpdater.downloadUpdate();
+      const downloaded = await pendingDownload;
+
+      if (!downloaded.ok) {
+        return { ok: false as const, error: downloaded.message };
+      }
+
       return { ok: true as const };
     } catch (error: unknown) {
       const raw = error instanceof Error ? error.message : 'Update download failed.';
       return { ok: false as const, error: sanitizeUpdaterError(raw) };
+    } finally {
+      updaterPhase = 'idle';
     }
   });
 
@@ -235,11 +371,19 @@ function registerUpdaterIpcHandlers(): void {
       return;
     }
 
-    // isForceRunAfter=true relaunches the app after the Mac zip is applied.
     autoUpdater.quitAndInstall(false, true);
   });
 
+  register('updater:open-release-page', () => {
+    void shell.openExternal(DESKTOP_RELEASE_PAGE);
+    return { ok: true as const };
+  });
+
   register('updater:get-version', () => app.getVersion());
+}
+
+function attachAutoUpdaterConfiguredOnly(): void {
+  ensureAutoUpdaterConfigured();
 }
 
 /** Call once during app startup (safe to call again after dev HMR). */

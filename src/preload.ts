@@ -852,6 +852,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   downloadUpdate: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('updater:download'),
   quitAndInstallUpdate: (): Promise<void> => ipcRenderer.invoke('updater:quit-and-install'),
+  openDesktopReleasePage: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('updater:open-release-page'),
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('updater:get-version'),
   getDesktopLegalContext: (): Promise<{
     isPackaged: boolean;

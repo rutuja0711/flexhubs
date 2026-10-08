@@ -617,6 +617,7 @@ declare global {
       }>;
       downloadUpdate: () => Promise<{ ok: boolean; error?: string }>;
       quitAndInstallUpdate: () => Promise<void>;
+      openDesktopReleasePage?: () => Promise<{ ok: boolean }>;
       getAppVersion: () => Promise<string>;
       getDesktopLegalContext: () => Promise<{
         isPackaged: boolean;

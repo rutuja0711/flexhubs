@@ -150,16 +150,22 @@ export function UpdatesSettings() {
     });
 
     const unsubError = api.onUpdaterEvent('error', (payload: { message?: string } | string) => {
-      setUpdateState('error');
       const message =
         typeof payload === 'string'
           ? payload
           : typeof payload?.message === 'string'
             ? payload.message
             : '';
-      if (message.trim()) {
-        setErrorMessage(message.trim());
-      }
+
+      setUpdateState((state) => {
+        if (state !== 'checking' && state !== 'downloading') {
+          return state;
+        }
+        if (message.trim()) {
+          setErrorMessage(message.trim());
+        }
+        return 'error';
+      });
     });
 
     const unsubProgress = api.onUpdaterEvent('download-progress', (progress: { percent?: number }) => {
@@ -184,7 +190,12 @@ export function UpdatesSettings() {
     };
   }, [checkForUpdates, isElectron]);
 
+  const openReleasePage = () => {
+    void window.electronAPI.openDesktopReleasePage?.();
+  };
+
   const downloadUpdate = async () => {
+    setErrorMessage('');
     setUpdateState('downloading');
     setDownloadProgress(0);
     const result = await window.electronAPI.downloadUpdate();
@@ -297,6 +308,16 @@ export function UpdatesSettings() {
                   }`}
                 >
                   {updateState === 'error' ? 'Retry' : updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
+                </button>
+              )}
+
+              {updateState === 'error' && (
+                <button
+                  type="button"
+                  onClick={openReleasePage}
+                  className="rounded-xl border border-app-border bg-app-surface px-5 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-chat-hover"
+                >
+                  Install from GitHub
                 </button>
               )}
 
