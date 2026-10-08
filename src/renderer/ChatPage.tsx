@@ -11,7 +11,15 @@ import {
   isBlockedByViewer,
   redactDirectConversationForPeerBlock,
 } from '../shared/blocking';
-import { buildCalendarHubOptions, enrichCalendarEventsWithTeammateAvatars } from '../shared/extras';
+import {
+  mergeCalendarEventTagFields,
+  readAllCalendarEventTagSnapshotsAsync,
+} from '../shared/calendarEventTags';
+import {
+  buildCalendarHubOptions,
+  enrichCalendarEventsWithTeammateAvatars,
+  resolveMyEventResponse,
+} from '../shared/extras';
 import {
   getBlockedByPeerIds,
   getBlockedUserIds,
@@ -177,7 +185,16 @@ import {
   parseRealtimeEvent,
   type RealtimeConnectionStatus,
 } from '../shared/realtime';
-import { getUserAvatarUrl, getUserDisplayName, getUserId, getUserInitials, getWorkspaceName, getWorkspaceShortName, userInOrganization } from '../shared/user';
+import {
+  getUserAvatarUrl,
+  getUserDisplayName,
+  getUserId,
+  getUserInitials,
+  getUserUsername,
+  getWorkspaceName,
+  getWorkspaceShortName,
+  userInOrganization,
+} from '../shared/user';
 import { userIsSuperAdmin } from '../shared/superadmin';
 import { parseMeetingNotificationBody, type MeetingStartedPayload } from '../shared/calls';
 import { loadCallHistory } from './callsApi';
@@ -531,6 +548,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const [realtimeStatus, setRealtimeStatus] = useState<RealtimeConnectionStatus>('idle');
   const realtimeStatusRef = useRef<RealtimeConnectionStatus>('idle');
   const [threadLoading, setThreadLoading] = useState(false);
+  const [threadJumpSyncing, setThreadJumpSyncing] = useState(false);
   const [threadError, setThreadError] = useState('');
   const [threadUnreadAnchorId, setThreadUnreadAnchorId] = useState<string | null>(null);
   const [activeHubDetails, setActiveHubDetails] = useState<Record<string, unknown> | null>(null);
@@ -677,6 +695,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const [notificationSettings, setNotificationSettings] = useState<ProfileSettings | null>(null);
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [updateViewed, setUpdateViewed] = useState(false);
+  const [profileInitialTab, setProfileInitialTab] = useState<
+    'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates'
+  >('profile');
   const [planComplianceRules, setPlanComplianceRules] = useState<string[]>([]);
   const [planComplianceDismissed, setPlanComplianceDismissed] = useState(() =>
     readPlanComplianceDismissed(),
@@ -816,8 +837,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       setUpdateAvailable(true);
       setUpdateViewed(false);
       
-      toast.info(`Version ${info?.version || "new"} is ready to download.`, {
-        action: { label: "View Update", onClick: () => handleNavigate("profile") }
+      toast.info(`Version ${info?.version || 'new'} is ready to download.`, {
+        action: {
+          label: 'View Update',
+          onClick: () => {
+            setProfileInitialTab('updates');
+            handleNavigate('profile');
+          },
+        },
       });
 
     });
@@ -869,6 +896,23 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   }, [conversations, selectedConversation?.id, selectedConversation?.kind]);
 
   const viewerUserId = getUserId(user);
+  const viewerUsername = getUserUsername(user);
+  const viewerDisplayName = getUserDisplayName(user);
+
+  const calendarInviteStatusByEventId = useMemo(() => {
+    const next: Record<string, string | null> = {};
+
+    for (const event of calendarEvents) {
+      next[event.id] = resolveMyEventResponse(
+        event,
+        viewerUserId,
+        viewerUsername,
+        viewerDisplayName,
+      );
+    }
+
+    return next;
+  }, [calendarEvents, viewerDisplayName, viewerUserId, viewerUsername]);
 
   const visibleMessages = useMemo(() => {
     const conversationKind = selectedConversation?.kind ?? 'direct';
@@ -2337,6 +2381,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       } finally {
         if (conversationId === selectedIdRef.current) {
           setThreadLoading(false);
+          setThreadJumpSyncing(false);
         }
       }
     },
@@ -2650,7 +2695,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     setCalendarLoading(true);
     setCalendarError('');
 
-    const result = await loadCalendarEvents();
+    const [result, tagCache] = await Promise.all([
+      loadCalendarEvents(),
+      readAllCalendarEventTagSnapshotsAsync(),
+    ]);
 
     if (handleUnauthorized(result.status)) {
       setCalendarLoading(false);
@@ -2664,7 +2712,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     setCalendarEvents(
-      enrichCalendarEventsWithTeammateAvatars(result.data, teammatesRef.current),
+      enrichCalendarEventsWithTeammateAvatars(
+        result.data.map((event) => {
+          const cached = tagCache[event.id];
+          return cached ? mergeCalendarEventTagFields(event, cached) : event;
+        }),
+        teammatesRef.current,
+      ),
     );
     setCalendarLoading(false);
   }, [handleUnauthorized]);
@@ -3889,7 +3943,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     setSelectedId(conversationId);
 
     if (messageId) {
+      setThreadUnreadAnchorId(null);
+      setThreadJumpSyncing(true);
       setFocusMessageId(messageId);
+    } else {
+      setThreadJumpSyncing(false);
+      setFocusMessageId(null);
     }
   };
 
@@ -3921,7 +3980,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    handleSelectConversation(conversationId, messageId);
+    setMainView('chat');
+    handleSelectConversation(conversationId, messageId, { forceReload: false });
   };
 
   const handleOpenDirectChat = useCallback(
@@ -5609,6 +5669,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           onMarkAllRead={() => {
             void syncNotifications({ withLoading: true, markAllRead: true });
           }}
+          calendarInviteStatusByEventId={calendarInviteStatusByEventId}
+          onCalendarInviteResponded={() => {
+            void loadCalendarData();
+            void loadActivityData();
+          }}
+          onUnauthorized={handleUnauthorized}
         />
       );
     }
@@ -5715,6 +5781,23 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             void loadCalendarData();
             void syncNotifications();
           }}
+          onEventSaved={(saved) => {
+            setCalendarEvents((current) =>
+              current.map((event) => {
+                if (event.id !== saved.id) {
+                  return event;
+                }
+
+                const tagged = mergeCalendarEventTagFields(event, saved);
+                return {
+                  ...event,
+                  ...saved,
+                  mentionUserIds: tagged.mentionUserIds,
+                  invitees: tagged.invitees,
+                };
+              }),
+            );
+          }}
           onNotificationsRefresh={() => {
             void syncNotifications();
           }}
@@ -5812,6 +5895,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }}
           hasUpdateBadge={updateAvailable && !updateViewed}
           onUpdateViewed={() => setUpdateViewed(true)}
+          initialTab={profileInitialTab}
         />
       );
     }
@@ -5871,7 +5955,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }}
           messages={visibleMessages}
           draft={draft}
-          loading={threadLoading}
+          loading={threadLoading || threadJumpSyncing}
           error={threadError}
           draftError={draftError}
           typingLabel={typingLabel}

@@ -689,6 +689,8 @@ type MessageListProps = {
   highlightTerm?: string;
   highlightedMessageIds?: string[];
   scrollToMessageId?: string | null;
+  /** While set, suppress auto scroll-to-bottom (e.g. opening a saved message). */
+  pendingScrollToMessageId?: string | null;
   scrollRequestKey?: number;
   scrollRestoreKey?: number;
   hasMoreOlder?: boolean;
@@ -735,6 +737,7 @@ export function MessageList({
   highlightTerm = '',
   highlightedMessageIds = [],
   scrollToMessageId = null,
+  pendingScrollToMessageId = null,
   scrollRequestKey = 0,
   scrollRestoreKey = 0,
   hasMoreOlder = false,
@@ -775,6 +778,7 @@ export function MessageList({
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomAnchorRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
+  const suppressAutoScrollRef = useRef(false);
   const lastMessageIdRef = useRef<string | null>(null);
   const loadOlderScrollSnapshotRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(
     null,
@@ -796,6 +800,10 @@ export function MessageList({
   );
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    if (suppressAutoScrollRef.current || pendingScrollToMessageId || scrollToMessageId) {
+      return;
+    }
+
     const container = scrollContainerRef.current;
 
     if (container) {
@@ -811,30 +819,73 @@ export function MessageList({
     }
 
     bottomAnchorRef.current?.scrollIntoView({ block: 'end', behavior });
-  }, []);
+  }, [pendingScrollToMessageId, scrollToMessageId]);
 
   useEffect(() => {
     if (!scrollToMessageId || showInitialLoading) {
       return;
     }
 
-    const frame = window.requestAnimationFrame(() => {
-      const element = document.querySelector(`[data-message-id="${scrollToMessageId}"]`);
+    let attempts = 0;
+    let frame = 0;
+    const maxAttempts = 48;
 
-      if (element instanceof HTMLElement) {
-        element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    const tryScroll = () => {
+      const container = scrollContainerRef.current;
+      const element = container?.querySelector(`[data-message-id="${scrollToMessageId}"]`);
+
+      if (container && element instanceof HTMLElement) {
+        stickToBottomRef.current = false;
+        suppressAutoScrollRef.current = true;
+
+        const elementTop =
+          element.getBoundingClientRect().top -
+          container.getBoundingClientRect().top +
+          container.scrollTop;
+        const targetTop =
+          elementTop - container.clientHeight / 2 + element.getBoundingClientRect().height / 2;
+
+        container.scrollTop = Math.max(0, Math.min(targetTop, container.scrollHeight - container.clientHeight));
         onScrollToMessageComplete?.(scrollToMessageId);
+        return;
       }
-    });
+
+      attempts += 1;
+      if (attempts < maxAttempts) {
+        frame = window.requestAnimationFrame(tryScroll);
+      }
+    };
+
+    frame = window.requestAnimationFrame(tryScroll);
 
     return () => window.cancelAnimationFrame(frame);
   }, [messages, onScrollToMessageComplete, scrollRequestKey, scrollToMessageId, showInitialLoading]);
 
   useEffect(() => {
-    stickToBottomRef.current = true;
+    if (pendingScrollToMessageId) {
+      stickToBottomRef.current = false;
+      suppressAutoScrollRef.current = true;
+    } else {
+      stickToBottomRef.current = true;
+      suppressAutoScrollRef.current = false;
+    }
     lastMessageIdRef.current = null;
     loadOlderScrollSnapshotRef.current = null;
-  }, [conversationId]);
+  }, [conversationId, pendingScrollToMessageId]);
+
+  useEffect(() => {
+    if (pendingScrollToMessageId || scrollToMessageId) {
+      suppressAutoScrollRef.current = true;
+      stickToBottomRef.current = false;
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      suppressAutoScrollRef.current = false;
+    }, 5000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [pendingScrollToMessageId, scrollToMessageId]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -843,6 +894,10 @@ export function MessageList({
     }
 
     const onScroll = () => {
+      if (suppressAutoScrollRef.current || pendingScrollToMessageId) {
+        return;
+      }
+
       if (container.scrollHeight <= container.clientHeight + 1) {
         stickToBottomRef.current = true;
         return;
@@ -869,7 +924,7 @@ export function MessageList({
 
     container.addEventListener('scroll', onScroll, { passive: true });
     return () => container.removeEventListener('scroll', onScroll);
-  }, [hasMoreOlder, loadingOlder, onLoadOlder]);
+  }, [hasMoreOlder, loadingOlder, onLoadOlder, pendingScrollToMessageId]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -880,7 +935,9 @@ export function MessageList({
       !hasMoreOlder ||
       loadingOlder ||
       showInitialLoading ||
-      loadOlderScrollSnapshotRef.current
+      loadOlderScrollSnapshotRef.current ||
+      pendingScrollToMessageId ||
+      suppressAutoScrollRef.current
     ) {
       return;
     }
@@ -892,7 +949,14 @@ export function MessageList({
       };
       onLoadOlder();
     }
-  }, [hasMoreOlder, loadingOlder, messages.length, onLoadOlder, showInitialLoading]);
+  }, [
+    hasMoreOlder,
+    loadingOlder,
+    messages.length,
+    onLoadOlder,
+    pendingScrollToMessageId,
+    showInitialLoading,
+  ]);
 
   useEffect(() => {
     if (loadingOlder || !loadOlderScrollSnapshotRef.current) {
@@ -931,12 +995,17 @@ export function MessageList({
     const previousLastId = lastMessageIdRef.current;
     const isInitialLoad = previousLastId === null;
     const appendedNewMessage = Boolean(lastId && previousLastId && lastId !== previousLastId);
-    lastMessageIdRef.current = lastId;
 
     const isOwnNewMessage =
       lastMessage?.isOwn === true ||
       lastMessage?.id.startsWith('local-') ||
       (lastMessage ? isAppearingMessage(lastMessage) && lastMessage.isOwn : false);
+
+    if ((pendingScrollToMessageId || suppressAutoScrollRef.current) && !isOwnNewMessage) {
+      return;
+    }
+
+    lastMessageIdRef.current = lastId;
 
     if (
       scrollToMessageId &&
@@ -948,7 +1017,7 @@ export function MessageList({
     }
 
     const shouldScroll =
-      isInitialLoad ||
+      (isInitialLoad && !pendingScrollToMessageId && !scrollToMessageId) ||
       isOwnNewMessage ||
       (appendedNewMessage && stickToBottomRef.current);
 
@@ -973,7 +1042,14 @@ export function MessageList({
       window.cancelAnimationFrame(outerFrame);
       window.cancelAnimationFrame(innerFrame);
     };
-  }, [conversationId, messages, scrollToBottom, scrollToMessageId, showInitialLoading]);
+  }, [
+    conversationId,
+    messages,
+    pendingScrollToMessageId,
+    scrollToBottom,
+    scrollToMessageId,
+    showInitialLoading,
+  ]);
 
   const startEdit = useCallback((message: MessageItem) => {
     setEditingId(message.id);

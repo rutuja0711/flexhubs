@@ -1,7 +1,7 @@
 {
   "name": "flexhubs-desktop",
   "productName": "FlexHubs Desktop",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "FlexHubs Desktop Application",
   "author": "Flexodyn Solutions",
   "authors": "Flexodyn Solutions",
@@ -14,7 +14,10 @@
     "make:win": "electron-forge make --platform=win32 --arch x64",
     "package:win": "electron-forge package --platform=win32",
     "generate:install-gif": "python3 scripts/generate-install-loading-gif.py",
-    "generate:updater-metadata": "node scripts/ci/generate-updater-metadata.mjs"
+    "generate:updater-metadata": "node scripts/ci/generate-updater-metadata.mjs",
+    "release:mac:stage": "bash scripts/ci/stage-desktop-mac-release.sh",
+    "release:mac": "bash scripts/ci/publish-desktop-mac.sh",
+    "verify:update-feed": "node scripts/ci/verify-update-feed.mjs"
   },
   "license": "MIT",
   "devDependencies": {

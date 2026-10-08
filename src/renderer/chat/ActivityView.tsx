@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ConversationItem } from '../../shared/chat';
 import {
+  isCalendarInviteNotification,
   resolveFriendRequestUserId,
   type NotificationItem,
   type PendingFriendItem,
 } from '../../shared/messages';
+import { CalendarEventInviteActions } from './CalendarEventInviteActions';
 import { formatNotificationDisplayBody } from '../../shared/calls';
 import { SearchIcon } from './ChatIcons';
 import {
@@ -43,6 +45,7 @@ type ActivityListItem = {
   notification: NotificationItem | null;
   isUnread: boolean;
   respondUserId: string | null;
+  respondCalendarEventId: string | null;
 };
 
 function classifyNotification(item: NotificationItem): ActivityKind {
@@ -91,18 +94,37 @@ function ActivityRowContent({
   conversations,
   onRespondFriend,
   isProcessing,
+  calendarInviteStatusByEventId,
+  onCalendarInviteResponded,
+  onUnauthorized,
 }: {
   item: ActivityListItem;
   conversations: ConversationItem[];
   onRespondFriend?: (id: string, status: 'ACCEPTED' | 'DECLINED') => void;
   isProcessing?: boolean;
+  calendarInviteStatusByEventId?: Record<string, string | null | undefined>;
+  onCalendarInviteResponded?: () => void;
+  onUnauthorized?: (status?: number) => boolean;
 }) {
   const presentation = mapActivityListItemToFlexHubsData(item, conversations, {
     onRespondFriend,
     isProcessing,
   });
 
-  return <FlexHubsDesktopNotification variant="activity" data={presentation} />;
+  return (
+    <>
+      <FlexHubsDesktopNotification variant="activity" data={presentation} />
+      {item.respondCalendarEventId ? (
+        <CalendarEventInviteActions
+          compact
+          eventId={item.respondCalendarEventId}
+          responseStatus={calendarInviteStatusByEventId?.[item.respondCalendarEventId]}
+          onComplete={onCalendarInviteResponded}
+          onUnauthorized={onUnauthorized}
+        />
+      ) : null}
+    </>
+  );
 }
 
 function ActivitySplitFilterPicker({
@@ -226,6 +248,9 @@ export type ActivityViewProps = {
   onNotificationClick: (notification: NotificationItem) => void;
   onRespondFriend?: (id: string, status: 'ACCEPTED' | 'DECLINED') => void;
   onMarkAllRead?: () => void;
+  calendarInviteStatusByEventId?: Record<string, string | null | undefined>;
+  onCalendarInviteResponded?: () => void;
+  onUnauthorized?: (status?: number) => boolean;
 };
 
 export function ActivityView({
@@ -238,6 +263,9 @@ export function ActivityView({
   onNotificationClick,
   onRespondFriend,
   onMarkAllRead,
+  calendarInviteStatusByEventId,
+  onCalendarInviteResponded,
+  onUnauthorized,
 }: ActivityViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [activeFilter, setActiveFilter] = useState<ActivityFilter>('All');
@@ -323,6 +351,7 @@ export function ActivityView({
       notification: null,
       isUnread: true,
       respondUserId: item.userId || item.id,
+      respondCalendarEventId: null,
     }));
 
     const notificationItems: ActivityListItem[] = notifications
@@ -330,6 +359,8 @@ export function ActivityView({
         const kind = classifyNotification(item);
         const respondUserId =
           kind === 'request' ? resolveFriendRequestUserId(item, conversations) : null;
+        const respondCalendarEventId =
+          isCalendarInviteNotification(item) && item.eventId ? item.eventId : null;
 
         return {
           id: item.id,
@@ -340,6 +371,7 @@ export function ActivityView({
           notification: item,
           isUnread: !item.isRead,
           respondUserId,
+          respondCalendarEventId,
         };
       })
       .filter((item) => {
@@ -418,6 +450,9 @@ export function ActivityView({
                     isProcessing={
                       Boolean(item.respondUserId) && processingId === item.respondUserId
                     }
+                    calendarInviteStatusByEventId={calendarInviteStatusByEventId}
+                    onCalendarInviteResponded={onCalendarInviteResponded}
+                    onUnauthorized={onUnauthorized}
                   />
                 </div>
               ))}

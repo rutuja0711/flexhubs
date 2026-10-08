@@ -159,9 +159,36 @@ Download from: **GitHub → Releases → `desktop-latest`**.
 1. **Mac:** `FlexHubs-Desktop.dmg` for first install; CI also uploads `FlexHubs-Desktop-mac.zip` + `latest-mac.yml` for Update Center.
 2. **Windows:** `FlexHubs-Desktop-Setup.exe` + `latest.yml` (not old `.msi` or portable zips).
 3. **First run:** legal gate + login; mic/camera/screen permissions when using calls.
-4. **Updates:** installed builds check **`desktop-latest`** on GitHub via `electron-updater`. Bump **`version`** in `package.json` before merging when you want users to see a new version (same version → “up to date” even if CI rebuilt).
+4. **Updates:** installed builds fetch **`latest-mac.yml`** from the rolling GitHub release **`desktop-latest`** (generic update feed). Bump **`version`** in `package.json` before every release — same version → “up to date” even if you rebuilt.
 
 CI generates `latest-mac.yml` / `latest.yml` with `scripts/ci/generate-updater-metadata.mjs` after each successful `make`.
+
+### Release from your Mac (DMG built locally, not only CI)
+
+1. **Bump version** in `package.json` (e.g. `1.0.0` → `1.0.1`). Commit and push your code changes.
+2. Install and sign in with GitHub CLI: `gh auth login`
+3. Build + publish update assets:
+
+```bash
+npm run release:mac
+```
+
+This runs `make:mac`, stages `out/release/FlexHubs-Desktop.dmg`, `FlexHubs-Desktop-mac.zip`, and `latest-mac.yml`, then uploads all three to **`desktop-latest`** (same as CI).
+
+- **First install for testers:** share the DMG (from `out/release/` or the release page).
+- **In-app updates:** only work if **`FlexHubs-Desktop-mac.zip`** and **`latest-mac.yml`** are on the release (the script uploads both). Uploading a DMG alone is not enough.
+
+Optional: build without publishing:
+
+```bash
+npm run release:mac:stage
+```
+
+Verify the public feed after publishing:
+
+```bash
+node scripts/ci/verify-update-feed.mjs
+```
 
 ---
 

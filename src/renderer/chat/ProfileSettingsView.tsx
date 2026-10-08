@@ -81,6 +81,7 @@ type ProfileSettingsViewProps = {
   onUserUpdated?: () => void;
   hasUpdateBadge?: boolean;
   onUpdateViewed?: () => void;
+  initialTab?: 'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates';
 };
 
 type AvatarTab = 'avatar' | 'upload' | 'initials';
@@ -186,10 +187,15 @@ export function ProfileSettingsView({
   onUserUpdated,
   hasUpdateBadge,
   onUpdateViewed,
+  initialTab = 'profile',
 }: ProfileSettingsViewProps) {
   const { theme, setTheme } = useTheme();
   const toast = useToast();
-  const [activeTab, setActiveTab] = useState<'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates'>('profile');
+  const [activeTab, setActiveTab] = useState<'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates'>(initialTab);
+
+  useEffect(() => {
+    setActiveTab(initialTab);
+  }, [initialTab]);
   const [profile, setProfile] = useState<UserProfileState | null>(null);
   const [settings, setSettings] = useState<ProfileSettings | null>(null);
   const [avatarStyles, setAvatarStyles] = useState<AvatarStyleItem[]>([]);

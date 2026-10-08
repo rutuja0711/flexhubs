@@ -1,6 +1,11 @@
 import { autoUpdater } from 'electron-updater';
 import { BrowserWindow, ipcMain, app } from 'electron';
 
+/** Rolling release tag on GitHub (see scripts/ci/publish-desktop-mac.sh and INSTALL.md). */
+const DESKTOP_RELEASE_FEED_URL =
+  process.env.FLEXHUBS_UPDATE_FEED_URL?.trim() ||
+  'https://github.com/rutuja0711/flexhubs/releases/download/desktop-latest';
+
 let mainWindow: BrowserWindow | null = null;
 
 export type UpdaterCheckResult =
@@ -25,14 +30,17 @@ function sendToRenderer(channel: string, ...args: unknown[]): void {
 function ensureAutoUpdaterConfigured(): void {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowDowngrade = false;
   autoUpdater.allowPrerelease = true;
+  autoUpdater.disableDifferentialDownload = true;
 
-  // Configure the GitHub repository where updates will be published
+  // Generic feed pinned to the rolling `desktop-latest` release (not "newest GitHub release by tag name").
   autoUpdater.setFeedURL({
-    provider: 'github',
-    owner: 'rutuja0711',
-    repo: 'flexhubs',
+    provider: 'generic',
+    url: DESKTOP_RELEASE_FEED_URL,
   });
+
+  console.info('[FlexHubs] Update feed:', DESKTOP_RELEASE_FEED_URL);
 }
 
 /** User-safe message; full details stay in main-process logs only. */
@@ -235,7 +243,8 @@ function registerUpdaterIpcHandlers(): void {
       return;
     }
 
-    autoUpdater.quitAndInstall();
+    // isForceRunAfter=true relaunches the app after the Mac zip is applied.
+    autoUpdater.quitAndInstall(false, true);
   });
 
   register('updater:get-version', () => app.getVersion());

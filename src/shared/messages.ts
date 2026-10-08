@@ -2463,6 +2463,40 @@ export function isGroupInviteNotification(notification: NotificationItem): boole
   );
 }
 
+export function isCalendarInviteNotification(notification: NotificationItem): boolean {
+  if (isHubInviteNotification(notification) || isGroupInviteNotification(notification)) {
+    return false;
+  }
+
+  if (!notification.eventId) {
+    return false;
+  }
+
+  const type = notification.type.toLowerCase();
+  const haystack = notificationHaystack(notification);
+
+  if (
+    haystack.includes('reminder') ||
+    type.includes('reminder') ||
+    haystack.includes('event reminder') ||
+    haystack.includes('upcoming event reminder')
+  ) {
+    return false;
+  }
+
+  if (
+    (type.includes('invite') && (type.includes('calendar') || type.includes('event'))) ||
+    haystack.includes('invited you') ||
+    haystack.includes('event invite') ||
+    haystack.includes('calendar invite') ||
+    haystack.includes('meeting invite')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export function isCalendarRelatedNotification(notification: NotificationItem): boolean {
   if (isHubInviteNotification(notification) || isGroupInviteNotification(notification)) {
     return false;

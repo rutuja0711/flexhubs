@@ -30,6 +30,7 @@ import type { GifPickerItem } from '../../shared/gifs';
 import type { MessageItem } from '../../shared/messages';
 import {
   filterMainChatMessages,
+  isThreadReply,
   formatMessagePreview,
   registerThreadReplyMessage,
   trackPendingThreadSend,
@@ -374,8 +375,8 @@ export function ConversationThread({
   }, []);
 
   const jumpToMessage = useCallback((messageId: string) => {
-    scrollToMessageInThread(messageId);
     setHighlightedMessageIds((current) => [...new Set([...current, messageId])]);
+    scrollToMessageInThread(messageId);
   }, [scrollToMessageInThread]);
 
   const navigateSearchMatch = useCallback(
@@ -405,14 +406,37 @@ export function ConversationThread({
       return;
     }
 
-    const messageInThread = mainChatMessages.some((message) => message.id === focusMessageId);
-    if (!messageInThread) {
+    if (loading) {
       return;
     }
 
-    jumpToMessage(focusMessageId);
-    onFocusMessageHandled?.();
-  }, [focusMessageId, jumpToMessage, mainChatMessages, onFocusMessageHandled]);
+    if (mainChatMessages.some((message) => message.id === focusMessageId)) {
+      jumpToMessage(focusMessageId);
+      return;
+    }
+
+    const target = messages.find((message) => message.id === focusMessageId);
+    if (!target) {
+      return;
+    }
+
+    if (threadsEnabled && isThreadReply(target)) {
+      const rootId = target.threadRootId ?? null;
+      const root = rootId ? messages.find((message) => message.id === rootId) : null;
+      if (root) {
+        setThreadRootMessage(root);
+      }
+      onFocusMessageHandled?.();
+    }
+  }, [
+    focusMessageId,
+    jumpToMessage,
+    loading,
+    mainChatMessages,
+    messages,
+    onFocusMessageHandled,
+    threadsEnabled,
+  ]);
 
   const handlePinnedBannerJump = () => {
     if (!featuredPinnedMessage) {
@@ -911,6 +935,7 @@ export function ConversationThread({
         highlightTerm={searchOpen && searchQuery.trim() ? searchQuery : ''}
         highlightedMessageIds={highlightedMessageIds}
         scrollToMessageId={bannerScrollTargetId}
+        pendingScrollToMessageId={focusMessageId}
         scrollRequestKey={scrollRequestKey}
         scrollRestoreKey={scrollRestoreKey}
         hasMoreOlder={hasMoreOlder}
@@ -920,11 +945,14 @@ export function ConversationThread({
         onJumpToMessage={jumpToMessage}
         onScrollToMessageComplete={(messageId) => {
           setBannerScrollTargetId(null);
+          if (messageId && focusMessageId && messageId === focusMessageId && !loading) {
+            onFocusMessageHandled?.();
+          }
           if (messageId) {
             const timeoutId = window.setTimeout(() => {
               setHighlightedMessageIds((current) => current.filter((id) => id !== messageId));
               highlightTimeoutsRef.current = highlightTimeoutsRef.current.filter((id) => id !== timeoutId);
-            }, 2200);
+            }, 5500);
             highlightTimeoutsRef.current.push(timeoutId);
           }
         }}

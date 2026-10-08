@@ -6,6 +6,7 @@ import {
   nativeImage,
   nativeTheme,
   Notification,
+  powerSaveBlocker,
   screen,
   session,
   shell,
@@ -90,6 +91,15 @@ import {
   fetchMessageSearch,
   fetchUserSearch,
 } from './main/searchApi';
+import {
+  readAllPersistedCalendarEventTags,
+  readPersistedCalendarEventTags,
+  writePersistedCalendarEventTags,
+} from './main/desktopCalendarTagStorage';
+import {
+  readPersistedDesktopLegalVersion,
+  writePersistedDesktopLegalVersion,
+} from './main/desktopLegalStorage';
 import { deliverDesktopNotification } from './main/notifications/deliverDesktopNotification';
 import {
   closeNotificationWindow,
@@ -140,6 +150,7 @@ import {
 } from './main/gifsApi';
 import {
   createCalendarEvent,
+  fetchCalendarEventById,
   updateCalendarEvent,
   deleteCalendarEvent,
   deletePushSubscriptions,
@@ -385,6 +396,74 @@ function notificationOptions(title: string, body: string): Electron.Notification
 
 if (handleSquirrelStartup()) {
   app.quit();
+}
+
+const hardwareConfigPath = path.join(app.getPath('userData'), 'flexhubs-hardware.json');
+let displaySleepBlockerId: number | null = null;
+
+function readSavedHardwareAccelerationDisabled(): boolean | null {
+  try {
+    if (!fs.existsSync(hardwareConfigPath)) {
+      return null;
+    }
+
+    const config = JSON.parse(fs.readFileSync(hardwareConfigPath, 'utf8')) as {
+      disableHardwareAcceleration?: boolean;
+    };
+
+    if (typeof config.disableHardwareAcceleration === 'boolean') {
+      return config.disableHardwareAcceleration;
+    }
+  } catch {
+    // ignore corrupt config
+  }
+
+  return null;
+}
+
+/** Default off (dev + production) unless user explicitly enabled GPU in settings. */
+function isHardwareAccelerationDisabled(): boolean {
+  const saved = readSavedHardwareAccelerationDisabled();
+  if (saved !== null) {
+    return saved;
+  }
+
+  return true;
+}
+
+function applyStableDisplayProfile(): void {
+  if (!isHardwareAccelerationDisabled()) {
+    return;
+  }
+
+  app.commandLine.appendSwitch('disable-gpu');
+  app.commandLine.appendSwitch('disable-gpu-compositing');
+  app.commandLine.appendSwitch('disable-gpu-sandbox');
+  app.disableHardwareAcceleration();
+  console.log('[FlexHubs] Stable display profile: hardware GPU acceleration disabled.');
+}
+
+applyStableDisplayProfile();
+
+function updateDisplaySleepBlocker(): void {
+  const shouldPreventSleep = Boolean(
+    mainWindow &&
+      !mainWindow.isDestroyed() &&
+      mainWindow.isVisible() &&
+      !mainWindow.isMinimized(),
+  );
+
+  if (shouldPreventSleep) {
+    if (displaySleepBlockerId === null || !powerSaveBlocker.isStarted(displaySleepBlockerId)) {
+      displaySleepBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+    }
+    return;
+  }
+
+  if (displaySleepBlockerId !== null && powerSaveBlocker.isStarted(displaySleepBlockerId)) {
+    powerSaveBlocker.stop(displaySleepBlockerId);
+  }
+  displaySleepBlockerId = null;
 }
 
 ipcMain.handle('auth:login', (_event, credentials) => performLogin(credentials));
@@ -838,6 +917,19 @@ ipcMain.handle('features:calendar', (_event, token: string) => fetchCalendarEven
 ipcMain.handle('extras:calendar-mentionable-users', (_event, token: string) =>
   fetchCalendarMentionableUsers(token),
 );
+ipcMain.handle('extras:calendar-event-by-id', (_event, token: string, eventId: string) =>
+  fetchCalendarEventById(token, eventId),
+);
+ipcMain.handle('calendar:get-event-tags', (_event, eventId: string) =>
+  readPersistedCalendarEventTags(eventId),
+);
+ipcMain.handle('calendar:set-event-tags', (_event, eventId: string, snapshot: unknown) => {
+  writePersistedCalendarEventTags(
+    eventId,
+    snapshot as import('../shared/calendarEventTags').CalendarEventTagSnapshot,
+  );
+});
+ipcMain.handle('calendar:get-all-event-tags', () => readAllPersistedCalendarEventTags());
 ipcMain.handle('extras:create-calendar-event', (_event, token: string, payloadJson: string) => {
   try {
     const input = JSON.parse(payloadJson) as import('../shared/extras').CreateCalendarEventInput;
@@ -1251,7 +1343,17 @@ ipcMain.handle('app:get-name', () => readMediaAppName());
 ipcMain.handle('app:get-desktop-legal-context', () => ({
   isPackaged: app.isPackaged,
   version: app.getVersion(),
+  acceptedLegalVersion: readPersistedDesktopLegalVersion(),
 }));
+
+ipcMain.handle('app:accept-desktop-legal', (_event, version: number) => {
+  if (!Number.isFinite(version)) {
+    return { ok: false as const };
+  }
+
+  writePersistedDesktopLegalVersion(version);
+  return { ok: true as const };
+});
 ipcMain.handle('app:quit', () => {
   app.quit();
 });
@@ -1400,8 +1502,25 @@ const createWindow = (): void => {
 
   mainWindow.once('ready-to-show', () => {
     mainWindow?.show();
-    mainWindow?.center();
     applyApplicationIcon();
+    updateDisplaySleepBlocker();
+  });
+
+  mainWindow.on('show', () => {
+    updateDisplaySleepBlocker();
+  });
+
+  mainWindow.on('hide', () => {
+    applyApplicationIcon();
+    updateDisplaySleepBlocker();
+  });
+
+  mainWindow.on('minimize', () => {
+    updateDisplaySleepBlocker();
+  });
+
+  mainWindow.on('restore', () => {
+    updateDisplaySleepBlocker();
   });
 
   mainWindow.on('enter-full-screen', () => {
@@ -1428,10 +1547,7 @@ const createWindow = (): void => {
     mainWindow = null;
     stopRealtimeStream();
     closeNotificationWindow();
-  });
-
-  mainWindow.on('hide', () => {
-    applyApplicationIcon();
+    updateDisplaySleepBlocker();
   });
 
   if (process.platform === 'darwin') {
@@ -1739,27 +1855,7 @@ if (process.platform === 'win32') {
   app.setAppUserModelId(app.name);
 }
 
-const hardwareConfigPath = path.join(app.getPath('userData'), 'flexhubs-hardware.json');
-try {
-  if (fs.existsSync(hardwareConfigPath)) {
-    const config = JSON.parse(fs.readFileSync(hardwareConfigPath, 'utf8'));
-    if (config.disableHardwareAcceleration === true) {
-      app.disableHardwareAcceleration();
-    }
-  }
-} catch (e) {
-  // Ignore config errors
-}
-
-ipcMain.handle('app:get-hardware-acceleration-disabled', () => {
-  try {
-    if (fs.existsSync(hardwareConfigPath)) {
-      const config = JSON.parse(fs.readFileSync(hardwareConfigPath, 'utf8'));
-      return config.disableHardwareAcceleration === true;
-    }
-  } catch (e) {}
-  return false;
-});
+ipcMain.handle('app:get-hardware-acceleration-disabled', () => isHardwareAccelerationDisabled());
 
 ipcMain.handle('app:set-hardware-acceleration-disabled', (_event, disabled: boolean) => {
   try {

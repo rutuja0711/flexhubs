@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   FiChevronLeft,
   FiChevronRight,
@@ -10,10 +10,20 @@ import {
 import type { CalendarEventItem } from '../../shared/features';
 import type { CalendarHubOption, ScheduledMessageItem } from '../../shared/extras';
 import {
+  mergeCalendarEventTagFields,
+  readCalendarEventTagSnapshot,
+} from '../../shared/calendarEventTags';
+import {
+  canEditCalendarEvent,
+  isEventAtLeastOneMinuteFromNow,
   isPendingScheduledMessage,
+  isSameCalendarDay,
   resolveEventCreatorAvatarUrl,
   resolveEventCreatorDisplayName,
+  buildCalendarEventMoveUpdateInput,
+  shiftCalendarEventToDate,
 } from '../../shared/extras';
+import { CalendarSharedInviteeAvatars } from './CalendarSharedInviteeAvatars';
 import {
   getUserAvatarUrl,
   getUserDisplayName,
@@ -22,7 +32,7 @@ import {
   getUserUsername,
 } from '../../shared/user';
 import { Avatar } from './ChatIcons';
-import { loadScheduledMessages } from '../extrasApi';
+import { loadScheduledMessages, updateCalendarEvent } from '../extrasApi';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
 import { NewEventModal } from './NewEventModal';
@@ -41,6 +51,7 @@ type CalendarViewProps = {
   user: unknown;
   onRetry: () => void;
   onRefresh: () => void;
+  onEventSaved?: (event: CalendarEventItem) => void;
   onNotificationsRefresh?: () => void;
   onUnauthorized: (status?: number) => boolean;
   highlightEventId?: string | null;
@@ -55,6 +66,7 @@ export function CalendarView({
   user,
   onRetry,
   onRefresh,
+  onEventSaved,
   onNotificationsRefresh,
   onUnauthorized,
   highlightEventId = null,
@@ -67,6 +79,25 @@ export function CalendarView({
   const [searchQuery, setSearchQuery] = useState("");
   const [modalOpen, setModalOpen] = useState(false);
   const [editEvent, setEditEvent] = useState<CalendarEventItem | null>(null);
+
+  const resolveCalendarEventForEdit = useCallback(
+    (event: CalendarEventItem) => {
+      const latest = events.find((item) => item.id === event.id) ?? event;
+      return mergeCalendarEventTagFields(
+        latest,
+        readCalendarEventTagSnapshot(latest.id) ?? undefined,
+      );
+    },
+    [events],
+  );
+
+  const editEventForModal = useMemo(() => {
+    if (!editEvent) {
+      return null;
+    }
+
+    return resolveCalendarEventForEdit(editEvent);
+  }, [editEvent, resolveCalendarEventForEdit]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFilters] = useState<CalendarFiltersState>(defaultCalendarFilters);
   const [scheduledMessages, setScheduledMessages] = useState<ScheduledMessageItem[]>([]);
@@ -91,6 +122,176 @@ export function CalendarView({
   const username = getUserUsername(user);
   const displayName = getUserDisplayName(user);
   const viewerAvatarUrl = getUserAvatarUrl(user);
+
+  const [eventModalReadOnly, setEventModalReadOnly] = useState(false);
+  const [draggingEventId, setDraggingEventId] = useState<string | null>(null);
+  const [dropTargetDayKey, setDropTargetDayKey] = useState<string | null>(null);
+  const [movingEventId, setMovingEventId] = useState<string | null>(null);
+  const pointerDragRef = useRef<{
+    eventId: string;
+    pointerId: number;
+    originX: number;
+    originY: number;
+    active: boolean;
+  } | null>(null);
+  const suppressChipClickRef = useRef(false);
+
+  const canEditEvent = useCallback(
+    (event: CalendarEventItem) =>
+      canEditCalendarEvent(event, userId, username, displayName),
+    [displayName, userId, username],
+  );
+
+  const handleMoveEventToDate = useCallback(
+    async (event: CalendarEventItem, targetDate: Date) => {
+      if (!canEditEvent(event) || !event.startsAt) {
+        return;
+      }
+
+      const currentStart = new Date(event.startsAt);
+      if (isSameCalendarDay(currentStart, targetDate)) {
+        return;
+      }
+
+      const newStartsAt = shiftCalendarEventToDate(event.startsAt, targetDate);
+      if (!isEventAtLeastOneMinuteFromNow(newStartsAt)) {
+        toast.error('Events must be at least 1 minute from now.');
+        return;
+      }
+
+      setMovingEventId(event.id);
+      onEventSaved?.({ ...event, startsAt: newStartsAt });
+
+      const result = await updateCalendarEvent(
+        buildCalendarEventMoveUpdateInput(event, newStartsAt),
+      );
+
+      setMovingEventId(null);
+
+      if (!result.ok) {
+        onEventSaved?.(event);
+        if (onUnauthorized(result.status)) {
+          return;
+        }
+        toast.error(result.error);
+        void onRefresh();
+        return;
+      }
+
+      const tagged = mergeCalendarEventTagFields(event, result.data);
+      onEventSaved?.({
+        ...event,
+        ...result.data,
+        mentionUserIds: tagged.mentionUserIds,
+        invitees: tagged.invitees,
+      });
+      toast.success('Event moved.');
+    },
+    [canEditEvent, onEventSaved, onRefresh, onUnauthorized, toast],
+  );
+
+  const endEventDrag = useCallback(() => {
+    setDraggingEventId(null);
+    setDropTargetDayKey(null);
+  }, []);
+
+  const updateDropTargetFromPoint = useCallback((clientX: number, clientY: number) => {
+    const element = document.elementFromPoint(clientX, clientY);
+    const cell = element?.closest('[data-calendar-drop-date]') as HTMLElement | null;
+    const iso = cell?.dataset.calendarDropDate;
+    setDropTargetDayKey(iso ? new Date(iso).toDateString() : null);
+  }, []);
+
+  const handleChipPointerDown = useCallback(
+    (pointerEvent: React.PointerEvent<HTMLDivElement>, eventId: string, draggable: boolean) => {
+      if (!draggable || pointerEvent.button !== 0) {
+        return;
+      }
+
+      pointerEvent.stopPropagation();
+      pointerEvent.currentTarget.setPointerCapture(pointerEvent.pointerId);
+      pointerDragRef.current = {
+        eventId,
+        pointerId: pointerEvent.pointerId,
+        originX: pointerEvent.clientX,
+        originY: pointerEvent.clientY,
+        active: false,
+      };
+    },
+    [],
+  );
+
+  const handleChipPointerMove = useCallback(
+    (pointerEvent: React.PointerEvent<HTMLDivElement>) => {
+      const session = pointerDragRef.current;
+      if (!session || pointerEvent.pointerId !== session.pointerId) {
+        return;
+      }
+
+      if (!session.active) {
+        const distance = Math.hypot(
+          pointerEvent.clientX - session.originX,
+          pointerEvent.clientY - session.originY,
+        );
+        if (distance < 6) {
+          return;
+        }
+        session.active = true;
+        setDraggingEventId(session.eventId);
+      }
+
+      pointerEvent.preventDefault();
+      updateDropTargetFromPoint(pointerEvent.clientX, pointerEvent.clientY);
+    },
+    [updateDropTargetFromPoint],
+  );
+
+  const handleChipPointerUp = useCallback(
+    (pointerEvent: React.PointerEvent<HTMLDivElement>) => {
+      const session = pointerDragRef.current;
+      if (!session || pointerEvent.pointerId !== session.pointerId) {
+        return;
+      }
+
+      try {
+        pointerEvent.currentTarget.releasePointerCapture(pointerEvent.pointerId);
+      } catch {
+        // capture may already be released
+      }
+
+      if (session.active) {
+        suppressChipClickRef.current = true;
+        const element = document.elementFromPoint(pointerEvent.clientX, pointerEvent.clientY);
+        const cell = element?.closest('[data-calendar-drop-date]') as HTMLElement | null;
+        const iso = cell?.dataset.calendarDropDate;
+        const calendarEvent = events.find((item) => item.id === session.eventId);
+        if (iso && calendarEvent) {
+          void handleMoveEventToDate(calendarEvent, new Date(iso));
+        }
+      }
+
+      pointerDragRef.current = null;
+      endEventDrag();
+    },
+    [endEventDrag, events, handleMoveEventToDate],
+  );
+
+  const openCalendarEvent = useCallback(
+    (event: CalendarEventItem) => {
+      setEditEvent(resolveCalendarEventForEdit(event));
+      setEventModalReadOnly(
+        !canEditCalendarEvent(event, userId, username, displayName),
+      );
+      setModalOpen(true);
+    },
+    [displayName, resolveCalendarEventForEdit, userId, username],
+  );
+
+  const openCreateEvent = useCallback(() => {
+    setEditEvent(null);
+    setEventModalReadOnly(false);
+    setModalOpen(true);
+  }, []);
 
   const daysInMonth = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate();
   const firstDayOfMonth = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1).getDay();
@@ -240,6 +441,56 @@ export function CalendarView({
     return colors[Math.abs(hash) % colors.length];
   };
 
+  const renderEventChip = (
+    event: CalendarEventItem,
+    options: {
+      variant: 'month' | 'week';
+      color?: ReturnType<typeof getEventColor>;
+    },
+  ) => {
+    const draggable = canEditEvent(event);
+    const isDragging = draggingEventId === event.id;
+    const isMoving = movingEventId === event.id;
+    const color = options.color ?? getEventColor(event.id);
+    const textSize = options.variant === 'month' ? 'text-[10px]' : 'text-xs';
+    const padding = options.variant === 'month' ? 'px-2 py-1' : 'px-2 py-1.5';
+
+    return (
+      <div
+        key={event.id}
+        onPointerDown={(pointerEvent) =>
+          handleChipPointerDown(pointerEvent, event.id, draggable)
+        }
+        onPointerMove={handleChipPointerMove}
+        onPointerUp={handleChipPointerUp}
+        onPointerCancel={handleChipPointerUp}
+        onClick={(clickEvent) => {
+          clickEvent.stopPropagation();
+          if (suppressChipClickRef.current) {
+            suppressChipClickRef.current = false;
+            return;
+          }
+          openCalendarEvent(event);
+        }}
+        className={`${padding} ${textSize} rounded border ${color.border} ${color.bg} text-app-text font-medium flex items-center gap-1 min-w-0 shadow-sm ${color.hover} transition-colors select-none touch-none ${
+          draggable ? 'cursor-grab active:cursor-grabbing' : 'cursor-pointer'
+        } ${isDragging || isMoving ? 'opacity-50 ring-1 ring-accent/40' : ''}`}
+        title={draggable ? `${event.title} — drag to another day` : event.title}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full ${color.dot} shrink-0`} />
+        <span className="truncate flex-1 min-w-0">{event.title}</span>
+        <div className="shrink-0 scale-[0.72] origin-center pointer-events-none">
+          <Avatar
+            imageUrl={getCreatorAvatarUrl(event)}
+            initials={getCreatorInitial(event)}
+            size="xs"
+            loading="eager"
+          />
+        </div>
+      </div>
+    );
+  };
+
   const selectedEvents = selectedDate !== null ? getEventsForDate(selectedDate) : [];
   const selectedScheduled =
     selectedDate !== null ? getScheduledForDate(selectedDate) : [];
@@ -297,7 +548,7 @@ export function CalendarView({
             ) : null}
           </div>
           <button 
-            onClick={() => { setEditEvent(null); setModalOpen(true); }}
+            onClick={() => openCreateEvent()}
             className="flex items-center gap-2 bg-accent text-white px-4 py-2 rounded-full text-sm font-medium hover:bg-accent-hover transition-colors shadow-sm"
           >
             <FiCalendar className="h-4 w-4" />
@@ -363,27 +614,24 @@ export function CalendarView({
                     const dayEvents = getEventsForDate(date);
                     const dayScheduled = getScheduledForDate(date);
                     const isToday = new Date().getDate() === date && new Date().getMonth() === currentDate.getMonth() && new Date().getFullYear() === currentDate.getFullYear();
+                    const cellDate = new Date(currentDate.getFullYear(), currentDate.getMonth(), date);
+                    const dayKey = cellDate.toDateString();
+                    const isDropTarget = dropTargetDayKey === dayKey && draggingEventId !== null;
 
                     return (
                       <div 
                         key={date} 
+                        data-calendar-drop-date={cellDate.toISOString()}
                         onClick={() => setSelectedDate(date)}
-                        className={`border-r border-b border-app-border p-2 transition-colors relative min-h-[100px] cursor-pointer ${isSelected ? 'bg-accent/10' : 'hover:bg-app-inset/50'}`}
+                        className={`border-r border-b border-app-border p-2 transition-colors relative min-h-[100px] cursor-pointer ${
+                          isDropTarget ? 'bg-accent/15 ring-2 ring-inset ring-accent/35' : ''
+                        } ${isSelected ? 'bg-accent/10' : 'hover:bg-app-inset/50'}`}
                       >
                         <span className={`inline-flex items-center justify-center w-7 h-7 text-sm font-medium rounded-full ${isToday ? 'bg-accent text-white shadow-sm' : isSelected ? 'bg-accent/20 text-accent' : 'text-app-text'}`}>
                           {date}
                         </span>
                         <div className="mt-1 flex flex-col gap-1">
-                          {dayEvents.map(e => (
-                             <div 
-                               key={e.id} 
-                               onClick={(ev) => { ev.stopPropagation(); setEditEvent(e); setModalOpen(true); }}
-                               className="px-2 py-1 text-[10px] rounded border border-accent/20 bg-accent/5 text-app-text font-medium truncate flex items-center gap-1 shadow-sm hover:bg-accent/10 transition-colors"
-                             >
-                               <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0"></span>
-                               {e.title}
-                             </div>
-                          ))}
+                          {dayEvents.map((e) => renderEventChip(e, { variant: 'month' }))}
                           {dayScheduled.map((item) => (
                             <div
                               key={item.id}
@@ -421,33 +669,31 @@ export function CalendarView({
                      return d.getDate() === date.getDate() && d.getMonth() === date.getMonth() && d.getFullYear() === date.getFullYear();
                    });
                    const dayStr = ["MON", "TUE", "WED", "THU", "FRI", "SAT", "SUN"][i];
+                   const dayKey = date.toDateString();
+                   const isDropTarget = dropTargetDayKey === dayKey && draggingEventId !== null;
                    
                    return (
-                     <div key={i} className="flex-1 border-r border-app-border flex flex-col">
+                     <div
+                       key={i}
+                       data-calendar-drop-date={date.toISOString()}
+                       className={`flex-1 border-r border-app-border flex flex-col ${
+                         isDropTarget ? 'bg-accent/10 ring-2 ring-inset ring-accent/30' : ''
+                       }`}
+                     >
                         <div className="p-3 text-center border-b border-app-border bg-app-surface sticky top-0 z-10">
                            <div className="text-xs font-semibold text-app-muted">{dayStr}</div>
                            <div className={`text-lg font-bold mt-1 ${isToday ? 'text-accent' : ''}`}>{date.getDate()}</div>
                            <button 
-                             onClick={() => { setSelectedDate(date.getDate()); setEditEvent(null); setModalOpen(true); }}
+                             onClick={() => { setSelectedDate(date.getDate()); openCreateEvent(); }}
                              className="text-[11px] font-semibold text-accent mt-2 hover:underline"
                            >
                              Add event
                            </button>
                         </div>
                         <div className="flex-1 p-1 flex flex-col gap-1">
-                          {dayEvents.map(e => {
-                            const color = getEventColor(e.id);
-                            return (
-                              <div 
-                                key={e.id}
-                                onClick={() => { setEditEvent(e); setModalOpen(true); }}
-                                className={`px-2 py-1.5 text-xs rounded border ${color.border} ${color.bg} text-app-text font-medium truncate flex items-center gap-1.5 cursor-pointer ${color.hover}`}
-                              >
-                                <span className={`w-1.5 h-1.5 rounded-full ${color.dot} shrink-0`}></span>
-                                {e.title}
-                              </div>
-                            );
-                          })}
+                          {dayEvents.map((e) =>
+                            renderEventChip(e, { variant: 'week', color: getEventColor(e.id) }),
+                          )}
                           {dayScheduled.map((item) => (
                             <div
                               key={item.id}
@@ -474,7 +720,7 @@ export function CalendarView({
                     {selectedEvents.map(e => (
                       <div 
                         key={e.id} 
-                        onClick={() => { setEditEvent(e); setModalOpen(true); }}
+                        onClick={() => openCalendarEvent(e)}
                         className="px-4 py-3 border border-accent/30 bg-accent/5 rounded-xl cursor-pointer hover:bg-accent/10 transition-colors flex items-center gap-3"
                       >
                          <span className="text-sm font-semibold text-app-text">{new Date(e.startsAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -532,7 +778,7 @@ export function CalendarView({
                              return (
                                <div 
                                  key={e.id} 
-                                 onClick={() => { setEditEvent(e); setModalOpen(true); }}
+                                 onClick={() => openCalendarEvent(e)}
                                  className={`px-4 py-3 border ${color.border} ${color.bg} rounded-xl flex items-center justify-between cursor-pointer ${color.hover} transition-colors`}
                                >
                                   <div className="flex items-center gap-3">
@@ -639,7 +885,7 @@ export function CalendarView({
                  return (
                    <div 
                      key={e.id} 
-                     onClick={() => { setEditEvent(e); setModalOpen(true); }}
+                     onClick={() => openCalendarEvent(e)}
                      className="flex items-start gap-3 p-3 rounded-xl bg-app-card hover:bg-app-inset transition-colors border border-transparent hover:border-app-border group cursor-pointer"
                    >
                      <div className={`mt-1 w-2 h-2 rounded-full ${color.dot} shrink-0`}></div>
@@ -652,18 +898,29 @@ export function CalendarView({
                            e.taggedHubs?.[0]?.name ||
                            (e.conversationId || (e.taggedHubs?.length ?? 0) > 0 ? 'Hub event' : 'Private')}
                        </p>
-                       <div className="flex items-center gap-2 mt-2">
-                         <Avatar
-                           imageUrl={getCreatorAvatarUrl(e)}
-                           initials={getCreatorInitial(e)}
-                           size="xs"
-                         />
-                         <span className="text-[10px] font-medium text-app-muted">{creatorName}</span>
-                       </div>
+                       <p className="text-[10px] font-medium text-app-muted mt-2">{creatorName}</p>
+                       {e.isOwner && (e.invitees?.length ?? 0) > 0 ? (
+                         <div className="mt-2">
+                           <p className="text-[10px] font-semibold uppercase tracking-wide text-app-muted">
+                             Shared with
+                           </p>
+                           <CalendarSharedInviteeAvatars
+                             invitees={e.invitees ?? []}
+                             onItemClick={(clickEvent) => clickEvent.stopPropagation()}
+                           />
+                         </div>
+                       ) : null}
                      </div>
-                     <button className="opacity-0 group-hover:opacity-100 p-1.5 text-app-muted hover:text-app-text hover:bg-app-card rounded-full transition-all">
-                       <FiMoreHorizontal className="w-4 h-4" />
-                     </button>
+                     <div className="flex shrink-0 flex-col items-end gap-1">
+                       <Avatar
+                         imageUrl={getCreatorAvatarUrl(e)}
+                         initials={getCreatorInitial(e)}
+                         size="xs"
+                       />
+                       <button className="opacity-0 group-hover:opacity-100 p-1.5 text-app-muted hover:text-app-text hover:bg-app-card rounded-full transition-all">
+                         <FiMoreHorizontal className="w-4 h-4" />
+                       </button>
+                     </div>
                    </div>
                  );
                })}
@@ -692,7 +949,7 @@ export function CalendarView({
                   <FiCalendar className="w-6 h-6 text-app-muted mb-2" />
                   <p className="text-sm text-app-muted mb-3">No events on this day</p>
                   <button 
-                    onClick={() => { setEditEvent(null); setModalOpen(true); }}
+                    onClick={() => openCreateEvent()}
                     className="text-xs font-semibold bg-app-inset text-app-text px-3 py-1.5 rounded-lg hover:bg-app-card transition-colors"
                   >
                     Create event
@@ -706,15 +963,26 @@ export function CalendarView({
       <NewEventModal
         key={editEvent?.id ?? 'new-event'}
         open={modalOpen}
-        onClose={() => { setModalOpen(false); setEditEvent(null); }}
-        onCreated={() => {
+        onClose={() => { setModalOpen(false); setEditEvent(null); setEventModalReadOnly(false); }}
+        readOnly={eventModalReadOnly}
+        viewerUserId={userId}
+        viewerUsername={username}
+        viewerDisplayName={displayName}
+        onCalendarResponse={() => {
+          onRefresh();
+          onNotificationsRefresh?.();
+        }}
+        onCreated={(saved) => {
           toast.success('Event saved.');
+          if (saved) {
+            onEventSaved?.(saved);
+          }
           onRefresh();
           void loadScheduled();
         }}
         onDelete={() => editEvent && handleDelete(editEvent)}
         onUnauthorized={onUnauthorized}
-        editEvent={editEvent}
+        editEvent={editEventForModal}
         initialDate={modalInitialDate}
         hubOptions={hubOptions}
       />

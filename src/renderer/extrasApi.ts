@@ -38,6 +38,16 @@ export async function loadCalendarMentionableUsers(): Promise<
   return withToken((token) => window.electronAPI.getCalendarMentionableUsers(token));
 }
 
+export async function loadCalendarEventById(
+  eventId: string,
+): Promise<ApiResult<CalendarEventItem>> {
+  if (!window.electronAPI?.getCalendarEventById) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getCalendarEventById(token, eventId));
+}
+
 export async function createCalendarEvent(
   input: CreateCalendarEventInput,
 ): Promise<ApiResult<CalendarEventItem>> {

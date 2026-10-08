@@ -457,6 +457,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     token: string,
   ): Promise<ApiResult<import('./shared/extras').CalendarMentionableUser[]>> =>
     ipcRenderer.invoke('extras:calendar-mentionable-users', token),
+  getCalendarEventById: (
+    token: string,
+    eventId: string,
+  ): Promise<ApiResult<import('./shared/extras').CalendarEventItem>> =>
+    ipcRenderer.invoke('extras:calendar-event-by-id', token, eventId),
+  getCalendarEventTags: (
+    eventId: string,
+  ): Promise<import('./shared/calendarEventTags').CalendarEventTagSnapshot | null> =>
+    ipcRenderer.invoke('calendar:get-event-tags', eventId),
+  setCalendarEventTags: (
+    eventId: string,
+    snapshot: import('./shared/calendarEventTags').CalendarEventTagSnapshot,
+  ): Promise<void> => ipcRenderer.invoke('calendar:set-event-tags', eventId, snapshot),
+  getAllCalendarEventTags: (): Promise<
+    Record<string, import('./shared/calendarEventTags').CalendarEventTagSnapshot>
+  > => ipcRenderer.invoke('calendar:get-all-event-tags'),
   createCalendarEvent: (
     token: string,
     payloadJson: string,
@@ -828,8 +844,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('updater:download'),
   quitAndInstallUpdate: (): Promise<void> => ipcRenderer.invoke('updater:quit-and-install'),
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('updater:get-version'),
-  getDesktopLegalContext: (): Promise<{ isPackaged: boolean; version: string }> =>
-    ipcRenderer.invoke('app:get-desktop-legal-context'),
+  getDesktopLegalContext: (): Promise<{
+    isPackaged: boolean;
+    version: string;
+    acceptedLegalVersion: number | null;
+  }> => ipcRenderer.invoke('app:get-desktop-legal-context'),
+  acceptDesktopLegal: (version: number): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('app:accept-desktop-legal', version),
   quitDesktopApp: (): Promise<void> => ipcRenderer.invoke('app:quit'),
   getHardwareAccelerationDisabled: (): Promise<boolean> => ipcRenderer.invoke('app:get-hardware-acceleration-disabled'),
   setHardwareAccelerationDisabled: (disabled: boolean): Promise<void> => ipcRenderer.invoke('app:set-hardware-acceleration-disabled', disabled),

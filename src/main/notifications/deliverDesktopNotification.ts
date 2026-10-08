@@ -59,6 +59,11 @@ export function deliverDesktopNotification(
     return { ok: true, channel: 'native' };
   }
 
+  // Transparent overlay windows can destabilize external displays on macOS.
+  if (process.platform === 'darwin') {
+    return { ok: false, channel: 'native' };
+  }
+
   showCustomDesktopNotification(payload, onClick);
   return { ok: true, channel: 'overlay' };
 }

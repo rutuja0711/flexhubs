@@ -5,6 +5,7 @@ import {
   DESKTOP_PRIVACY_URL,
   DESKTOP_TERMS_URL,
   needsDesktopLegalAcceptance,
+  readAcceptedDesktopLegalVersion,
   storeAcceptedDesktopLegalVersion,
 } from '../shared/desktopLegal';
 
@@ -12,33 +13,64 @@ type DesktopLegalGateProps = {
   children: React.ReactNode;
 };
 
+function isNotificationOverlayRoute(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  return (
+    params.get('route') === 'notification' ||
+    hashParams.get('route') === 'notification' ||
+    hashParams.has('route=notification')
+  );
+}
+
 export function DesktopLegalGate({ children }: DesktopLegalGateProps) {
+  const skipGate = isNotificationOverlayRoute();
   const [checking, setChecking] = useState(true);
   const [mustAccept, setMustAccept] = useState(false);
   const [checkedTerms, setCheckedTerms] = useState(false);
 
   useEffect(() => {
+    if (skipGate) {
+      setChecking(false);
+      setMustAccept(false);
+      return;
+    }
+
     if (!window.electronAPI?.getDesktopLegalContext) {
       setChecking(false);
       setMustAccept(false);
       return;
     }
 
-    void window.electronAPI
-      .getDesktopLegalContext()
-      .then((context) => {
-        setMustAccept(needsDesktopLegalAcceptance(context.isPackaged));
-      })
-      .catch(() => {
+    void (async () => {
+      try {
+        const context = await window.electronAPI!.getDesktopLegalContext();
+        let accepted = context.acceptedLegalVersion;
+
+        if (accepted == null) {
+          const legacy = readAcceptedDesktopLegalVersion();
+          if (legacy != null && legacy === DESKTOP_LEGAL_VERSION) {
+            await window.electronAPI?.acceptDesktopLegal?.(legacy);
+            accepted = legacy;
+          }
+        }
+
+        setMustAccept(needsDesktopLegalAcceptance(context.isPackaged, accepted));
+      } catch {
         setMustAccept(false);
-      })
-      .finally(() => {
+      } finally {
         setChecking(false);
-      });
-  }, []);
+      }
+    })();
+  }, [skipGate]);
+
+  if (skipGate) {
+    return <>{children}</>;
+  }
 
   const handleAccept = () => {
     storeAcceptedDesktopLegalVersion(DESKTOP_LEGAL_VERSION);
+    void window.electronAPI?.acceptDesktopLegal?.(DESKTOP_LEGAL_VERSION);
     setMustAccept(false);
   };
 

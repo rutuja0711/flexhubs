@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { FiSearch, FiUserPlus, FiX } from 'react-icons/fi';
 import type { CalendarHubOption, CalendarMentionableUser } from '../../shared/extras';
 import {
@@ -10,21 +10,42 @@ import {
   mergeMentionUserIds,
   parseHubConversationIdsFromText,
   parseMentionUserIdsFromText,
+  resolveEventCanRespond,
+  resolveMyEventResponse,
 } from '../../shared/extras';
+import { CalendarEventInviteActions } from './CalendarEventInviteActions';
+import {
+  buildCalendarInviteesFromMentionUsers,
+  mergeCalendarEventTagFields,
+  readCalendarEventTagSnapshot,
+  readCalendarEventTagSnapshotAsync,
+  writeCalendarEventTagSnapshotAsync,
+} from '../../shared/calendarEventTags';
+import type { CalendarEventItem } from '../../shared/features';
 import { loadOrganizationMembers } from '../chatApi';
-import { createCalendarEvent, loadCalendarMentionableUsers } from '../extrasApi';
+import {
+  createCalendarEvent,
+  loadCalendarEventById,
+  loadCalendarMentionableUsers,
+} from '../extrasApi';
 import { CalendarNavIcon } from './ChatIcons';
+import { CalendarSharedInviteeAvatars } from './CalendarSharedInviteeAvatars';
 
 type NewEventModalProps = {
   open: boolean;
   onClose: () => void;
-  onCreated: () => void;
+  onCreated: (saved?: CalendarEventItem) => void;
   onDelete?: () => void;
   onUnauthorized: (status?: number) => boolean;
   conversationId?: string | null;
-  editEvent?: import('../../shared/features').CalendarEventItem | null;
+  editEvent?: CalendarEventItem | null;
   initialDate?: Date | null;
   hubOptions?: CalendarHubOption[];
+  readOnly?: boolean;
+  viewerUserId?: string | null;
+  viewerUsername?: string | null;
+  viewerDisplayName?: string | null;
+  onCalendarResponse?: () => void;
 };
 
 function channelIdsForHubConversations(
@@ -38,6 +59,25 @@ function channelIdsForHubConversations(
         .filter((id): id is string => Boolean(id)),
     ),
   ];
+}
+
+function formatWhenLabel(localValue: string): string {
+  if (!localValue) {
+    return 'Pick date and time';
+  }
+
+  const parsed = new Date(localValue);
+  if (Number.isNaN(parsed.getTime())) {
+    return localValue;
+  }
+
+  return parsed.toLocaleString(undefined, {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 function activeMentionQuery(value: string, cursor: number | null): string | null {
@@ -60,7 +100,21 @@ export function NewEventModal({
   editEvent = null,
   initialDate = null,
   hubOptions = [],
+  readOnly = false,
+  viewerUserId = null,
+  viewerUsername = null,
+  viewerDisplayName = null,
+  onCalendarResponse,
 }: NewEventModalProps) {
+  const isViewOnly = readOnly && Boolean(editEvent);
+  const showCalendarInviteActions =
+    isViewOnly &&
+    editEvent &&
+    (resolveEventCanRespond(editEvent, viewerUserId, viewerUsername, viewerDisplayName) ||
+      editEvent.canRespond === true);
+  const calendarInviteStatus = editEvent
+    ? resolveMyEventResponse(editEvent, viewerUserId, viewerUsername, viewerDisplayName)
+    : null;
   const notesRef = useRef<HTMLTextAreaElement>(null);
   const [title, setTitle] = useState('');
   const [startsAtLocal, setStartsAtLocal] = useState(defaultEventDateTimeLocal());
@@ -78,46 +132,33 @@ export function NewEventModal({
   const [error, setError] = useState('');
   const initialDateMs = initialDate?.getTime() ?? null;
   const hubOptionsRef = useRef(hubOptions);
+  const inviteeSourceRef = useRef<CalendarEventItem | null>(null);
+  const editEventRef = useRef(editEvent);
+  editEventRef.current = editEvent;
   hubOptionsRef.current = hubOptions;
-  useEffect(() => {
-    if (!open) {
-      setMembersLoading(false);
-      return;
-    }
 
-    let cancelled = false;
-
-    setTitle(editEvent?.title ?? '');
-    
-    if (editEvent?.startsAt) {
-      try {
-        const d = new Date(editEvent.startsAt);
-        const localIso = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-        setStartsAtLocal(localIso);
-      } catch {
-        setStartsAtLocal(defaultEventDateTimeLocal());
-      }
-    } else if (initialDate) {
-      const now = new Date(Date.now() + 60 * 60 * 1000);
-      const target = new Date(initialDate.getFullYear(), initialDate.getMonth(), initialDate.getDate(), now.getHours(), now.getMinutes());
-      const pad = (value: number) => String(value).padStart(2, '0');
-      setStartsAtLocal(`${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}T${pad(target.getHours())}:${pad(target.getMinutes())}`);
-    } else {
-      setStartsAtLocal(defaultEventDateTimeLocal());
-    }
-    
-    setDescription(editEvent?.description ?? editEvent?.notes ?? '');
-
-    const inviteeIdsFromEvent = (editEvent?.invitees ?? [])
+  const mergeInviteeFieldsFromSource = (
+    source: Pick<CalendarEventItem, 'invitees' | 'mentionUserIds'>,
+    mode: 'replace' | 'merge' = 'merge',
+  ) => {
+    const inviteeIdsFromEvent = (source.invitees ?? [])
       .map((invitee) => invitee.userId)
       .filter((id): id is string => Boolean(id));
     const initialSelectedIds = [
-      ...new Set([...inviteeIdsFromEvent, ...(editEvent?.mentionUserIds ?? [])]),
+      ...new Set([...inviteeIdsFromEvent, ...(source.mentionUserIds ?? [])]),
     ];
-    setSelectedUserIds(initialSelectedIds);
-    setRemovedInviteeIds([]);
 
-    const seedPeopleFromInvitees = (editEvent?.invitees ?? []).map((invitee, index) => {
+    setSelectedUserIds((current) =>
+      mode === 'replace'
+        ? initialSelectedIds
+        : [...new Set([...current, ...initialSelectedIds])],
+    );
+
+    if (mode === 'replace') {
+      setRemovedInviteeIds([]);
+    }
+
+    const seedPeopleFromInvitees = (source.invitees ?? []).map((invitee, index) => {
       const username = invitee.username?.trim() || '';
       const name = invitee.name?.trim() || username || 'Teammate';
       const id =
@@ -126,7 +167,7 @@ export function NewEventModal({
       return { id, username: username || name, name };
     });
 
-    for (const userId of editEvent?.mentionUserIds ?? []) {
+    for (const userId of source.mentionUserIds ?? []) {
       if (!userId || seedPeopleFromInvitees.some((person) => person.id === userId)) {
         continue;
       }
@@ -137,22 +178,129 @@ export function NewEventModal({
       });
     }
 
-    if (seedPeopleFromInvitees.length > 0) {
-      setMentionUsers(seedPeopleFromInvitees);
+    setMentionUsers((current) => {
+      const byId = new Map(current.map((person) => [person.id, person]));
+      for (const person of seedPeopleFromInvitees) {
+        byId.set(person.id, person);
+      }
+      return [...byId.values()];
+    });
+  };
+
+  useLayoutEffect(() => {
+    if (!open || !editEvent) {
+      return;
     }
-    const hubIdsFromEvent = [
-      ...(editEvent?.taggedHubs?.map((hub) => hub.conversationId).filter(Boolean) ?? []),
-      editEvent?.conversationId,
-      !editEvent && conversationId ? conversationId : null,
-    ].filter((id): id is string => Boolean(id));
-    setSelectedHubConversationIds([...new Set(hubIdsFromEvent)]);
-    setPeopleQuery('');
-    setHubQuery('');
-    setMentionQuery(null);
-    setError('');
-    setMembersError('');
-    setMembersLoading(true);
-    void loadCalendarMentionableUsers().then(async (result) => {
+
+    const cached = readCalendarEventTagSnapshot(editEvent.id);
+    const merged = mergeCalendarEventTagFields(editEvent, cached ?? undefined);
+    inviteeSourceRef.current = merged;
+    mergeInviteeFieldsFromSource(merged, 'replace');
+  }, [open, editEvent?.id]);
+
+  useEffect(() => {
+    if (!open) {
+      setMembersLoading(false);
+      inviteeSourceRef.current = null;
+      return;
+    }
+
+    let cancelled = false;
+    const activeEditEvent = editEventRef.current;
+
+    void (async () => {
+      let eventForForm: CalendarEventItem | null = activeEditEvent;
+
+      if (activeEditEvent) {
+        const tags = await readCalendarEventTagSnapshotAsync(activeEditEvent.id);
+        eventForForm = mergeCalendarEventTagFields(activeEditEvent, tags ?? undefined);
+        inviteeSourceRef.current = eventForForm;
+        if (!cancelled) {
+          mergeInviteeFieldsFromSource(eventForForm, 'merge');
+        }
+      } else {
+        inviteeSourceRef.current = null;
+        if (!cancelled) {
+          setSelectedUserIds([]);
+          setRemovedInviteeIds([]);
+          setMentionUsers([]);
+        }
+      }
+
+      if (cancelled) {
+        return;
+      }
+
+      setTitle(eventForForm?.title ?? '');
+
+      if (eventForForm?.startsAt) {
+        try {
+          const d = new Date(eventForForm.startsAt);
+          const localIso = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+            .toISOString()
+            .slice(0, 16);
+          setStartsAtLocal(localIso);
+        } catch {
+          setStartsAtLocal(defaultEventDateTimeLocal());
+        }
+      } else if (initialDate) {
+        const now = new Date(Date.now() + 60 * 60 * 1000);
+        const target = new Date(
+          initialDate.getFullYear(),
+          initialDate.getMonth(),
+          initialDate.getDate(),
+          now.getHours(),
+          now.getMinutes(),
+        );
+        const pad = (value: number) => String(value).padStart(2, '0');
+        setStartsAtLocal(
+          `${target.getFullYear()}-${pad(target.getMonth() + 1)}-${pad(target.getDate())}T${pad(target.getHours())}:${pad(target.getMinutes())}`,
+        );
+      } else {
+        setStartsAtLocal(defaultEventDateTimeLocal());
+      }
+
+      setDescription(eventForForm?.description ?? eventForForm?.notes ?? '');
+
+      if (activeEditEvent?.id) {
+        const tags = await readCalendarEventTagSnapshotAsync(activeEditEvent.id);
+        const detailResult = await loadCalendarEventById(activeEditEvent.id);
+
+        if (!cancelled) {
+          if (detailResult.ok) {
+            eventForForm = mergeCalendarEventTagFields(
+              detailResult.data,
+              tags ?? undefined,
+              activeEditEvent,
+              eventForForm ?? undefined,
+            );
+          } else {
+            eventForForm = mergeCalendarEventTagFields(
+              activeEditEvent,
+              tags ?? undefined,
+              eventForForm ?? undefined,
+            );
+          }
+
+          inviteeSourceRef.current = eventForForm;
+          mergeInviteeFieldsFromSource(eventForForm, 'merge');
+        }
+      }
+
+      const hubIdsFromEvent = [
+        ...(eventForForm?.taggedHubs?.map((hub) => hub.conversationId).filter(Boolean) ?? []),
+        eventForForm?.conversationId,
+        !activeEditEvent && conversationId ? conversationId : null,
+      ].filter((id): id is string => Boolean(id));
+      setSelectedHubConversationIds([...new Set(hubIdsFromEvent)]);
+      setPeopleQuery('');
+      setHubQuery('');
+      setMentionQuery(null);
+      setError('');
+      setMembersError('');
+      setMembersLoading(true);
+
+      const result = await loadCalendarMentionableUsers();
       let finalUsers: CalendarMentionableUser[] = [];
 
       if (!result.ok) {
@@ -197,21 +345,24 @@ export function NewEventModal({
         return;
       }
 
+      const inviteeSource = inviteeSourceRef.current ?? eventForForm ?? activeEditEvent;
       const { people, selectedUserIds: inviteeUserIds } = mergeCalendarPeopleWithInvitees(
         finalUsers,
-        editEvent?.invitees,
+        inviteeSource?.invitees,
       );
-      const descriptionText = editEvent?.description ?? editEvent?.notes ?? '';
+      const descriptionText = inviteeSource?.description ?? inviteeSource?.notes ?? '';
       const mentionIdsFromNotes = parseMentionUserIdsFromText(descriptionText, people);
       const hubIdsFromNotes = parseHubConversationIdsFromText(
         descriptionText,
         hubOptionsRef.current,
       );
-      const selectedIds = [...new Set([
-        ...inviteeUserIds,
-        ...mentionIdsFromNotes,
-        ...(editEvent?.mentionUserIds || [])
-      ])];
+      const selectedIds = [
+        ...new Set([
+          ...inviteeUserIds,
+          ...mentionIdsFromNotes,
+          ...(inviteeSource?.mentionUserIds ?? []),
+        ]),
+      ];
 
       setMentionUsers((current) => {
         const byId = new Map(current.map((person) => [person.id, person]));
@@ -221,94 +372,36 @@ export function NewEventModal({
         return [...byId.values()];
       });
       setSelectedUserIds((current) => [...new Set([...current, ...selectedIds])]);
-      setSelectedHubConversationIds((current) => [
-        ...new Set([...current, ...hubIdsFromNotes]),
-      ]);
+      setSelectedHubConversationIds((current) => [...new Set([...current, ...hubIdsFromNotes])]);
       setMembersLoading(false);
-    });
+    })();
 
     return () => {
       cancelled = true;
     };
-  }, [
-    conversationId,
-    editEvent?.id,
-    editEvent?.invitees,
-    editEvent?.mentionUserIds,
-    initialDateMs,
-    open,
-    onUnauthorized,
-  ]);
+  }, [conversationId, editEvent?.id, initialDateMs, open, onUnauthorized]);
 
   const displayedInvitees = useMemo(() => {
     const byId = new Map<string, CalendarMentionableUser>();
-    const inviteeByUserId = new Map(
-      (editEvent?.invitees ?? [])
-        .filter((invitee) => invitee.userId)
-        .map((invitee) => [invitee.userId as string, invitee]),
-    );
-
-    const addUser = (user: CalendarMentionableUser) => {
-      if (removedInviteeIds.includes(user.id)) {
-        return;
-      }
-      byId.set(user.id, user);
-    };
-
-    const resolvePerson = (id: string): CalendarMentionableUser => {
-      const fromPeople = mentionUsers.find((entry) => entry.id === id);
-      if (fromPeople) {
-        return fromPeople;
-      }
-
-      const invitee = inviteeByUserId.get(id);
-      if (invitee) {
-        const username = invitee.username?.trim() || '';
-        const name = invitee.name?.trim() || username || 'Teammate';
-        return {
-          id,
-          username: username || name,
-          name,
-        };
-      }
-
-      return {
-        id,
-        username: 'member',
-        name: 'Tagged member',
-      };
-    };
 
     for (const id of selectedUserIds) {
-      if (!id) {
-        continue;
-      }
-      addUser(resolvePerson(id));
-    }
-
-    for (const [index, invitee] of (editEvent?.invitees ?? []).entries()) {
-      const username = invitee.username?.trim() || '';
-      const name = invitee.name?.trim() || username || 'Teammate';
-      const id =
-        invitee.userId ??
-        (username ? `invitee:${username.toLowerCase()}` : `invitee-${index}-${name.toLowerCase()}`);
-
-      if (byId.has(id)) {
+      if (!id || removedInviteeIds.includes(id)) {
         continue;
       }
 
-      addUser(resolvePerson(id));
-    }
-
-    for (const id of editEvent?.mentionUserIds ?? []) {
-      if (!id || byId.has(id)) {
-        continue;
-      }
-      addUser(resolvePerson(id));
+      const fromPeople = mentionUsers.find((entry) => entry.id === id);
+      byId.set(
+        id,
+        fromPeople ?? {
+          id,
+          username: 'member',
+          name: 'Tagged member',
+        },
+      );
     }
 
     return [...byId.values()];
-  }, [editEvent?.invitees, editEvent?.mentionUserIds, mentionUsers, removedInviteeIds, selectedUserIds]);
+  }, [mentionUsers, removedInviteeIds, selectedUserIds]);
 
   const peopleSearchActive = peopleQuery.trim().length > 0;
 
@@ -382,6 +475,12 @@ export function NewEventModal({
       .slice(0, 6);
   }, [mentionQuery, mentionUsers, selectedUserIds]);
 
+  const viewNotes = description.trim();
+  const viewHubNames = displayedHubTags.map((hub) => hub.name);
+  const organizerLabel =
+    editEvent?.sharedBy?.trim() ||
+    (editEvent?.conversationName ? `Hub: ${editEvent.conversationName}` : '');
+
   if (!open) {
     return null;
   }
@@ -402,7 +501,14 @@ export function NewEventModal({
       return;
     }
 
-    const mentionUserIds = mergeMentionUserIds(description, mentionUsers, selectedUserIds);
+    // Match web CreateCalendarEventModal: invitees are mentionUserIds only.
+    const mentionUserIds = [
+      ...new Set(
+        selectedUserIds.filter(
+          (id) => id && !id.startsWith('invitee:') && !id.startsWith('invitee-'),
+        ),
+      ),
+    ];
     const hubConversationIds = mergeHubConversationIds(
       description,
       hubOptions,
@@ -449,11 +555,33 @@ export function NewEventModal({
       return;
     }
 
-    onCreated();
+    const eventId = result.data.id || editEvent?.id;
+    if (!eventId) {
+      setError('Event saved but the app did not receive an event id.');
+      return;
+    }
+
+    const invitees = buildCalendarInviteesFromMentionUsers(selectedUserIds, mentionUsers);
+    const savedEvent = mergeCalendarEventTagFields(
+      { ...result.data, id: eventId },
+      { mentionUserIds, invitees },
+    );
+    await writeCalendarEventTagSnapshotAsync(eventId, {
+      mentionUserIds,
+      invitees,
+    });
+
+    onCreated(savedEvent as CalendarEventItem);
     onClose();
   };
 
   const addPerson = (user: CalendarMentionableUser) => {
+    setMentionUsers((current) => {
+      if (current.some((entry) => entry.id === user.id)) {
+        return current;
+      }
+      return [...current, user];
+    });
     setSelectedUserIds((current) => (current.includes(user.id) ? current : [...current, user.id]));
     setPeopleQuery('');
   };
@@ -513,8 +641,14 @@ export function NewEventModal({
               <CalendarNavIcon className="h-5 w-5" />
             </div>
             <div>
-              <h2 className="text-base font-semibold text-app-text tracking-tight">{editEvent ? 'Edit event' : 'New event'}</h2>
-              <p className="text-xs text-app-muted">Schedule an event or deadline</p>
+              <h2 className="text-base font-semibold text-app-text tracking-tight">
+                {isViewOnly ? 'View event' : editEvent ? 'Edit event' : 'New event'}
+              </h2>
+              <p className="text-xs text-app-muted">
+                {isViewOnly
+                  ? 'You were invited to this event — only the organizer can edit it.'
+                  : 'Schedule an event or deadline'}
+              </p>
             </div>
           </div>
           <button
@@ -527,219 +661,307 @@ export function NewEventModal({
           </button>
         </div>
 
-        <form onSubmit={(event) => void handleSubmit(event)} className="space-y-4">
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-app-muted">
-              Title
-            </label>
-            <input
-              type="text"
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="Team sync, deadline, reminder..."
-              className="w-full rounded-xl border border-app-border bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-            />
-          </div>
+        <form
+          onSubmit={(event) => {
+            if (isViewOnly) {
+              event.preventDefault();
+              return;
+            }
+            void handleSubmit(event);
+          }}
+          className="space-y-4"
+        >
+          {isViewOnly ? (
+            <>
+              <div className="rounded-2xl border border-app-border bg-app-card p-4 space-y-4">
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-app-muted">
+                    Event
+                  </p>
+                  <p className="mt-1 text-lg font-semibold text-app-text">{title.trim() || 'Untitled event'}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-app-muted">
+                    When
+                  </p>
+                  <p className="mt-1 text-sm text-app-text">{formatWhenLabel(startsAtLocal)}</p>
+                </div>
+                {organizerLabel ? (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-app-muted">
+                      Organizer
+                    </p>
+                    <p className="mt-1 text-sm text-app-text">{organizerLabel}</p>
+                  </div>
+                ) : null}
+              </div>
 
-          <div>
-            <label className="mb-1.5 block text-xs font-medium text-app-muted">
-              When
-            </label>
-            <div className="relative">
-              <input
-                type="datetime-local"
-                value={startsAtLocal}
-                onChange={(event) => setStartsAtLocal(event.target.value)}
-                className="datetime-input w-full rounded-xl border border-app-border bg-app-surface-input px-3.5 py-2.5 pr-10 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-              />
-              <CalendarNavIcon className="pointer-events-none absolute top-1/2 right-3.5 h-4 w-4 -translate-y-1/2 text-app-muted" />
-            </div>
-            <p className="mt-1.5 text-xs text-app-muted">Events must be at least 1 minute from now.</p>
-          </div>
+              {(editEvent?.invitees?.length ?? 0) > 0 ? (
+                <div className="rounded-2xl border border-app-border bg-app-card p-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-app-muted">
+                    Shared with
+                  </p>
+                  <CalendarSharedInviteeAvatars invitees={editEvent?.invitees ?? []} />
+                </div>
+              ) : null}
 
-          <div>
-            <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-app-muted">
-              Tag people
-            </label>
-            <div className="rounded-2xl border border-app-border bg-app-card p-3.5">
-              <div className="relative">
-                <FiSearch className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-app-muted" />
+              {viewHubNames.length > 0 ? (
+                <div className="rounded-2xl border border-app-border bg-app-card p-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-app-muted">
+                    Hubs
+                  </p>
+                  <p className="mt-2 text-sm text-app-text">{viewHubNames.join(', ')}</p>
+                </div>
+              ) : null}
+
+              {viewNotes ? (
+                <div className="rounded-2xl border border-app-border bg-app-card p-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-app-muted">
+                    Notes
+                  </p>
+                  <p className="mt-2 whitespace-pre-wrap text-sm text-app-text">{viewNotes}</p>
+                </div>
+              ) : null}
+
+              {isViewOnly &&
+              editEvent &&
+              (showCalendarInviteActions ||
+                calendarInviteStatus === 'ACCEPTED' ||
+                calendarInviteStatus === 'DECLINED') ? (
+                <CalendarEventInviteActions
+                  eventId={editEvent.id}
+                  responseStatus={calendarInviteStatus}
+                  onComplete={onCalendarResponse}
+                  onUnauthorized={onUnauthorized}
+                />
+              ) : null}
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-app-muted">
+                  Title
+                </label>
                 <input
                   type="text"
-                  value={peopleQuery}
-                  onChange={(event) => setPeopleQuery(event.target.value)}
-                  placeholder="Search teammates to invite..."
-                  className="w-full rounded-full border border-app-border bg-app-surface-input py-2.5 pr-3 pl-9 text-xs text-app-text outline-none focus:border-accent focus:ring-1 focus:ring-accent/20"
+                  value={title}
+                  onChange={(event) => setTitle(event.target.value)}
+                  placeholder="Team sync, deadline, reminder..."
+                  className="w-full rounded-xl border border-app-border bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
                 />
               </div>
 
-              <div className="mt-3 min-h-8 flex flex-wrap gap-2">
-                {displayedInvitees.map((user) => (
-                  <span
-                    key={user.id}
-                    className="inline-flex items-center gap-2 rounded-full border border-accent/35 bg-accent/15 px-3 py-1.5 text-xs font-medium text-app-text"
-                  >
-                    <FiUserPlus className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" />
-                    @{user.username || user.name}
-                    <button
-                      type="button"
-                      aria-label={`Remove ${user.name}`}
-                      className="text-accent hover:text-accent-hover transition-colors"
-                      onClick={() => removePerson(user.id)}
-                    >
-                      <FiX className="h-3.5 w-3.5" />
-                    </button>
-                  </span>
-                ))}
-              </div>
-
-              <p className="mt-3 text-xs text-app-muted">
-                Only tagged people will see this event besides you.
-              </p>
-
-              {membersError ? (
-                <p className="mt-2 text-xs text-accent-soft">{membersError}</p>
-              ) : null}
-
-              {peopleSearchActive && membersLoading ? (
-                <p className="mt-2 text-xs text-app-muted">Loading teammates…</p>
-              ) : null}
-
-              {peopleSearchActive && !membersLoading && filteredPeople.length > 0 ? (
-                <div className="mt-2 overflow-hidden rounded-xl border border-app-border bg-app-card">
-                  {filteredPeople.map((user) => (
-                    <button
-                      key={user.id}
-                      type="button"
-                      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs hover:bg-app-inset transition-colors"
-                      onClick={() => addPerson(user)}
-                    >
-                      <FiUserPlus className="h-3.5 w-3.5 text-accent-soft" />
-                      <span className="font-semibold text-app-text">{user.name}</span>
-                      <span className="text-app-muted">@{user.username}</span>
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          </div>
-
-          {hubOptions.length > 0 ? (
-            <div>
-              <label className="mb-1.5 block text-xs font-medium text-app-muted">
-                Tag hubs
-              </label>
-              <div className="rounded-2xl border border-app-border bg-app-card p-3.5">
-                <div className="relative">
-                  <FiSearch className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-app-muted" />
+              <div>
+                <label className="mb-1.5 block text-xs font-medium text-app-muted">
+                  When
+                </label>
+                <div className="relative overflow-hidden rounded-xl border border-app-border bg-app-surface-input focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20">
+                  <div className="pointer-events-none flex w-full items-stretch" aria-hidden>
+                    <span className="min-w-0 flex-1 px-3.5 py-2.5 text-sm text-app-text">
+                      {formatWhenLabel(startsAtLocal)}
+                    </span>
+                    <span className="flex shrink-0 items-center border-l border-app-border px-3.5 text-app-muted">
+                      <CalendarNavIcon className="h-4 w-4" />
+                    </span>
+                  </div>
                   <input
-                    type="text"
-                    value={hubQuery}
-                    onChange={(event) => setHubQuery(event.target.value)}
-                    placeholder="Search hubs to tag..."
-                    className="w-full rounded-xl border border-app-border bg-app-surface-input py-2.5 pr-3 pl-9 text-xs text-app-text outline-none focus:border-accent focus:ring-1 focus:ring-accent/20 transition-all"
+                    type="datetime-local"
+                    value={startsAtLocal}
+                    onChange={(event) => setStartsAtLocal(event.target.value)}
+                    aria-label="Event date and time"
+                    className="datetime-input absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
                   />
                 </div>
+                <p className="mt-1.5 text-xs text-app-muted">
+                  Events must be at least 1 minute from now.
+                </p>
+              </div>
 
-                {displayedHubTags.length > 0 ? (
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    {displayedHubTags.map((hub) => (
+              <div>
+                <label className="mb-1.5 block text-[10px] font-semibold uppercase tracking-wider text-app-muted">
+                  Tag people
+                </label>
+                <div className="rounded-2xl border border-app-border bg-app-card p-3.5">
+                  <div className="relative">
+                    <FiSearch className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-app-muted" />
+                    <input
+                      type="text"
+                      value={peopleQuery}
+                      onChange={(event) => setPeopleQuery(event.target.value)}
+                      placeholder="Search teammates to invite..."
+                      className="w-full rounded-full border border-app-border bg-app-surface-input py-2.5 pr-3 pl-9 text-xs text-app-text outline-none focus:border-accent focus:ring-1 focus:ring-accent/20"
+                    />
+                  </div>
+
+                  <div className="mt-3 min-h-8 flex flex-wrap gap-2">
+                    {displayedInvitees.map((user) => (
                       <span
-                        key={hub.conversationId}
-                        className="inline-flex items-center gap-2 rounded-full border border-violet-500/35 bg-violet-500/15 px-3 py-1.5 text-xs font-medium text-app-text"
+                        key={user.id}
+                        className="inline-flex items-center gap-2 rounded-full border border-accent/35 bg-accent/15 px-3 py-1.5 text-xs font-medium text-app-text"
                       >
-                        <span className="text-violet-400" aria-hidden="true">
-                          #
-                        </span>
-                        {hub.name}
+                        <FiUserPlus className="h-3.5 w-3.5 shrink-0 text-accent" aria-hidden="true" />
+                        @{user.username || user.name}
                         <button
                           type="button"
-                          aria-label={`Remove ${hub.name}`}
-                          className="text-violet-400 hover:text-violet-300 transition-colors"
-                          onClick={() => removeHub(hub.conversationId)}
+                          aria-label={`Remove ${user.name}`}
+                          className="text-accent hover:text-accent-hover transition-colors"
+                          onClick={() => removePerson(user.id)}
                         >
                           <FiX className="h-3.5 w-3.5" />
                         </button>
                       </span>
                     ))}
                   </div>
-                ) : null}
 
-                <p className="mt-3 text-xs text-app-muted">
-                  Tagged hubs see this event on their calendar. You can also type #hub-name in notes.
-                </p>
+                  <p className="mt-3 text-xs text-app-muted">
+                    Only tagged people will see this event besides you.
+                  </p>
 
-                {filteredHubs.length > 0 ? (
-                  <div className="mt-2 overflow-hidden rounded-xl border border-app-border bg-app-card">
-                    {filteredHubs.map((hub) => (
+                  {membersError ? (
+                    <p className="mt-2 text-xs text-accent-soft">{membersError}</p>
+                  ) : null}
+
+                  {peopleSearchActive && membersLoading ? (
+                    <p className="mt-2 text-xs text-app-muted">Loading teammates…</p>
+                  ) : null}
+
+                  {peopleSearchActive && !membersLoading && filteredPeople.length > 0 ? (
+                    <div className="mt-2 overflow-hidden rounded-xl border border-app-border bg-app-card">
+                      {filteredPeople.map((user) => (
+                        <button
+                          key={user.id}
+                          type="button"
+                          className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs hover:bg-app-inset transition-colors"
+                          onClick={() => addPerson(user)}
+                        >
+                          <FiUserPlus className="h-3.5 w-3.5 text-accent-soft" />
+                          <span className="font-semibold text-app-text">{user.name}</span>
+                          <span className="text-app-muted">@{user.username}</span>
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              {hubOptions.length > 0 ? (
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-app-muted">
+                    Tag hubs
+                  </label>
+                  <div className="rounded-2xl border border-app-border bg-app-card p-3.5">
+                    <div className="relative">
+                      <FiSearch className="pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2 text-app-muted" />
+                      <input
+                        type="text"
+                        value={hubQuery}
+                        onChange={(event) => setHubQuery(event.target.value)}
+                        placeholder="Search hubs to tag..."
+                        className="w-full rounded-xl border border-app-border bg-app-surface-input py-2.5 pr-3 pl-9 text-xs text-app-text outline-none focus:border-accent focus:ring-1 focus:ring-accent/20 transition-all"
+                      />
+                    </div>
+
+                    {displayedHubTags.length > 0 ? (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {displayedHubTags.map((hub) => (
+                          <span
+                            key={hub.conversationId}
+                            className="inline-flex items-center gap-2 rounded-full border border-violet-500/35 bg-violet-500/15 px-3 py-1.5 text-xs font-medium text-app-text"
+                          >
+                            <span className="text-violet-400" aria-hidden="true">
+                              #
+                            </span>
+                            {hub.name}
+                            <button
+                              type="button"
+                              aria-label={`Remove ${hub.name}`}
+                              className="text-violet-400 hover:text-violet-300 transition-colors"
+                              onClick={() => removeHub(hub.conversationId)}
+                            >
+                              <FiX className="h-3.5 w-3.5" />
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                    ) : null}
+
+                    <p className="mt-3 text-xs text-app-muted">
+                      Tagged hubs see this event on their calendar. You can also type #hub-name in notes.
+                    </p>
+
+                    {filteredHubs.length > 0 ? (
+                      <div className="mt-2 overflow-hidden rounded-xl border border-app-border bg-app-card">
+                        {filteredHubs.map((hub) => (
+                          <button
+                            key={hub.conversationId}
+                            type="button"
+                            className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs hover:bg-app-inset transition-colors"
+                            onClick={() => addHub(hub)}
+                          >
+                            <span className="font-semibold text-violet-400">#</span>
+                            <span className="font-semibold text-app-text">{hub.name}</span>
+                            <span className="text-app-muted">@{hub.slug}</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="relative">
+                <label className="mb-1.5 block text-xs font-medium text-app-muted">
+                  Notes
+                </label>
+                <textarea
+                  ref={notesRef}
+                  value={description}
+                  onChange={(event) =>
+                    updateDescription(event.target.value, event.target.selectionStart)
+                  }
+                  onClick={(event) =>
+                    updateDescription(
+                      event.currentTarget.value,
+                      event.currentTarget.selectionStart,
+                    )
+                  }
+                  onKeyUp={(event) =>
+                    updateDescription(
+                      event.currentTarget.value,
+                      event.currentTarget.selectionStart,
+                    )
+                  }
+                  placeholder="Private notes... Use @name to share with a teammate"
+                  rows={3}
+                  className="w-full resize-none rounded-xl border border-app-border bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
+                />
+                {mentionSuggestions.length > 0 ? (
+                  <div className="absolute right-0 bottom-full left-0 z-10 mb-1 rounded-2xl border border-app-border bg-app-surface backdrop-blur-xl p-1 shadow-xl">
+                    {mentionSuggestions.map((user) => (
                       <button
-                        key={hub.conversationId}
+                        key={user.id}
                         type="button"
-                        className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-xs hover:bg-app-inset transition-colors"
-                        onClick={() => addHub(hub)}
+                        className="flex w-full px-3 py-2 text-left text-xs hover:bg-app-inset rounded-xl transition-colors"
+                        onClick={() => insertMention(user)}
                       >
-                        <span className="font-semibold text-violet-400">#</span>
-                        <span className="font-semibold text-app-text">{hub.name}</span>
-                        <span className="text-app-muted">@{hub.slug}</span>
+                        <span className="font-semibold text-app-text">{user.name}</span>
+                        <span className="ml-2 text-app-muted">@{user.username}</span>
                       </button>
                     ))}
                   </div>
                 ) : null}
+                <p className="mt-1.5 text-xs text-app-muted">
+                  Teammates you add or @mention will be notified and see this event on their calendar.
+                </p>
               </div>
-            </div>
-          ) : null}
-
-          <div className="relative">
-            <label className="mb-1.5 block text-xs font-medium text-app-muted">
-              Notes
-            </label>
-            <textarea
-              ref={notesRef}
-              value={description}
-              onChange={(event) =>
-                updateDescription(event.target.value, event.target.selectionStart)
-              }
-              onClick={(event) =>
-                updateDescription(
-                  event.currentTarget.value,
-                  event.currentTarget.selectionStart,
-                )
-              }
-              onKeyUp={(event) =>
-                updateDescription(
-                  event.currentTarget.value,
-                  event.currentTarget.selectionStart,
-                )
-              }
-              placeholder="Private notes... Use @name to share with a teammate"
-              rows={3}
-              className="w-full resize-none rounded-xl border border-app-border bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
-            />
-            {mentionSuggestions.length > 0 ? (
-              <div className="absolute right-0 bottom-full left-0 z-10 mb-1 rounded-2xl border border-app-border bg-app-surface backdrop-blur-xl p-1 shadow-xl">
-                {mentionSuggestions.map((user) => (
-                  <button
-                    key={user.id}
-                    type="button"
-                    className="flex w-full px-3 py-2 text-left text-xs hover:bg-app-inset rounded-xl transition-colors"
-                    onClick={() => insertMention(user)}
-                  >
-                    <span className="font-semibold text-app-text">{user.name}</span>
-                    <span className="ml-2 text-app-muted">@{user.username}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            <p className="mt-1.5 text-xs text-app-muted">
-              Teammates you add or @mention will be notified and see this event on their calendar.
-            </p>
-          </div>
+            </>
+          )}
 
           {error ? <p className="text-xs text-accent-soft font-medium">{error}</p> : null}
 
           <div className="flex justify-between items-center pt-3 w-full">
             <div>
-              {editEvent && onDelete && (
+              {editEvent && onDelete && !isViewOnly ? (
                 <button
                   type="button"
                   className="rounded-xl px-3 py-2 text-xs font-semibold text-accent hover:bg-accent/10 transition-colors"
@@ -748,7 +970,7 @@ export function NewEventModal({
                 >
                   Delete event
                 </button>
-              )}
+              ) : null}
             </div>
             <div className="flex gap-2.5">
               <button
@@ -757,15 +979,17 @@ export function NewEventModal({
                 onClick={onClose}
                 disabled={saving}
               >
-                Cancel
+                {isViewOnly ? 'Close' : 'Cancel'}
               </button>
-              <button
-                type="submit"
-                disabled={saving}
-                className="rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-white shadow-md shadow-accent/20 hover:bg-accent-hover active:scale-[0.98] disabled:opacity-60 transition-all"
-              >
-                {saving ? 'Saving…' : editEvent ? 'Save event' : 'Create event'}
-              </button>
+              {!isViewOnly ? (
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-white shadow-md shadow-accent/20 hover:bg-accent-hover active:scale-[0.98] disabled:opacity-60 transition-all"
+                >
+                  {saving ? 'Saving…' : editEvent ? 'Save event' : 'Create event'}
+                </button>
+              ) : null}
             </div>
           </div>
         </form>

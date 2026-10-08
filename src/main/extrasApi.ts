@@ -83,6 +83,30 @@ export async function fetchCalendarEventsDetailed(
   return { ok: true, data: normalizeCalendarEventsDetailed(result.data) };
 }
 
+export async function fetchCalendarEventById(
+  token: string,
+  eventId: string,
+): Promise<ApiResult<CalendarEventItem>> {
+  const result = await apiGet<unknown>(
+    `${API_BASE_URL}/calendar/events/${eventId}`,
+    token,
+    'Calendar Event API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const events = normalizeCalendarEventsDetailed(result.data);
+  const event = events[0] ?? normalizeCalendarEventsDetailed([result.data])[0];
+
+  if (!event) {
+    return { ok: false, error: 'Event not found.' };
+  }
+
+  return { ok: true, data: event };
+}
+
 export async function fetchCalendarMentionableUsers(
   token: string,
 ): Promise<ApiResult<CalendarMentionableUser[]>> {
@@ -116,16 +140,12 @@ export async function createCalendarEvent(
 
   if (input.conversationIds?.length) {
     payload.conversationIds = input.conversationIds;
-    payload.taggedConversationIds = input.conversationIds;
   }
 
   if (input.mentionChannelIds?.length) {
     payload.mentionChannelIds = input.mentionChannelIds;
-    payload.channelIds = input.mentionChannelIds;
-    payload.taggedChannelIds = input.mentionChannelIds;
   } else if (input.channelIds?.length) {
     payload.channelIds = input.channelIds;
-    payload.taggedChannelIds = input.channelIds;
   }
 
   const result = await apiPost<unknown>(
@@ -156,12 +176,11 @@ export async function updateCalendarEvent(
   const payload: Record<string, unknown> = {};
   if (input.title !== undefined) payload.title = input.title;
   if (input.startsAt !== undefined) payload.startsAt = input.startsAt;
-  if (input.description !== undefined) payload.description = input.description.trim();
+  if (input.description !== undefined) {
+    payload.description = (input.description ?? '').trim();
+  }
   if (input.mentionUserIds !== undefined) {
     payload.mentionUserIds = input.mentionUserIds;
-    payload.inviteeIds = input.mentionUserIds;
-    payload.mentions = input.mentionUserIds;
-    payload.invitees = input.mentionUserIds;
   }
 
   if (input.conversationId !== undefined) {
@@ -170,16 +189,12 @@ export async function updateCalendarEvent(
 
   if (input.conversationIds !== undefined) {
     payload.conversationIds = input.conversationIds;
-    payload.taggedConversationIds = input.conversationIds;
   }
 
   if (input.mentionChannelIds !== undefined) {
     payload.mentionChannelIds = input.mentionChannelIds;
-    payload.channelIds = input.mentionChannelIds;
-    payload.taggedChannelIds = input.mentionChannelIds;
   } else if (input.channelIds !== undefined) {
     payload.channelIds = input.channelIds;
-    payload.taggedChannelIds = input.channelIds;
   }
 
   const result = await apiPatch<unknown>(

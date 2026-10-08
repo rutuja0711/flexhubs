@@ -24,10 +24,13 @@ export function storeAcceptedDesktopLegalVersion(version: number = DESKTOP_LEGAL
   localStorage.setItem(DESKTOP_LEGAL_STORAGE_KEY, String(version));
 }
 
-export function needsDesktopLegalAcceptance(isPackaged: boolean): boolean {
+export function needsDesktopLegalAcceptance(
+  isPackaged: boolean,
+  persistedVersion: number | null = readAcceptedDesktopLegalVersion(),
+): boolean {
   if (!isPackaged) {
     return false;
   }
 
-  return readAcceptedDesktopLegalVersion() !== DESKTOP_LEGAL_VERSION;
+  return persistedVersion !== DESKTOP_LEGAL_VERSION;
 }

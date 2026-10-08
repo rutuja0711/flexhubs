@@ -148,21 +148,21 @@
 
   input[type='datetime-local'].datetime-input {
     color-scheme: dark;
+    appearance: none;
+    -webkit-appearance: none;
   }
 
   input[type='datetime-local'].datetime-input::-webkit-calendar-picker-indicator {
-    cursor: pointer;
-    filter: invert(1) brightness(1.15);
-    opacity: 0.9;
+    display: none !important;
+    -webkit-appearance: none;
+    opacity: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
   }
 
   .light input[type='datetime-local'].datetime-input {
     color-scheme: light;
-  }
-
-  .light input[type='datetime-local'].datetime-input::-webkit-calendar-picker-indicator {
-    filter: none;
-    opacity: 0.75;
   }
 }
 

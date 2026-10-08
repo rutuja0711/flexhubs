@@ -358,6 +358,20 @@ declare global {
       getCalendarMentionableUsers: (
         token: string,
       ) => Promise<ApiResult<import('../shared/extras').CalendarMentionableUser[]>>;
+      getCalendarEventById: (
+        token: string,
+        eventId: string,
+      ) => Promise<ApiResult<import('../shared/extras').CalendarEventItem>>;
+      getCalendarEventTags: (
+        eventId: string,
+      ) => Promise<import('../shared/calendarEventTags').CalendarEventTagSnapshot | null>;
+      setCalendarEventTags: (
+        eventId: string,
+        snapshot: import('../shared/calendarEventTags').CalendarEventTagSnapshot,
+      ) => Promise<void>;
+      getAllCalendarEventTags: () => Promise<
+        Record<string, import('../shared/calendarEventTags').CalendarEventTagSnapshot>
+      >;
       createCalendarEvent: (
         token: string,
         payloadJson: string,
@@ -598,7 +612,12 @@ declare global {
       downloadUpdate: () => Promise<{ ok: boolean; error?: string }>;
       quitAndInstallUpdate: () => Promise<void>;
       getAppVersion: () => Promise<string>;
-      getDesktopLegalContext: () => Promise<{ isPackaged: boolean; version: string }>;
+      getDesktopLegalContext: () => Promise<{
+        isPackaged: boolean;
+        version: string;
+        acceptedLegalVersion: number | null;
+      }>;
+      acceptDesktopLegal: (version: number) => Promise<{ ok: boolean }>;
       quitDesktopApp: () => Promise<void>;
       getHardwareAccelerationDisabled: () => Promise<boolean>;
       setHardwareAccelerationDisabled: (disabled: boolean) => Promise<void>;

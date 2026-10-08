@@ -386,11 +386,53 @@ export function mergeMentionUserIds(
   return [...merged];
 }
 
+function normalizeCalendarInvite(record: Record<string, unknown>): CalendarEventInvitee | null {
+  const user =
+    asRecord(record.user) ??
+    asRecord(record.invitedUser) ??
+    asRecord(record.member) ??
+    null;
+  const userId =
+    readString(record.userId) ??
+    readString(record.invitedUserId) ??
+    readString(record.memberId) ??
+    (user ? readString(user.id) : null) ??
+    readString(record.id) ??
+    null;
+  const username =
+    readString(record.username) ??
+    (user ? readString(user.username) : null) ??
+    readString(record.handle) ??
+    '';
+  const name =
+    readString(record.name) ??
+    (user ? readString(user.name) ?? readString(user.displayName) : null) ??
+    username;
+  const status =
+    readString(record.status) ??
+    readString(record.responseStatus) ??
+    readString(record.response) ??
+    'PENDING';
+
+  if (!userId && !username && !name) {
+    return null;
+  }
+
+  return {
+    username,
+    name: name || username || 'Teammate',
+    userId,
+    status: status.toUpperCase(),
+    avatarUrl: (user ? resolveAvatarUrl(user) : null) ?? resolveAvatarUrl(record),
+  };
+}
+
 function normalizeInvitee(record: Record<string, unknown>): CalendarEventInvitee | null {
   const user = asRecord(record.user) ?? asRecord(record.member) ?? record;
   const userId =
-    readString(user.id) ??
     readString(record.userId) ??
+    readString(record.invitedUserId) ??
+    readString(user.id) ??
     readString(record.memberId) ??
     readString(record.id) ??
     null;
@@ -436,6 +478,18 @@ function extractCalendarMentionUserIds(record: Record<string, unknown>): string[
   ];
 
   for (const source of sources) {
+    for (const entry of extractArray(source, ['invites'])) {
+      const item = asRecord(entry);
+      if (!item) {
+        continue;
+      }
+
+      const invite = normalizeCalendarInvite(item);
+      if (invite?.userId) {
+        ids.add(invite.userId);
+      }
+    }
+
     for (const key of keys) {
       const value = source[key];
       if (!Array.isArray(value)) {
@@ -560,6 +614,7 @@ function extractCalendarTaggedHubs(record: Record<string, unknown>): CalendarTag
 function extractCalendarInvitees(record: Record<string, unknown>): CalendarEventInvitee[] {
   const data = asRecord(record.data);
   const keys = [
+    'invites',
     'responses',
     'mentions',
     'invitees',
@@ -572,6 +627,11 @@ function extractCalendarInvitees(record: Record<string, unknown>): CalendarEvent
     'mentionUserIds',
     'mentionResponses',
     'calendarResponses',
+    'eventInvitees',
+    'calendarInvitees',
+    'sharedWith',
+    'sharedWithUsers',
+    'sharedUsers',
   ];
   const invitees: CalendarEventInvitee[] = [];
   const seen = new Set<string>();
@@ -599,7 +659,8 @@ function extractCalendarInvitees(record: Record<string, unknown>): CalendarEvent
         } else {
           const item = asRecord(entry);
           if (item) {
-            invitee = normalizeInvitee(item);
+            invitee =
+              key === 'invites' ? normalizeCalendarInvite(item) : normalizeInvitee(item);
           }
         }
 
@@ -845,6 +906,49 @@ export function resolveEventCreatorAvatarUrl(
   }
 
   return null;
+}
+
+export function canEditCalendarEvent(
+  event: Pick<
+    CalendarEventItem,
+    'isOwner' | 'createdById' | 'invitees' | 'sharedBy' | 'mentionUserIds'
+  >,
+  userId: string | null,
+  username: string | null,
+  displayName: string | null,
+): boolean {
+  if (event.isOwner === false) {
+    return false;
+  }
+
+  if (userId && event.createdById && userId === event.createdById) {
+    return true;
+  }
+
+  if (event.isOwner === true) {
+    return true;
+  }
+
+  if (userId) {
+    const listedAsInvitee = (event.invitees ?? []).some(
+      (invitee) => invitee.userId && invitee.userId === userId,
+    );
+    if (listedAsInvitee) {
+      return false;
+    }
+
+    const mentionedOnly = (event.mentionUserIds ?? []).includes(userId);
+    if (mentionedOnly && userId !== event.createdById) {
+      return false;
+    }
+  }
+
+  return isEventCreator(
+    event as CalendarEventItem,
+    userId,
+    username,
+    displayName,
+  );
 }
 
 export function isEventCreator(
@@ -1367,6 +1471,59 @@ export function defaultEventDateTimeLocal(): string {
 
   const pad = (value: number) => String(value).padStart(2, '0');
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+export function buildCalendarEventMoveUpdateInput(
+  event: Pick<
+    CalendarEventItem,
+    | 'id'
+    | 'title'
+    | 'startsAt'
+    | 'description'
+    | 'notes'
+    | 'mentionUserIds'
+    | 'conversationId'
+    | 'taggedHubs'
+  >,
+  newStartsAt: string,
+): UpdateCalendarEventInput {
+  const hubConversationIds = [
+    ...new Set(
+      (event.taggedHubs ?? [])
+        .map((hub) => hub.conversationId)
+        .filter((id): id is string => Boolean(id)),
+    ),
+  ];
+
+  return {
+    eventId: event.id,
+    title: event.title?.trim() || 'Untitled event',
+    startsAt: newStartsAt,
+    description: (event.description ?? event.notes ?? '').trim(),
+    mentionUserIds: [...(event.mentionUserIds ?? [])],
+    ...(event.conversationId != null && event.conversationId !== ''
+      ? { conversationId: event.conversationId }
+      : {}),
+    ...(hubConversationIds.length > 0 ? { conversationIds: hubConversationIds } : {}),
+  };
+}
+
+export function shiftCalendarEventToDate(startsAt: string, targetDate: Date): string {
+  const parsed = new Date(startsAt);
+  if (Number.isNaN(parsed.getTime())) {
+    return startsAt;
+  }
+
+  parsed.setFullYear(targetDate.getFullYear(), targetDate.getMonth(), targetDate.getDate());
+  return parsed.toISOString();
+}
+
+export function isSameCalendarDay(left: Date, right: Date): boolean {
+  return (
+    left.getFullYear() === right.getFullYear() &&
+    left.getMonth() === right.getMonth() &&
+    left.getDate() === right.getDate()
+  );
 }
 
 export function dateTimeLocalToIso(value: string): string {
