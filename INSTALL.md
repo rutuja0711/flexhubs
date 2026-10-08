@@ -35,6 +35,18 @@ open "/Applications/FlexHubs Desktop.app"
 
 ---
 
+## Windows — for end users (install once, then use Start Menu)
+
+**Do not** run the app from the Downloads folder every day. **Install once:**
+
+1. Download **`FlexHubs-Desktop-Setup.exe`** from Releases (not `FlexHubs Desktop.exe`, not a zip).
+2. Double-click **`FlexHubs-Desktop-Setup.exe`** once and wait until FlexHubs opens (install + first launch).
+3. Next time, open **Start Menu → FlexHubs Desktop** (or the Desktop shortcut). **Do not** open the Setup file in Downloads again.
+
+If opening the downloaded file only launches the app with **no install** and **no Start Menu entry**, the wrong file was uploaded or downloaded — it must be **`FlexHubs-Desktop-Setup.exe`** (the Squirrel installer), not the raw app executable.
+
+**Install location:** Squirrel installs per-user to `%LocalAppData%\FlexHubsDesktop`. There is **no “choose folder” wizard** in the current installer (unlike some MSI wizards). To pin elsewhere, use the Start Menu shortcut after install.
+
 ## Windows — reliable method (Setup.exe)
 
 ### Before sending the app
@@ -204,10 +216,30 @@ Calls need **two** things that `npm start` often has but a **downloaded DMG/Setu
 
 **If calls work locally but not from the installed app:**
 
-1. Confirm GitHub repo **Settings → Secrets and variables → Actions** includes `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` (copy from the web app env).
-2. Push to `main` (or re-run **Build Desktop App**) so a **new** `desktop-latest` release is produced, then reinstall.
-3. On Mac, allow **FlexHubs Desktop** (not Electron) for mic/camera.
-4. Optional: your API can return `supabaseUrl` and `supabaseAnonKey` in the **`GET /realtime/token`** JSON so desktop builds work even without baked-in env vars.
+Chat uses HTTPS; **calls also need Supabase realtime** (ringing, accept, hub meetings, join-request). `npm start` reads `.env`; **packaged builds bake env in at compile time**.
+
+1. Add to **`flexhubs/.env`** (same values as the web app):
+
+   ```
+   VITE_SUPABASE_URL=https://xxxx.supabase.co
+   VITE_SUPABASE_ANON_KEY=eyJ...
+   ```
+
+2. Rebuild and republish — the verify step runs automatically:
+
+   ```bash
+   npm run release:mac:stage
+   ```
+
+   If Supabase vars are missing, the script **stops** with instructions (calls would fail in the DMG).
+
+3. Upload **`out/release/`** to GitHub **`desktop-latest`** (or `npm run release:mac` with `gh`).
+
+4. For CI: repo **Settings → Secrets → Actions** must include **`VITE_SUPABASE_URL`** and **`VITE_SUPABASE_ANON_KEY`**, then re-run **Build Desktop App**.
+
+5. On Mac, allow **FlexHubs Desktop** (not Electron) for mic/camera in System Settings.
+
+6. Meeting **join-request / respond** APIs use `POST /calls/meetings/join-request` and `POST /calls/meetings/join-request/respond` with `requestId` + `approved` (desktop app aligned with this).
 
 **Quick local production test:** `VITE_SUPABASE_URL=... VITE_SUPABASE_ANON_KEY=... npm run make:mac` and install that DMG — if calls work, CI secrets were the issue.
 

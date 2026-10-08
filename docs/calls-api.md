@@ -108,9 +108,12 @@ Response includes `url`, `token`, `roomName`, `engine`, and optionally `canModer
 {
   "conversationId": "uuid",
   "requestId": "uuid",
-  "approved": true
+  "approved": true,
+  "callId": "uuid"
 }
 ```
+
+Optional legacy fields some builds accept: `participantIdentity`, `accept`.
 
 ## Realtime signaling
 

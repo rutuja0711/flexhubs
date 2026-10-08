@@ -625,7 +625,7 @@ const MessageRow = memo(function MessageRow({
             </div>
 
             <div
-              className={`mb-1 flex shrink-0 items-center gap-0.5 rounded-xl border border-app-border/80 bg-app-surface/98 dark:bg-app-elevated/95 backdrop-blur-md px-1 py-0.5 shadow-md opacity-0 transition-all duration-200 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 ${
+              className={`glass-panel mb-1 flex shrink-0 items-center gap-0.5 rounded-xl px-1 py-0.5 shadow-lg opacity-0 transition-all duration-200 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 ${
                 message.isOwn ? 'flex-row-reverse' : 'flex-row'
               }`}
             >

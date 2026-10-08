@@ -7,24 +7,65 @@ const FEED_BASE =
   'https://github.com/rutuja0711/flexhubs/releases/download/desktop-latest';
 const METADATA_URL = `${FEED_BASE.replace(/\/$/, '')}/latest-mac.yml`;
 
-async function main() {
-  const response = await fetch(METADATA_URL, { redirect: 'follow' });
-  if (!response.ok) {
-    console.error(`Failed to fetch ${METADATA_URL}: HTTP ${response.status}`);
-    process.exit(1);
-  }
-
-  const text = await response.text();
+function verifyYamlText(text, label) {
   const versionMatch = text.match(/^version:\s*(.+)$/m);
   const pathMatch = text.match(/^path:\s*(.+)$/m);
   const shaMatch = text.match(/^sha512:\s*(.+)$/m);
 
   if (!versionMatch || !pathMatch || !shaMatch) {
-    console.error('latest-mac.yml is missing version, path, or sha512');
+    console.error(`${label} is missing version, path, or sha512`);
     process.exit(1);
   }
 
-  const version = versionMatch[1].trim();
+  console.log('Update metadata OK');
+  console.log(`  source:   ${label}`);
+  console.log(`  version:  ${versionMatch[1].trim()}`);
+  console.log(`  asset:    ${pathMatch[1].trim()}`);
+}
+
+async function main() {
+  const localPath = process.argv.includes('--local')
+    ? process.argv[process.argv.indexOf('--local') + 1]
+    : null;
+
+  if (localPath) {
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const resolved = path.resolve(localPath);
+    if (!fs.existsSync(resolved)) {
+      console.error(`File not found: ${resolved}`);
+      process.exit(1);
+    }
+    verifyYamlText(fs.readFileSync(resolved, 'utf8'), resolved);
+    console.log('');
+    console.log(
+      'Note: This only checks your local yml. Installed apps still need a PUBLIC URL (see below).',
+    );
+    return;
+  }
+
+  const response = await fetch(METADATA_URL, { redirect: 'follow' });
+  if (!response.ok) {
+    console.error(`Failed to fetch ${METADATA_URL}: HTTP ${response.status}`);
+    console.error('');
+    console.error('Common causes:');
+    console.error('  • GitHub repo is PRIVATE — release files are not public; auto-update will 404 for users.');
+    console.error('    Fix: make the repo public, or host latest-mac.yml + zip on a public URL.');
+    console.error('  • Release is still a DRAFT, or tag is not exactly desktop-latest.');
+    console.error('  • latest-mac.yml was not uploaded to that release.');
+    console.error('');
+    console.error('Test in a private/incognito browser (not logged into GitHub):');
+    console.error(`  ${METADATA_URL}`);
+    console.error('');
+    console.error('Validate local build output instead:');
+    console.error('  node scripts/ci/verify-update-feed.mjs --local out/release/latest-mac.yml');
+    process.exit(1);
+  }
+
+  const text = await response.text();
+  verifyYamlText(text, METADATA_URL);
+
+  const pathMatch = text.match(/^path:\s*(.+)$/m);
   const assetName = pathMatch[1].trim();
   const assetUrl = `${FEED_BASE.replace(/\/$/, '')}/${assetName}`;
 
@@ -34,10 +75,9 @@ async function main() {
     process.exit(1);
   }
 
-  console.log('Update feed OK');
-  console.log(`  metadata: ${METADATA_URL}`);
-  console.log(`  version:  ${version}`);
-  console.log(`  asset:    ${assetUrl}`);
+  console.log(`  zip URL:  ${assetUrl}`);
+  console.log('');
+  console.log('Update feed OK (public download works).');
 }
 
 main().catch((error) => {

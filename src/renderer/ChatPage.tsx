@@ -141,7 +141,7 @@ import type {
 } from '../shared/messages';
 import type { GifPickerItem } from '../shared/gifs';
 import type { ConversationBootstrap } from '../shared/messages';
-import { applyMessageReadReceipts, applyReactionPatch, buildScheduleMessageBody, clearThreadReplyRegistry, compareMessagesChronologically, enrichMessageReplies, extractPeerLastReadMessageIds, filterMainChatMessages, findFirstUnreadMessageId, formatMessagePreview, isAlreadyDeletedForEveryoneError, markMessageDeletedForEveryone, mergeMessageListsChronologically, mergeMessageUpdates, mergeServerMessagesWithLocal, readLastReadMessageId, registerThreadReplyMessage, resolveMessageReadBy, resolveNotificationAction, resolveNotificationConversationId, resolveThreadRootId } from '../shared/messages';
+import { applyMessageDeletionToList, applyMessageReadReceipts, applyReactionPatch, buildScheduleMessageBody, clearThreadReplyRegistry, compareMessagesChronologically, enrichMessageReplies, extractPeerLastReadMessageIds, filterMainChatMessages, findFirstUnreadMessageId, formatMessagePreview, isAlreadyDeletedForEveryoneError, isDeletedMessage, markMessageDeletedForEveryone, mergeMessageListsChronologically, mergeMessageUpdates, mergeServerMessagesWithLocal, readLastReadMessageId, registerThreadReplyMessage, resolveMessageReadBy, resolveNotificationAction, resolveNotificationConversationId, resolveThreadRootId } from '../shared/messages';
 import type { AiTextResult } from '../shared/extras';
 import { hoursToSnoozePreset, inferFlexIntent } from '../shared/extras';
 import type { ProfileSettings } from '../shared/profile';
@@ -166,6 +166,7 @@ import {
 import {
   extractConversationIdFromRealtime,
   extractConversationMemberIds,
+  extractDeletedMessageId,
   extractMessageDeleteScope,
   extractMessageFromRealtimePayload,
   extractPresenceUpdate,
@@ -229,14 +230,13 @@ import { appendThreadReply, clearThreadRepliesStore } from './threadRepliesStore
 // Background refresh intervals (not initial load time).
 const UNREAD_POLL_MS = 120_000;
 const BELL_POLL_MS = 30_000;
-const NOTIFICATION_POLL_CONNECTED_MS = 12_000;
-const NOTIFICATION_POLL_DISCONNECTED_MS = 3_000;
+const NOTIFICATION_POLL_CONNECTED_MS = 30_000;
+const NOTIFICATION_POLL_DISCONNECTED_MS = 8_000;
 const CALENDAR_POLL_MS = 5 * 60_000;
 const DRAFT_SAVE_MS = 600;
 const TYPING_STOP_MS = 3_000;
 const TYPING_LABEL_MS = 5_000;
 const THREAD_POLL_MS = 20_000;
-const THREAD_POLL_CONNECTED_MS = 5_000;
 
 type FileFilter = 'all' | 'images' | 'docs' | 'other';
 
@@ -3054,6 +3054,23 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       const incomingMessage = extractMessageFromRealtimePayload(event.payload);
       const activeConversationId = selectedIdRef.current;
 
+      if (incomingMessage && conversationId && isDeletedMessage(incomingMessage)) {
+        const messageId = incomingMessage.id;
+        const applyDelete = (current: MessageItem[]) =>
+          applyMessageDeletionToList(current, messageId, 'everyone');
+
+        if (conversationId === activeConversationId) {
+          setMessages(applyDelete);
+        } else {
+          patchThreadCacheMessages(threadCacheRef.current, conversationId, applyDelete);
+        }
+
+        setSavedItems((current) => current.filter((item) => item.messageId !== messageId));
+        scheduleConversationsRefresh();
+        void syncNotifications();
+        return;
+      }
+
       if (incomingMessage && conversationId && isNewMessageEvent(type)) {
         const message = markOwnMessages([incomingMessage], userId)[0];
         const { conversationId: resolvedConversationId, conversation } = resolveConversationForMessage(
@@ -3178,7 +3195,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
       }
 
-      if (incomingMessage && conversationId && isMessageUpdateEvent(type)) {
+      if (incomingMessage && conversationId && isMessageUpdateEvent(type, event.payload)) {
         if (conversationId === activeConversationId) {
           setMessages((current) =>
             current.map((message) =>
@@ -3209,37 +3226,25 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
 
-      if (isMessageDeleteEvent(type) && conversationId) {
-        const messageId =
-          typeof event.payload === 'object' &&
-          event.payload &&
-          'messageId' in event.payload &&
-          typeof (event.payload as { messageId: unknown }).messageId === 'string'
-            ? (event.payload as { messageId: string }).messageId
-            : incomingMessage?.id;
+      if (isMessageDeleteEvent(type, event.payload) && conversationId) {
+        const messageId = extractDeletedMessageId(event.payload, incomingMessage);
 
         if (messageId) {
-          const deleteScope = extractMessageDeleteScope(event.payload) ?? 'me';
-          const applyDelete = (current: MessageItem[]) => {
-            if (deleteScope === 'everyone') {
-              return current.map((message) =>
-                message.id === messageId ? markMessageDeletedForEveryone(message) : message,
-              );
-            }
-
-            return current.filter((message) => message.id !== messageId);
-          };
+          const deleteScope = extractMessageDeleteScope(event.payload) ?? 'everyone';
+          const applyDelete = (current: MessageItem[]) =>
+            applyMessageDeletionToList(current, messageId, deleteScope);
 
           if (conversationId === activeConversationId) {
             setMessages(applyDelete);
           } else {
             patchThreadCacheMessages(threadCacheRef.current, conversationId, applyDelete);
           }
-          
+
           setSavedItems((current) => current.filter((item) => item.messageId !== messageId));
         }
 
         scheduleConversationsRefresh();
+        void syncNotifications();
         return;
       }
 
@@ -3462,11 +3467,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   }, []);
 
   useEffect(() => {
-    if (!selectedId || mainView !== 'chat') {
+    if (!selectedId || mainView !== 'chat' || realtimeStatus === 'connected') {
       return;
     }
 
-    const pollMs = realtimeStatus === 'connected' ? THREAD_POLL_CONNECTED_MS : THREAD_POLL_MS;
     let pollInFlight = false;
 
     const intervalId = window.setInterval(() => {
@@ -3477,13 +3481,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       pollInFlight = true;
       void Promise.all([
         refreshActiveThreadSilently(selectedId),
-        realtimeStatus === 'connected' ? Promise.resolve() : refreshConversations(),
+        refreshConversations(),
       ]).finally(() => {
         pollInFlight = false;
       });
-    }, pollMs);
-
-    return () => window.clearInterval(intervalId);
+    }, THREAD_POLL_MS);
   }, [mainView, realtimeStatus, refreshActiveThreadSilently, refreshConversations, selectedId]);
 
   const stopTyping = useCallback((conversationId: string) => {

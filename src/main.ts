@@ -421,14 +421,14 @@ function readSavedHardwareAccelerationDisabled(): boolean | null {
   return null;
 }
 
-/** Default off (dev + production) unless user explicitly enabled GPU in settings. */
+/** Default on for performance; users can disable in settings if they hit display glitches. */
 function isHardwareAccelerationDisabled(): boolean {
   const saved = readSavedHardwareAccelerationDisabled();
   if (saved !== null) {
     return saved;
   }
 
-  return true;
+  return false;
 }
 
 function applyStableDisplayProfile(): void {
@@ -1409,9 +1409,10 @@ ipcMain.handle('calls:join-request-respond', (_event, token: string, payloadJson
   try {
     const payload = JSON.parse(payloadJson) as {
       conversationId: string;
-      participantIdentity: string;
-      callId: string;
-      accept: boolean;
+      requestId: string;
+      approved: boolean;
+      callId?: string;
+      participantIdentity?: string;
     };
     return respondMeetingJoinRequest(token, payload);
   } catch {

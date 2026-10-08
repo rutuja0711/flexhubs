@@ -264,9 +264,10 @@ export function listMeetingJoinRequests(
 
 export function respondMeetingJoinRequestCall(payload: {
   conversationId: string;
-  participantIdentity: string;
-  callId: string;
-  accept: boolean;
+  requestId: string;
+  approved: boolean;
+  callId?: string;
+  participantIdentity?: string;
 }): Promise<ApiResult<unknown>> {
   return withToken((token) =>
     window.electronAPI.respondMeetingJoinRequest(token, JSON.stringify(payload)),

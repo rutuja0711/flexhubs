@@ -53,6 +53,21 @@ jobs:
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: ./scripts/ci/prepare-windows-signing.ps1
 
+      - name: Verify desktop build secrets (Mac)
+        if: matrix.os == 'macos-latest'
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: node scripts/ci/verify-desktop-build-env.mjs
+
+      - name: Verify desktop build secrets (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+        run: node scripts/ci/verify-desktop-build-env.mjs
+
       - name: Build Mac universal app
         if: matrix.os == 'macos-latest'
         env:
@@ -126,23 +141,7 @@ jobs:
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
-          $setupDir = "out/make/squirrel.windows/x64"
-          if (-not (Test-Path $setupDir)) {
-            throw "Squirrel output not found at $setupDir"
-          }
-
-          $setup = Get-ChildItem -Path $setupDir -Filter *.exe |
-            Where-Object { $_.Name -notmatch '\.exe\.exe$' } |
-            Sort-Object LastWriteTime -Descending |
-            Select-Object -First 1
-
-          if (-not $setup) {
-            throw "Setup.exe not found under $setupDir"
-          }
-
-          Copy-Item -Path $setup.FullName -Destination out/FlexHubs-Desktop-Setup.exe -Force
-          Write-Host "Staged installer: $($setup.Name) -> out/FlexHubs-Desktop-Setup.exe"
-
+          ./scripts/ci/stage-windows-installer.ps1
           node scripts/ci/generate-updater-metadata.mjs `
             --platform win `
             --artifact out/FlexHubs-Desktop-Setup.exe `

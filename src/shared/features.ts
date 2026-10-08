@@ -181,7 +181,6 @@ export function slugifyChannelName(name: string): string {
 }
 
 export function normalizeSavedMessages(payload: unknown): SavedMessageItem[] {
-  console.log('normalizeSavedMessages payload:', JSON.stringify(payload, null, 2));
   return extractArray(payload, ['saved', 'items', 'messages', 'data'])
     .map(asRecord)
     .filter((item): item is Record<string, unknown> => item !== null)

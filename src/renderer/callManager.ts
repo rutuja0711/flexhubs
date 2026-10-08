@@ -1285,9 +1285,10 @@ export function useCallManager({
 
         const result = await respondMeetingJoinRequestCall({
           conversationId: active.conversationId,
-          participantIdentity,
+          requestId,
+          approved,
           callId,
-          accept: approved,
+          participantIdentity: participantIdentity || undefined,
         });
 
         if (!result.ok) {

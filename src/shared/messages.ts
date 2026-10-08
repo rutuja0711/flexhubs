@@ -250,12 +250,33 @@ export function markMessageDeletedForEveryone(message: MessageItem): MessageItem
   };
 }
 
+export function applyMessageDeletionToList(
+  messages: MessageItem[],
+  messageId: string,
+  scope: 'me' | 'everyone',
+): MessageItem[] {
+  if (scope === 'everyone') {
+    return messages.map((message) =>
+      message.id === messageId ? markMessageDeletedForEveryone(message) : message,
+    );
+  }
+
+  return messages.filter((message) => message.id !== messageId);
+}
+
 function readDeletedForEveryone(record: Record<string, unknown>): boolean {
-  if (readString(record.deletedForEveryoneAt)) {
+  if (
+    readString(record.deletedForEveryoneAt) ??
+    readString(record.deleted_for_everyone_at)
+  ) {
     return true;
   }
 
-  if (record.deletedForEveryone === true || record.isDeletedForEveryone === true) {
+  if (
+    record.deletedForEveryone === true ||
+    record.isDeletedForEveryone === true ||
+    record.deleted_for_everyone === true
+  ) {
     return true;
   }
 

@@ -1,4 +1,7 @@
+import { app } from 'electron';
 import type { ApiResult } from '../shared/api';
+
+const logApiTraffic = !app.isPackaged;
 
 type JsonRecord = Record<string, unknown> & { error?: string };
 

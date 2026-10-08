@@ -8,6 +8,8 @@ cd "$ROOT"
 VERSION="$(node -p "require('./package.json').version")"
 echo "==> FlexHubs Desktop macOS release staging (package.json version: ${VERSION})"
 
+node scripts/ci/verify-desktop-build-env.mjs
+
 npm run make:mac
 
 DMG="$(find out/make -name 'FlexHubs-Desktop.dmg' -print -quit)"

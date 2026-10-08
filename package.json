@@ -1,7 +1,7 @@
 {
   "name": "flexhubs-desktop",
   "productName": "FlexHubs Desktop",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "FlexHubs Desktop Application",
   "author": "Flexodyn Solutions",
   "authors": "Flexodyn Solutions",
@@ -17,7 +17,8 @@
     "generate:updater-metadata": "node scripts/ci/generate-updater-metadata.mjs",
     "release:mac:stage": "bash scripts/ci/stage-desktop-mac-release.sh",
     "release:mac": "bash scripts/ci/publish-desktop-mac.sh",
-    "verify:update-feed": "node scripts/ci/verify-update-feed.mjs"
+    "verify:update-feed": "node scripts/ci/verify-update-feed.mjs",
+    "verify:update-feed:local": "node scripts/ci/verify-update-feed.mjs --local out/release/latest-mac.yml"
   },
   "license": "MIT",
   "devDependencies": {

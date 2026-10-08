@@ -165,16 +165,31 @@ export async function respondMeetingJoinRequest(
   token: string,
   payload: {
     conversationId: string;
-    participantIdentity: string;
-    callId: string;
-    accept: boolean;
+    requestId: string;
+    approved: boolean;
+    callId?: string;
+    participantIdentity?: string;
   },
 ): Promise<ApiResult<unknown>> {
+  const body: Record<string, unknown> = {
+    conversationId: payload.conversationId,
+    requestId: payload.requestId,
+    approved: payload.approved,
+  };
+
+  if (payload.callId?.trim()) {
+    body.callId = payload.callId.trim();
+  }
+
+  if (payload.participantIdentity?.trim()) {
+    body.participantIdentity = payload.participantIdentity.trim();
+  }
+
   return apiPost<unknown>(
     `${API_BASE_URL}/calls/meetings/join-request/respond`,
     token,
     'Call Meeting Join Respond API',
-    payload,
+    body,
   );
 }
 

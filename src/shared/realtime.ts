@@ -1,6 +1,11 @@
 import { readEmbeddedSupabaseBuildConfig } from './supabaseEnv';
 import { readUserStatusMessage, readUserStatusMessageUpdate } from './profile';
-import { normalizeMessage, parseMessageReactions, type MessageItem, type MessageReaction } from './messages';
+import {
+  normalizeMessage,
+  parseMessageReactions,
+  type MessageItem,
+  type MessageReaction,
+} from './messages';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
@@ -277,12 +282,32 @@ export function normalizeRealtimeStatus(payload: unknown): RealtimeStatusPayload
   };
 }
 
+function asRealtimeConfigRecord(payload: unknown): Record<string, unknown> | null {
+  const record = asRecord(payload);
+
+  if (!record) {
+    return null;
+  }
+
+  const nested =
+    asRecord(record.data) ??
+    asRecord(record.config) ??
+    asRecord(record.realtime) ??
+    asRecord(record.supabase);
+
+  if (nested) {
+    return { ...nested, ...record };
+  }
+
+  return record;
+}
+
 export function extractRealtimeAccessToken(payload: unknown): string | null {
   if (typeof payload === 'string' && payload.trim()) {
     return payload.trim();
   }
 
-  const record = asRecord(payload);
+  const record = asRealtimeConfigRecord(payload);
 
   if (!record) {
     return null;
@@ -368,7 +393,7 @@ export function extractRealtimeClientConfig(payload: unknown): RealtimeClientCon
     return null;
   }
 
-  const record = asRecord(payload);
+  const record = asRealtimeConfigRecord(payload);
   const supabaseUrl = readSupabaseUrlFromRealtimePayload(record);
   const supabaseAnonKey = readSupabaseAnonKeyFromRealtimePayload(record);
 
@@ -390,13 +415,93 @@ export function extractConversationId(payload: unknown): string | null {
     return null;
   }
 
+  const messageRecord = asRecord(record.message);
+
   return (
     readString(record.conversationId) ??
+    readString(record.conversation_id) ??
     readString(asRecord(record.conversation)?.id) ??
-    readString(asRecord(record.message)?.conversationId) ??
+    readString(messageRecord?.conversationId) ??
+    readString(messageRecord?.conversation_id) ??
     readString(record.channelId) ??
-    readString(record.chatId)
+    readString(record.channel_id) ??
+    readString(record.chatId) ??
+    readString(record.chat_id)
   );
+}
+
+function collectMessageRecordCandidates(payload: unknown): Record<string, unknown>[] {
+  const unwrapped = unwrapRealtimePayload(payload);
+  const record = asRecord(unwrapped);
+
+  if (!record) {
+    return [];
+  }
+
+  const nestedData = asRecord(record.data);
+  const candidates = [
+    asRecord(record.message),
+    asRecord(record.record),
+    asRecord(record.new),
+    asRecord(nestedData?.message),
+    asRecord(nestedData?.record),
+    asRecord(nestedData?.new),
+    nestedData,
+    record,
+  ].filter((value): value is Record<string, unknown> => Boolean(value));
+
+  return candidates;
+}
+
+function messageRecordLooksComplete(candidate: Record<string, unknown>): boolean {
+  const messageId =
+    readString(candidate.messageId) ??
+    readString(candidate.message_id) ??
+    readString(candidate.id);
+
+  if (!messageId) {
+    return false;
+  }
+
+  return Boolean(
+    readString(candidate.content) ||
+      readString(candidate.text) ||
+      readString(candidate.deletedForEveryoneAt) ||
+      readString(candidate.deleted_for_everyone_at) ||
+      candidate.deletedForEveryone === true ||
+      candidate.deleted_for_everyone === true ||
+      candidate.isDeletedForEveryone === true ||
+      Array.isArray(candidate.reactions) ||
+      readString(candidate.createdAt) ||
+      readString(candidate.created_at) ||
+      readString(candidate.sentAt) ||
+      readString(candidate.sent_at),
+  );
+}
+
+export function extractDeletedMessageId(
+  payload: unknown,
+  fallbackMessage?: MessageItem | null,
+): string | null {
+  if (fallbackMessage?.id) {
+    return fallbackMessage.id;
+  }
+
+  for (const candidate of collectMessageRecordCandidates(payload)) {
+    const nested = asRecord(candidate.message);
+    const messageId =
+      readString(candidate.messageId) ??
+      readString(candidate.message_id) ??
+      readString(nested?.id) ??
+      readString(nested?.messageId) ??
+      readString(candidate.id);
+
+    if (messageId) {
+      return messageId;
+    }
+  }
+
+  return null;
 }
 
 export function extractConversationIdFromRealtime(rawEvent: unknown, payload: unknown): string | null {
@@ -413,32 +518,27 @@ export function extractConversationIdFromRealtime(rawEvent: unknown, payload: un
 }
 
 export function extractMessageFromRealtimePayload(payload: unknown): MessageItem | null {
-  const record = asRecord(payload);
+  for (const candidate of collectMessageRecordCandidates(payload)) {
+    const nestedMessage = asRecord(candidate.message);
 
-  if (!record) {
-    return null;
-  }
+    if (nestedMessage) {
+      return normalizeMessage(nestedMessage, 0);
+    }
 
-  const messageRecord = asRecord(record.message);
+    if (!messageRecordLooksComplete(candidate)) {
+      continue;
+    }
 
-  if (messageRecord) {
-    return normalizeMessage(messageRecord, 0);
-  }
+    const messageId =
+      readString(candidate.messageId) ??
+      readString(candidate.message_id) ??
+      readString(candidate.id);
 
-  const messageId = readString(record.messageId) ?? readString(record.id);
+    if (!messageId) {
+      continue;
+    }
 
-  if (
-    messageId &&
-    (readString(record.content) ||
-      readString(record.text) ||
-      readString(record.deletedForEveryoneAt) ||
-      record.deletedForEveryone === true ||
-      record.isDeletedForEveryone === true ||
-      Array.isArray(record.reactions) ||
-      readString(record.createdAt) ||
-      readString(record.sentAt))
-  ) {
-    return normalizeMessage({ ...record, id: messageId }, 0);
+    return normalizeMessage({ ...candidate, id: messageId }, 0);
   }
 
   return null;
@@ -573,22 +673,57 @@ export function isNewMessageEvent(type: string): boolean {
   );
 }
 
-export function isMessageUpdateEvent(type: string): boolean {
+export function isMessageUpdateEvent(type: string, payload?: unknown): boolean {
   const normalized = type.toLowerCase();
 
-  return (
+  if (
     normalized.includes('message') &&
     (normalized.includes('update') ||
       normalized.includes('edit') ||
       normalized.includes('reaction') ||
       normalized.includes('pin'))
-  );
+  ) {
+    return true;
+  }
+
+  if (normalized === 'update' || normalized === 'updated') {
+    const record = asRecord(unwrapRealtimePayload(payload));
+    const table = readString(record?.table)?.toLowerCase();
+
+    if (table && table.includes('message')) {
+      return true;
+    }
+
+    return collectMessageRecordCandidates(payload).some((candidate) =>
+      messageRecordLooksComplete(candidate),
+    );
+  }
+
+  return false;
 }
 
-export function isMessageDeleteEvent(type: string): boolean {
+export function isMessageDeleteEvent(type: string, payload?: unknown): boolean {
   const normalized = type.toLowerCase();
 
-  return normalized.includes('message') && normalized.includes('delete');
+  if (
+    (normalized.includes('message') && normalized.includes('delete')) ||
+    (normalized.includes('message') && normalized.includes('deleted'))
+  ) {
+    return true;
+  }
+
+  if (normalized === 'delete' || normalized === 'deleted') {
+    return Boolean(extractDeletedMessageId(payload ?? null, null));
+  }
+
+  const record = asRecord(unwrapRealtimePayload(payload));
+  const action = String(record?.action ?? record?.event ?? record?.type ?? '').toLowerCase();
+
+  if (action.includes('delete') && extractDeletedMessageId(payload ?? null, null)) {
+    return true;
+  }
+
+  return false;
 }
 
 export function extractMessageDeleteScope(payload: unknown): 'me' | 'everyone' | null {

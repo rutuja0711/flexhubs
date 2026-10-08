@@ -93,7 +93,7 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
   const panel = open ? (
     <div
       ref={panelRef}
-      className="fixed z-[9999] flex flex-col overflow-hidden rounded-2xl border border-app-border/80 bg-app-elevated/95 backdrop-blur-xl shadow-2xl animate-pop-in"
+      className="glass-panel fixed z-[9999] flex flex-col overflow-hidden rounded-2xl shadow-2xl animate-pop-in"
       style={{
         top: pickerPosition.top,
         left: pickerPosition.left,
