@@ -14,6 +14,7 @@ import {
   FiUpload,
   FiUser,
   FiVolume2,
+  FiHeadphones,
   FiShield,
   FiSmartphone,
   FiDownloadCloud,
@@ -61,6 +62,12 @@ import {
   shouldDeliverDesktopNotifications,
 } from '../pushNotifications';
 import { playMessageNotificationSound } from '../messageSound';
+import {
+  getPreferredAudioOutputDeviceId,
+  labelForAudioOutputDevice,
+  listAudioOutputDevices,
+  setPreferredAudioOutputDeviceId,
+} from '../audioOutputDevice';
 import { UpdatesSettings } from './UpdatesSettings';
 import { PrivacySettings } from './PrivacySettings';
 import {
@@ -226,12 +233,44 @@ export function ProfileSettingsView({
   const [unblockingId, setUnblockingId] = useState<string | null>(null);
 
   const [hwAccelerationDisabled, setHwAccelerationDisabled] = useState<boolean>(false);
+  const [audioOutputDevices, setAudioOutputDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedAudioOutputId, setSelectedAudioOutputId] = useState(() =>
+    getPreferredAudioOutputDeviceId(),
+  );
 
   useEffect(() => {
     void window.electronAPI?.getHardwareAccelerationDisabled?.().then(disabled => {
       setHwAccelerationDisabled(disabled);
     });
   }, []);
+
+  const refreshAudioOutputDevices = useCallback(async () => {
+    const outputs = await listAudioOutputDevices();
+    setAudioOutputDevices(outputs);
+    setSelectedAudioOutputId(getPreferredAudioOutputDeviceId());
+  }, []);
+
+  useEffect(() => {
+    void refreshAudioOutputDevices();
+
+    const mediaDevices = navigator.mediaDevices;
+    if (!mediaDevices) {
+      return;
+    }
+
+    const onDeviceChange = () => {
+      void refreshAudioOutputDevices();
+    };
+
+    mediaDevices.addEventListener('devicechange', onDeviceChange);
+    return () => mediaDevices.removeEventListener('devicechange', onDeviceChange);
+  }, [refreshAudioOutputDevices]);
+
+  const handleAudioOutputChange = (deviceId: string) => {
+    setSelectedAudioOutputId(deviceId);
+    setPreferredAudioOutputDeviceId(deviceId);
+    toast.success('Speaker output updated.');
+  };
 
   const handleToggleHwAcceleration = async () => {
     const nextState = !hwAccelerationDisabled;
@@ -1475,6 +1514,33 @@ export function ProfileSettingsView({
                           <span className="sr-only">Toggle message sounds</span>
                           <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition duration-200 ease-in-out ${settings.messageSoundEnabled ? 'translate-x-2' : '-translate-x-2'}`} />
                         </button>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between gap-4 p-4 hover:bg-app-chat-hover/30 transition-colors">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <FiHeadphones className="text-app-muted shrink-0 text-lg" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-app-text">Speaker output</p>
+                          <p className="text-xs text-app-muted mt-0.5">
+                            Messages, voice notes, and calls
+                          </p>
+                        </div>
+                      </div>
+                      <div className="relative shrink-0">
+                        <select
+                          value={selectedAudioOutputId}
+                          onChange={(event) => handleAudioOutputChange(event.target.value)}
+                          className="max-w-[220px] appearance-none rounded-lg border border-app-border bg-app-surface py-2 pl-3 pr-8 text-sm text-app-text focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                          aria-label="Select speaker output"
+                        >
+                          <option value="default">System default</option>
+                          {audioOutputDevices.map((device, index) => (
+                            <option key={device.deviceId || `output-${index}`} value={device.deviceId}>
+                              {labelForAudioOutputDevice(device, index)}
+                            </option>
+                          ))}
+                        </select>
+                        <FiChevronDown className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-app-muted" />
                       </div>
                     </div>
                     <div className="flex items-start justify-between p-4 hover:bg-app-chat-hover/30 transition-colors rounded-b-xl">

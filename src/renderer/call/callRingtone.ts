@@ -1,3 +1,5 @@
+import { applyAudioContextSink } from '../audioOutputDevice';
+
 type RingMode = 'incoming' | 'outgoing';
 
 class CallRingtoneController {
@@ -12,6 +14,7 @@ class CallRingtoneController {
     }
 
     void this.audioContext.resume();
+    void applyAudioContextSink(this.audioContext);
     return this.audioContext;
   }
 

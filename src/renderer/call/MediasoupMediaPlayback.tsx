@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { applyAudioElementSink } from '../audioOutputDevice';
 import type { MediasoupRemotePeer } from './mediasoupAdapter';
 
 type MediasoupMediaPlaybackProps = {
@@ -33,7 +34,7 @@ export function MediasoupMediaPlayback({
       element.setAttribute('playsinline', 'true');
       element.srcObject = stream;
       container.appendChild(element);
-      void element.play().catch(() => undefined);
+      void applyAudioElementSink(element).then(() => element.play().catch(() => undefined));
     }
   }, [remotePeers]);
 

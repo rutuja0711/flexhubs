@@ -1,3 +1,5 @@
+import { applyAudioContextSink } from './audioOutputDevice';
+
 let audioContext: AudioContext | null = null;
 
 function getAudioContext(): AudioContext | null {
@@ -30,6 +32,8 @@ export async function playMessageNotificationSound(): Promise<boolean> {
   if (context.state === 'suspended') {
     await context.resume();
   }
+
+  await applyAudioContextSink(context);
 
   const oscillator = context.createOscillator();
   const gain = context.createGain();

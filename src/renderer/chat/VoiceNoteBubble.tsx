@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { applyAudioElementSink, subscribeAudioOutputChanges } from '../audioOutputDevice';
 import { FiPause, FiPlay } from 'react-icons/fi';
 
 type VoiceNoteBubbleProps = {
@@ -26,6 +27,20 @@ export function VoiceNoteBubble({ src, isOwn = false }: VoiceNoteBubbleProps) {
     setPlaying(false);
     setCurrentTime(0);
     setDuration(0);
+  }, [src]);
+
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (audio) {
+      void applyAudioElementSink(audio);
+    }
+
+    return subscribeAudioOutputChanges(() => {
+      const current = audioRef.current;
+      if (current) {
+        void applyAudioElementSink(current);
+      }
+    });
   }, [src]);
 
   const togglePlay = async () => {

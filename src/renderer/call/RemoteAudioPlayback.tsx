@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { applyAudioElementSink } from '../audioOutputDevice';
 import {
   Room,
   RoomEvent,
@@ -28,7 +29,7 @@ function attachRemoteAudioTrack(
     container.appendChild(element);
   }
 
-  void element.play().catch(() => undefined);
+  void applyAudioElementSink(element).then(() => element.play().catch(() => undefined));
 
   return element;
 }
