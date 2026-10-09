@@ -615,12 +615,7 @@ declare global {
         data?: { version?: string; releaseNotes?: unknown };
         error?: string;
       }>;
-      downloadUpdate: () => Promise<{
-        ok: boolean;
-        error?: string;
-        method?: 'in-app' | 'installer';
-        installerPath?: string;
-      }>;
+      downloadUpdate: () => Promise<{ ok: boolean; error?: string; method?: 'in-app' }>;
       quitAndInstallUpdate: () => Promise<void>;
       openDesktopReleasePage?: () => Promise<{ ok: boolean }>;
       getAppVersion: () => Promise<string>;

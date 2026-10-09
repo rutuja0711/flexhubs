@@ -231,15 +231,20 @@ import {
 import { appendThreadReply, clearThreadRepliesStore } from './threadRepliesStore';
 
 // Background refresh intervals (not initial load time).
-const UNREAD_POLL_MS = 120_000;
-const BELL_POLL_MS = 30_000;
-const NOTIFICATION_POLL_CONNECTED_MS = 30_000;
-const NOTIFICATION_POLL_DISCONNECTED_MS = 8_000;
+const UNREAD_POLL_MS = 180_000;
+const BELL_POLL_MS = 60_000;
+const NOTIFICATION_POLL_CONNECTED_MS = 180_000;
+const NOTIFICATION_POLL_DISCONNECTED_MS = 45_000;
+const PENDING_FRIENDS_CACHE_MS = 120_000;
 const CALENDAR_POLL_MS = 5 * 60_000;
 const DRAFT_SAVE_MS = 600;
 const TYPING_STOP_MS = 3_000;
 const TYPING_LABEL_MS = 5_000;
 const THREAD_POLL_MS = 20_000;
+
+function isAppWindowActive(): boolean {
+  return !document.hidden;
+}
 
 type FileFilter = 'all' | 'images' | 'docs' | 'other';
 
@@ -729,6 +734,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const hubAvatarHydrateInFlightRef = useRef<Set<string>>(new Set());
   const prefetchTimerRef = useRef<Record<string, number>>({});
   const bootstrapStartedRef = useRef(false);
+  const pendingFriendsCacheRef = useRef<{ fetchedAt: number; count: number } | null>(null);
   const isTypingActiveRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
   const messagesRef = useRef<MessageItem[]>([]);
@@ -1552,13 +1558,23 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const refreshUnreadCount = useCallback(
     async (notificationItems?: NotificationItem[]) => {
-      const pendingResult = await loadPendingFriends();
+      let pendingCount = 0;
+      const pendingCache = pendingFriendsCacheRef.current;
+      const pendingCacheFresh =
+        pendingCache && Date.now() - pendingCache.fetchedAt < PENDING_FRIENDS_CACHE_MS;
 
-      if (handleUnauthorized(pendingResult.status)) {
-        return;
+      if (pendingCacheFresh) {
+        pendingCount = pendingCache.count;
+      } else {
+        const pendingResult = await loadPendingFriends();
+
+        if (handleUnauthorized(pendingResult.status)) {
+          return;
+        }
+
+        pendingCount = pendingResult.ok ? pendingResult.data.length : 0;
+        pendingFriendsCacheRef.current = { fetchedAt: Date.now(), count: pendingCount };
       }
-
-      const pendingCount = pendingResult.ok ? pendingResult.data.length : 0;
       const listSource =
         notificationItems ??
         (activityNotificationsRef.current.length > 0 ? activityNotificationsRef.current : null);
@@ -2022,15 +2038,25 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
       void refreshUnreadCount(notificationList);
 
-      void loadPendingFriends().then((pending) => {
-        if (handleUnauthorized(pending.status)) {
-          return;
-        }
+      const pendingCache = pendingFriendsCacheRef.current;
+      const pendingListStale =
+        !pendingCache || Date.now() - pendingCache.fetchedAt >= PENDING_FRIENDS_CACHE_MS;
 
-        if (pending.ok) {
-          setActivityPendingFriends(pending.data);
-        }
-      });
+      if (pendingListStale) {
+        void loadPendingFriends().then((pending) => {
+          if (handleUnauthorized(pending.status)) {
+            return;
+          }
+
+          if (pending.ok) {
+            pendingFriendsCacheRef.current = {
+              fetchedAt: Date.now(),
+              count: pending.data.length,
+            };
+            setActivityPendingFriends(pending.data);
+          }
+        });
+      }
 
       if (options?.withLoading) {
         setActivityLoading(false);
@@ -3496,7 +3522,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     let pollInFlight = false;
 
     const intervalId = window.setInterval(() => {
-      if (pollInFlight) {
+      if (!isAppWindowActive() || pollInFlight) {
         return;
       }
 
@@ -3508,6 +3534,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         pollInFlight = false;
       });
     }, THREAD_POLL_MS);
+
+    return () => window.clearInterval(intervalId);
   }, [mainView, realtimeStatus, refreshActiveThreadSilently, refreshConversations, selectedId]);
 
   const stopTyping = useCallback((conversationId: string) => {
@@ -3698,18 +3726,24 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         ? NOTIFICATION_POLL_CONNECTED_MS
         : NOTIFICATION_POLL_DISCONNECTED_MS;
 
-    void syncNotifications();
+    const syncIfActive = () => {
+      if (isAppWindowActive()) {
+        void syncNotifications();
+      }
+    };
 
-    const intervalId = window.setInterval(() => {
-      void syncNotifications();
-    }, pollMs);
+    syncIfActive();
+
+    const intervalId = window.setInterval(syncIfActive, pollMs);
 
     return () => window.clearInterval(intervalId);
   }, [realtimeStatus, syncNotifications]);
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
-      void loadCalendarData();
+      if (isAppWindowActive()) {
+        void loadCalendarData();
+      }
     }, CALENDAR_POLL_MS);
 
     return () => window.clearInterval(intervalId);
@@ -3737,7 +3771,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   useEffect(() => {
     const intervalId = window.setInterval(() => {
-      void refreshUnreadCount();
+      if (isAppWindowActive()) {
+        void refreshUnreadCount();
+      }
     }, UNREAD_POLL_MS);
 
     return () => window.clearInterval(intervalId);
@@ -3751,7 +3787,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     void loadActivityData();
 
     const intervalId = window.setInterval(() => {
-      void syncNotifications();
+      if (isAppWindowActive()) {
+        void syncNotifications();
+      }
     }, BELL_POLL_MS);
 
     return () => window.clearInterval(intervalId);

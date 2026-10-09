@@ -1,7 +1,8 @@
 import { app } from 'electron';
 import type { ApiResult } from '../shared/api';
 
-const logApiTraffic = !app.isPackaged;
+/** Verbose API logs in dev only when FLEXHUBS_LOG_API=1 (background polls otherwise flood the terminal). */
+const logApiTraffic = !app.isPackaged && process.env.FLEXHUBS_LOG_API === '1';
 
 type JsonRecord = Record<string, unknown> & { error?: string };
 
@@ -69,10 +70,15 @@ async function parseResponse<T>(response: Response, label: string): Promise<ApiR
     data = {} as T & JsonRecord;
   }
 
-  console.log(`[${label}] status:`, response.status);
-  console.log(`[${label}] response:`, data);
+  if (logApiTraffic) {
+    console.log(`[${label}] status:`, response.status);
+    console.log(`[${label}] response:`, data);
+  }
 
   if (!response.ok) {
+    if (!logApiTraffic) {
+      console.warn(`[${label}] HTTP ${response.status}:`, data.error ?? 'Request failed');
+    }
     const fallbackError =
       response.status === 502 || response.status === 503 || response.status === 504
         ? 'flexhubs.in is temporarily unavailable. Try again in a few minutes.'

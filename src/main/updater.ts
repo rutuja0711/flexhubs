@@ -1,6 +1,5 @@
 import { autoUpdater } from 'electron-updater';
 import { BrowserWindow, ipcMain, app, shell } from 'electron';
-import { downloadReleaseAsset, revealInstaller } from './desktopReleaseDownload';
 
 /** Rolling release tag on GitHub (see scripts/ci/publish-desktop-mac.sh and INSTALL.md). */
 const DESKTOP_RELEASE_FEED_URL =
@@ -11,9 +10,6 @@ const DESKTOP_RELEASE_PAGE =
   process.env.FLEXHUBS_RELEASE_PAGE_URL?.trim() ||
   'https://github.com/rutuja0711/flexhubs/releases/tag/desktop-latest';
 
-const MAC_DMG_FILE_NAME = 'FlexHubs-Desktop.dmg';
-const WIN_SETUP_FILE_NAME = 'FlexHubs-Desktop-Setup.exe';
-
 let mainWindow: BrowserWindow | null = null;
 
 type UpdaterPhase = 'idle' | 'checking' | 'downloading';
@@ -22,8 +18,6 @@ let updaterPhase: UpdaterPhase = 'idle';
 
 /** Last version reported by the feed (used when checks are skipped during download). */
 let lastKnownAvailableVersion: string | undefined;
-
-let lastDownloadedInstallerPath: string | undefined;
 
 export type UpdaterCheckResult =
   | { ok: true; status: 'skipped'; currentVersion: string }
@@ -36,10 +30,7 @@ export type UpdaterCheckResult =
     }
   | { ok: false; error: string; currentVersion: string };
 
-export type UpdaterDownloadResult =
-  | { ok: true; method: 'in-app' }
-  | { ok: true; method: 'installer'; installerPath: string }
-  | { ok: false; error: string };
+export type UpdaterDownloadResult = { ok: true; method: 'in-app' } | { ok: false; error: string };
 
 function sendToRenderer(channel: string, ...args: unknown[]): void {
   const win = mainWindow;
@@ -86,11 +77,13 @@ function isVersionNewer(latest: string, current: string): boolean {
 
 function ensureAutoUpdaterConfigured(): void {
   autoUpdater.autoDownload = false;
+  // Apply Squirrel/NSIS update on Restart & Install, not during downloadUpdate().
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.autoRunAppAfterInstall = false;
   autoUpdater.allowDowngrade = false;
   autoUpdater.allowPrerelease = false;
-  autoUpdater.disableDifferentialDownload = true;
+  // Windows: allow blockmap/differential patches when the feed provides them.
+  autoUpdater.disableDifferentialDownload = false;
 
   autoUpdater.setFeedURL({
     provider: 'generic',
@@ -118,7 +111,7 @@ export function sanitizeUpdaterError(raw: string): string {
   }
 
   if (lower.includes('sha512') || lower.includes('checksum') || lower.includes('hash')) {
-    return 'The update file failed verification. Use Download installer to get the DMG (Mac) or Setup.exe (Windows) from desktop-latest.';
+    return 'The update file failed verification. Install manually from the desktop-latest release on GitHub.';
   }
 
   if (
@@ -129,7 +122,7 @@ export function sanitizeUpdaterError(raw: string): string {
     lower.includes('could not locate') ||
     lower.includes('zip file not provided')
   ) {
-    return 'In-app zip update is not available for this build. Use Download installer instead.';
+    return 'This build could not apply the in-app update. Install FlexHubs-Desktop.dmg (Mac) or FlexHubs-Desktop-Setup.exe (Windows) from desktop-latest on GitHub.';
   }
 
   if (lower.includes('timed out') || lower.includes('timeout')) {
@@ -150,7 +143,7 @@ export function sanitizeUpdaterError(raw: string): string {
     return message;
   }
 
-  return 'Update failed. Try Download installer, or install from the desktop-latest release on GitHub.';
+  return 'Update failed. Try again, or install manually from the desktop-latest release on GitHub.';
 }
 
 function attachAutoUpdaterListeners(): void {
@@ -180,7 +173,6 @@ function attachAutoUpdaterListeners(): void {
     });
   });
 
-  // Mac Squirrel emits many benign errors; IPC handlers report real failures.
   autoUpdater.on('error', (err) => {
     console.warn('[FlexHubs] Updater (logged only):', err.message);
   });
@@ -196,6 +188,7 @@ function attachAutoUpdaterListeners(): void {
   autoUpdater.on('update-downloaded', (info) => {
     sendToRenderer('updater:update-downloaded', {
       version: info.version,
+      method: 'in-app',
     });
   });
 }
@@ -236,47 +229,7 @@ async function checkFeedForUpdate(): Promise<FeedCheckOutcome> {
   }
 }
 
-async function downloadMacDmg(version: string): Promise<UpdaterDownloadResult> {
-  const downloaded = await downloadReleaseAsset({
-    feedBaseUrl: DESKTOP_RELEASE_FEED_URL,
-    fileName: MAC_DMG_FILE_NAME,
-    versionLabel: version,
-    onProgress: (progress) => {
-      sendToRenderer('updater:download-progress', progress);
-    },
-  });
-
-  if (!downloaded.ok) {
-    return { ok: false, error: sanitizeUpdaterError(downloaded.error) };
-  }
-
-  lastDownloadedInstallerPath = downloaded.filePath;
-  sendToRenderer('updater:update-downloaded', { version, method: 'installer' });
-  void revealInstaller(downloaded.filePath);
-  return { ok: true, method: 'installer', installerPath: downloaded.filePath };
-}
-
-async function downloadWindowsSetup(version: string): Promise<UpdaterDownloadResult> {
-  const downloaded = await downloadReleaseAsset({
-    feedBaseUrl: DESKTOP_RELEASE_FEED_URL,
-    fileName: WIN_SETUP_FILE_NAME,
-    versionLabel: version,
-    onProgress: (progress) => {
-      sendToRenderer('updater:download-progress', progress);
-    },
-  });
-
-  if (!downloaded.ok) {
-    return { ok: false, error: sanitizeUpdaterError(downloaded.error) };
-  }
-
-  lastDownloadedInstallerPath = downloaded.filePath;
-  sendToRenderer('updater:update-downloaded', { version, method: 'installer' });
-  void revealInstaller(downloaded.filePath);
-  return { ok: true, method: 'installer', installerPath: downloaded.filePath };
-}
-
-async function downloadViaElectronUpdater(): Promise<UpdaterDownloadResult> {
+async function downloadInAppUpdate(): Promise<UpdaterDownloadResult> {
   try {
     await autoUpdater.downloadUpdate();
     return { ok: true, method: 'in-app' };
@@ -374,21 +327,7 @@ function registerUpdaterIpcHandlers(): void {
         return { ok: false, error: 'No update is available to download right now.' };
       }
 
-      if (process.platform === 'darwin') {
-        return downloadMacDmg(checked.version);
-      }
-
-      if (process.platform === 'win32') {
-        const setupResult = await downloadWindowsSetup(checked.version);
-        if (setupResult.ok) {
-          return setupResult;
-        }
-
-        const inApp = await downloadViaElectronUpdater();
-        return inApp;
-      }
-
-      return downloadViaElectronUpdater();
+      return downloadInAppUpdate();
     } finally {
       updaterPhase = 'idle';
     }
@@ -399,25 +338,11 @@ function registerUpdaterIpcHandlers(): void {
       return;
     }
 
-    if (lastDownloadedInstallerPath) {
-      void revealInstaller(lastDownloadedInstallerPath);
-      return;
-    }
-
     autoUpdater.quitAndInstall(false, true);
   });
 
   register('updater:open-release-page', () => {
     void shell.openExternal(DESKTOP_RELEASE_PAGE);
-    return { ok: true as const };
-  });
-
-  register('updater:open-downloaded-installer', async () => {
-    if (!lastDownloadedInstallerPath) {
-      return { ok: false as const, error: 'No installer has been downloaded yet.' };
-    }
-
-    await revealInstaller(lastDownloadedInstallerPath);
     return { ok: true as const };
   });
 

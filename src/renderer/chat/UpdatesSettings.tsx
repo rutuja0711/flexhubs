@@ -3,8 +3,6 @@ import { FiDownloadCloud, FiRefreshCcw, FiCheckCircle, FiAlertCircle } from 'rea
 
 type UpdateState = 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error' | 'offline';
 
-type InstallMethod = 'in-app' | 'installer';
-
 type CheckUpdatesResult = {
   ok: boolean;
   status?: 'skipped' | 'up-to-date' | 'available';
@@ -30,7 +28,6 @@ export function UpdatesSettings() {
   const [releaseNotes, setReleaseNotes] = useState<string>('');
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string>('');
-  const [installMethod, setInstallMethod] = useState<InstallMethod>('in-app');
   const isElectron = !!window.electronAPI;
 
   const applyCheckResult = useCallback((result: CheckUpdatesResult) => {
@@ -157,20 +154,12 @@ export function UpdatesSettings() {
       setDownloadProgress(Math.floor(progress.percent || 0));
     });
 
-    const unsubDownloaded = api.onUpdaterEvent(
-      'update-downloaded',
-      (info: { version?: string; method?: InstallMethod }) => {
-        setUpdateState('ready');
-        if (info?.method === 'installer') {
-          setInstallMethod('installer');
-        } else {
-          setInstallMethod('in-app');
-        }
-        if (info?.version) {
-          setLatestVersion(formatVersion(info.version));
-        }
-      },
-    );
+    const unsubDownloaded = api.onUpdaterEvent('update-downloaded', (info: { version?: string }) => {
+      setUpdateState('ready');
+      if (info?.version) {
+        setLatestVersion(formatVersion(info.version));
+      }
+    });
 
     return () => {
       unsubChecking();
@@ -192,17 +181,11 @@ export function UpdatesSettings() {
     const result = await window.electronAPI.downloadUpdate();
     if (!result.ok) {
       setUpdateState('error');
-      setErrorMessage(result.error?.trim() || 'Update download failed. Try again or install from the DMG.');
+      setErrorMessage(result.error?.trim() || 'Update download failed. Try again or install from GitHub.');
       return;
     }
 
-    if (result.method === 'installer') {
-      setInstallMethod('installer');
-      setUpdateState('ready');
-    } else {
-      setInstallMethod('in-app');
-      setUpdateState('ready');
-    }
+    setUpdateState('ready');
   };
 
   const restartAndInstall = () => {
@@ -243,10 +226,7 @@ export function UpdatesSettings() {
                 {updateState === 'up-to-date' && "You're up to date."}
                 {updateState === 'available' && 'New version available'}
                 {updateState === 'downloading' && 'Downloading update…'}
-                {updateState === 'ready' &&
-                  (installMethod === 'installer'
-                    ? 'Installer downloaded — open it to finish updating.'
-                    : 'FlexHubs is ready to update.')}
+                {updateState === 'ready' && 'FlexHubs is ready to update.'}
                 {updateState === 'error' && 'Update failed'}
                 {updateState === 'offline' && "You're offline"}
               </h3>
@@ -330,7 +310,7 @@ export function UpdatesSettings() {
                   onClick={downloadUpdate}
                   className="rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover shadow-md"
                 >
-                  Download installer
+                  Download Update
                 </button>
               )}
 
@@ -341,7 +321,7 @@ export function UpdatesSettings() {
                     onClick={restartAndInstall}
                     className="rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover shadow-md"
                   >
-                    {installMethod === 'installer' ? 'Open installer' : 'Restart & Install'}
+                    Restart & Install
                   </button>
                   <button
                     type="button"

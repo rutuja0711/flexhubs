@@ -849,12 +849,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     data?: { version?: string; releaseNotes?: unknown };
     error?: string;
   }> => ipcRenderer.invoke('updater:check'),
-  downloadUpdate: (): Promise<{
-    ok: boolean;
-    error?: string;
-    method?: 'in-app' | 'installer';
-    installerPath?: string;
-  }> => ipcRenderer.invoke('updater:download'),
+  downloadUpdate: (): Promise<{ ok: boolean; error?: string; method?: 'in-app' }> =>
+    ipcRenderer.invoke('updater:download'),
   quitAndInstallUpdate: (): Promise<void> => ipcRenderer.invoke('updater:quit-and-install'),
   openDesktopReleasePage: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('updater:open-release-page'),
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('updater:get-version'),
