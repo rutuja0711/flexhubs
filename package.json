@@ -1,11 +1,12 @@
 {
   "name": "flexhubs-desktop",
   "productName": "FlexHubs Desktop",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "FlexHubs Desktop Application",
   "author": "Flexodyn Solutions",
   "authors": "Flexodyn Solutions",
   "main": ".vite/build/main.js",
+
   "scripts": {
     "start": "electron-forge start",
     "package": "electron-forge package",

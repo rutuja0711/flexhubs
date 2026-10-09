@@ -1458,7 +1458,15 @@ export function ProfileSettingsView({
                         </div>
                       </div>
                       <div className="flex items-center gap-2">
-                        <button type="button" onClick={() => void handlePreviewMessageSound()} className="text-[11px] font-semibold text-app-text border border-app-border rounded px-2 py-1 hover:bg-app-chat-hover">Preview</button>
+                        <button
+                          type="button"
+                          onClick={() => void handlePreviewMessageSound()}
+                          title="Preview sound"
+                          aria-label="Preview message sound"
+                          className="inline-flex items-center justify-center rounded border border-app-border p-1.5 text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+                        >
+                          <FiVolume2 className="h-4 w-4" aria-hidden />
+                        </button>
                         <button
                           type="button"
                           onClick={() => void handleMessageSoundToggle()}
