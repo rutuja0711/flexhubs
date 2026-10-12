@@ -616,14 +616,15 @@ declare global {
       setNotificationWindowSize?: (size: { width: number; height: number }) => void;
       checkForUpdates: () => Promise<{
         ok: boolean;
-        status?: 'skipped' | 'up-to-date' | 'available';
+        status?: 'skipped' | 'up-to-date' | 'available' | 'ready';
         skipped?: boolean;
         currentVersion?: string;
         data?: { version?: string; releaseNotes?: unknown };
         error?: string;
       }>;
       downloadUpdate: () => Promise<{ ok: boolean; error?: string; method?: 'in-app' }>;
-      quitAndInstallUpdate: () => Promise<void>;
+      quitAndInstallUpdate: () => Promise<{ ok: boolean; error?: string }>;
+      getPendingUpdateInstall?: () => Promise<{ ready: boolean; version?: string }>;
       openDesktopReleasePage?: () => Promise<{ ok: boolean }>;
       getUpdaterCapabilities?: () => Promise<{ inAppPatchOnly?: boolean }>;
       getAppVersion: () => Promise<string>;

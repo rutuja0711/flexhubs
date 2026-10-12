@@ -19,9 +19,18 @@ let updaterPhase: UpdaterPhase = 'idle';
 /** Last version reported by the feed (used when checks are skipped during download). */
 let lastKnownAvailableVersion: string | undefined;
 
+/** Set when the in-app patch finished downloading and is waiting for Restart & Install. */
+let pendingInstallVersion: string | undefined;
+
 export type UpdaterCheckResult =
   | { ok: true; status: 'skipped'; currentVersion: string }
   | { ok: true; status: 'up-to-date'; currentVersion: string; data?: { version?: string } }
+  | {
+      ok: true;
+      status: 'ready';
+      currentVersion: string;
+      data?: { version?: string };
+    }
   | {
       ok: true;
       status: 'available';
@@ -29,6 +38,11 @@ export type UpdaterCheckResult =
       data?: { version?: string; releaseNotes?: unknown };
     }
   | { ok: false; error: string; currentVersion: string };
+
+export type UpdaterPendingInstall = {
+  ready: boolean;
+  version?: string;
+};
 
 export type UpdaterDownloadResult = { ok: true; method: 'in-app' } | { ok: false; error: string };
 
@@ -110,22 +124,23 @@ export function sanitizeUpdaterError(raw: string): string {
     lower.includes('latest-mac.yml') ||
     lower.includes('latest.yml')
   ) {
-    return 'No update feed is available yet. Check again after the next desktop release is published on GitHub.';
+    return 'No update is available yet. Check again later.';
   }
 
   if (lower.includes('sha512') || lower.includes('checksum') || lower.includes('hash')) {
-    return 'The update patch failed verification. Try again, or use Manual download on GitHub as a last resort.';
+    return 'The update failed verification. Try again, or use Manual download.';
   }
 
   if (
     lower.includes('code signature') ||
     lower.includes('codesign') ||
-    lower.includes('signed') ||
+    lower.includes('not signed') ||
+    lower.includes('signature invalid') ||
     lower.includes('squirrel') ||
     lower.includes('could not locate') ||
     lower.includes('zip file not provided')
   ) {
-    return 'This build could not apply the in-app patch automatically. Use Manual download on GitHub once, then in-app updates will work again.';
+    return 'This update could not be applied automatically. Use Manual download once, then try in-app updates again.';
   }
 
   if (lower.includes('timed out') || lower.includes('timeout')) {
@@ -137,7 +152,7 @@ export function sanitizeUpdaterError(raw: string): string {
     lower.includes('eperm') ||
     lower.includes('eacces')
   ) {
-    return 'macOS blocked writing to Applications. Quit FlexHubs, reinstall the latest DMG from GitHub (drag to Applications), then try Restart & Install again.';
+    return 'macOS blocked updating the app in Applications. Quit FlexHubs, use Manual download to reinstall, then try Restart & Install again.';
   }
 
   if (
@@ -185,7 +200,11 @@ function attachAutoUpdaterListeners(): void {
   });
 
   autoUpdater.on('error', (err) => {
-    console.warn('[FlexHubs] Updater (logged only):', err.message);
+    const message = err.message || 'Update failed.';
+    console.warn('[FlexHubs] Updater error:', message);
+    sendToRenderer('updater:error', {
+      error: sanitizeUpdaterError(message),
+    });
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
@@ -197,11 +216,27 @@ function attachAutoUpdaterListeners(): void {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    if (info.version) {
+      pendingInstallVersion = info.version;
+      lastKnownAvailableVersion = info.version;
+    }
+
     sendToRenderer('updater:update-downloaded', {
       version: info.version,
       method: 'in-app',
     });
   });
+}
+
+function pendingInstallState(): UpdaterPendingInstall {
+  const version = pendingInstallVersion?.trim();
+
+  if (!version || !isVersionNewer(version, app.getVersion())) {
+    pendingInstallVersion = undefined;
+    return { ready: false };
+  }
+
+  return { ready: true, version };
 }
 
 type FeedCheckOutcome =
@@ -286,6 +321,17 @@ async function runUpdateCheck(): Promise<UpdaterCheckResult> {
     return { ok: true, status: 'skipped', currentVersion };
   }
 
+  const pending = pendingInstallState();
+
+  if (pending.ready && pending.version) {
+    return {
+      ok: true,
+      status: 'ready',
+      currentVersion,
+      data: { version: pending.version },
+    };
+  }
+
   if (updaterPhase === 'downloading') {
     return {
       ok: true,
@@ -349,6 +395,12 @@ function registerUpdaterIpcHandlers(): void {
       return { ok: false, error: 'Updates are only available in installed builds.' };
     }
 
+    const alreadyDownloaded = pendingInstallState();
+
+    if (alreadyDownloaded.ready) {
+      return { ok: true, method: 'in-app' };
+    }
+
     if (updaterPhase === 'downloading') {
       return { ok: false, error: 'A download is already in progress.' };
     }
@@ -374,13 +426,33 @@ function registerUpdaterIpcHandlers(): void {
     }
   });
 
-  register('updater:quit-and-install', () => {
+  register('updater:quit-and-install', (): { ok: true } | { ok: false; error: string } => {
     if (!app.isPackaged) {
-      return;
+      return { ok: false, error: 'Updates are only available in installed builds.' };
     }
 
-    autoUpdater.quitAndInstall(false, true);
+    const pending = pendingInstallState();
+
+    if (!pending.ready) {
+      return {
+        ok: false,
+        error: 'No downloaded update is ready to install. Download the update again first.',
+      };
+    }
+
+    try {
+      console.info('[FlexHubs] Quitting to install update', pending.version);
+      setImmediate(() => {
+        autoUpdater.quitAndInstall(false, true);
+      });
+      return { ok: true };
+    } catch (error: unknown) {
+      const raw = error instanceof Error ? error.message : 'Could not start install.';
+      return { ok: false, error: sanitizeUpdaterError(raw) };
+    }
   });
+
+  register('updater:get-pending-install', (): UpdaterPendingInstall => pendingInstallState());
 
   register('updater:open-release-page', () => {
     void shell.openExternal(DESKTOP_RELEASE_PAGE);

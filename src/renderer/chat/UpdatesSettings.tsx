@@ -5,7 +5,7 @@ type UpdateState = 'checking' | 'up-to-date' | 'available' | 'downloading' | 're
 
 type CheckUpdatesResult = {
   ok: boolean;
-  status?: 'skipped' | 'up-to-date' | 'available';
+  status?: 'skipped' | 'up-to-date' | 'available' | 'ready';
   skipped?: boolean;
   data?: { version?: string; releaseNotes?: unknown };
   error?: string;
@@ -46,6 +46,14 @@ export function UpdatesSettings() {
 
     if (result.status === 'skipped' || result.skipped) {
       setUpdateState('up-to-date');
+      return;
+    }
+
+    if (result.status === 'ready') {
+      setUpdateState('ready');
+      if (result.data?.version) {
+        setLatestVersion(formatVersion(String(result.data.version)));
+      }
       return;
     }
 
@@ -131,6 +139,17 @@ export function UpdatesSettings() {
         setLegacyInstallerUpdater(true);
       }
 
+      try {
+        const pending = await api.getPendingUpdateInstall?.();
+        if (pending?.ready && pending.version) {
+          setUpdateState('ready');
+          setLatestVersion(formatVersion(pending.version));
+          return;
+        }
+      } catch {
+        // Fall through to normal update check.
+      }
+
       await checkForUpdates();
     };
 
@@ -164,8 +183,16 @@ export function UpdatesSettings() {
 
     const unsubDownloaded = api.onUpdaterEvent('update-downloaded', (info: { version?: string }) => {
       setUpdateState('ready');
+      setErrorMessage('');
       if (info?.version) {
         setLatestVersion(formatVersion(info.version));
+      }
+    });
+
+    const unsubError = api.onUpdaterEvent('error', (payload: { error?: string }) => {
+      if (typeof payload?.error === 'string' && payload.error.trim()) {
+        setUpdateState('error');
+        setErrorMessage(payload.error.trim());
       }
     });
 
@@ -175,6 +202,7 @@ export function UpdatesSettings() {
       unsubNotAvailable();
       unsubProgress();
       unsubDownloaded();
+      unsubError();
     };
   }, [checkForUpdates, isElectron]);
 
@@ -189,15 +217,21 @@ export function UpdatesSettings() {
     const result = await window.electronAPI.downloadUpdate();
     if (!result.ok) {
       setUpdateState('error');
-      setErrorMessage(result.error?.trim() || 'Update download failed. Try again or install from GitHub.');
+      setErrorMessage(result.error?.trim() || 'Update download failed. Try again or use Manual download.');
       return;
     }
 
     setUpdateState('ready');
   };
 
-  const restartAndInstall = () => {
-    void window.electronAPI.quitAndInstallUpdate();
+  const restartAndInstall = async () => {
+    setErrorMessage('');
+    const result = await window.electronAPI.quitAndInstallUpdate();
+
+    if (result && result.ok === false) {
+      setUpdateState('error');
+      setErrorMessage(result.error?.trim() || 'Could not restart to install the update.');
+    }
   };
 
   if (!isElectron) {
@@ -214,16 +248,13 @@ export function UpdatesSettings() {
     <div className="mx-auto max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div className="mb-6">
         <h2 className="text-xl font-bold tracking-tight text-app-text">Update Center</h2>
-        <p className="mt-1 text-sm text-app-muted">
-          Updates download in the background as a patch. Use Restart &amp; Install to apply — not the DMG installer.
-        </p>
+       
       </div>
 
       {legacyInstallerUpdater ? (
         <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-app-text">
-          This app build uses an old update flow that opens the DMG installer. Install{' '}
-          <strong>v1.0.9+</strong> from GitHub once (Manual download), then future updates will be in-app patches
-          only.
+          This build uses an older update flow. Use <strong>Manual download</strong> once to install the latest
+          version, then in-app updates will work normally.
         </div>
       ) : null}
 
@@ -243,8 +274,8 @@ export function UpdatesSettings() {
                 {updateState === 'checking' && 'Checking for updates…'}
                 {updateState === 'up-to-date' && "You're up to date."}
                 {updateState === 'available' && 'New version available'}
-                {updateState === 'downloading' && 'Downloading update patch…'}
-                {updateState === 'ready' && 'Update patch ready — restart to install.'}
+                {updateState === 'downloading' && 'Downloading update…'}
+                {updateState === 'ready' && 'Update ready — restart to install.'}
                 {updateState === 'error' && 'Update failed'}
                 {updateState === 'offline' && "You're offline"}
               </h3>
@@ -318,7 +349,7 @@ export function UpdatesSettings() {
                   onClick={openReleasePage}
                   className="rounded-xl border border-app-border bg-app-surface px-5 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-chat-hover"
                 >
-                  Manual download (DMG)
+                  Manual download
                 </button>
               )}
 
@@ -343,7 +374,10 @@ export function UpdatesSettings() {
                   </button>
                   <button
                     type="button"
-                    onClick={() => setUpdateState('up-to-date')}
+                    onClick={() => {
+                      setErrorMessage('');
+                      setUpdateState('ready');
+                    }}
                     className="rounded-xl bg-app-chat-hover px-5 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-border"
                   >
                     Later
