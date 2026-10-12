@@ -102,6 +102,7 @@ export function UpdatesSettings() {
   const currentVersionRef = useRef('');
   const updateStateRef = useRef<UpdateState>('up-to-date');
   const checkInFlightRef = useRef(false);
+  const checkRequestIdRef = useRef(0);
 
   useEffect(() => {
     currentVersionRef.current = currentVersion;
@@ -228,6 +229,8 @@ export function UpdatesSettings() {
       return;
     }
 
+    const requestId = checkRequestIdRef.current + 1;
+    checkRequestIdRef.current = requestId;
     checkInFlightRef.current = true;
 
     let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -235,9 +238,13 @@ export function UpdatesSettings() {
 
     if (showCheckingImmediately) {
       setUpdateState('checking');
-      minWaitPromise = new Promise((resolve) => setTimeout(resolve, 800));
+      minWaitPromise = new Promise((resolve) => setTimeout(resolve, 400));
     } else {
-      timeout = setTimeout(() => setUpdateState('checking'), 500);
+      timeout = setTimeout(() => {
+        if (checkRequestIdRef.current === requestId) {
+          setUpdateState('checking');
+        }
+      }, 600);
     }
 
     try {
@@ -246,6 +253,9 @@ export function UpdatesSettings() {
       if (timeout) {
         clearTimeout(timeout);
       }
+      if (checkRequestIdRef.current !== requestId) {
+        return;
+      }
       applyCheckResult(result);
       await syncDownloadStatus();
     } catch {
@@ -253,10 +263,15 @@ export function UpdatesSettings() {
       if (timeout) {
         clearTimeout(timeout);
       }
+      if (checkRequestIdRef.current !== requestId) {
+        return;
+      }
       setUpdateState('error');
       setErrorMessage('Unable to check for updates right now.');
     } finally {
-      checkInFlightRef.current = false;
+      if (checkRequestIdRef.current === requestId) {
+        checkInFlightRef.current = false;
+      }
     }
   }, [applyCheckResult, syncDownloadStatus]);
 
@@ -307,13 +322,15 @@ export function UpdatesSettings() {
       }
 
       await syncDownloadStatus();
-      await checkForUpdates();
+      await checkForUpdates(true);
     };
 
     void init();
 
     const unsubChecking = api.onUpdaterEvent('checking', () => {
-      setUpdateState('checking');
+      if (checkInFlightRef.current) {
+        setUpdateState('checking');
+      }
     });
 
     const unsubAvailable = api.onUpdaterEvent('update-available', (info: { version?: string; releaseNotes?: string }) => {
@@ -379,6 +396,24 @@ export function UpdatesSettings() {
       unsubError();
     };
   }, [checkForUpdates, isElectron, openRestartModal, syncDownloadStatus]);
+
+  useEffect(() => {
+    if (updateState !== 'checking') {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      if (updateStateRef.current !== 'checking') {
+        return;
+      }
+
+      checkInFlightRef.current = false;
+      setUpdateState('up-to-date');
+      setErrorMessage('');
+    }, 50_000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [updateState]);
 
   const openReleasePage = () => {
     void window.electronAPI.openDesktopReleasePage?.();
@@ -582,7 +617,7 @@ export function UpdatesSettings() {
               <p className="text-sm text-app-muted">
                 {hasUpdate
                   ? 'Release notes for this version will appear here when available.'
-                  : 'You already have the latest improvements for this version.'}
+                  : 'You already have the latest improvements for this version this is in the cloud.'}
               </p>
             )}
           </div>

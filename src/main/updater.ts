@@ -360,7 +360,14 @@ async function checkFeedForUpdate(): Promise<FeedCheckOutcome> {
   attachAutoUpdaterListeners();
 
   try {
-    const result = await autoUpdater.checkForUpdates();
+    const result = await Promise.race([
+      autoUpdater.checkForUpdates(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Update check timed out. Try again later.'));
+        }, UPDATE_CHECK_TIMEOUT_MS);
+      }),
+    ]);
     if (!result) {
       return { kind: 'up-to-date', version: app.getVersion() };
     }
@@ -389,6 +396,7 @@ async function checkFeedForUpdate(): Promise<FeedCheckOutcome> {
 }
 
 const UPDATE_DOWNLOAD_TIMEOUT_MS = 25 * 60_000;
+const UPDATE_CHECK_TIMEOUT_MS = 45_000;
 
 async function downloadInAppUpdate(): Promise<UpdaterDownloadResult> {
   downloadPausedIntentionally = false;
