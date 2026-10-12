@@ -580,7 +580,7 @@ export function UpdatesSettings() {
     <div className="mx-auto max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div className="mb-6">
         <h2 className="text-xl font-bold tracking-tight text-app-text">
-          Update Center <span className="font-semibold text-app-muted">({versionLabel})</span>
+          Update Center flexhubs  <span className="font-semibold text-app-muted">({versionLabel})</span>
         </h2>
         <p className="mt-2 text-sm text-app-muted">
           Latest version: <span className="font-medium text-app-text">{latestLabel}</span>
