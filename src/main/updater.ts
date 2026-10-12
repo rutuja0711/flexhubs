@@ -184,18 +184,28 @@ function attachAutoUpdaterListeners(): void {
   });
 
   autoUpdater.on('update-available', (info) => {
-    if (info.version) {
-      lastKnownAvailableVersion = info.version;
+    const version = String(info.version || '').trim();
+    const current = app.getVersion();
+
+    if (!version || !isVersionNewer(version, current)) {
+      lastKnownAvailableVersion = undefined;
+      sendToRenderer('updater:update-not-available', {
+        version: current,
+      });
+      return;
     }
+
+    lastKnownAvailableVersion = version;
     sendToRenderer('updater:update-available', {
-      version: info.version,
+      version,
       releaseNotes: info.releaseNotes,
     });
   });
 
   autoUpdater.on('update-not-available', (info) => {
+    lastKnownAvailableVersion = undefined;
     sendToRenderer('updater:update-not-available', {
-      version: info.version,
+      version: info.version ?? app.getVersion(),
     });
   });
 
@@ -268,7 +278,8 @@ async function checkFeedForUpdate(): Promise<FeedCheckOutcome> {
       };
     }
 
-    return { kind: 'up-to-date', version };
+    lastKnownAvailableVersion = undefined;
+    return { kind: 'up-to-date', version: app.getVersion() };
   } catch (error: unknown) {
     const raw = error instanceof Error ? error.message : 'Update check failed.';
     return { kind: 'error', message: sanitizeUpdaterError(raw) };
@@ -314,7 +325,9 @@ async function downloadInAppUpdate(): Promise<UpdaterDownloadResult> {
   });
 }
 
-async function runUpdateCheck(): Promise<UpdaterCheckResult> {
+let updateCheckInFlight: Promise<UpdaterCheckResult> | null = null;
+
+async function runUpdateCheckInternal(): Promise<UpdaterCheckResult> {
   const currentVersion = app.getVersion();
 
   if (!app.isPackaged) {
@@ -333,20 +346,15 @@ async function runUpdateCheck(): Promise<UpdaterCheckResult> {
   }
 
   if (updaterPhase === 'downloading') {
-    return {
-      ok: true,
-      status: 'available',
-      currentVersion,
-      data: { version: lastKnownAvailableVersion ?? currentVersion },
-    };
-  }
+    const version = lastKnownAvailableVersion?.trim();
+    const hasNewerDownload =
+      version && isVersionNewer(version, currentVersion);
 
-  if (updaterPhase === 'checking') {
     return {
       ok: true,
-      status: lastKnownAvailableVersion ? 'available' : 'up-to-date',
+      status: hasNewerDownload ? 'available' : 'up-to-date',
       currentVersion,
-      data: { version: lastKnownAvailableVersion ?? currentVersion },
+      data: { version: hasNewerDownload ? version : currentVersion },
     };
   }
 
@@ -368,15 +376,29 @@ async function runUpdateCheck(): Promise<UpdaterCheckResult> {
       };
     }
 
+    lastKnownAvailableVersion = undefined;
+
     return {
       ok: true,
       status: 'up-to-date',
       currentVersion,
-      data: { version: outcome.version },
+      data: { version: outcome.version ?? currentVersion },
     };
   } finally {
     updaterPhase = 'idle';
   }
+}
+
+function runUpdateCheck(): Promise<UpdaterCheckResult> {
+  if (updateCheckInFlight) {
+    return updateCheckInFlight;
+  }
+
+  updateCheckInFlight = runUpdateCheckInternal().finally(() => {
+    updateCheckInFlight = null;
+  });
+
+  return updateCheckInFlight;
 }
 
 function registerUpdaterIpcHandlers(): void {

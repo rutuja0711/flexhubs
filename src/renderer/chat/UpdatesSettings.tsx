@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FiDownloadCloud, FiRefreshCcw, FiCheckCircle, FiAlertCircle } from 'react-icons/fi';
 
 type UpdateState = 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error' | 'offline';
@@ -21,6 +21,36 @@ function formatVersion(version: string): string {
   return trimmed.startsWith('v') ? trimmed : `v${trimmed}`;
 }
 
+function parseVersionParts(version: string): number[] {
+  return version
+    .trim()
+    .replace(/^v/i, '')
+    .split('.')
+    .map((part) => {
+      const match = part.match(/^\d+/);
+      return match ? Number(match[0]) : 0;
+    });
+}
+
+function isVersionNewer(latest: string, current: string): boolean {
+  const a = parseVersionParts(latest);
+  const b = parseVersionParts(current);
+  const length = Math.max(a.length, b.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const left = a[index] ?? 0;
+    const right = b[index] ?? 0;
+    if (left > right) {
+      return true;
+    }
+    if (left < right) {
+      return false;
+    }
+  }
+
+  return false;
+}
+
 export function UpdatesSettings() {
   const [updateState, setUpdateState] = useState<UpdateState>('up-to-date');
   const [currentVersion, setCurrentVersion] = useState<string>('');
@@ -30,6 +60,12 @@ export function UpdatesSettings() {
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [legacyInstallerUpdater, setLegacyInstallerUpdater] = useState(false);
   const isElectron = !!window.electronAPI;
+  const currentVersionRef = useRef('');
+  const checkInFlightRef = useRef(false);
+
+  useEffect(() => {
+    currentVersionRef.current = currentVersion;
+  }, [currentVersion]);
 
   const applyCheckResult = useCallback((result: CheckUpdatesResult) => {
     if (result.currentVersion) {
@@ -58,10 +94,19 @@ export function UpdatesSettings() {
     }
 
     if (result.status === 'available') {
-      setUpdateState('available');
-      if (result.data?.version) {
-        setLatestVersion(formatVersion(String(result.data.version)));
+      const latest = result.data?.version ? formatVersion(String(result.data.version)) : '';
+      const current = result.currentVersion
+        ? formatVersion(result.currentVersion)
+        : currentVersionRef.current;
+
+      if (!latest || !isVersionNewer(latest, current)) {
+        setUpdateState('up-to-date');
+        setLatestVersion(current);
+        return;
       }
+
+      setUpdateState('available');
+      setLatestVersion(latest);
       if (typeof result.data?.releaseNotes === 'string') {
         setReleaseNotes(result.data.releaseNotes);
       }
@@ -84,10 +129,16 @@ export function UpdatesSettings() {
       return;
     }
 
+    if (checkInFlightRef.current) {
+      return;
+    }
+
     if (!navigator.onLine) {
       setUpdateState('offline');
       return;
     }
+
+    checkInFlightRef.current = true;
 
     // Only show checking state immediately if requested (e.g. manual click)
     // Otherwise, delay it to prevent flashing on fast auto-checks
@@ -111,6 +162,8 @@ export function UpdatesSettings() {
       if (timeout) clearTimeout(timeout);
       setUpdateState('error');
       setErrorMessage('Unable to check for updates right now.');
+    } finally {
+      checkInFlightRef.current = false;
     }
   }, [applyCheckResult]);
 
@@ -160,10 +213,15 @@ export function UpdatesSettings() {
     });
 
     const unsubAvailable = api.onUpdaterEvent('update-available', (info: { version?: string; releaseNotes?: string }) => {
-      setUpdateState('available');
-      if (info?.version) {
-        setLatestVersion(formatVersion(info.version));
+      const latest = info?.version ? formatVersion(info.version) : '';
+      const current = currentVersionRef.current;
+
+      if (!latest || !isVersionNewer(latest, current)) {
+        return;
       }
+
+      setUpdateState('available');
+      setLatestVersion(latest);
       if (info?.releaseNotes) {
         setReleaseNotes(info.releaseNotes);
       }
