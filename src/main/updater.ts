@@ -550,12 +550,38 @@ async function resetDownloadState(): Promise<{ ok: true }> {
 }
 
 async function pauseActiveDownload(): Promise<{ ok: true } | { ok: false; error: string }> {
-  if (updaterPhase !== 'downloading' || !activeDownloadCancellation) {
+  const persisted = readPersistedDownloadPause();
+  const canPause =
+    (updaterPhase === 'downloading' && activeDownloadCancellation) || persisted != null;
+
+  if (!canPause) {
     return { ok: false, error: 'No update download is in progress.' };
   }
 
   downloadPausedIntentionally = true;
-  activeDownloadCancellation.cancel();
+
+  if (activeDownloadCancellation) {
+    activeDownloadCancellation.cancel();
+    activeDownloadCancellation = null;
+  }
+
+  const version =
+    lastKnownAvailableVersion?.trim() ??
+    persisted?.version ??
+    app.getVersion();
+
+  updaterPhase = 'paused';
+  writePersistedDownloadPause({
+    version,
+    progress: lastDownloadProgressPercent,
+    pausedAt: new Date().toISOString(),
+  });
+
+  sendToRenderer('updater:download-paused', {
+    version,
+    progress: lastDownloadProgressPercent,
+  });
+
   return { ok: true };
 }
 
@@ -569,13 +595,13 @@ async function resumePausedDownload(): Promise<UpdaterDownloadResult> {
     return { ok: true, method: 'in-app' };
   }
 
-  if (updaterPhase === 'downloading') {
+  if (updaterPhase === 'downloading' && activeDownloadCancellation && !downloadPausedIntentionally) {
     return { ok: false, error: 'A download is already in progress.' };
   }
 
   attachAutoUpdaterListeners();
-  updaterPhase = 'downloading';
   downloadPausedIntentionally = false;
+  activeDownloadCancellation = null;
 
   const persisted = readPersistedDownloadPause();
   if (persisted?.version) {
@@ -583,24 +609,29 @@ async function resumePausedDownload(): Promise<UpdaterDownloadResult> {
     lastDownloadProgressPercent = persisted.progress;
   }
 
-  try {
-    if (!lastKnownAvailableVersion || !isVersionNewer(lastKnownAvailableVersion, app.getVersion())) {
-      const checked = await checkFeedForUpdate();
-      if (checked.kind === 'error') {
-        return { ok: false, error: checked.message };
-      }
-      if (checked.kind !== 'available') {
-        return { ok: false, error: 'No update is available to download right now.' };
-      }
-    }
+  updaterPhase = 'downloading';
 
-    console.info('[FlexHubs] Resuming in-app update download...');
-    return await downloadInAppUpdate();
-  } finally {
-    if (updaterPhase === 'downloading') {
-      updaterPhase = 'idle';
-    }
+  const checked = await checkFeedForUpdate();
+  if (checked.kind === 'error') {
+    updaterPhase = 'paused';
+    return { ok: false, error: checked.message };
   }
+
+  if (checked.kind !== 'available') {
+    updaterPhase = 'paused';
+    return { ok: false, error: 'No update is available to download right now.' };
+  }
+
+  lastKnownAvailableVersion = checked.version;
+
+  console.info('[FlexHubs] Resuming in-app update download...');
+  const result = await downloadInAppUpdate();
+
+  if (!result.ok && !result.paused && updaterPhase === 'downloading') {
+    updaterPhase = 'paused';
+  }
+
+  return result;
 }
 
 let updateCheckInFlight: Promise<UpdaterCheckResult> | null = null;
@@ -701,12 +732,18 @@ function registerUpdaterIpcHandlers(): void {
       return { ok: true, method: 'in-app' };
     }
 
-    if (updaterPhase === 'downloading') {
+    if (updaterPhase === 'downloading' && activeDownloadCancellation && !downloadPausedIntentionally) {
       return { ok: false, error: 'A download is already in progress.' };
+    }
+
+    if (updaterPhase === 'paused' || readPersistedDownloadPause()) {
+      return resumePausedDownload();
     }
 
     attachAutoUpdaterListeners();
     updaterPhase = 'downloading';
+    downloadPausedIntentionally = false;
+    activeDownloadCancellation = null;
 
     try {
       const checked = await checkFeedForUpdate();
@@ -727,8 +764,8 @@ function registerUpdaterIpcHandlers(): void {
       }
       return result;
     } finally {
-      if (updaterPhase !== 'paused') {
-        updaterPhase = 'idle';
+      if (updaterPhase === 'downloading') {
+        updaterPhase = readPersistedDownloadPause() ? 'paused' : 'idle';
       }
     }
   });

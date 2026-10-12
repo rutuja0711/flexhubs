@@ -98,6 +98,7 @@ export function UpdatesSettings() {
   const [legacyInstallerUpdater, setLegacyInstallerUpdater] = useState(false);
   const [restartModalOpen, setRestartModalOpen] = useState(false);
   const [deferredRestartActive, setDeferredRestartActive] = useState(false);
+  const [resumeBusy, setResumeBusy] = useState(false);
   const isElectron = !!window.electronAPI;
   const currentVersionRef = useRef('');
   const updateStateRef = useRef<UpdateState>('up-to-date');
@@ -447,21 +448,44 @@ export function UpdatesSettings() {
   };
 
   const resumeDownload = async () => {
-    setErrorMessage('');
-    setUpdateState('downloading');
-    const result = await window.electronAPI.resumeUpdateDownload?.();
-    if (result?.paused) {
-      setUpdateState('paused');
-      return;
-    }
-    if (!result?.ok) {
-      setUpdateState('paused');
-      setErrorMessage(result?.error?.trim() || 'Could not resume the download.');
+    if (resumeBusy) {
       return;
     }
 
-    setUpdateState('ready');
-    openRestartModal();
+    setResumeBusy(true);
+    setErrorMessage('');
+    setUpdateState('downloading');
+
+    try {
+      const resume = window.electronAPI.resumeUpdateDownload;
+      const result = resume
+        ? await resume()
+        : await window.electronAPI.downloadUpdate();
+
+      if (result?.paused) {
+        setUpdateState('paused');
+        return;
+      }
+
+      if (!result?.ok) {
+        setUpdateState('paused');
+        setErrorMessage(result?.error?.trim() || 'Could not resume the download.');
+        return;
+      }
+
+      setUpdateState('ready');
+      openRestartModal();
+    } finally {
+      setResumeBusy(false);
+    }
+  };
+
+  const restartDownloadFromScratch = async () => {
+    setErrorMessage('');
+    await window.electronAPI.resetUpdateDownloadState?.();
+    setDownloadProgress(0);
+    setUpdateState('available');
+    await downloadUpdate();
   };
 
   const restartNow = async () => {
@@ -557,6 +581,10 @@ export function UpdatesSettings() {
           <p className="mb-4 text-sm text-app-text">{errorMessage}</p>
         )}
 
+        {updateState === 'paused' && errorMessage && (
+          <p className="mb-4 text-sm text-red-400">{errorMessage}</p>
+        )}
+
         {(updateState === 'downloading' || updateState === 'paused') && (
           <div className="mb-6">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
@@ -577,11 +605,12 @@ export function UpdatesSettings() {
                 {showResumeAction && (
                   <button
                     type="button"
+                    disabled={resumeBusy}
                     onClick={() => void resumeDownload()}
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-accent-hover"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <FiPlay aria-hidden />
-                    Resume
+                    {resumeBusy ? 'Resuming…' : 'Resume'}
                   </button>
                 )}
                 <span className="font-medium text-accent">{downloadProgress}%</span>
@@ -594,9 +623,19 @@ export function UpdatesSettings() {
               />
             </div>
             {updateState === 'paused' ? (
-              <p className="mt-2 text-xs text-app-muted">
-                Resume later to continue from {downloadProgress}% — your progress is saved on this device.
-              </p>
+              <div className="mt-2 space-y-2">
+                <p className="text-xs text-app-muted">
+                  Progress is saved on this device. Resume continues the download (the bar may restart while the
+                  cached file is reused).
+                </p>
+                <button
+                  type="button"
+                  onClick={() => void restartDownloadFromScratch()}
+                  className="text-xs font-medium text-accent hover:underline"
+                >
+                  Restart download from 0%
+                </button>
+              </div>
             ) : (
               <p className="mt-2 text-xs text-app-muted">
                 The update installs while it downloads. You&apos;ll be asked to restart when it&apos;s done.
@@ -617,7 +656,7 @@ export function UpdatesSettings() {
               <p className="text-sm text-app-muted">
                 {hasUpdate
                   ? 'Release notes for this version will appear here when available.'
-                  : 'You already have the latest improvements for this version this is in the cloud.'}
+                  : 'You already have the latest improvements for this version.'}
               </p>
             )}
           </div>
