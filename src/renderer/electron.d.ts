@@ -639,6 +639,7 @@ declare global {
       }>;
       scheduleDeferredUpdateRestart?: () => Promise<{ ok: boolean; delayMs?: number }>;
       cancelDeferredUpdateRestart?: () => Promise<{ ok: boolean }>;
+      isDeferredUpdateRestartScheduled?: () => Promise<{ scheduled: boolean }>;
       quitAndInstallUpdate: () => Promise<{ ok: boolean; error?: string }>;
       getPendingUpdateInstall?: () => Promise<{ ready: boolean; version?: string }>;
       openDesktopReleasePage?: () => Promise<{ ok: boolean }>;

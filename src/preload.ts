@@ -877,6 +877,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('updater:schedule-deferred-restart'),
   cancelDeferredUpdateRestart: (): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('updater:cancel-deferred-restart'),
+  isDeferredUpdateRestartScheduled: (): Promise<{ scheduled: boolean }> =>
+    ipcRenderer.invoke('updater:is-deferred-restart-scheduled'),
   quitAndInstallUpdate: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('updater:quit-and-install'),
   getPendingUpdateInstall: (): Promise<{ ready: boolean; version?: string }> =>

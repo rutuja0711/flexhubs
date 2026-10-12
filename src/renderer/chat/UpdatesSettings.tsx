@@ -21,6 +21,33 @@ type CheckUpdatesResult = {
 };
 
 const AUTO_RESTART_MINUTES = 15;
+const DEFERRED_RESTART_STORAGE_PREFIX = 'flexhubs-update-deferred-restart:';
+
+function deferredRestartStorageKey(version: string): string {
+  return `${DEFERRED_RESTART_STORAGE_PREFIX}${version.trim()}`;
+}
+
+function readDeferredRestartChoice(version: string): boolean {
+  try {
+    return sessionStorage.getItem(deferredRestartStorageKey(version)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeDeferredRestartChoice(version: string, deferred: boolean): void {
+  try {
+    const key = deferredRestartStorageKey(version);
+
+    if (deferred) {
+      sessionStorage.setItem(key, '1');
+    } else {
+      sessionStorage.removeItem(key);
+    }
+  } catch {
+    // ignore
+  }
+}
 
 function formatVersion(version: string): string {
   const trimmed = version.trim();
@@ -113,9 +140,17 @@ export function UpdatesSettings() {
     updateStateRef.current = updateState;
   }, [updateState]);
 
-  const openRestartModal = useCallback(() => {
+  const openRestartModal = useCallback((targetVersion?: string) => {
+    const version = targetVersion?.trim() || latestVersion.trim();
+
+    if (version && readDeferredRestartChoice(version)) {
+      setDeferredRestartActive(true);
+      setRestartModalOpen(false);
+      return;
+    }
+
     setRestartModalOpen(true);
-  }, []);
+  }, [latestVersion]);
 
   const applyCheckResult = useCallback((result: CheckUpdatesResult) => {
     if (result.currentVersion) {
@@ -154,7 +189,9 @@ export function UpdatesSettings() {
       if (result.data?.version) {
         setLatestVersion(formatVersion(String(result.data.version)));
       }
-      openRestartModal();
+      openRestartModal(
+        result.data?.version ? formatVersion(String(result.data.version)) : latestVersion,
+      );
       return;
     }
 
@@ -313,9 +350,16 @@ export function UpdatesSettings() {
       try {
         const pending = await api.getPendingUpdateInstall?.();
         if (pending?.ready && pending.version) {
+          const pendingVersion = formatVersion(pending.version);
           setUpdateState('ready');
-          setLatestVersion(formatVersion(pending.version));
-          openRestartModal();
+          setLatestVersion(pendingVersion);
+
+          const scheduled = await api.isDeferredUpdateRestartScheduled?.();
+          if (scheduled?.scheduled) {
+            setDeferredRestartActive(true);
+          }
+
+          openRestartModal(pendingVersion);
           return;
         }
       } catch {
@@ -377,7 +421,7 @@ export function UpdatesSettings() {
       if (info?.version) {
         setLatestVersion(formatVersion(info.version));
       }
-      openRestartModal();
+      openRestartModal(info?.version ? formatVersion(info.version) : undefined);
     });
 
     const unsubError = api.onUpdaterEvent('error', (payload: { error?: string }) => {
@@ -436,7 +480,7 @@ export function UpdatesSettings() {
     }
 
     setUpdateState('ready');
-    openRestartModal();
+    openRestartModal(latestVersion);
   };
 
   const pauseDownload = async () => {
@@ -474,7 +518,7 @@ export function UpdatesSettings() {
       }
 
       setUpdateState('ready');
-      openRestartModal();
+      openRestartModal(latestVersion);
     } finally {
       setResumeBusy(false);
     }
@@ -490,6 +534,7 @@ export function UpdatesSettings() {
 
   const restartNow = async () => {
     setErrorMessage('');
+    writeDeferredRestartChoice(latestVersion, false);
     await window.electronAPI.cancelDeferredUpdateRestart?.();
     setDeferredRestartActive(false);
     setRestartModalOpen(false);
@@ -497,14 +542,15 @@ export function UpdatesSettings() {
     const result = await window.electronAPI.quitAndInstallUpdate();
 
     if (result && result.ok === false) {
-      setUpdateState('error');
+      setUpdateState('ready');
       setErrorMessage(result.error?.trim() || 'Could not restart to apply the update.');
-      openRestartModal();
+      openRestartModal(latestVersion);
     }
   };
 
   const restartLater = async () => {
     setErrorMessage('');
+    writeDeferredRestartChoice(latestVersion, true);
     await window.electronAPI.scheduleDeferredUpdateRestart?.();
     setDeferredRestartActive(true);
     setRestartModalOpen(false);
@@ -703,6 +749,27 @@ export function UpdatesSettings() {
             >
               Manual download
             </button>
+          )}
+
+          {updateState === 'ready' && (
+            <>
+              <button
+                type="button"
+                onClick={() => void restartNow()}
+                className="rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white shadow-md transition-colors hover:bg-accent-hover"
+              >
+                Restart now
+              </button>
+              {!deferredRestartActive ? (
+                <button
+                  type="button"
+                  onClick={() => void restartLater()}
+                  className="rounded-xl bg-app-chat-hover px-5 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-border"
+                >
+                  Later
+                </button>
+              ) : null}
+            </>
           )}
 
         </div>

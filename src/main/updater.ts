@@ -99,8 +99,60 @@ function scheduleDeferredInstall(): void {
 /** Last version reported by the feed (used when checks are skipped during download). */
 let lastKnownAvailableVersion: string | undefined;
 
-/** Set when the in-app patch finished downloading and is waiting for Restart & Install. */
+/** Set when the in-app patch finished downloading and is waiting for restart. */
 let pendingInstallVersion: string | undefined;
+
+function pendingInstallFilePath(): string {
+  return path.join(app.getPath('userData'), 'pending-update-install.json');
+}
+
+function readPersistedPendingInstallVersion(): string | undefined {
+  try {
+    const raw = fs.readFileSync(pendingInstallFilePath(), 'utf8');
+    const parsed = JSON.parse(raw) as { version?: string };
+    const version = parsed?.version?.trim();
+    return version || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writePersistedPendingInstallVersion(version: string | null): void {
+  const filePath = pendingInstallFilePath();
+
+  try {
+    if (!version) {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      return;
+    }
+
+    fs.writeFileSync(
+      filePath,
+      JSON.stringify({ version, savedAt: new Date().toISOString() }),
+      'utf8',
+    );
+  } catch (error) {
+    console.warn('[FlexHubs] Could not persist pending install version:', error);
+  }
+}
+
+function hydratePendingInstallVersion(): void {
+  const persisted = readPersistedPendingInstallVersion();
+
+  if (!persisted) {
+    return;
+  }
+
+  if (!isVersionNewer(persisted, app.getVersion())) {
+    writePersistedPendingInstallVersion(null);
+    pendingInstallVersion = undefined;
+    return;
+  }
+
+  pendingInstallVersion = persisted;
+}
 
 export type UpdaterCheckResult =
   | { ok: true; status: 'skipped'; currentVersion: string }
@@ -331,7 +383,10 @@ function attachAutoUpdaterListeners(): void {
     if (info.version) {
       pendingInstallVersion = info.version;
       lastKnownAvailableVersion = info.version;
+      writePersistedPendingInstallVersion(info.version);
     }
+
+    autoUpdater.autoInstallOnAppQuit = true;
 
     sendToRenderer('updater:update-downloaded', {
       version: info.version,
@@ -341,10 +396,15 @@ function attachAutoUpdaterListeners(): void {
 }
 
 function pendingInstallState(): UpdaterPendingInstall {
+  if (!pendingInstallVersion?.trim()) {
+    hydratePendingInstallVersion();
+  }
+
   const version = pendingInstallVersion?.trim();
 
   if (!version || !isVersionNewer(version, app.getVersion())) {
     pendingInstallVersion = undefined;
+    writePersistedPendingInstallVersion(null);
     return { ready: false };
   }
 
@@ -542,6 +602,7 @@ async function resetDownloadState(): Promise<{ ok: true }> {
   downloadPausedIntentionally = false;
   lastDownloadProgressPercent = 0;
   pendingInstallVersion = undefined;
+  writePersistedPendingInstallVersion(null);
   writePersistedDownloadPause(null);
   clearUpdaterDownloadCache();
   clearDeferredInstallTimer();
@@ -804,16 +865,35 @@ function registerUpdaterIpcHandlers(): void {
 
     try {
       clearDeferredInstallTimer();
+      autoUpdater.autoInstallOnAppQuit = true;
       console.info('[FlexHubs] Quitting to apply update', pending.version);
+
       setImmediate(() => {
-        autoUpdater.quitAndInstall(false, true);
+        try {
+          autoUpdater.quitAndInstall(false, true);
+        } catch (error) {
+          console.warn('[FlexHubs] quitAndInstall failed:', error);
+        }
+
+        window.setTimeout(() => {
+          if (!app.isQuitting) {
+            console.info('[FlexHubs] quitAndInstall did not exit — relaunching app to apply update');
+            app.relaunch();
+            app.quit();
+          }
+        }, 2500);
       });
+
       return { ok: true };
     } catch (error: unknown) {
       const raw = error instanceof Error ? error.message : 'Could not start install.';
       return { ok: false, error: sanitizeUpdaterError(raw) };
     }
   });
+
+  register('updater:is-deferred-restart-scheduled', (): { scheduled: boolean } => ({
+    scheduled: deferredInstallTimer != null,
+  }));
 
   register('updater:get-pending-install', (): UpdaterPendingInstall => pendingInstallState());
 
@@ -833,6 +913,7 @@ function registerUpdaterIpcHandlers(): void {
 export function initUpdater(): void {
   attachAutoUpdaterListeners();
   registerUpdaterIpcHandlers();
+  hydratePendingInstallVersion();
 
   const persisted = readPersistedDownloadPause();
   if (persisted && !pendingInstallState().ready) {
