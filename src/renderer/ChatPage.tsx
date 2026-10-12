@@ -3127,6 +3127,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           conversationId,
           message.senderId,
         );
+        callManager.clearMeetingBannerFromCallLog(
+          message.content,
+          resolvedConversationId,
+          message.createdAt,
+        );
         const isActivelyViewing = isActivelyViewingConversation(
           resolvedConversationId,
           mainViewRef.current,
@@ -3363,6 +3368,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           conversationId,
           message.senderId,
         );
+        callManager.clearMeetingBannerFromCallLog(
+          message.content,
+          resolvedConversationId,
+          message.createdAt,
+        );
         const isActivelyViewing = isActivelyViewingConversation(
           resolvedConversationId,
           mainViewRef.current,
@@ -3422,8 +3432,37 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
       }
     },
-    [applyDraftPreviews, applyTypingUpdate, clearConversationUnread, clearTypingUser, isConversationSnoozed, notifyIncomingMessage, patchMessageReactions, refreshActiveThreadSilently, refreshMessageReactions, scheduleConversationsRefresh, shouldSuppressNotificationAlerts, syncNotifications, touchConversationWithMessage],
+    [applyDraftPreviews, applyTypingUpdate, callManager.clearMeetingBannerFromCallLog, clearConversationUnread, clearTypingUser, isConversationSnoozed, notifyIncomingMessage, patchMessageReactions, refreshActiveThreadSilently, refreshMessageReactions, scheduleConversationsRefresh, shouldSuppressNotificationAlerts, syncNotifications, touchConversationWithMessage],
   );
+
+  useEffect(() => {
+    const banner = callManager.session.meetingBanner;
+
+    if (!banner || selectedId !== banner.conversationId) {
+      return;
+    }
+
+    const scanFrom = Math.max(0, messages.length - 40);
+
+    for (let index = messages.length - 1; index >= scanFrom; index -= 1) {
+      const message = messages[index];
+
+      if (!message) {
+        continue;
+      }
+
+      callManager.clearMeetingBannerFromCallLog(
+        message.content,
+        banner.conversationId,
+        message.createdAt,
+      );
+    }
+  }, [
+    callManager.clearMeetingBannerFromCallLog,
+    callManager.session.meetingBanner,
+    messages,
+    selectedId,
+  ]);
 
   handleRealtimeEventRef.current = handleRealtimeEvent;
   syncNotificationsRef.current = syncNotifications;

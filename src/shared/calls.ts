@@ -357,6 +357,28 @@ export type MeetingEndedPayload = {
   endedBy: string;
 };
 
+export function normalizeMeetingEndedPayload(payload: unknown): MeetingEndedPayload | null {
+  const record = asRecord(payload);
+  const nested = asRecord(record?.payload) ?? asRecord(record?.data) ?? record;
+
+  if (!nested) {
+    return null;
+  }
+
+  const callId = readString(nested.callId);
+  const conversationId = readString(nested.conversationId);
+
+  if (!callId || !conversationId) {
+    return null;
+  }
+
+  return {
+    callId,
+    conversationId,
+    endedBy: readString(nested.endedBy) ?? readString(nested.userId) ?? '',
+  };
+}
+
 export type MeetingJoinRequestItem = {
   id: string;
   conversationId: string;

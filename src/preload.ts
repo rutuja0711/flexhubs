@@ -859,8 +859,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     data?: { version?: string; releaseNotes?: unknown };
     error?: string;
   }> => ipcRenderer.invoke('updater:check'),
-  downloadUpdate: (): Promise<{ ok: boolean; error?: string; method?: 'in-app' }> =>
+  downloadUpdate: (): Promise<{ ok: boolean; error?: string; method?: 'in-app'; paused?: boolean }> =>
     ipcRenderer.invoke('updater:download'),
+  pauseUpdateDownload: (): Promise<{ ok: boolean; error?: string }> =>
+    ipcRenderer.invoke('updater:pause-download'),
+  resumeUpdateDownload: (): Promise<{ ok: boolean; error?: string; method?: 'in-app'; paused?: boolean }> =>
+    ipcRenderer.invoke('updater:resume-download'),
+  getUpdateDownloadStatus: (): Promise<{
+    phase: 'idle' | 'checking' | 'downloading' | 'paused';
+    progress: number;
+    version?: string;
+    paused: boolean;
+  }> => ipcRenderer.invoke('updater:get-download-status'),
+  scheduleDeferredUpdateRestart: (): Promise<{ ok: boolean; delayMs?: number }> =>
+    ipcRenderer.invoke('updater:schedule-deferred-restart'),
+  cancelDeferredUpdateRestart: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('updater:cancel-deferred-restart'),
   quitAndInstallUpdate: (): Promise<{ ok: boolean; error?: string }> =>
     ipcRenderer.invoke('updater:quit-and-install'),
   getPendingUpdateInstall: (): Promise<{ ready: boolean; version?: string }> =>

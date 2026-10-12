@@ -16,6 +16,7 @@ import {
   normalizeCallCancelPayload,
   normalizeCallInvitePayload,
   normalizeCallRejectPayload,
+  normalizeMeetingEndedPayload,
   normalizeMeetingJoinRequestPayload,
   normalizeMeetingJoinResponsePayload,
 } from '../shared/calls';
@@ -186,7 +187,7 @@ function dispatchHubEvent(channelName: string, event: string, payload: unknown):
       return;
     }
     case HUB_EVENTS.ended: {
-      const parsed = asPayload<MeetingEndedPayload>(payload);
+      const parsed = normalizeMeetingEndedPayload(payload);
 
       if (parsed) {
         readHubHandlers(channelName)?.onMeetingEnded?.(parsed);

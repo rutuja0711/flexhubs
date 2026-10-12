@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { FiDownloadCloud, FiRefreshCcw, FiCheckCircle, FiAlertCircle } from 'react-icons/fi';
+import { FiDownloadCloud, FiRefreshCcw, FiCheckCircle, FiAlertCircle, FiPause, FiPlay } from 'react-icons/fi';
 
-type UpdateState = 'checking' | 'up-to-date' | 'available' | 'downloading' | 'ready' | 'error' | 'offline';
+type UpdateState =
+  | 'checking'
+  | 'up-to-date'
+  | 'available'
+  | 'downloading'
+  | 'paused'
+  | 'ready'
+  | 'error'
+  | 'offline';
 
 type CheckUpdatesResult = {
   ok: boolean;
@@ -11,6 +19,8 @@ type CheckUpdatesResult = {
   error?: string;
   currentVersion?: string;
 };
+
+const AUTO_RESTART_MINUTES = 15;
 
 function formatVersion(version: string): string {
   const trimmed = version.trim();
@@ -51,6 +61,33 @@ function isVersionNewer(latest: string, current: string): boolean {
   return false;
 }
 
+function normalizeReleaseNotes(value: unknown): string {
+  if (typeof value === 'string' && value.trim()) {
+    return value.trim();
+  }
+
+  if (Array.isArray(value)) {
+    const joined = value
+      .map((entry) => {
+        if (typeof entry === 'string') {
+          return entry;
+        }
+        if (entry && typeof entry === 'object' && 'note' in entry) {
+          return String((entry as { note?: string }).note ?? '');
+        }
+        return '';
+      })
+      .filter(Boolean)
+      .join('');
+
+    if (joined.trim()) {
+      return joined;
+    }
+  }
+
+  return '';
+}
+
 export function UpdatesSettings() {
   const [updateState, setUpdateState] = useState<UpdateState>('up-to-date');
   const [currentVersion, setCurrentVersion] = useState<string>('');
@@ -59,17 +96,42 @@ export function UpdatesSettings() {
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string>('');
   const [legacyInstallerUpdater, setLegacyInstallerUpdater] = useState(false);
+  const [restartModalOpen, setRestartModalOpen] = useState(false);
+  const [deferredRestartActive, setDeferredRestartActive] = useState(false);
   const isElectron = !!window.electronAPI;
   const currentVersionRef = useRef('');
+  const updateStateRef = useRef<UpdateState>('up-to-date');
   const checkInFlightRef = useRef(false);
 
   useEffect(() => {
     currentVersionRef.current = currentVersion;
   }, [currentVersion]);
 
+  useEffect(() => {
+    updateStateRef.current = updateState;
+  }, [updateState]);
+
+  const openRestartModal = useCallback(() => {
+    setRestartModalOpen(true);
+  }, []);
+
   const applyCheckResult = useCallback((result: CheckUpdatesResult) => {
     if (result.currentVersion) {
       setCurrentVersion(formatVersion(result.currentVersion));
+    }
+
+    const activeDownloadState =
+      updateStateRef.current === 'downloading' || updateStateRef.current === 'paused';
+
+    if (activeDownloadState && result.status !== 'ready') {
+      if (result.data?.version) {
+        setLatestVersion(formatVersion(String(result.data.version)));
+      }
+      const notes = normalizeReleaseNotes(result.data?.releaseNotes);
+      if (notes) {
+        setReleaseNotes(notes);
+      }
+      return;
     }
 
     if (!result.ok) {
@@ -90,6 +152,7 @@ export function UpdatesSettings() {
       if (result.data?.version) {
         setLatestVersion(formatVersion(String(result.data.version)));
       }
+      openRestartModal();
       return;
     }
 
@@ -107,8 +170,9 @@ export function UpdatesSettings() {
 
       setUpdateState('available');
       setLatestVersion(latest);
-      if (typeof result.data?.releaseNotes === 'string') {
-        setReleaseNotes(result.data.releaseNotes);
+      const notes = normalizeReleaseNotes(result.data?.releaseNotes);
+      if (notes) {
+        setReleaseNotes(notes);
       }
       return;
     }
@@ -117,11 +181,37 @@ export function UpdatesSettings() {
       setUpdateState('up-to-date');
       if (result.data?.version) {
         setLatestVersion(formatVersion(String(result.data.version)));
+      } else if (result.currentVersion) {
+        setLatestVersion(formatVersion(result.currentVersion));
       }
       return;
     }
 
     setUpdateState('up-to-date');
+  }, [openRestartModal]);
+
+  const syncDownloadStatus = useCallback(async () => {
+    const status = await window.electronAPI.getUpdateDownloadStatus?.();
+    if (!status) {
+      return;
+    }
+
+    if (status.paused || status.phase === 'paused') {
+      setUpdateState('paused');
+      setDownloadProgress(status.progress);
+      if (status.version) {
+        setLatestVersion(formatVersion(status.version));
+      }
+      return;
+    }
+
+    if (status.phase === 'downloading') {
+      setUpdateState('downloading');
+      setDownloadProgress(status.progress);
+      if (status.version) {
+        setLatestVersion(formatVersion(status.version));
+      }
+    }
   }, []);
 
   const checkForUpdates = useCallback(async (showCheckingImmediately = false) => {
@@ -140,14 +230,12 @@ export function UpdatesSettings() {
 
     checkInFlightRef.current = true;
 
-    // Only show checking state immediately if requested (e.g. manual click)
-    // Otherwise, delay it to prevent flashing on fast auto-checks
     let timeout: ReturnType<typeof setTimeout> | null = null;
     let minWaitPromise = Promise.resolve();
-    
+
     if (showCheckingImmediately) {
       setUpdateState('checking');
-      minWaitPromise = new Promise(resolve => setTimeout(resolve, 800));
+      minWaitPromise = new Promise((resolve) => setTimeout(resolve, 800));
     } else {
       timeout = setTimeout(() => setUpdateState('checking'), 500);
     }
@@ -155,17 +243,22 @@ export function UpdatesSettings() {
     try {
       const result = (await window.electronAPI.checkForUpdates()) as CheckUpdatesResult;
       await minWaitPromise;
-      if (timeout) clearTimeout(timeout);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       applyCheckResult(result);
-    } catch (error) {
+      await syncDownloadStatus();
+    } catch {
       await minWaitPromise;
-      if (timeout) clearTimeout(timeout);
+      if (timeout) {
+        clearTimeout(timeout);
+      }
       setUpdateState('error');
       setErrorMessage('Unable to check for updates right now.');
     } finally {
       checkInFlightRef.current = false;
     }
-  }, [applyCheckResult]);
+  }, [applyCheckResult, syncDownloadStatus]);
 
   useEffect(() => {
     if (!isElectron || !window.electronAPI) {
@@ -179,7 +272,9 @@ export function UpdatesSettings() {
       try {
         const version = await api.getAppVersion();
         if (typeof version === 'string' && version.trim()) {
-          setCurrentVersion(formatVersion(version));
+          const formatted = formatVersion(version);
+          setCurrentVersion(formatted);
+          setLatestVersion((current) => current || formatted);
         }
       } catch {
         setCurrentVersion('');
@@ -197,12 +292,14 @@ export function UpdatesSettings() {
         if (pending?.ready && pending.version) {
           setUpdateState('ready');
           setLatestVersion(formatVersion(pending.version));
+          openRestartModal();
           return;
         }
       } catch {
         // Fall through to normal update check.
       }
 
+      await syncDownloadStatus();
       await checkForUpdates();
     };
 
@@ -222,8 +319,9 @@ export function UpdatesSettings() {
 
       setUpdateState('available');
       setLatestVersion(latest);
-      if (info?.releaseNotes) {
-        setReleaseNotes(info.releaseNotes);
+      const notes = normalizeReleaseNotes(info?.releaseNotes);
+      if (notes) {
+        setReleaseNotes(notes);
       }
     });
 
@@ -239,12 +337,22 @@ export function UpdatesSettings() {
       setDownloadProgress(Math.floor(progress.percent || 0));
     });
 
+    const unsubPaused = api.onUpdaterEvent('download-paused', (payload: { progress?: number; version?: string }) => {
+      setUpdateState('paused');
+      setDownloadProgress(Math.floor(payload?.progress || 0));
+      if (payload?.version) {
+        setLatestVersion(formatVersion(payload.version));
+      }
+    });
+
     const unsubDownloaded = api.onUpdaterEvent('update-downloaded', (info: { version?: string }) => {
       setUpdateState('ready');
       setErrorMessage('');
+      setDownloadProgress(100);
       if (info?.version) {
         setLatestVersion(formatVersion(info.version));
       }
+      openRestartModal();
     });
 
     const unsubError = api.onUpdaterEvent('error', (payload: { error?: string }) => {
@@ -259,10 +367,11 @@ export function UpdatesSettings() {
       unsubAvailable();
       unsubNotAvailable();
       unsubProgress();
+      unsubPaused();
       unsubDownloaded();
       unsubError();
     };
-  }, [checkForUpdates, isElectron]);
+  }, [checkForUpdates, isElectron, openRestartModal, syncDownloadStatus]);
 
   const openReleasePage = () => {
     void window.electronAPI.openDesktopReleasePage?.();
@@ -273,6 +382,10 @@ export function UpdatesSettings() {
     setUpdateState('downloading');
     setDownloadProgress(0);
     const result = await window.electronAPI.downloadUpdate();
+    if (result.paused) {
+      setUpdateState('paused');
+      return;
+    }
     if (!result.ok) {
       setUpdateState('error');
       setErrorMessage(result.error?.trim() || 'Update download failed. Try again or use Manual download.');
@@ -280,16 +393,55 @@ export function UpdatesSettings() {
     }
 
     setUpdateState('ready');
+    openRestartModal();
   };
 
-  const restartAndInstall = async () => {
+  const pauseDownload = async () => {
     setErrorMessage('');
+    const result = await window.electronAPI.pauseUpdateDownload?.();
+    if (!result?.ok) {
+      setErrorMessage(result?.error?.trim() || 'Could not pause the download.');
+    }
+  };
+
+  const resumeDownload = async () => {
+    setErrorMessage('');
+    setUpdateState('downloading');
+    const result = await window.electronAPI.resumeUpdateDownload?.();
+    if (result?.paused) {
+      setUpdateState('paused');
+      return;
+    }
+    if (!result?.ok) {
+      setUpdateState('paused');
+      setErrorMessage(result?.error?.trim() || 'Could not resume the download.');
+      return;
+    }
+
+    setUpdateState('ready');
+    openRestartModal();
+  };
+
+  const restartNow = async () => {
+    setErrorMessage('');
+    await window.electronAPI.cancelDeferredUpdateRestart?.();
+    setDeferredRestartActive(false);
+    setRestartModalOpen(false);
+
     const result = await window.electronAPI.quitAndInstallUpdate();
 
     if (result && result.ok === false) {
       setUpdateState('error');
-      setErrorMessage(result.error?.trim() || 'Could not restart to install the update.');
+      setErrorMessage(result.error?.trim() || 'Could not restart to apply the update.');
+      openRestartModal();
     }
+  };
+
+  const restartLater = async () => {
+    setErrorMessage('');
+    await window.electronAPI.scheduleDeferredUpdateRestart?.();
+    setDeferredRestartActive(true);
+    setRestartModalOpen(false);
   };
 
   if (!isElectron) {
@@ -301,12 +453,26 @@ export function UpdatesSettings() {
   }
 
   const versionLabel = currentVersion || 'Unknown';
+  const latestLabel = latestVersion || versionLabel;
+  const showDownloadAction = updateState === 'available';
+  const showPauseAction = updateState === 'downloading';
+  const showResumeAction = updateState === 'paused';
+  const hasUpdate =
+    Boolean(latestVersion && currentVersion) && isVersionNewer(latestVersion, currentVersion);
+
+  const whatsNewTitle = hasUpdate
+    ? `What's new in ${latestLabel}`
+    : `What's new in ${latestLabel}`;
 
   return (
     <div className="mx-auto max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div className="mb-6">
-        <h2 className="text-xl font-bold tracking-tight text-app-text">Update Center</h2>
-       
+        <h2 className="text-xl font-bold tracking-tight text-app-text">
+          Update Center <span className="font-semibold text-app-muted">({versionLabel})</span>
+        </h2>
+        <p className="mt-2 text-sm text-app-muted">
+          Latest version: <span className="font-medium text-app-text">{latestLabel}</span>
+        </p>
       </div>
 
       {legacyInstallerUpdater ? (
@@ -316,136 +482,193 @@ export function UpdatesSettings() {
         </div>
       ) : null}
 
-      <div className="rounded-xl border border-app-border bg-app-surface shadow-xs p-6">
-        <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
-          <div className="flex-1">
-            <div className="flex items-center gap-3 mb-4">
-              {updateState === 'checking' && <FiRefreshCcw className="text-accent animate-spin text-xl" />}
-              {updateState === 'up-to-date' && <FiCheckCircle className="text-green-500 text-xl" />}
-              {updateState === 'available' && <FiDownloadCloud className="text-accent text-xl" />}
-              {updateState === 'downloading' && <FiDownloadCloud className="text-accent text-xl animate-pulse" />}
-              {updateState === 'ready' && <FiCheckCircle className="text-accent text-xl" />}
-              {updateState === 'error' && <FiAlertCircle className="text-red-500 text-xl" />}
-              {updateState === 'offline' && <FiAlertCircle className="text-orange-500 text-xl" />}
+      <div className="rounded-xl border border-app-border bg-app-surface p-6 shadow-xs">
+        <div className="mb-4 flex items-center gap-3">
+          {updateState === 'checking' && <FiRefreshCcw className="animate-spin text-xl text-accent" />}
+          {updateState === 'up-to-date' && <FiCheckCircle className="text-xl text-green-500" />}
+          {(updateState === 'available' || updateState === 'downloading' || updateState === 'paused') && (
+            <FiDownloadCloud className={`text-xl text-accent ${updateState === 'downloading' ? 'animate-pulse' : ''}`} />
+          )}
+          {updateState === 'ready' && <FiCheckCircle className="text-xl text-accent" />}
+          {updateState === 'error' && <FiAlertCircle className="text-xl text-red-500" />}
+          {updateState === 'offline' && <FiAlertCircle className="text-xl text-orange-500" />}
 
-              <h3 className="text-lg font-semibold text-app-text">
-                {updateState === 'checking' && 'Checking for updates…'}
-                {updateState === 'up-to-date' && "You're up to date."}
-                {updateState === 'available' && 'New version available'}
-                {updateState === 'downloading' && 'Downloading update…'}
-                {updateState === 'ready' && 'Update ready — restart to install.'}
-                {updateState === 'error' && 'Update failed'}
-                {updateState === 'offline' && "You're offline"}
-              </h3>
+          <p className="text-sm font-medium text-app-text">
+            {updateState === 'checking' && 'Checking for updates…'}
+            {updateState === 'up-to-date' && "You're up to date."}
+            {updateState === 'available' && 'A new update is ready to download.'}
+            {updateState === 'downloading' && 'Downloading and installing update…'}
+            {updateState === 'paused' && 'Update download paused.'}
+            {updateState === 'ready' && 'Update installed — restart when you are ready.'}
+            {updateState === 'error' && 'Update failed'}
+            {updateState === 'offline' && "You're offline"}
+          </p>
+        </div>
+
+        {updateState === 'offline' && (
+          <p className="mb-4 text-sm text-app-text">
+            You&apos;re currently offline. Connect to the internet and check again.
+          </p>
+        )}
+
+        {updateState === 'error' && errorMessage && (
+          <p className="mb-4 text-sm text-app-text">{errorMessage}</p>
+        )}
+
+        {(updateState === 'downloading' || updateState === 'paused') && (
+          <div className="mb-6">
+            <div className="mb-2 flex items-center justify-between text-sm">
+              <span className="text-app-muted">
+                {updateState === 'paused' ? 'Paused' : 'Download progress'}
+              </span>
+              <span className="font-medium text-accent">{downloadProgress}%</span>
             </div>
-
-            <div className="text-sm text-app-muted mb-6 space-y-1">
-              <p>
-                Current version: <span className="font-medium text-app-text">{versionLabel}</span>
-              </p>
-              {latestVersion && latestVersion !== currentVersion && (
-                <p>
-                  Latest version: <span className="font-medium text-app-text">{latestVersion}</span>
-                </p>
-              )}
+            <div className="h-2 w-full overflow-hidden rounded-full bg-app-border">
+              <div
+                className="h-full bg-accent transition-all duration-300 ease-out"
+                style={{ width: `${downloadProgress}%` }}
+              />
             </div>
-
-            {updateState === 'offline' && (
-              <p className="text-sm text-app-text mb-4">
-                You&apos;re currently offline. Please connect to the internet and try again.
+            {updateState === 'paused' ? (
+              <p className="mt-2 text-xs text-app-muted">
+                Resume later to continue from {downloadProgress}% — your progress is saved on this device.
+              </p>
+            ) : (
+              <p className="mt-2 text-xs text-app-muted">
+                The update installs while it downloads. You&apos;ll be asked to restart when it&apos;s done.
               </p>
             )}
+          </div>
+        )}
 
-            {updateState === 'error' && errorMessage && (
-              <p className="text-sm text-app-text mb-4">{errorMessage}</p>
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0 flex-1 rounded-xl border border-app-border bg-app-chat-bg/50 p-4">
+            <h3 className="mb-2 text-sm font-semibold text-app-text">{whatsNewTitle}</h3>
+            {releaseNotes ? (
+              <div
+                className="prose prose-sm prose-invert max-w-none text-sm text-app-text"
+                dangerouslySetInnerHTML={{ __html: releaseNotes }}
+              />
+            ) : (
+              <p className="text-sm text-app-muted">
+                {hasUpdate
+                  ? 'Release notes for this version will appear here when available.'
+                  : 'You already have the latest improvements for this version.'}
+              </p>
+            )}
+          </div>
+
+          <div className="flex shrink-0 flex-col gap-2 md:w-44">
+            {showDownloadAction && (
+              <button
+                type="button"
+                onClick={() => void downloadUpdate()}
+                className="rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white shadow-md transition-colors hover:bg-accent-hover"
+              >
+                Download
+              </button>
             )}
 
-            {updateState === 'available' && releaseNotes && (
-              <div className="mb-6 bg-app-chat-bg/50 border border-app-border rounded-xl p-4">
-                <h4 className="text-sm font-semibold text-app-text mb-2">What&apos;s New in {latestVersion}</h4>
-                <div
-                  className="text-sm text-app-text prose prose-invert prose-sm max-w-none"
-                  dangerouslySetInnerHTML={{ __html: releaseNotes }}
-                />
-              </div>
+            {showPauseAction && (
+              <button
+                type="button"
+                onClick={() => void pauseDownload()}
+                className="inline-flex items-center justify-center gap-2 rounded-xl border border-app-border bg-app-surface px-5 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-chat-hover"
+              >
+                <FiPause aria-hidden />
+                Pause
+              </button>
             )}
 
-            {updateState === 'downloading' && (
-              <div className="mb-6">
-                <div className="flex items-center justify-between text-sm mb-2">
-                  <span className="text-app-muted">Downloading…</span>
-                  <span className="font-medium text-accent">{downloadProgress}%</span>
-                </div>
-                <div className="h-2 w-full bg-app-border rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-accent transition-all duration-300 ease-out"
-                    style={{ width: `${downloadProgress}%` }}
-                  />
-                </div>
-              </div>
+            {showResumeAction && (
+              <button
+                type="button"
+                onClick={() => void resumeDownload()}
+                className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white shadow-md transition-colors hover:bg-accent-hover"
+              >
+                <FiPlay aria-hidden />
+                Resume
+              </button>
             )}
+          </div>
+        </div>
 
-            <div className="flex items-center gap-3 mt-4">
-              {(updateState === 'checking' || updateState === 'up-to-date' || updateState === 'error' || updateState === 'offline') && (
-                <button
-                  type="button"
-                  onClick={() => void checkForUpdates(true)}
-                  disabled={updateState === 'checking'}
-                  className={`rounded-xl px-5 py-2.5 text-sm font-medium transition-colors ${
-                    updateState === 'checking'
-                      ? 'bg-app-chat-hover/50 text-app-muted cursor-not-allowed'
-                      : 'bg-app-chat-hover text-app-text hover:bg-app-border'
-                  }`}
-                >
-                  {updateState === 'error' ? 'Retry' : updateState === 'checking' ? 'Checking...' : 'Check for Updates'}
-                </button>
-              )}
+        <div className="mt-6 flex flex-wrap items-center gap-3">
+          {(updateState === 'checking' ||
+            updateState === 'up-to-date' ||
+            updateState === 'error' ||
+            updateState === 'offline' ||
+            updateState === 'available') && (
+            <button
+              type="button"
+              onClick={() => void checkForUpdates(true)}
+              disabled={updateState === 'checking'}
+              className={`rounded-xl px-5 py-2.5 text-sm font-medium transition-colors ${
+                updateState === 'checking'
+                  ? 'cursor-not-allowed bg-app-chat-hover/50 text-app-muted'
+                  : 'bg-app-chat-hover text-app-text hover:bg-app-border'
+              }`}
+            >
+              {updateState === 'error' ? 'Retry' : updateState === 'checking' ? 'Checking…' : 'Check for updates'}
+            </button>
+          )}
 
-              {updateState === 'error' && (
-                <button
-                  type="button"
-                  onClick={openReleasePage}
-                  className="rounded-xl border border-app-border bg-app-surface px-5 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-chat-hover"
-                >
-                  Manual download
-                </button>
-              )}
+          {updateState === 'error' && (
+            <button
+              type="button"
+              onClick={openReleasePage}
+              className="rounded-xl border border-app-border bg-app-surface px-5 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-chat-hover"
+            >
+              Manual download
+            </button>
+          )}
 
-              {updateState === 'available' && (
-                <button
-                  type="button"
-                  onClick={downloadUpdate}
-                  className="rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover shadow-md"
-                >
-                  Download Update
-                </button>
-              )}
+        </div>
 
-              {updateState === 'ready' && (
-                <>
-                  <button
-                    type="button"
-                    onClick={restartAndInstall}
-                    className="rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-accent-hover shadow-md"
-                  >
-                    Restart & Install
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setErrorMessage('');
-                      setUpdateState('ready');
-                    }}
-                    className="rounded-xl bg-app-chat-hover px-5 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-border"
-                  >
-                    Later
-                  </button>
-                </>
-              )}
+        {deferredRestartActive && updateState === 'ready' && (
+          <p className="mt-3 text-xs text-app-muted">
+            FlexHubs will restart automatically in {AUTO_RESTART_MINUTES} minutes to apply the update.
+          </p>
+        )}
+      </div>
+
+      {restartModalOpen && updateState === 'ready' ? (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55 p-4">
+          <div
+            className="w-full max-w-md rounded-2xl border border-app-border bg-app-surface p-6 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="update-restart-title"
+          >
+            <h3 id="update-restart-title" className="text-lg font-semibold text-app-text">
+              Restart to finish
+            </h3>
+            <p className="mt-2 text-sm text-app-muted">
+              {latestLabel} is downloaded and installed. Restart FlexHubs to start using it.
+            </p>
+            <p className="mt-3 text-sm text-app-text">
+              Choose <strong>Later</strong> to keep working — the app will restart automatically in{' '}
+              {AUTO_RESTART_MINUTES} minutes.
+            </p>
+            <div className="mt-6 flex flex-wrap justify-end gap-3">
+              <button
+                type="button"
+                onClick={() => void restartLater()}
+                className="rounded-xl bg-app-chat-hover px-5 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-border"
+              >
+                Later
+              </button>
+              <button
+                type="button"
+                onClick={() => void restartNow()}
+                className="rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white shadow-md transition-colors hover:bg-accent-hover"
+              >
+                Restart now
+              </button>
             </div>
           </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }

@@ -622,7 +622,22 @@ declare global {
         data?: { version?: string; releaseNotes?: unknown };
         error?: string;
       }>;
-      downloadUpdate: () => Promise<{ ok: boolean; error?: string; method?: 'in-app' }>;
+      downloadUpdate: () => Promise<{ ok: boolean; error?: string; method?: 'in-app'; paused?: boolean }>;
+      pauseUpdateDownload?: () => Promise<{ ok: boolean; error?: string }>;
+      resumeUpdateDownload?: () => Promise<{
+        ok: boolean;
+        error?: string;
+        method?: 'in-app';
+        paused?: boolean;
+      }>;
+      getUpdateDownloadStatus?: () => Promise<{
+        phase: 'idle' | 'checking' | 'downloading' | 'paused';
+        progress: number;
+        version?: string;
+        paused: boolean;
+      }>;
+      scheduleDeferredUpdateRestart?: () => Promise<{ ok: boolean; delayMs?: number }>;
+      cancelDeferredUpdateRestart?: () => Promise<{ ok: boolean }>;
       quitAndInstallUpdate: () => Promise<{ ok: boolean; error?: string }>;
       getPendingUpdateInstall?: () => Promise<{ ready: boolean; version?: string }>;
       openDesktopReleasePage?: () => Promise<{ ok: boolean }>;

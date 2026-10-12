@@ -23,6 +23,7 @@ import {
   buildLiveKitRtcConfig,
   isMeetingModerator,
   normalizeMeetingJoinRequestPayload,
+  parseCallLogContent,
 } from '../shared/calls';
 import { applyPreferredCallInputToLiveKitRoom } from './call/applyCallInputDevice';
 import { captureDesktopSource } from './call/captureDesktopSource';
@@ -1090,11 +1091,22 @@ export function useCallManager({
         return;
       }
 
-      setSession((current) =>
-        current.meetingBanner?.callId === payload.callId
-          ? { ...current, meetingBanner: null }
-          : current,
-      );
+      setSession((current) => {
+        const banner = current.meetingBanner;
+
+        if (!banner) {
+          return current;
+        }
+
+        if (
+          banner.callId === payload.callId ||
+          banner.conversationId === payload.conversationId
+        ) {
+          return { ...current, meetingBanner: null };
+        }
+
+        return current;
+      });
     },
     [resetSession, snapshotCallContext, writeCallLogSnapshot],
   );
@@ -2294,6 +2306,39 @@ export function useCallManager({
     [connectLiveKit, currentUserId, refreshMeetingJoinRequests, reportError, resetSession, submitMeetingJoinRequest],
   );
 
+  const clearMeetingBannerFromCallLog = useCallback(
+    (content: string, conversationId: string, messageCreatedAt?: string) => {
+      const callLog = parseCallLogContent(content);
+
+      if (!callLog) {
+        return;
+      }
+
+      if (!['completed', 'cancelled', 'missed', 'declined'].includes(callLog.outcome)) {
+        return;
+      }
+
+      setSession((current) => {
+        const banner = current.meetingBanner;
+
+        if (!banner || banner.conversationId !== conversationId) {
+          return current;
+        }
+
+        if (banner.callId === callLog.callId) {
+          return { ...current, meetingBanner: null };
+        }
+
+        if (messageCreatedAt && messageCreatedAt >= banner.startedAt) {
+          return { ...current, meetingBanner: null };
+        }
+
+        return current;
+      });
+    },
+    [],
+  );
+
   const dismissMeetingBanner = useCallback(() => {
     const banner = sessionRef.current.meetingBanner;
 
@@ -2564,6 +2609,7 @@ export function useCallManager({
     startGroupMeeting,
     joinGroupMeeting,
     dismissMeetingBanner,
+    clearMeetingBannerFromCallLog,
     ingestMeetingNotification,
     notifyMeetingStarted,
     respondToJoinRequest,

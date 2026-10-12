@@ -1,5 +1,7 @@
-import { autoUpdater } from 'electron-updater';
+import { autoUpdater, CancellationToken } from 'electron-updater';
 import { BrowserWindow, ipcMain, app, shell } from 'electron';
+import fs from 'node:fs';
+import path from 'node:path';
 
 /** Rolling release tag on GitHub (see scripts/ci/publish-desktop-mac.sh and INSTALL.md). */
 const DESKTOP_RELEASE_FEED_URL =
@@ -12,9 +14,87 @@ const DESKTOP_RELEASE_PAGE =
 
 let mainWindow: BrowserWindow | null = null;
 
-type UpdaterPhase = 'idle' | 'checking' | 'downloading';
+type UpdaterPhase = 'idle' | 'checking' | 'downloading' | 'paused';
 
 let updaterPhase: UpdaterPhase = 'idle';
+
+let activeDownloadCancellation: CancellationToken | null = null;
+
+let downloadPausedIntentionally = false;
+
+let lastDownloadProgressPercent = 0;
+
+let deferredInstallTimer: ReturnType<typeof setTimeout> | null = null;
+
+const DEFERRED_INSTALL_MS = 15 * 60 * 1000;
+
+type PersistedDownloadPause = {
+  version: string;
+  progress: number;
+  pausedAt: string;
+};
+
+function pauseStateFilePath(): string {
+  return path.join(app.getPath('userData'), 'update-download-pause.json');
+}
+
+function readPersistedDownloadPause(): PersistedDownloadPause | null {
+  try {
+    const raw = fs.readFileSync(pauseStateFilePath(), 'utf8');
+    const parsed = JSON.parse(raw) as PersistedDownloadPause;
+    if (!parsed?.version?.trim()) {
+      return null;
+    }
+    return {
+      version: parsed.version.trim(),
+      progress: typeof parsed.progress === 'number' ? Math.max(0, Math.min(100, parsed.progress)) : 0,
+      pausedAt: parsed.pausedAt ?? new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePersistedDownloadPause(state: PersistedDownloadPause | null): void {
+  const filePath = pauseStateFilePath();
+
+  try {
+    if (!state) {
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath);
+      }
+      return;
+    }
+    fs.writeFileSync(filePath, JSON.stringify(state), 'utf8');
+  } catch {
+    // Best-effort persistence for resume-after-restart.
+  }
+}
+
+function clearDeferredInstallTimer(): void {
+  if (deferredInstallTimer != null) {
+    clearTimeout(deferredInstallTimer);
+    deferredInstallTimer = null;
+  }
+}
+
+function scheduleDeferredInstall(): void {
+  clearDeferredInstallTimer();
+
+  if (!pendingInstallState().ready) {
+    return;
+  }
+
+  deferredInstallTimer = setTimeout(() => {
+    deferredInstallTimer = null;
+    try {
+      console.info('[FlexHubs] Deferred restart to apply update');
+      autoUpdater.quitAndInstall(false, true);
+    } catch (error) {
+      console.warn('[FlexHubs] Deferred install failed:', error);
+    }
+  }, DEFERRED_INSTALL_MS);
+}
 
 /** Last version reported by the feed (used when checks are skipped during download). */
 let lastKnownAvailableVersion: string | undefined;
@@ -44,7 +124,16 @@ export type UpdaterPendingInstall = {
   version?: string;
 };
 
-export type UpdaterDownloadResult = { ok: true; method: 'in-app' } | { ok: false; error: string };
+export type UpdaterDownloadResult =
+  | { ok: true; method: 'in-app' }
+  | { ok: false; error: string; paused?: boolean };
+
+export type UpdaterDownloadStatus = {
+  phase: UpdaterPhase;
+  progress: number;
+  version?: string;
+  paused: boolean;
+};
 
 export type UpdaterCapabilities = {
   /** In-app zip / NSIS patch updates only (never downloads or opens DMG/Setup installers). */
@@ -152,7 +241,7 @@ export function sanitizeUpdaterError(raw: string): string {
     lower.includes('eperm') ||
     lower.includes('eacces')
   ) {
-    return 'macOS blocked updating the app in Applications. Quit FlexHubs, use Manual download to reinstall, then try Restart & Install again.';
+    return 'macOS blocked updating the app in Applications. Quit FlexHubs, use Manual download to reinstall, then try Restart again.';
   }
 
   if (
@@ -218,6 +307,7 @@ function attachAutoUpdaterListeners(): void {
   });
 
   autoUpdater.on('download-progress', (progressObj) => {
+    lastDownloadProgressPercent = Math.floor(progressObj.percent || 0);
     sendToRenderer('updater:download-progress', {
       percent: progressObj.percent,
       transferred: progressObj.transferred,
@@ -226,6 +316,11 @@ function attachAutoUpdaterListeners(): void {
   });
 
   autoUpdater.on('update-downloaded', (info) => {
+    writePersistedDownloadPause(null);
+    downloadPausedIntentionally = false;
+    updaterPhase = 'idle';
+    activeDownloadCancellation = null;
+
     if (info.version) {
       pendingInstallVersion = info.version;
       lastKnownAvailableVersion = info.version;
@@ -289,6 +384,10 @@ async function checkFeedForUpdate(): Promise<FeedCheckOutcome> {
 const UPDATE_DOWNLOAD_TIMEOUT_MS = 25 * 60_000;
 
 async function downloadInAppUpdate(): Promise<UpdaterDownloadResult> {
+  downloadPausedIntentionally = false;
+  const cancellationToken = new CancellationToken();
+  activeDownloadCancellation = cancellationToken;
+
   return new Promise((resolve) => {
     let settled = false;
 
@@ -300,6 +399,15 @@ async function downloadInAppUpdate(): Promise<UpdaterDownloadResult> {
       clearTimeout(timeoutId);
       autoUpdater.removeListener('update-downloaded', onDownloaded);
       autoUpdater.removeListener('error', onError);
+
+      if (!result.ok && result.paused) {
+        activeDownloadCancellation = null;
+        updaterPhase = 'paused';
+      } else if (result.ok) {
+        activeDownloadCancellation = null;
+        updaterPhase = 'idle';
+      }
+
       resolve(result);
     };
 
@@ -308,21 +416,130 @@ async function downloadInAppUpdate(): Promise<UpdaterDownloadResult> {
     };
 
     const onError = (error: Error) => {
-      finish({ ok: false, error: sanitizeUpdaterError(error.message || 'Update download failed.') });
+      const message = error.message || 'Update download failed.';
+
+      if (downloadPausedIntentionally || cancellationToken.cancelled) {
+        const version = lastKnownAvailableVersion?.trim() ?? app.getVersion();
+        writePersistedDownloadPause({
+          version,
+          progress: lastDownloadProgressPercent,
+          pausedAt: new Date().toISOString(),
+        });
+        sendToRenderer('updater:download-paused', {
+          version,
+          progress: lastDownloadProgressPercent,
+        });
+        finish({ ok: false, error: '', paused: true });
+        return;
+      }
+
+      finish({ ok: false, error: sanitizeUpdaterError(message) });
     };
 
     const timeoutId = setTimeout(() => {
-      finish({ ok: false, error: 'Update download timed out. Check your connection and try again.' });
+      if (!downloadPausedIntentionally) {
+        finish({ ok: false, error: 'Update download timed out. Check your connection and try again.' });
+      }
     }, UPDATE_DOWNLOAD_TIMEOUT_MS);
 
     autoUpdater.once('update-downloaded', onDownloaded);
     autoUpdater.once('error', onError);
 
-    void autoUpdater.downloadUpdate().catch((error: unknown) => {
+    void autoUpdater.downloadUpdate(cancellationToken).catch((error: unknown) => {
       const raw = error instanceof Error ? error.message : 'Update download failed.';
+
+      if (downloadPausedIntentionally || cancellationToken.cancelled) {
+        onError(error instanceof Error ? error : new Error(raw));
+        return;
+      }
+
       finish({ ok: false, error: sanitizeUpdaterError(raw) });
     });
   });
+}
+
+function downloadStatus(): UpdaterDownloadStatus {
+  const persisted = readPersistedDownloadPause();
+  const version = lastKnownAvailableVersion?.trim() ?? persisted?.version;
+
+  if (updaterPhase === 'downloading') {
+    return {
+      phase: 'downloading',
+      progress: lastDownloadProgressPercent,
+      version,
+      paused: false,
+    };
+  }
+
+  if (updaterPhase === 'paused' || persisted) {
+    return {
+      phase: 'paused',
+      progress: persisted?.progress ?? lastDownloadProgressPercent,
+      version: persisted?.version ?? version,
+      paused: true,
+    };
+  }
+
+  return {
+    phase: updaterPhase,
+    progress: lastDownloadProgressPercent,
+    version,
+    paused: false,
+  };
+}
+
+async function pauseActiveDownload(): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (updaterPhase !== 'downloading' || !activeDownloadCancellation) {
+    return { ok: false, error: 'No update download is in progress.' };
+  }
+
+  downloadPausedIntentionally = true;
+  activeDownloadCancellation.cancel();
+  return { ok: true };
+}
+
+async function resumePausedDownload(): Promise<UpdaterDownloadResult> {
+  if (!app.isPackaged) {
+    return { ok: false, error: 'Updates are only available in installed builds.' };
+  }
+
+  const alreadyDownloaded = pendingInstallState();
+  if (alreadyDownloaded.ready) {
+    return { ok: true, method: 'in-app' };
+  }
+
+  if (updaterPhase === 'downloading') {
+    return { ok: false, error: 'A download is already in progress.' };
+  }
+
+  attachAutoUpdaterListeners();
+  updaterPhase = 'downloading';
+  downloadPausedIntentionally = false;
+
+  const persisted = readPersistedDownloadPause();
+  if (persisted?.version) {
+    lastKnownAvailableVersion = persisted.version;
+    lastDownloadProgressPercent = persisted.progress;
+  }
+
+  try {
+    if (!lastKnownAvailableVersion || !isVersionNewer(lastKnownAvailableVersion, app.getVersion())) {
+      const checked = await checkFeedForUpdate();
+      if (checked.kind === 'error') {
+        return { ok: false, error: checked.message };
+      }
+      if (checked.kind !== 'available') {
+        return { ok: false, error: 'No update is available to download right now.' };
+      }
+    }
+
+    console.info('[FlexHubs] Resuming in-app update download...');
+    return await downloadInAppUpdate();
+  } finally {
+    if (updaterPhase === 'downloading') {
+      updaterPhase = 'idle';
+    }
+  }
 }
 
 let updateCheckInFlight: Promise<UpdaterCheckResult> | null = null;
@@ -345,8 +562,8 @@ async function runUpdateCheckInternal(): Promise<UpdaterCheckResult> {
     };
   }
 
-  if (updaterPhase === 'downloading') {
-    const version = lastKnownAvailableVersion?.trim();
+  if (updaterPhase === 'downloading' || updaterPhase === 'paused' || readPersistedDownloadPause()) {
+    const version = lastKnownAvailableVersion?.trim() ?? readPersistedDownloadPause()?.version;
     const hasNewerDownload =
       version && isVersionNewer(version, currentVersion);
 
@@ -441,11 +658,34 @@ function registerUpdaterIpcHandlers(): void {
         return { ok: false, error: 'No update is available to download right now.' };
       }
 
+      writePersistedDownloadPause(null);
       console.info('[FlexHubs] Downloading in-app update patch (zip/NSIS via electron-updater)...');
-      return await downloadInAppUpdate();
+      const result = await downloadInAppUpdate();
+      if (!result.ok && result.paused) {
+        return result;
+      }
+      return result;
     } finally {
-      updaterPhase = 'idle';
+      if (updaterPhase !== 'paused') {
+        updaterPhase = 'idle';
+      }
     }
+  });
+
+  register('updater:pause-download', () => pauseActiveDownload());
+
+  register('updater:resume-download', () => resumePausedDownload());
+
+  register('updater:get-download-status', (): UpdaterDownloadStatus => downloadStatus());
+
+  register('updater:schedule-deferred-restart', (): { ok: true; delayMs: number } => {
+    scheduleDeferredInstall();
+    return { ok: true, delayMs: DEFERRED_INSTALL_MS };
+  });
+
+  register('updater:cancel-deferred-restart', (): { ok: true } => {
+    clearDeferredInstallTimer();
+    return { ok: true };
   });
 
   register('updater:quit-and-install', (): { ok: true } | { ok: false; error: string } => {
@@ -463,7 +703,8 @@ function registerUpdaterIpcHandlers(): void {
     }
 
     try {
-      console.info('[FlexHubs] Quitting to install update', pending.version);
+      clearDeferredInstallTimer();
+      console.info('[FlexHubs] Quitting to apply update', pending.version);
       setImmediate(() => {
         autoUpdater.quitAndInstall(false, true);
       });
@@ -492,6 +733,13 @@ function registerUpdaterIpcHandlers(): void {
 export function initUpdater(): void {
   attachAutoUpdaterListeners();
   registerUpdaterIpcHandlers();
+
+  const persisted = readPersistedDownloadPause();
+  if (persisted && !pendingInstallState().ready) {
+    updaterPhase = 'paused';
+    lastKnownAvailableVersion = persisted.version;
+    lastDownloadProgressPercent = persisted.progress;
+  }
 }
 
 /** Point the updater at the current main window (call from createWindow). */
