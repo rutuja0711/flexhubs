@@ -511,6 +511,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     description: string,
   ): Promise<ApiResult<import('./shared/extras').AiTextResult>> =>
     ipcRenderer.invoke('extras:ai-generate', token, description),
+  generateAiReply: (
+    token: string,
+    messageContent: string,
+  ): Promise<ApiResult<import('./shared/extras').AiTextResult>> =>
+    ipcRenderer.invoke('extras:ai-reply', token, messageContent),
   parseFlexCommand: (
     token: string,
     input: string,
@@ -853,6 +858,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('updater:download'),
   quitAndInstallUpdate: (): Promise<void> => ipcRenderer.invoke('updater:quit-and-install'),
   openDesktopReleasePage: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('updater:open-release-page'),
+  getUpdaterCapabilities: (): Promise<{ inAppPatchOnly?: boolean }> =>
+    ipcRenderer.invoke('updater:get-capabilities'),
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('updater:get-version'),
   getDesktopLegalContext: (): Promise<{
     isPackaged: boolean;

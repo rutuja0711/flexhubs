@@ -370,10 +370,12 @@ export function MessageReplyPreview({
   message,
   className = '',
   currentUserId = null,
+  variant = 'inline',
 }: {
   message: Pick<MessageItem, 'content' | 'media' | 'messageType' | 'deletedForEveryone' | 'poll'>;
   className?: string;
   currentUserId?: string | null;
+  variant?: 'inline' | 'composer';
 }) {
   if (isDeletedMessage(message)) {
     return (
@@ -431,7 +433,15 @@ export function MessageReplyPreview({
         />
       ) : null}
       {visibleText ? (
-        <span className="min-w-0 truncate text-app-text">{visibleText}</span>
+        <span
+          className={`min-w-0 text-app-text ${
+            variant === 'composer'
+              ? 'line-clamp-3 whitespace-pre-wrap break-words text-[11px] leading-snug'
+              : 'truncate'
+          }`}
+        >
+          {visibleText}
+        </span>
       ) : primaryMedia && primaryMedia.kind !== 'file' ? (
         <span className="truncate italic text-app-muted">{mediaLabel(primaryMedia.kind)}</span>
       ) : null}

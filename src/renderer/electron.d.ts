@@ -403,6 +403,10 @@ declare global {
         token: string,
         description: string,
       ) => Promise<ApiResult<import('../shared/extras').AiTextResult>>;
+      generateAiReply: (
+        token: string,
+        messageContent: string,
+      ) => Promise<ApiResult<import('../shared/extras').AiTextResult>>;
       parseFlexCommand: (
         token: string,
         input: string,
@@ -618,6 +622,7 @@ declare global {
       downloadUpdate: () => Promise<{ ok: boolean; error?: string; method?: 'in-app' }>;
       quitAndInstallUpdate: () => Promise<void>;
       openDesktopReleasePage?: () => Promise<{ ok: boolean }>;
+      getUpdaterCapabilities?: () => Promise<{ inAppPatchOnly?: boolean }>;
       getAppVersion: () => Promise<string>;
       getDesktopLegalContext: () => Promise<{
         isPackaged: boolean;

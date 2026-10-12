@@ -7,7 +7,6 @@ export type CalendarWhenFilter = 'allDates' | 'today' | 'thisWeek';
 
 export type CalendarFiltersState = {
   showEvents: boolean;
-  showScheduledMessages: boolean;
   eventsScope: CalendarEventsScope;
   eventType: CalendarEventTypeFilter;
   when: CalendarWhenFilter;
@@ -17,7 +16,6 @@ export type CalendarFiltersState = {
 
 export const defaultCalendarFilters: CalendarFiltersState = {
   showEvents: true,
-  showScheduledMessages: false,
   eventsScope: 'all',
   eventType: 'any',
   when: 'allDates',
@@ -27,7 +25,6 @@ export const defaultCalendarFilters: CalendarFiltersState = {
 export function calendarFiltersActive(filters: CalendarFiltersState): boolean {
   return (
     filters.showEvents !== defaultCalendarFilters.showEvents ||
-    filters.showScheduledMessages !== defaultCalendarFilters.showScheduledMessages ||
     filters.eventsScope !== defaultCalendarFilters.eventsScope ||
     filters.eventType !== defaultCalendarFilters.eventType ||
     filters.when !== defaultCalendarFilters.when ||
@@ -134,11 +131,6 @@ export function CalendarFiltersPopover({
             active={filters.showEvents}
             onClick={() => patch({ showEvents: !filters.showEvents })}
           />
-          <ToggleChip
-            label="Scheduled messages"
-            active={filters.showScheduledMessages}
-            onClick={() => patch({ showScheduledMessages: !filters.showScheduledMessages })}
-          />
         </div>
 
         <div className="border-t border-app-border" />
@@ -182,7 +174,7 @@ export function CalendarFiltersPopover({
             <div className="border-t border-app-border" />
             <SectionLabel>Hubs</SectionLabel>
             <p className="px-4 pb-2 text-[11px] text-app-muted leading-snug">
-              Show events and schedules tagged to selected hubs. Leave empty for all hubs.
+              Show events tagged to selected hubs. Leave empty for all hubs.
             </p>
             <div className="flex max-h-36 flex-wrap gap-2 overflow-y-auto px-4 pb-3">
               {hubOptions.map((hub) => (

@@ -162,6 +162,7 @@ import {
   fetchPushVapidPublicKey,
   fetchScheduledMessages,
   generateMessageText,
+  generateAiReply,
   parseFlexCommand,
   respondToCalendarEvent,
   subscribePushNotifications,
@@ -970,6 +971,9 @@ ipcMain.handle('extras:ai-enhance', (_event, token: string, text: string) =>
 );
 ipcMain.handle('extras:ai-generate', (_event, token: string, description: string) =>
   generateMessageText(token, description),
+);
+ipcMain.handle('extras:ai-reply', (_event, token: string, messageContent: string) =>
+  generateAiReply(token, messageContent),
 );
 ipcMain.handle(
   'extras:ai-flex-command',

@@ -1,0 +1,3 @@
+provider: generic
+url: https://github.com/rutuja0711/flexhubs/releases/download/desktop-latest
+updaterCacheDirName: flexhubs-desktop-updater

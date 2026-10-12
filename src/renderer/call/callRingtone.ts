@@ -1,4 +1,4 @@
-import { applyAudioContextSink } from '../audioOutputDevice';
+import { applyAudioContextSink, subscribeAudioOutputChanges } from '../audioOutputDevice';
 
 type RingMode = 'incoming' | 'outgoing';
 
@@ -96,9 +96,23 @@ class CallRingtoneController {
     this.clearNodes();
     this.mode = null;
   }
+
+  reapplyOutputSink(): void {
+    if (!this.audioContext) {
+      return;
+    }
+
+    void applyAudioContextSink(this.audioContext);
+  }
 }
 
 const controller = new CallRingtoneController();
+
+if (typeof window !== 'undefined') {
+  subscribeAudioOutputChanges(() => {
+    void controller.reapplyOutputSink();
+  });
+}
 
 export function startIncomingCallRing(): void {
   controller.start('incoming');

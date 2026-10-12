@@ -32,6 +32,11 @@ export type UpdaterCheckResult =
 
 export type UpdaterDownloadResult = { ok: true; method: 'in-app' } | { ok: false; error: string };
 
+export type UpdaterCapabilities = {
+  /** In-app zip / NSIS patch updates only (never downloads or opens DMG/Setup installers). */
+  inAppPatchOnly: true;
+};
+
 function sendToRenderer(channel: string, ...args: unknown[]): void {
   const win = mainWindow;
   if (!win || win.isDestroyed()) {
@@ -77,12 +82,10 @@ function isVersionNewer(latest: string, current: string): boolean {
 
 function ensureAutoUpdaterConfigured(): void {
   autoUpdater.autoDownload = false;
-  // Apply Squirrel/NSIS update on Restart & Install, not during downloadUpdate().
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.autoRunAppAfterInstall = false;
   autoUpdater.allowDowngrade = false;
   autoUpdater.allowPrerelease = false;
-  // Windows: allow blockmap/differential patches when the feed provides them.
   autoUpdater.disableDifferentialDownload = false;
 
   autoUpdater.setFeedURL({
@@ -90,7 +93,7 @@ function ensureAutoUpdaterConfigured(): void {
     url: DESKTOP_RELEASE_FEED_URL,
   });
 
-  console.info('[FlexHubs] Update feed:', DESKTOP_RELEASE_FEED_URL);
+  console.info('[FlexHubs] Update feed (in-app patch only):', DESKTOP_RELEASE_FEED_URL);
 }
 
 /** User-safe message; full details stay in main-process logs only. */
@@ -111,7 +114,7 @@ export function sanitizeUpdaterError(raw: string): string {
   }
 
   if (lower.includes('sha512') || lower.includes('checksum') || lower.includes('hash')) {
-    return 'The update file failed verification. Install manually from the desktop-latest release on GitHub.';
+    return 'The update patch failed verification. Try again, or use Manual download on GitHub as a last resort.';
   }
 
   if (
@@ -122,7 +125,7 @@ export function sanitizeUpdaterError(raw: string): string {
     lower.includes('could not locate') ||
     lower.includes('zip file not provided')
   ) {
-    return 'This build could not apply the in-app update. Install FlexHubs-Desktop.dmg (Mac) or FlexHubs-Desktop-Setup.exe (Windows) from desktop-latest on GitHub.';
+    return 'This build could not apply the in-app patch automatically. Use Manual download on GitHub once, then in-app updates will work again.';
   }
 
   if (lower.includes('timed out') || lower.includes('timeout')) {
@@ -143,7 +146,7 @@ export function sanitizeUpdaterError(raw: string): string {
     return message;
   }
 
-  return 'Update failed. Try again, or install manually from the desktop-latest release on GitHub.';
+  return 'Update failed. Try again later.';
 }
 
 function attachAutoUpdaterListeners(): void {
@@ -229,14 +232,43 @@ async function checkFeedForUpdate(): Promise<FeedCheckOutcome> {
   }
 }
 
+const UPDATE_DOWNLOAD_TIMEOUT_MS = 25 * 60_000;
+
 async function downloadInAppUpdate(): Promise<UpdaterDownloadResult> {
-  try {
-    await autoUpdater.downloadUpdate();
-    return { ok: true, method: 'in-app' };
-  } catch (error: unknown) {
-    const raw = error instanceof Error ? error.message : 'Update download failed.';
-    return { ok: false, error: sanitizeUpdaterError(raw) };
-  }
+  return new Promise((resolve) => {
+    let settled = false;
+
+    const finish = (result: UpdaterDownloadResult) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timeoutId);
+      autoUpdater.removeListener('update-downloaded', onDownloaded);
+      autoUpdater.removeListener('error', onError);
+      resolve(result);
+    };
+
+    const onDownloaded = () => {
+      finish({ ok: true, method: 'in-app' });
+    };
+
+    const onError = (error: Error) => {
+      finish({ ok: false, error: sanitizeUpdaterError(error.message || 'Update download failed.') });
+    };
+
+    const timeoutId = setTimeout(() => {
+      finish({ ok: false, error: 'Update download timed out. Check your connection and try again.' });
+    }, UPDATE_DOWNLOAD_TIMEOUT_MS);
+
+    autoUpdater.once('update-downloaded', onDownloaded);
+    autoUpdater.once('error', onError);
+
+    void autoUpdater.downloadUpdate().catch((error: unknown) => {
+      const raw = error instanceof Error ? error.message : 'Update download failed.';
+      finish({ ok: false, error: sanitizeUpdaterError(raw) });
+    });
+  });
 }
 
 async function runUpdateCheck(): Promise<UpdaterCheckResult> {
@@ -327,7 +359,8 @@ function registerUpdaterIpcHandlers(): void {
         return { ok: false, error: 'No update is available to download right now.' };
       }
 
-      return downloadInAppUpdate();
+      console.info('[FlexHubs] Downloading in-app update patch (zip/NSIS via electron-updater)...');
+      return await downloadInAppUpdate();
     } finally {
       updaterPhase = 'idle';
     }
@@ -345,6 +378,10 @@ function registerUpdaterIpcHandlers(): void {
     void shell.openExternal(DESKTOP_RELEASE_PAGE);
     return { ok: true as const };
   });
+
+  register('updater:get-capabilities', (): UpdaterCapabilities => ({
+    inAppPatchOnly: true,
+  }));
 
   register('updater:get-version', () => app.getVersion());
 }

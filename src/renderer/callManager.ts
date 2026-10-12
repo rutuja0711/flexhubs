@@ -24,6 +24,7 @@ import {
   isMeetingModerator,
   normalizeMeetingJoinRequestPayload,
 } from '../shared/calls';
+import { applyPreferredCallInputToLiveKitRoom } from './call/applyCallInputDevice';
 import { captureDesktopSource } from './call/captureDesktopSource';
 import { MediasoupCallSession, type MediasoupRemotePeer } from './call/mediasoupAdapter';
 import type { ScreenCaptureSource } from '../shared/screenShare';
@@ -289,7 +290,6 @@ export function useCallManager({
   const [awaitingJoinApproval, setAwaitingJoinApproval] = useState(false);
   const [mediasoupPeers, setMediasoupPeers] = useState<MediasoupRemotePeer[]>([]);
   const [mediasoupLocalVideo, setMediasoupLocalVideo] = useState<MediaStream | null>(null);
-  const [callNotice, setCallNotice] = useState('');
   const [screenSharePickerOpen, setScreenSharePickerOpen] = useState(false);
 
   const sessionRef = useRef(session);
@@ -525,7 +525,6 @@ export function useCallManager({
     setScreenShareEnabled(false);
     setScreenSharePickerOpen(false);
     setBusy(false);
-    setCallNotice('');
     setPendingJoinRequests([]);
     setAwaitingJoinApproval(false);
     pendingJoinConversationRef.current = null;
@@ -741,6 +740,7 @@ export function useCallManager({
 
       try {
         await room.localParticipant.setMicrophoneEnabled(true);
+        await applyPreferredCallInputToLiveKitRoom(room);
         setMicEnabled(true);
       } catch (error) {
         logCallDebug('[Calls] Microphone enable failed', error instanceof Error ? error.message : error);
@@ -1778,7 +1778,6 @@ export function useCallManager({
     }
 
     setBusy(true);
-    setCallNotice('');
     clearCallSignalTimers();
 
     setSession((current) =>
@@ -1820,7 +1819,7 @@ export function useCallManager({
 
     if (!permissionResult.ok) {
       setBusy(false);
-      setCallNotice(formatCallPermissionNotice(permissionResult.error));
+      reportError(formatCallPermissionNotice(permissionResult.error));
       revertToIncoming();
       return;
     }
@@ -1835,7 +1834,7 @@ export function useCallManager({
 
       if (!tokenResult.ok) {
         setBusy(false);
-        setCallNotice(formatCallApiError(tokenResult.error, tokenResult.status));
+        reportError(formatCallApiError(tokenResult.error, tokenResult.status));
         revertToIncoming();
         return;
       }
@@ -1885,14 +1884,11 @@ export function useCallManager({
     try {
       await connectLiveKit(liveToken, active.video, true);
       clearCallSignalTimers();
-      setCallNotice('');
     } catch (error) {
       clearCallSignalTimers();
       const message = formatCallMediaError(error);
-      setCallNotice(isCallPermissionMessage(message) ? formatCallPermissionNotice(message) : message);
-      if (!isCallPermissionMessage(message)) {
-        reportError(message);
-      }
+      const notice = isCallPermissionMessage(message) ? formatCallPermissionNotice(message) : message;
+      reportError(notice);
       await disconnectRoom();
       setSession((current) =>
         current.callId === active.callId
@@ -2549,7 +2545,6 @@ export function useCallManager({
   return {
     session,
     busy,
-    callNotice,
     remoteParticipants,
     micEnabled,
     cameraEnabled,

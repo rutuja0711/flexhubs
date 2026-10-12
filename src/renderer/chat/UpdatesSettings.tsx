@@ -28,6 +28,7 @@ export function UpdatesSettings() {
   const [releaseNotes, setReleaseNotes] = useState<string>('');
   const [downloadProgress, setDownloadProgress] = useState<number>(0);
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [legacyInstallerUpdater, setLegacyInstallerUpdater] = useState(false);
   const isElectron = !!window.electronAPI;
 
   const applyCheckResult = useCallback((result: CheckUpdatesResult) => {
@@ -123,6 +124,13 @@ export function UpdatesSettings() {
         setCurrentVersion('');
       }
 
+      try {
+        const capabilities = await api.getUpdaterCapabilities?.();
+        setLegacyInstallerUpdater(capabilities?.inAppPatchOnly !== true);
+      } catch {
+        setLegacyInstallerUpdater(true);
+      }
+
       await checkForUpdates();
     };
 
@@ -206,8 +214,18 @@ export function UpdatesSettings() {
     <div className="mx-auto max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
       <div className="mb-6">
         <h2 className="text-xl font-bold tracking-tight text-app-text">Update Center</h2>
-        <p className="mt-1 text-sm text-app-muted">Keep FlexHubs running smoothly with the latest features.</p>
+        <p className="mt-1 text-sm text-app-muted">
+          Updates download in the background as a patch. Use Restart &amp; Install to apply — not the DMG installer.
+        </p>
       </div>
+
+      {legacyInstallerUpdater ? (
+        <div className="mb-4 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-app-text">
+          This app build uses an old update flow that opens the DMG installer. Install{' '}
+          <strong>v1.0.9+</strong> from GitHub once (Manual download), then future updates will be in-app patches
+          only.
+        </div>
+      ) : null}
 
       <div className="rounded-xl border border-app-border bg-app-surface shadow-xs p-6">
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
@@ -225,8 +243,8 @@ export function UpdatesSettings() {
                 {updateState === 'checking' && 'Checking for updates…'}
                 {updateState === 'up-to-date' && "You're up to date."}
                 {updateState === 'available' && 'New version available'}
-                {updateState === 'downloading' && 'Downloading update…'}
-                {updateState === 'ready' && 'FlexHubs is ready to update.'}
+                {updateState === 'downloading' && 'Downloading update patch…'}
+                {updateState === 'ready' && 'Update patch ready — restart to install.'}
                 {updateState === 'error' && 'Update failed'}
                 {updateState === 'offline' && "You're offline"}
               </h3>
@@ -300,7 +318,7 @@ export function UpdatesSettings() {
                   onClick={openReleasePage}
                   className="rounded-xl border border-app-border bg-app-surface px-5 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-chat-hover"
                 >
-                  Install from GitHub
+                  Manual download (DMG)
                 </button>
               )}
 

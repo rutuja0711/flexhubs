@@ -118,6 +118,14 @@ export async function generateMessageText(description: string): Promise<ApiResul
   return withToken((token) => window.electronAPI.generateMessageText(token, description));
 }
 
+export async function generateAiReply(messageContent: string): Promise<ApiResult<AiTextResult>> {
+  if (!window.electronAPI?.generateAiReply) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.generateAiReply(token, messageContent));
+}
+
 export async function parseFlexCommand(
   input: string,
   conversationId?: string,

@@ -23,7 +23,6 @@ import type { ScreenCaptureSource } from '../../shared/screenShare';
 type CallOverlayProps = {
   session: CallSession;
   busy: boolean;
-  callNotice?: string;
   room: Room | null;
   remoteParticipants: RemoteParticipant[];
   mediasoupPeers?: MediasoupRemotePeer[];
@@ -60,7 +59,6 @@ function remoteHasVideo(participants: RemoteParticipant[]): boolean {
 export function CallOverlay({
   session,
   busy,
-  callNotice = '',
   room,
   remoteParticipants,
   mediasoupPeers = [],
@@ -214,7 +212,6 @@ export function CallOverlay({
         <CallRingingView
           session={session}
           busy={busy}
-          notice={callNotice}
           onAccept={onAccept}
           onReject={onReject}
           onCancel={onCancel}
@@ -238,7 +235,6 @@ export function CallOverlay({
         <CallRingingView
           session={session}
           busy={busy}
-          notice={callNotice || 'Connecting...'}
           onAccept={onAccept}
           onReject={onReject}
           onCancel={onCancel}

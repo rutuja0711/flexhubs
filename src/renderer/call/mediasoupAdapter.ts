@@ -7,6 +7,7 @@ type RtpCapabilities = types.RtpCapabilities;
 type Transport = types.Transport;
 import type { CallTokenResult } from '../../shared/calls';
 import { logCallDebug } from '../callDebug';
+import { buildCallAudioInputConstraint } from '../callInputDevice';
 import { ensureCallMediaPermissions } from '../callsApi';
 import { MediaSignalingClient } from './mediaSignalingClient';
 
@@ -423,7 +424,7 @@ export class MediasoupCallSession {
     this.recvTransport = await this.createTransport('recv');
 
     const micStream = await navigator.mediaDevices.getUserMedia({
-      audio: true,
+      audio: buildCallAudioInputConstraint(),
       video: false,
     });
 

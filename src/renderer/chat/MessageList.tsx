@@ -1,9 +1,10 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { FiCheck, FiMessageSquare, FiChevronUp, FiRefreshCw } from 'react-icons/fi';
+import { FiCheck, FiCornerUpLeft, FiMessageSquare, FiChevronUp, FiRefreshCw } from 'react-icons/fi';
 import type { MessageItem, MessageReadReceipt } from '../../shared/messages';
 import {
   buildConversationMemberNameIndex,
   enrichMessageReadReceipts,
+  formatMessagePreview,
   formatMessageSeenByDetail,
   formatMessageSeenByLabel,
   groupMessageReactions,
@@ -18,7 +19,7 @@ import {
 import { loadMessageById } from '../chatApi';
 import { fetchMediaBlob } from '../mediaBlob';
 import { formatConversationTimestamp, formatMessageDayDivider, messageDayKey } from './format';
-import { Avatar } from './ChatIcons';
+import { Avatar, EnhanceSparkleIcon } from './ChatIcons';
 import { MessageMenu } from './MessageMenu';
 import { ReactionChip } from './ReactionChip';
 import { ReactionPicker } from './ReactionPicker';
@@ -152,6 +153,8 @@ type MessageRowProps = {
   onSaveEdit: () => void;
   onAddReaction: (messageId: string, emoji: string) => void;
   onReplyMessage: (messageId: string) => void;
+  onAiReplyMessage?: (messageId: string) => void;
+  aiReplyLoadingMessageId?: string | null;
   onReplyInThread: (messageId: string) => void;
   onJumpToMessage?: (messageId: string) => void;
   onEditMessage: (messageId: string, content: string) => void;
@@ -175,6 +178,55 @@ type MessageRowProps = {
   hideIncomingSenderMeta?: boolean;
   sendProgressByMessageId?: Record<string, number>;
 };
+
+function MessageHoverAction({
+  label,
+  title,
+  onClick,
+  disabled = false,
+  busy = false,
+  children,
+}: {
+  label: string;
+  title: string;
+  onClick: () => void;
+  disabled?: boolean;
+  busy?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={title}
+      disabled={disabled || busy}
+      className="flex h-7 w-7 items-center justify-center rounded-lg text-app-muted transition-all duration-150 hover:bg-black/[0.06] hover:text-app-text active:scale-95 disabled:cursor-not-allowed disabled:opacity-50 dark:hover:bg-white/[0.1]"
+      onClick={(event) => {
+        event.stopPropagation();
+        onClick();
+      }}
+    >
+      {busy ? <FiRefreshCw className="animate-spin text-sm" aria-hidden /> : children}
+    </button>
+  );
+}
+
+function canGenerateAiReply(message: MessageItem): boolean {
+  if (message.isOwn) {
+    return false;
+  }
+
+  if (message.content.trim() === 'This message was deleted.') {
+    return false;
+  }
+
+  if (isCallLogMessage(message)) {
+    return false;
+  }
+
+  const preview = formatMessagePreview(message).trim();
+  return preview.length > 0 || message.content.trim().length > 0;
+}
 
 function DoubleCheckIcon() {
   return (
@@ -352,6 +404,8 @@ const MessageRow = memo(function MessageRow({
   onSaveEdit,
   onAddReaction,
   onReplyMessage,
+  onAiReplyMessage,
+  aiReplyLoadingMessageId = null,
   onReplyInThread,
   onJumpToMessage,
   onDeleteMessage,
@@ -636,6 +690,26 @@ const MessageRow = memo(function MessageRow({
                   onSelect={(emoji) => onAddReaction(message.id, emoji)}
                 />
               ) : null}
+              {!isSending && message.content.trim() !== 'This message was deleted.' ? (
+                <MessageHoverAction
+                  label="Reply"
+                  title="Reply"
+                  onClick={() => onReplyMessage(message.id)}
+                >
+                  <FiCornerUpLeft className="text-sm" aria-hidden />
+                </MessageHoverAction>
+              ) : null}
+              {!isSending && onAiReplyMessage && canGenerateAiReply(message) ? (
+                <MessageHoverAction
+                  label="Reply with AI"
+                  title="Reply with AI"
+                  busy={aiReplyLoadingMessageId === message.id}
+                  disabled={Boolean(aiReplyLoadingMessageId && aiReplyLoadingMessageId !== message.id)}
+                  onClick={() => onAiReplyMessage(message.id)}
+                >
+                  <EnhanceSparkleIcon className="h-[15px] w-[15px]" />
+                </MessageHoverAction>
+              ) : null}
               <MessageMenu
                 isOwn={message.isOwn}
                 isPinned={isPinned}
@@ -704,6 +778,8 @@ type MessageListProps = {
   currentUserId: string | null;
   onAddReaction: (messageId: string, emoji: string) => void;
   onReplyMessage: (messageId: string) => void;
+  onAiReplyMessage?: (messageId: string) => void;
+  aiReplyLoadingMessageId?: string | null;
   onReplyInThread: (messageId: string) => void;
   onJumpToMessage?: (messageId: string) => void;
   onEditMessage: (messageId: string, content: string) => void;
@@ -752,6 +828,8 @@ export function MessageList({
   currentUserId,
   onAddReaction,
   onReplyMessage,
+  onAiReplyMessage,
+  aiReplyLoadingMessageId = null,
   onReplyInThread,
   onJumpToMessage,
   onEditMessage,
@@ -1218,6 +1296,8 @@ export function MessageList({
               onSaveEdit={saveEdit}
               onAddReaction={onAddReaction}
               onReplyMessage={onReplyMessage}
+              onAiReplyMessage={onAiReplyMessage}
+              aiReplyLoadingMessageId={aiReplyLoadingMessageId}
               onReplyInThread={onReplyInThread}
               onJumpToMessage={onJumpToMessage}
               onEditMessage={onEditMessage}

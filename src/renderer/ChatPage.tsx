@@ -6181,7 +6181,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       <CallOverlay
         session={callManager.session}
         busy={callManager.busy}
-        callNotice={callManager.callNotice}
         room={callManager.room}
         remoteParticipants={callManager.remoteParticipants}
         mediasoupPeers={callManager.mediasoupPeers}

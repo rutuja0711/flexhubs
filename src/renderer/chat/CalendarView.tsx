@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
 import {
   FiChevronLeft,
   FiChevronRight,
@@ -16,7 +16,6 @@ import {
 import {
   canEditCalendarEvent,
   isEventAtLeastOneMinuteFromNow,
-  isPendingScheduledMessage,
   isSameCalendarDay,
   resolveEventCreatorAvatarUrl,
   resolveEventCreatorDisplayName,
@@ -32,7 +31,7 @@ import {
   getUserUsername,
 } from '../../shared/user';
 import { Avatar } from './ChatIcons';
-import { loadScheduledMessages, updateCalendarEvent } from '../extrasApi';
+import { updateCalendarEvent } from '../extrasApi';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
 import { NewEventModal } from './NewEventModal';
@@ -42,7 +41,7 @@ import {
   defaultCalendarFilters,
   type CalendarFiltersState,
 } from './CalendarFiltersPopover';
-import { filterCalendarEvents, filterScheduledMessages } from './calendarFilterUtils';
+import { filterCalendarEvents } from './calendarFilterUtils';
 
 type CalendarViewProps = {
   events: CalendarEventItem[];
@@ -100,21 +99,6 @@ export function CalendarView({
   }, [editEvent, resolveCalendarEventForEdit]);
   const [filterOpen, setFilterOpen] = useState(false);
   const [filters, setFilters] = useState<CalendarFiltersState>(defaultCalendarFilters);
-  const [scheduledMessages, setScheduledMessages] = useState<ScheduledMessageItem[]>([]);
-
-  const loadScheduled = useCallback(async () => {
-    const result = await loadScheduledMessages();
-    if (!result.ok) {
-      if (onUnauthorized(result.status)) return;
-      return;
-    }
-    setScheduledMessages(result.data.filter(isPendingScheduledMessage));
-  }, [onUnauthorized]);
-
-  useEffect(() => {
-    void loadScheduled();
-  }, [loadScheduled, events.length]);
-  
   const toast = useToast();
   const confirm = useConfirm();
 
@@ -383,19 +367,8 @@ export function CalendarView({
     ],
   );
 
-  const filteredScheduled = useMemo(
-    () =>
-      filterScheduledMessages(scheduledMessages, {
-        searchQuery,
-        when: filters.when,
-        hubConversationIds: filters.hubConversationIds,
-        hubOptions,
-      }),
-    [scheduledMessages, searchQuery, filters.when, filters.hubConversationIds, hubOptions],
-  );
-
   const visibleEvents = filters.showEvents ? filteredEvents : [];
-  const visibleScheduled = filters.showScheduledMessages ? filteredScheduled : [];
+  const visibleScheduled: ScheduledMessageItem[] = [];
 
   const getEventsForDate = (dateNum: number) => {
     return visibleEvents.filter((e) => {
@@ -978,7 +951,6 @@ export function CalendarView({
             onEventSaved?.(saved);
           }
           onRefresh();
-          void loadScheduled();
         }}
         onDelete={() => editEvent && handleDelete(editEvent)}
         onUnauthorized={onUnauthorized}

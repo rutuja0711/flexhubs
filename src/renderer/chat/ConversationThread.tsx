@@ -9,6 +9,7 @@ import {
   FiMapPin,
   FiMoreVertical,
   FiPhone,
+  FiRefreshCw,
   FiTrash2,
   FiUsers,
   FiVideo,
@@ -46,6 +47,7 @@ import {
   clearConversationHistory,
   deleteConversation,
 } from '../chatApi';
+import { generateAiReply } from '../extrasApi';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
 import { PinIcon, SearchIcon, SparkleIcon } from './ChatIcons';
@@ -186,6 +188,7 @@ export function ConversationThread({
   const [forwardLoading, setForwardLoading] = useState(false);
   const [forwardError, setForwardError] = useState('');
   const [replyingToMessage, setReplyingToMessage] = useState<MessageItem | null>(null);
+  const [aiReplyLoadingMessageId, setAiReplyLoadingMessageId] = useState<string | null>(null);
   const [threadRootMessage, setThreadRootMessage] = useState<MessageItem | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -357,6 +360,43 @@ export function ConversationThread({
     );
   }, [blockedUserIds, conversation.kind, currentUserId, messages]);
   const threadsEnabled = conversation.kind === 'hub';
+
+  const handleAiReplyMessage = useCallback(
+    async (messageId: string) => {
+      const message = messages.find((item) => item.id === messageId);
+      if (!message || message.isOwn) {
+        return;
+      }
+
+      const messageContent = formatMessagePreview(message).trim() || message.content.trim();
+      if (!messageContent) {
+        toast.error('Nothing to reply to in this message.');
+        return;
+      }
+
+      setReplyingToMessage(message);
+      setAiReplyLoadingMessageId(messageId);
+
+      const result = await generateAiReply(messageContent);
+      setAiReplyLoadingMessageId(null);
+
+      if (!result.ok) {
+        if (!onUnauthorized(result.status)) {
+          toast.error(result.error);
+        }
+        return;
+      }
+
+      const replyText = result.data.text.trim();
+      if (!replyText) {
+        toast.error('AI returned an empty reply.');
+        return;
+      }
+
+      onDraftChange(replyText);
+    },
+    [messages, onDraftChange, onUnauthorized, toast],
+  );
 
   const featuredPinnedMessage =
     pinnedMessages[pinnedBannerIndex % Math.max(pinnedMessages.length, 1)] ?? null;
@@ -696,6 +736,16 @@ export function ConversationThread({
           <p className="truncate text-xs font-medium text-app-muted mt-0.5">{subtitle}</p>
         </div>
         <div className="flex items-center gap-1.5">
+          {aiReplyLoadingMessageId ? (
+            <div
+              className="mr-1 flex items-center gap-2 text-sm text-app-muted"
+              role="status"
+              aria-live="polite"
+            >
+              <FiRefreshCw className="animate-spin text-accent" aria-hidden />
+              <span>Generating AI reply…</span>
+            </div>
+          ) : null}
           <button
             type="button"
             aria-label="Search in conversation"
@@ -988,6 +1038,10 @@ export function ConversationThread({
             setReplyingToMessage(message);
           }
         }}
+        onAiReplyMessage={(messageId) => {
+          void handleAiReplyMessage(messageId);
+        }}
+        aiReplyLoadingMessageId={aiReplyLoadingMessageId}
         threadsEnabled={threadsEnabled}
         onReplyInThread={(messageId) => {
           if (!threadsEnabled) {
@@ -1052,7 +1106,11 @@ export function ConversationThread({
         conversationId={conversation.id}
         currentUserId={currentUserId}
         replyingToMessage={replyingToMessage}
-        onCancelReply={() => setReplyingToMessage(null)}
+        aiReplyGenerating={Boolean(aiReplyLoadingMessageId)}
+        onCancelReply={() => {
+          setReplyingToMessage(null);
+          setAiReplyLoadingMessageId(null);
+        }}
         onChange={onDraftChange}
         onSend={() => {
           onSend(replyingToMessage?.id);

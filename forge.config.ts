@@ -23,7 +23,7 @@ const config: ForgeConfig = {
     appBundleId: 'com.flexodyn.flexhubs',
     appCategoryType: 'public.app-category.business',
     executableName: 'FlexHubs Desktop',
-    extraResource: [path.join(__dirname, 'assets')],
+    extraResource: [path.join(__dirname, 'assets'), path.join(__dirname, 'build', 'app-update.yml')],
     icon: isWindowsHost
       ? path.join(__dirname, 'assets', 'icon.ico')
       : path.join(__dirname, 'assets', 'logo-symbol.icns'),

@@ -38,6 +38,7 @@ type MessageInputProps = {
   error: string;
   conversationId?: string;
   replyingToMessage?: MessageItem | null;
+  aiReplyGenerating?: boolean;
   onCancelReply?: () => void;
   onChange: (value: string) => void;
   onSend: () => void;
@@ -154,6 +155,7 @@ export function MessageInput({
   error,
   conversationId,
   replyingToMessage,
+  aiReplyGenerating = false,
   onCancelReply,
   onChange,
   onSend,
@@ -1128,7 +1130,22 @@ export function MessageInput({
               </button>
             ) : null}
           </div>
-          <MessageReplyPreview message={replyingToMessage} currentUserId={currentUserId} />
+          <MessageReplyPreview
+            message={replyingToMessage}
+            currentUserId={currentUserId}
+            variant="composer"
+          />
+        </div>
+      ) : null}
+
+      {aiReplyGenerating ? (
+        <div
+          className="flex items-center gap-2 border border-b-0 border-app-border bg-app-surface/95 px-4 py-2 text-sm text-app-muted backdrop-blur-md"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="inline-block h-3.5 w-3.5 animate-spin rounded-full border-2 border-app-border border-t-accent" />
+          Generating AI reply…
         </div>
       ) : null}
 

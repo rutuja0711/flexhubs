@@ -306,6 +306,24 @@ export async function generateMessageText(
   return { ok: true, data: normalizeAiTextResult(result.data) };
 }
 
+export async function generateAiReply(
+  token: string,
+  messageContent: string,
+): Promise<ApiResult<AiTextResult>> {
+  const result = await apiPost<unknown>(
+    `${API_BASE_URL}/ai/reply`,
+    token,
+    'AI Reply API',
+    { messageContent },
+  );
+
+  if (!result.ok) {
+    return { ...result, error: sanitizeAiApiError(result.error) };
+  }
+
+  return { ok: true, data: normalizeAiTextResult(result.data) };
+}
+
 export async function parseFlexCommand(
   token: string,
   input: string,
