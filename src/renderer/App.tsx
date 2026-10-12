@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import ChatPage from './ChatPage';
 import LoginPage from './LoginPage';
-import { clearAuth, getCurrentUser, getStoredToken, performLogout } from './authApi';
+import {
+  clearAuth,
+  getCurrentUser,
+  getStoredToken,
+  getStoredUser,
+  hydrateAuthSessionFromDisk,
+  performLogout,
+} from './authApi';
 import { AppLogoMark } from './brand/AppLogo';
 import { FiRefreshCw, FiAlertCircle } from 'react-icons/fi';
 
@@ -49,7 +56,14 @@ function App() {
     setIsCheckingOffline(false);
     setIsRetrying(true);
 
+    await hydrateAuthSessionFromDisk();
+
     const token = getStoredToken();
+    const cachedUser = token ? getStoredUser() : null;
+
+    if (token && cachedUser != null) {
+      void window.electronAPI?.writeAuthSession?.({ token, user: cachedUser });
+    }
 
     if (!token) {
       setIsRetrying(false);

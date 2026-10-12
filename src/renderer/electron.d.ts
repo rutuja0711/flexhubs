@@ -35,6 +35,9 @@ declare global {
     electronAPI: {
       login: (credentials: LoginCredentials) => Promise<LoginResult>;
       getCurrentUser: (token: string) => Promise<LoginResult>;
+      readAuthSession?: () => Promise<{ token: string; user: unknown } | null>;
+      writeAuthSession?: (payload: { token: string; user: unknown }) => Promise<{ ok: boolean }>;
+      clearAuthSession?: () => Promise<{ ok: boolean }>;
       createOrgOrder: (
         token: string | null,
         payloadJson: string,

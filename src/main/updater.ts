@@ -133,6 +133,14 @@ export function sanitizeUpdaterError(raw: string): string {
   }
 
   if (
+    lower.includes('operation not permitted') ||
+    lower.includes('eperm') ||
+    lower.includes('eacces')
+  ) {
+    return 'macOS blocked writing to Applications. Quit FlexHubs, reinstall the latest DMG from GitHub (drag to Applications), then try Restart & Install again.';
+  }
+
+  if (
     lower.includes('network') ||
     lower.includes('offline') ||
     lower.includes('enotfound') ||

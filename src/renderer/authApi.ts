@@ -1,4 +1,4 @@
-import type { LoginCredentials, LoginResult } from '../shared/auth';
+import type { LoginCredentials, LoginResult, LoginSuccess } from '../shared/auth';
 
 export type { LoginCredentials, LoginResult, LoginSuccess } from '../shared/auth';
 
@@ -13,28 +13,65 @@ export async function login(credentials: LoginCredentials): Promise<LoginResult>
   return window.electronAPI.login(credentials);
 }
 
+function readTokenFromAuthPayload(data: LoginSuccess | null | undefined): string | null {
+  if (!data || typeof data !== 'object') {
+    return null;
+  }
+
+  const record = data as Record<string, unknown>;
+  const direct =
+    (typeof record.token === 'string' && record.token) ||
+    (typeof record.accessToken === 'string' && record.accessToken) ||
+    (typeof record.access_token === 'string' && record.access_token);
+
+  if (direct) {
+    return direct.trim();
+  }
+
+  const nested = record.data;
+
+  if (nested && typeof nested === 'object') {
+    const inner = nested as Record<string, unknown>;
+    const nestedToken =
+      (typeof inner.token === 'string' && inner.token) ||
+      (typeof inner.accessToken === 'string' && inner.accessToken) ||
+      (typeof inner.access_token === 'string' && inner.access_token);
+
+    if (nestedToken) {
+      return nestedToken.trim();
+    }
+  }
+
+  return null;
+}
+
+function persistAuthSessionToDisk(token: string, user: unknown): void {
+  void window.electronAPI?.writeAuthSession?.({ token, user });
+}
+
 export function getStoredToken(): string | null {
   return localStorage.getItem('authToken');
 }
 
-export function storeAuth(data: import('../shared/auth').LoginSuccess): void {
-  const token =
-    typeof data.token === 'string'
-      ? data.token
-      : typeof data.accessToken === 'string'
-        ? data.accessToken
-        : null;
+export function storeAuth(data: LoginSuccess): void {
+  const token = readTokenFromAuthPayload(data);
 
   if (token) {
     localStorage.setItem('authToken', token);
   }
 
-  localStorage.setItem('authUser', JSON.stringify(data.user ?? data));
+  const user = data.user ?? data;
+  localStorage.setItem('authUser', JSON.stringify(user));
+
+  if (token) {
+    persistAuthSessionToDisk(token, user);
+  }
 }
 
 export function clearAuth(): void {
   localStorage.removeItem('authToken');
   localStorage.removeItem('authUser');
+  void window.electronAPI?.clearAuthSession?.();
 }
 
 export function logout(): void {
@@ -89,7 +126,28 @@ export function getStoredUser(): unknown | null {
   }
 }
 
+/** Restore session from main-process disk store when renderer localStorage is empty. */
+export async function hydrateAuthSessionFromDisk(): Promise<void> {
+  if (getStoredToken()) {
+    return;
+  }
+
+  const session = await window.electronAPI?.readAuthSession?.();
+
+  if (!session?.token?.trim()) {
+    return;
+  }
+
+  localStorage.setItem('authToken', session.token.trim());
+
+  if (session.user != null) {
+    localStorage.setItem('authUser', JSON.stringify(session.user));
+  }
+}
+
 export async function getCurrentUser(): Promise<LoginResult> {
+  await hydrateAuthSessionFromDisk();
+
   const token = getStoredToken();
 
   if (!token) {

@@ -18,19 +18,28 @@ GitHub → **Releases** → `desktop-latest` → **`FlexHubs-Desktop.dmg`**
 2. Drag **FlexHubs Desktop** into **Applications**.
 3. Open from **Applications** (first launch may show Gatekeeper).
 4. If blocked: **System Settings → Privacy & Security → Open Anyway**.
-5. **Manual fallback** (Terminal):
+5. **Manual fallback** (Terminal) — only if Gatekeeper still blocks after **Open Anyway**:
 
 ```bash
-xattr -cr "/Applications/FlexHubs Desktop.app"
+# Quit FlexHubs Desktop first (Cmd+Q)
+sudo xattr -cr "/Applications/FlexHubs Desktop.app"
 open "/Applications/FlexHubs Desktop.app"
 ```
+
+If you see **`xattr: Operation not permitted`** on every file, macOS is blocking Terminal (not a broken app):
+
+1. **System Settings → Privacy & Security → Full Disk Access** → turn **on** for **Terminal** (or iTerm).
+2. Quit and reopen Terminal, then run the `sudo xattr` command again.
+
+You can skip `xattr` entirely if **Open Anyway** in Privacy & Security already lets the app run.
 
 ### Common Mac mistakes
 
 | Mistake | Fix |
 |--------|-----|
 | Running the app from inside the mounted DMG | Drag to **Applications** first |
-| App still quarantined | Run `xattr -cr` on the installed app |
+| App still quarantined | **Open Anyway**, or `sudo xattr -cr` with Full Disk Access for Terminal |
+| `xattr: Operation not permitted` | Enable **Full Disk Access** for Terminal, or use **sudo**; quit the app first |
 | Only "Move to Bin" on dialog | Use **Open Anyway** in Settings |
 
 ---

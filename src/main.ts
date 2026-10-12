@@ -21,6 +21,11 @@ import { handleSquirrelStartup } from './main/squirrelStartup';
 import { initUpdater, setUpdaterMainWindow } from './main/updater';
 import { performLogin } from './main/authLogin';
 import { performGetMe } from './main/authMe';
+import {
+  clearPersistedAuthSession,
+  readPersistedAuthSession,
+  writePersistedAuthSession,
+} from './main/desktopAuthStorage';
 import { API_BASE_URL } from './shared/auth';
 import {
   fetchInviteRegistrationDetails,
@@ -471,6 +476,21 @@ function updateDisplaySleepBlocker(): void {
 
 ipcMain.handle('auth:login', (_event, credentials) => performLogin(credentials));
 ipcMain.handle('auth:me', (_event, token: string) => performGetMe(token));
+ipcMain.handle('auth:read-session', () => readPersistedAuthSession());
+ipcMain.handle('auth:write-session', (_event, payload: { token: string; user: unknown }) => {
+  const token = typeof payload?.token === 'string' ? payload.token.trim() : '';
+
+  if (!token) {
+    return { ok: false as const };
+  }
+
+  writePersistedAuthSession({ token, user: payload.user ?? null });
+  return { ok: true as const };
+});
+ipcMain.handle('auth:clear-session', () => {
+  clearPersistedAuthSession();
+  return { ok: true as const };
+});
 ipcMain.handle('auth:register', (_event, payloadJson: string) => {
   try {
     return performRegister(JSON.parse(payloadJson) as RegisterAccountInput);
@@ -2002,29 +2022,27 @@ function setupApplicationMenu(): void {
     });
   }
 
-  template.push({
-    label: 'Edit',
-    submenu: [
-      { role: 'undo' },
-      { role: 'redo' },
-      { type: 'separator' },
-      { role: 'cut' },
-      { role: 'copy' },
-      { role: 'paste' },
-      { role: 'selectAll' },
-    ],
-  });
+  if (isMac) {
+    template.push({ role: 'editMenu' }, { role: 'windowMenu' });
+  } else {
+    template.push({
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        { role: 'selectAll' },
+      ],
+    });
 
-  template.push({
-    label: 'Window',
-    submenu: [
-      { role: 'minimize' },
-      { role: 'zoom' },
-      ...(isMac
-        ? [{ type: 'separator' as const }, { role: 'front' as const }]
-        : [{ role: 'close' as const }]),
-    ],
-  });
+    template.push({
+      label: 'Window',
+      submenu: [{ role: 'minimize' }, { role: 'zoom' }, { role: 'close' }],
+    });
+  }
 
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }

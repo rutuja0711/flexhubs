@@ -196,7 +196,5 @@ export async function uploadProfileImage(
 }
 
 export async function fetchUserById(token: string, userId: string): Promise<ApiResult<unknown>> {
-  const res = await apiGet<unknown>(`${API_BASE_URL}/users/${userId}`, token, 'User Profile API');
-  console.log('RAW fetchUserById PAYLOAD:', JSON.stringify(res, null, 2));
-  return res;
+  return apiGet<unknown>(`${API_BASE_URL}/users/${userId}`, token, 'User Profile API');
 }

@@ -36,6 +36,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('auth:login', credentials),
   getCurrentUser: (token: string): Promise<LoginResult> =>
     ipcRenderer.invoke('auth:me', token),
+  readAuthSession: (): Promise<{ token: string; user: unknown } | null> =>
+    ipcRenderer.invoke('auth:read-session'),
+  writeAuthSession: (payload: { token: string; user: unknown }): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('auth:write-session', payload),
+  clearAuthSession: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('auth:clear-session'),
   createOrgOrder: (
     token: string | null,
     payloadJson: string,

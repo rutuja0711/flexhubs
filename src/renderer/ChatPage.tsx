@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
+import { createPortal } from 'react-dom';
 import type {
   CalendarEventItem,
   FileItem,
@@ -6178,6 +6179,34 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       className={`flex h-full bg-app-chat-bg ${callImmersiveMode ? 'overflow-hidden bg-[#101114]' : ''}`}
     >
       <MediaPreviewHost />
+      {showMeetingBanner && callManager.session.meetingBanner
+        ? createPortal(
+            <MeetingStartedBanner
+              meeting={callManager.session.meetingBanner}
+              onJoin={() => {
+                const meeting = callManager.session.meetingBanner;
+
+                if (!meeting) {
+                  return;
+                }
+
+                const targetConversation =
+                  conversations.find((conversation) => conversation.id === meeting.conversationId) ??
+                  (selectedConversation?.id === meeting.conversationId ? selectedConversation : null);
+
+                if (!targetConversation) {
+                  toast.error('Open the hub for this meeting, then tap Join again.');
+                  void handleSelectConversation(meeting.conversationId);
+                  return;
+                }
+
+                void callManager.joinGroupMeeting(targetConversation, meeting);
+              }}
+              onDismiss={callManager.dismissMeetingBanner}
+            />,
+            document.body,
+          )
+        : null}
       <CallOverlay
         session={callManager.session}
         busy={callManager.busy}
@@ -6333,31 +6362,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       ) : null}
 
       <main className="relative flex min-w-0 flex-1 flex-col">
-        {showMeetingBanner && callManager.session.meetingBanner ? (
-          <MeetingStartedBanner
-            meeting={callManager.session.meetingBanner}
-            onJoin={() => {
-              const meeting = callManager.session.meetingBanner;
-
-              if (!meeting) {
-                return;
-              }
-
-              const targetConversation =
-                conversations.find((conversation) => conversation.id === meeting.conversationId) ??
-                (selectedConversation?.id === meeting.conversationId ? selectedConversation : null);
-
-              if (!targetConversation) {
-                toast.error('Open the hub for this meeting, then tap Join again.');
-                void handleSelectConversation(meeting.conversationId);
-                return;
-              }
-
-              void callManager.joinGroupMeeting(targetConversation, meeting);
-            }}
-            onDismiss={callManager.dismissMeetingBanner}
-          />
-        ) : null}
         {mainView === 'chat' &&
         isOrgAdmin &&
         planComplianceRules.length > 0 &&
