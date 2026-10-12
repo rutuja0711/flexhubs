@@ -630,6 +630,7 @@ declare global {
         method?: 'in-app';
         paused?: boolean;
       }>;
+      resetUpdateDownloadState?: () => Promise<{ ok: boolean }>;
       getUpdateDownloadStatus?: () => Promise<{
         phase: 'idle' | 'checking' | 'downloading' | 'paused';
         progress: number;

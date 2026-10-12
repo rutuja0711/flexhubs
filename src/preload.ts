@@ -865,6 +865,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('updater:pause-download'),
   resumeUpdateDownload: (): Promise<{ ok: boolean; error?: string; method?: 'in-app'; paused?: boolean }> =>
     ipcRenderer.invoke('updater:resume-download'),
+  resetUpdateDownloadState: (): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('updater:reset-download-state'),
   getUpdateDownloadStatus: (): Promise<{
     phase: 'idle' | 'checking' | 'downloading' | 'paused';
     progress: number;

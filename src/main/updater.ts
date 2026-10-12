@@ -189,7 +189,8 @@ function ensureAutoUpdaterConfigured(): void {
   autoUpdater.autoRunAppAfterInstall = false;
   autoUpdater.allowDowngrade = false;
   autoUpdater.allowPrerelease = false;
-  autoUpdater.disableDifferentialDownload = false;
+  // Full zip only — differential patches often fail late in the download on macOS.
+  autoUpdater.disableDifferentialDownload = true;
 
   autoUpdater.setFeedURL({
     provider: 'generic',
@@ -227,9 +228,11 @@ export function sanitizeUpdaterError(raw: string): string {
     lower.includes('signature invalid') ||
     lower.includes('squirrel') ||
     lower.includes('could not locate') ||
-    lower.includes('zip file not provided')
+    lower.includes('zip file not provided') ||
+    lower.includes('err_updater') ||
+    lower.includes('blockmap')
   ) {
-    return 'This update could not be applied automatically. Use Manual download once, then try in-app updates again.';
+    return 'This update could not be applied automatically. Use Manual download to install the latest DMG once (same signed build as updates), then try again. You can also tap Retry to clear the cached download and redownload.';
   }
 
   if (lower.includes('timed out') || lower.includes('timeout')) {
@@ -299,6 +302,10 @@ function attachAutoUpdaterListeners(): void {
   });
 
   autoUpdater.on('error', (err) => {
+    if (downloadPausedIntentionally) {
+      return;
+    }
+
     const message = err.message || 'Update failed.';
     console.warn('[FlexHubs] Updater error:', message);
     sendToRenderer('updater:error', {
@@ -488,6 +495,52 @@ function downloadStatus(): UpdaterDownloadStatus {
   };
 }
 
+function clearUpdaterDownloadCache(): void {
+  const cacheRoots = [
+    app.getPath('localCache'),
+    app.getPath('userData'),
+    path.join(app.getPath('temp'), app.getName()),
+  ];
+  const dirNames = [
+    'flexhubs-desktop-updater',
+    `${app.getName()}-updater`,
+    'flexhubs-desktop-updater-updater',
+  ];
+
+  for (const root of cacheRoots) {
+    for (const dirName of dirNames) {
+      const target = path.join(root, dirName);
+
+      try {
+        if (fs.existsSync(target)) {
+          fs.rmSync(target, { recursive: true, force: true });
+          console.info('[FlexHubs] Cleared updater cache:', target);
+        }
+      } catch (error) {
+        console.warn('[FlexHubs] Could not clear updater cache:', target, error);
+      }
+    }
+  }
+}
+
+async function resetDownloadState(): Promise<{ ok: true }> {
+  if (updaterPhase === 'downloading' && activeDownloadCancellation) {
+    downloadPausedIntentionally = true;
+    activeDownloadCancellation.cancel();
+  }
+
+  updaterPhase = 'idle';
+  activeDownloadCancellation = null;
+  downloadPausedIntentionally = false;
+  lastDownloadProgressPercent = 0;
+  pendingInstallVersion = undefined;
+  writePersistedDownloadPause(null);
+  clearUpdaterDownloadCache();
+  clearDeferredInstallTimer();
+
+  return { ok: true };
+}
+
 async function pauseActiveDownload(): Promise<{ ok: true } | { ok: false; error: string }> {
   if (updaterPhase !== 'downloading' || !activeDownloadCancellation) {
     return { ok: false, error: 'No update download is in progress.' };
@@ -675,6 +728,8 @@ function registerUpdaterIpcHandlers(): void {
   register('updater:pause-download', () => pauseActiveDownload());
 
   register('updater:resume-download', () => resumePausedDownload());
+
+  register('updater:reset-download-state', () => resetDownloadState());
 
   register('updater:get-download-status', (): UpdaterDownloadStatus => downloadStatus());
 

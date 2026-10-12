@@ -260,6 +260,13 @@ export function UpdatesSettings() {
     }
   }, [applyCheckResult, syncDownloadStatus]);
 
+  const retryUpdateCheck = useCallback(async () => {
+    setErrorMessage('');
+    await window.electronAPI.resetUpdateDownloadState?.();
+    setDownloadProgress(0);
+    await checkForUpdates(true);
+  }, [checkForUpdates]);
+
   useEffect(() => {
     if (!isElectron || !window.electronAPI) {
       setUpdateState('offline');
@@ -517,11 +524,33 @@ export function UpdatesSettings() {
 
         {(updateState === 'downloading' || updateState === 'paused') && (
           <div className="mb-6">
-            <div className="mb-2 flex items-center justify-between text-sm">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-sm">
               <span className="text-app-muted">
                 {updateState === 'paused' ? 'Paused' : 'Download progress'}
               </span>
-              <span className="font-medium text-accent">{downloadProgress}%</span>
+              <div className="flex items-center gap-2">
+                {showPauseAction && (
+                  <button
+                    type="button"
+                    onClick={() => void pauseDownload()}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-app-border bg-app-surface px-3 py-1.5 text-xs font-medium text-app-text transition-colors hover:bg-app-chat-hover"
+                  >
+                    <FiPause aria-hidden />
+                    Pause
+                  </button>
+                )}
+                {showResumeAction && (
+                  <button
+                    type="button"
+                    onClick={() => void resumeDownload()}
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-accent-hover"
+                  >
+                    <FiPlay aria-hidden />
+                    Resume
+                  </button>
+                )}
+                <span className="font-medium text-accent">{downloadProgress}%</span>
+              </div>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-app-border">
               <div
@@ -569,27 +598,6 @@ export function UpdatesSettings() {
               </button>
             )}
 
-            {showPauseAction && (
-              <button
-                type="button"
-                onClick={() => void pauseDownload()}
-                className="inline-flex items-center justify-center gap-2 rounded-xl border border-app-border bg-app-surface px-5 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-chat-hover"
-              >
-                <FiPause aria-hidden />
-                Pause
-              </button>
-            )}
-
-            {showResumeAction && (
-              <button
-                type="button"
-                onClick={() => void resumeDownload()}
-                className="inline-flex items-center justify-center gap-2 rounded-xl bg-accent px-5 py-2.5 text-sm font-medium text-white shadow-md transition-colors hover:bg-accent-hover"
-              >
-                <FiPlay aria-hidden />
-                Resume
-              </button>
-            )}
           </div>
         </div>
 
@@ -601,7 +609,7 @@ export function UpdatesSettings() {
             updateState === 'available') && (
             <button
               type="button"
-              onClick={() => void checkForUpdates(true)}
+              onClick={() => (updateState === 'error' ? void retryUpdateCheck() : void checkForUpdates(true))}
               disabled={updateState === 'checking'}
               className={`rounded-xl px-5 py-2.5 text-sm font-medium transition-colors ${
                 updateState === 'checking'
