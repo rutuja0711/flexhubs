@@ -204,6 +204,22 @@ export async function fetchCallHistory(
   );
 }
 
+export async function inviteMeetingParticipant(
+  token: string,
+  payload: {
+    conversationId: string;
+    callId: string;
+    userId: string;
+  },
+): Promise<ApiResult<unknown>> {
+  return apiPost<unknown>(
+    `${API_BASE_URL}/calls/meetings/invite`,
+    token,
+    'Call Meeting Invite API',
+    payload,
+  );
+}
+
 export async function declineMeetingInvite(
   token: string,
   payload: {

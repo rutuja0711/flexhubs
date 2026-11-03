@@ -9,6 +9,7 @@ All REST endpoints require authentication (`Authorization: Bearer <token>`).
 | POST | `/api/calls/token` | LiveKit / mediasoup join token |
 | POST | `/api/calls/log` | Persist call outcome to chat history |
 | POST | `/api/calls/meetings/notify` | Notify hub members a meeting started |
+| POST | `/api/calls/meetings/invite` | Invite a hub member to an active meeting |
 
 ### POST `/api/calls/token`
 
@@ -47,6 +48,16 @@ Response includes `url`, `token`, `roomName`, `engine`, and optionally `canModer
   "startedBy": { "id": "uuid", "username": "Alex", "avatar": null },
   "video": true,
   "startedAt": "2026-09-11T08:00:00.000Z"
+}
+```
+
+### POST `/api/calls/meetings/invite`
+
+```json
+{
+  "conversationId": "uuid",
+  "callId": "uuid",
+  "userId": "uuid"
 }
 ```
 
@@ -142,6 +153,6 @@ Optional legacy fields some builds accept: `participantIdentity`, `accept`.
 
 ## Desktop integration
 
-IPC handlers in `src/main.ts` mirror the REST endpoints above (`calls:token`, `calls:log`, `calls:notify-meeting`, `calls:mute-participant`, `calls:remove-participant`, `calls:end-meeting`, `calls:join-request`, `calls:join-requests`, `calls:join-request-respond`).
+IPC handlers in `src/main.ts` mirror the REST endpoints above (`calls:token`, `calls:log`, `calls:notify-meeting`, `calls:invite-meeting-participant`, `calls:mute-participant`, `calls:remove-participant`, `calls:end-meeting`, `calls:join-request`, `calls:join-requests`, `calls:join-request-respond`).
 
 Renderer wrappers live in `src/renderer/callsApi.ts`. Meeting UI and moderation are handled by `useCallManager()` and `CallOverlay`.

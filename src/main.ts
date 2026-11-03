@@ -137,6 +137,7 @@ import {
   fetchCallToken,
   fetchDeclinedMeetingInvites,
   fetchMeetingJoinRequests,
+  inviteMeetingParticipant,
   logCallHistory,
   muteMeetingParticipant,
   notifyGroupMeeting,
@@ -1487,6 +1488,19 @@ ipcMain.handle('calls:decline-invite', (_event, token: string, payloadJson: stri
     return declineMeetingInvite(token, payload);
   } catch {
     return { ok: false as const, error: 'Invalid decline invite payload.' };
+  }
+});
+
+ipcMain.handle('calls:invite-meeting-participant', (_event, token: string, payloadJson: string) => {
+  try {
+    const payload = JSON.parse(payloadJson) as {
+      conversationId: string;
+      callId: string;
+      userId: string;
+    };
+    return inviteMeetingParticipant(token, payload);
+  } catch {
+    return { ok: false as const, error: 'Invalid meeting invite payload.' };
   }
 });
 

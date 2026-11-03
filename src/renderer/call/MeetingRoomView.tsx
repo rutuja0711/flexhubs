@@ -107,7 +107,18 @@ export function MeetingRoomView({
     return items;
   }, [remoteParticipants, room, screenShareTarget]);
 
-  const gridParticipants = remoteParticipants;
+  const gridParticipants = useMemo(() => {
+    if (!room) {
+      return remoteParticipants;
+    }
+
+    const localsIdentity = room.localParticipant.identity;
+    const remotes = remoteParticipants.filter(
+      (participant) => participant.identity !== localsIdentity,
+    );
+
+    return [room.localParticipant, ...remotes];
+  }, [remoteParticipants, room]);
 
   return (
     <div className={`flex flex-col bg-[#090a0d] text-white ${embedded ? 'h-full' : 'fixed inset-0 z-[120]'}`}>
@@ -170,10 +181,20 @@ export function MeetingRoomView({
               <div key={participant.identity} className="relative">
                 <ParticipantTile
                   participant={participant}
-                  label={readParticipantLabel(participant)}
+                  label={
+                    room && participant.identity === room.localParticipant.identity
+                      ? 'You'
+                      : readParticipantLabel(participant)
+                  }
                   large={gridParticipants.length === 1}
+                  isLocal={room?.localParticipant.identity === participant.identity}
+                  mirrored={room?.localParticipant.identity === participant.identity}
                 />
-                {canModerate && onMuteParticipant && onRemoveParticipant ? (
+                {canModerate &&
+                onMuteParticipant &&
+                onRemoveParticipant &&
+                room &&
+                participant.identity !== room.localParticipant.identity ? (
                   <div className="absolute right-2 top-2 flex gap-1">
                     <button
                       type="button"

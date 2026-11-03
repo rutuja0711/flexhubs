@@ -6490,6 +6490,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         onRemoveParticipant={(participantIdentity) =>
           void callManager.removeRemoteParticipant(participantIdentity)
         }
+        meetingHubMembers={callManager.meetingHubMembers}
+        meetingDeclinedInviteUserIds={callManager.meetingDeclinedInviteUserIds}
+        meetingInvitedUserIds={callManager.meetingInvitedUserIds}
+        meetingInviteBusyUserId={callManager.meetingInviteBusyUserId}
+        onInviteUserToMeeting={(userId) => void callManager.inviteUserToMeeting(userId)}
       />
       <div
         className={`flex min-h-0 min-w-0 flex-1 ${callImmersiveMode ? 'pointer-events-none invisible' : ''}`}

@@ -22,10 +22,13 @@ import {
   buildDirectCallRoomName,
   buildLiveKitRtcConfig,
   isMeetingModerator,
+  normalizeDeclinedMeetingInviteUserIds,
   normalizeMeetingJoinRequestPayload,
   parseCallLogContent,
 } from '../shared/calls';
 import { applyPreferredCallInputToLiveKitRoom } from './call/applyCallInputDevice';
+import type { HubMemberSummary } from './call/hubMemberUtils';
+import { readHubMembersFromBootstrapPayload } from './call/hubMemberUtils';
 import { captureDesktopSource } from './call/captureDesktopSource';
 import { ensureScreenCapturePermission } from './callsApi';
 import { MediasoupCallSession, type MediasoupRemotePeer } from './call/mediasoupAdapter';
@@ -34,8 +37,10 @@ import {
   declineCallMeetingInvite,
   endCallMeeting,
   ensureCallMediaPermissions,
+  inviteUserToCallMeeting,
   listMeetingJoinRequests,
   loadCallToken,
+  loadDeclinedCallMeetingInvites,
   loadRealtimeConfig,
   logCall,
   muteCallParticipant,
@@ -44,6 +49,7 @@ import {
   requestMeetingJoinCall,
   respondMeetingJoinRequestCall,
 } from './callsApi';
+import { loadConversationBootstrap } from './chatApi';
 import { focusCallWindow } from './callWindowApi';
 import { logCallDebug } from './callDebug';
 import { showGroupMeetingDesktopNotification, showIncomingCallDesktopNotification } from './desktopNotifications';
@@ -293,6 +299,10 @@ export function useCallManager({
   const [mediasoupPeers, setMediasoupPeers] = useState<MediasoupRemotePeer[]>([]);
   const [mediasoupLocalVideo, setMediasoupLocalVideo] = useState<MediaStream | null>(null);
   const [screenSharePickerOpen, setScreenSharePickerOpen] = useState(false);
+  const [meetingHubMembers, setMeetingHubMembers] = useState<HubMemberSummary[]>([]);
+  const [meetingDeclinedInviteUserIds, setMeetingDeclinedInviteUserIds] = useState<string[]>([]);
+  const [meetingInvitedUserIds, setMeetingInvitedUserIds] = useState<string[]>([]);
+  const [meetingInviteBusyUserId, setMeetingInviteBusyUserId] = useState<string | null>(null);
 
   const sessionRef = useRef(session);
   const roomRef = useRef<Room | null>(null);
@@ -544,6 +554,10 @@ export function useCallManager({
     setBusy(false);
     setPendingJoinRequests([]);
     setAwaitingJoinApproval(false);
+    setMeetingHubMembers([]);
+    setMeetingDeclinedInviteUserIds([]);
+    setMeetingInvitedUserIds([]);
+    setMeetingInviteBusyUserId(null);
     pendingJoinConversationRef.current = null;
     setSession(INITIAL_SESSION);
     void disconnectRoom();
@@ -1403,6 +1417,37 @@ export function useCallManager({
     }
   }, []);
 
+  const refreshMeetingParticipantSidebar = useCallback(async () => {
+    const active = sessionRef.current;
+
+    if (!active.isGroup || !active.conversationId || !active.callId) {
+      return;
+    }
+
+    if (active.phase !== 'active' && active.phase !== 'connecting') {
+      return;
+    }
+
+    const bootstrapResult = await loadConversationBootstrap(active.conversationId);
+
+    if (bootstrapResult.ok) {
+      setMeetingHubMembers(readHubMembersFromBootstrapPayload(bootstrapResult.data));
+    }
+
+    if (!isMeetingModerator(active)) {
+      return;
+    }
+
+    const declinedResult = await loadDeclinedCallMeetingInvites(
+      active.conversationId,
+      active.callId,
+    );
+
+    if (declinedResult.ok) {
+      setMeetingDeclinedInviteUserIds(normalizeDeclinedMeetingInviteUserIds(declinedResult.data));
+    }
+  }, []);
+
   directHandlersRef.current = {
     onInvite: handleIncomingInvite,
     onAccept: (payload) => {
@@ -1610,6 +1655,24 @@ export function useCallManager({
     session.phase,
   ]);
 
+  useEffect(() => {
+    if (
+      !session.isGroup ||
+      (session.phase !== 'active' && session.phase !== 'connecting')
+    ) {
+      return;
+    }
+
+    void refreshMeetingParticipantSidebar();
+    const timer = window.setInterval(() => {
+      void refreshMeetingParticipantSidebar();
+    }, MEETING_JOIN_POLL_MS);
+
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [refreshMeetingParticipantSidebar, session.callId, session.conversationId, session.isGroup, session.phase]);
+
   const ensureCallSignalingReady = useCallback(async (): Promise<boolean> => {
     const configResult = await loadRealtimeConfig();
 
@@ -1639,6 +1702,90 @@ export function useCallManager({
       return false;
     }
   }, [currentUserId, reportError]);
+
+  const inviteUserToMeeting = useCallback(
+    async (userId: string) => {
+      const active = sessionRef.current;
+      const trimmedUserId = userId.trim();
+
+      if (
+        !trimmedUserId ||
+        !currentUserId ||
+        !active.conversationId ||
+        !active.callId ||
+        !active.isGroup ||
+        !isMeetingModerator(active) ||
+        (active.phase !== 'active' && active.phase !== 'connecting')
+      ) {
+        return;
+      }
+
+      if (trimmedUserId === currentUserId) {
+        return;
+      }
+
+      setMeetingInviteBusyUserId(trimmedUserId);
+
+      const invitePayload = {
+        callId: active.callId,
+        conversationId: active.conversationId,
+        roomName: active.roomName,
+        caller: {
+          id: currentUserId,
+          username: currentUserLabel,
+          avatar: currentUserAvatar,
+        },
+        video: active.video,
+        sentAt: new Date().toISOString(),
+      };
+
+      try {
+        const signalingReady = await ensureCallSignalingReady();
+
+        if (!signalingReady) {
+          return;
+        }
+
+        const apiResult = await inviteUserToCallMeeting({
+          conversationId: active.conversationId,
+          callId: active.callId,
+          userId: trimmedUserId,
+        });
+
+        if (!apiResult.ok) {
+          logCallDebug(
+            '[Calls] Meeting invite API failed; falling back to call:invite',
+            apiResult.error,
+          );
+        }
+
+        await sendSignalWithRetries(
+          getUserCallChannelName(trimmedUserId),
+          'call:invite',
+          invitePayload,
+        );
+
+        setMeetingInvitedUserIds((current) =>
+          current.includes(trimmedUserId) ? current : [...current, trimmedUserId],
+        );
+      } catch (error) {
+        reportError('Could not invite that member. Please try again.');
+        logCallDebug(
+          '[Calls] Meeting invite failed',
+          error instanceof Error ? error.message : error,
+        );
+      } finally {
+        setMeetingInviteBusyUserId(null);
+      }
+    },
+    [
+      currentUserAvatar,
+      currentUserId,
+      currentUserLabel,
+      ensureCallSignalingReady,
+      reportError,
+    ],
+  );
 
   const startDirectCall = useCallback(
     async (conversation: ConversationItem, video: boolean) => {
@@ -2223,6 +2370,7 @@ export function useCallManager({
       try {
         await connectLiveKit(tokenResult.data, video);
         void refreshMeetingJoinRequests();
+        void refreshMeetingParticipantSidebar();
       } catch (error) {
         reportError('Could not start the meeting. Please try again.');
         await resetSession();
@@ -2237,6 +2385,7 @@ export function useCallManager({
       currentUserLabel,
       ensureCallSignalingReady,
       refreshMeetingJoinRequests,
+      refreshMeetingParticipantSidebar,
       reportError,
       resetSession,
     ],
@@ -2296,6 +2445,7 @@ export function useCallManager({
         });
 
         await connectLiveKit(tokenResult.data, video);
+        void refreshMeetingParticipantSidebar();
         if (tokenResult.data.canModerateMeeting) {
           void refreshMeetingJoinRequests();
         }
@@ -2319,7 +2469,7 @@ export function useCallManager({
         setBusy(false);
       }
     },
-    [connectLiveKit, currentUserId, refreshMeetingJoinRequests, reportError, resetSession, submitMeetingJoinRequest],
+    [connectLiveKit, currentUserId, refreshMeetingJoinRequests, refreshMeetingParticipantSidebar, reportError, resetSession, submitMeetingJoinRequest],
   );
 
   const clearMeetingBannerFromCallLog = useCallback(
@@ -2615,6 +2765,10 @@ export function useCallManager({
     screenSharePickerOpen,
     pendingJoinRequests,
     awaitingJoinApproval,
+    meetingHubMembers,
+    meetingDeclinedInviteUserIds,
+    meetingInvitedUserIds,
+    meetingInviteBusyUserId,
     localVideoTrack,
     mediasoupPeers,
     mediasoupLocalVideo,
@@ -2633,6 +2787,7 @@ export function useCallManager({
     respondToJoinRequest,
     muteRemoteParticipant,
     removeRemoteParticipant,
+    inviteUserToMeeting,
     toggleMic,
     toggleCamera,
     toggleScreenShare,

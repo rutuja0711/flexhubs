@@ -2,15 +2,20 @@ import { useCallback, useEffect, useMemo, useSyncExternalStore } from 'react';
 import { isAppInBackground, subscribeAppFocus } from '../appFocus';
 import { createPortal } from 'react-dom';
 import { Track } from 'livekit-client';
-import type { RemoteParticipant, Room } from 'livekit-client';
+import type { LocalParticipant, RemoteParticipant, Room } from 'livekit-client';
 import type { CallSession } from '../callManager';
 import { isMeetingModerator } from '../../shared/calls';
 import { CallFloatingPanel, type CallPanelLayout } from '../call/CallFloatingPanel';
+import type { HubMemberSummary } from '../call/hubMemberUtils';
 import { MediasoupMediaPlayback } from '../call/MediasoupMediaPlayback';
 import type { MediasoupRemotePeer } from '../call/mediasoupAdapter';
 import { RemoteAudioPlayback } from '../call/RemoteAudioPlayback';
 import { CallRingingView } from '../call/CallRingingView';
 import { MeetingJoinRequestsBar } from '../call/MeetingJoinRequestsBar';
+import {
+  MeetingParticipantsSidebar,
+  type MeetingParticipantRow,
+} from '../call/MeetingParticipantsSidebar';
 import { MeetingRoomView } from '../call/MeetingRoomView';
 import { VideoCallView } from '../call/VideoCallView';
 import { VoiceCallView } from '../call/VoiceCallView';
@@ -46,9 +51,34 @@ type CallOverlayProps = {
   onDenyJoinRequest: (requestId: string) => void;
   onMuteParticipant: (participantIdentity: string, muted: boolean) => void;
   onRemoveParticipant: (participantIdentity: string) => void;
+  meetingHubMembers?: HubMemberSummary[];
+  meetingDeclinedInviteUserIds?: string[];
+  meetingInvitedUserIds?: string[];
+  meetingInviteBusyUserId?: string | null;
+  onInviteUserToMeeting?: (userId: string) => void;
   panelLayout: CallPanelLayout;
   onPanelLayoutChange: (layout: CallPanelLayout) => void;
 };
+
+function readLiveKitParticipantLabel(participant: LocalParticipant | RemoteParticipant): string {
+  return participant.name?.trim() || participant.identity || 'Participant';
+}
+
+function resolveParticipantUserId(
+  participant: LocalParticipant | RemoteParticipant,
+  hubMembers: HubMemberSummary[],
+): string {
+  const identity = participant.identity.trim();
+  if (hubMembers.some((member) => member.id === identity)) {
+    return identity;
+  }
+
+  const byName = hubMembers.find(
+    (member) => member.name.trim().toLowerCase() === readLiveKitParticipantLabel(participant).toLowerCase(),
+  );
+
+  return byName?.id ?? identity;
+}
 
 function remoteHasVideo(participants: RemoteParticipant[]): boolean {
   return participants.some((participant) =>
@@ -82,6 +112,11 @@ export function CallOverlay({
   onDenyJoinRequest,
   onMuteParticipant,
   onRemoveParticipant,
+  meetingHubMembers = [],
+  meetingDeclinedInviteUserIds = [],
+  meetingInvitedUserIds = [],
+  meetingInviteBusyUserId = null,
+  onInviteUserToMeeting,
   panelLayout,
   onPanelLayoutChange,
 }: CallOverlayProps) {
@@ -250,7 +285,110 @@ export function CallOverlay({
 
   const canModerate = isMeetingModerator(session);
 
-  const panelContent = session.isGroup ? (
+  const showMeetingParticipantsSidebar =
+    session.isGroup && panelLayout === 'fullscreen' && !usesMediasoup;
+
+  const inCallParticipantRows: MeetingParticipantRow[] = (() => {
+    if (!room) {
+      return [];
+    }
+
+    const localsIdentity = room.localParticipant.identity;
+    const participants: Array<LocalParticipant | RemoteParticipant> = [
+      room.localParticipant,
+      ...remoteParticipants.filter((participant) => participant.identity !== localsIdentity),
+    ];
+
+    return participants.map((participant) => {
+      const isLocal = participant.identity === localsIdentity;
+      const userId = resolveParticipantUserId(participant, meetingHubMembers);
+      const hubMember = meetingHubMembers.find((member) => member.id === userId);
+
+      return {
+        identity: participant.identity,
+        userId,
+        label: hubMember?.name ?? readLiveKitParticipantLabel(participant),
+        avatarUrl: hubMember?.avatarUrl ?? null,
+        isLocal,
+      };
+    });
+  })();
+
+  const inCallUserIds = new Set(inCallParticipantRows.map((row) => row.userId));
+
+  const hubMembersNotInCall = meetingHubMembers.filter((member) => !inCallUserIds.has(member.id));
+
+  const groupMeetingStage = usesMediasoup ? (
+    showVideoLayout ? (
+      <div className="relative flex h-full min-h-[280px] flex-col bg-[#0b0c10]">
+        <div className="border-b border-white/10 px-4 py-3">
+          <p className="truncate text-sm font-semibold text-white">{session.peerLabel || 'Meeting'}</p>
+          <p className="text-xs text-white/55">{statusLabel}</p>
+        </div>
+        {canModerate && mediasoupPeers.length > 0 ? (
+          <div className="border-b border-white/10 px-4 py-2">
+            <div className="flex flex-wrap gap-2">
+              {mediasoupPeers.map((peer) => (
+                <div
+                  key={peer.id}
+                  className="flex items-center gap-2 rounded-lg bg-white/5 px-2 py-1 text-xs text-white"
+                >
+                  <span className="max-w-[120px] truncate">{peer.label || peer.id}</span>
+                  <button
+                    type="button"
+                    className="rounded bg-white/10 px-2 py-0.5 hover:bg-white/20"
+                    onClick={() => onMuteParticipant(peer.id, true)}
+                  >
+                    Mute
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded bg-red-500/90 px-2 py-0.5 hover:bg-red-500"
+                    onClick={() => onRemoveParticipant(peer.id)}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+        <div className="relative min-h-0 flex-1">
+          <MediasoupMediaPlayback
+            localVideoStream={mediasoupLocalVideo}
+            remotePeers={mediasoupPeers}
+          />
+        </div>
+      </div>
+    ) : (
+      <VoiceCallView
+        session={session}
+        durationLabel={durationLabel}
+        micEnabled={micEnabled}
+        statusLabel={statusLabel}
+      />
+    )
+  ) : (
+    <MeetingRoomView
+      session={session}
+      room={room}
+      remoteParticipants={remoteParticipants}
+      micEnabled={micEnabled}
+      cameraEnabled={cameraEnabled}
+      screenShareEnabled={screenShareEnabled}
+      canModerate={canModerate}
+      embedded
+      endMeetingForAll={canModerate}
+      onToggleMic={onToggleMic}
+      onToggleCamera={onToggleCamera}
+      onToggleScreenShare={onToggleScreenShare}
+      onMuteParticipant={onMuteParticipant}
+      onRemoveParticipant={onRemoveParticipant}
+      onEnd={onEnd}
+    />
+  );
+
+  const groupMeetingChrome = (
     <>
       <MeetingJoinRequestsBar
         requests={pendingJoinRequests}
@@ -260,78 +398,27 @@ export function CallOverlay({
         onApprove={onApproveJoinRequest}
         onDeny={onDenyJoinRequest}
       />
-      {usesMediasoup ? (
-        showVideoLayout ? (
-          <div className="relative flex h-full min-h-[280px] flex-col bg-[#0b0c10]">
-            <div className="border-b border-white/10 px-4 py-3">
-              <p className="truncate text-sm font-semibold text-white">
-                {session.peerLabel || 'Meeting'}
-              </p>
-              <p className="text-xs text-white/55">{statusLabel}</p>
-            </div>
-            {canModerate && mediasoupPeers.length > 0 ? (
-              <div className="border-b border-white/10 px-4 py-2">
-                <div className="flex flex-wrap gap-2">
-                  {mediasoupPeers.map((peer) => (
-                    <div
-                      key={peer.id}
-                      className="flex items-center gap-2 rounded-lg bg-white/5 px-2 py-1 text-xs text-white"
-                    >
-                      <span className="max-w-[120px] truncate">{peer.label || peer.id}</span>
-                      <button
-                        type="button"
-                        className="rounded bg-white/10 px-2 py-0.5 hover:bg-white/20"
-                        onClick={() => onMuteParticipant(peer.id, true)}
-                      >
-                        Mute
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded bg-red-500/90 px-2 py-0.5 hover:bg-red-500"
-                        onClick={() => onRemoveParticipant(peer.id)}
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-            <div className="relative min-h-0 flex-1">
-              <MediasoupMediaPlayback
-                localVideoStream={mediasoupLocalVideo}
-                remotePeers={mediasoupPeers}
-              />
-            </div>
-          </div>
-        ) : (
-          <VoiceCallView
-            session={session}
-            durationLabel={durationLabel}
-            micEnabled={micEnabled}
-            statusLabel={statusLabel}
-          />
-        )
-      ) : (
-        <MeetingRoomView
-          session={session}
-          room={room}
-          remoteParticipants={remoteParticipants}
-          micEnabled={micEnabled}
-          cameraEnabled={cameraEnabled}
-          screenShareEnabled={screenShareEnabled}
-          canModerate={canModerate}
-          embedded
-          endMeetingForAll={canModerate}
-          onToggleMic={onToggleMic}
-          onToggleCamera={onToggleCamera}
-          onToggleScreenShare={onToggleScreenShare}
-          onMuteParticipant={onMuteParticipant}
-          onRemoveParticipant={onRemoveParticipant}
-          onEnd={onEnd}
-        />
-      )}
+      {groupMeetingStage}
     </>
+  );
+
+  const panelContent = session.isGroup ? (
+    showMeetingParticipantsSidebar ? (
+      <div className="flex h-full min-h-0 overflow-hidden">
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">{groupMeetingChrome}</div>
+        <MeetingParticipantsSidebar
+          inCall={inCallParticipantRows}
+          hubMembersNotInCall={hubMembersNotInCall}
+          declinedUserIds={new Set(meetingDeclinedInviteUserIds)}
+          invitedUserIds={new Set(meetingInvitedUserIds)}
+          canInvite={canModerate && Boolean(onInviteUserToMeeting)}
+          inviteBusyUserId={meetingInviteBusyUserId}
+          onInvite={(userId) => onInviteUserToMeeting?.(userId)}
+        />
+      </div>
+    ) : (
+      groupMeetingChrome
+    )
   ) : showVideoLayout && usesMediasoup ? (
     <div className="relative flex h-full min-h-[280px] flex-col bg-[#0b0c10]">
       <div className="border-b border-white/10 px-4 py-3">

@@ -746,6 +746,60 @@ export function buildHubCallChannel(conversationId: string): string {
   return `call:hub:${conversationId}`;
 }
 
+export function normalizeDeclinedMeetingInviteUserIds(data: unknown): string[] {
+  const ids = new Set<string>();
+
+  const pushId = (value: unknown) => {
+    const id = readString(value);
+    if (id) {
+      ids.add(id);
+    }
+  };
+
+  const pushRecord = (value: unknown) => {
+    const record = asRecord(value);
+    if (!record) {
+      return;
+    }
+
+    pushId(record.userId);
+    pushId(record.id);
+    const user = asRecord(record.user);
+    pushId(user?.id);
+  };
+
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      if (typeof item === 'string') {
+        pushId(item);
+      } else {
+        pushRecord(item);
+      }
+    }
+  } else {
+    const record = asRecord(data);
+    const list =
+      record?.declined ??
+      record?.declinedInvites ??
+      record?.invites ??
+      record?.userIds ??
+      record?.users ??
+      record?.data;
+
+    if (Array.isArray(list)) {
+      for (const item of list) {
+        if (typeof item === 'string') {
+          pushId(item);
+        } else {
+          pushRecord(item);
+        }
+      }
+    }
+  }
+
+  return [...ids];
+}
+
 export function isMeetingModerator(session: {
   isGroup: boolean;
   isInitiator: boolean;

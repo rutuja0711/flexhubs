@@ -812,6 +812,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('calls:history', token, filter),
   declineCallMeetingInvite: (token: string, payloadJson: string): Promise<ApiResult<unknown>> =>
     ipcRenderer.invoke('calls:decline-invite', token, payloadJson),
+  inviteCallMeetingParticipant: (
+    token: string,
+    payloadJson: string,
+  ): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('calls:invite-meeting-participant', token, payloadJson),
   getDeclinedCallMeetingInvites: (
     token: string,
     conversationId: string,

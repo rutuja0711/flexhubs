@@ -875,7 +875,7 @@ function registerUpdaterIpcHandlers(): void {
           console.warn('[FlexHubs] quitAndInstall failed:', error);
         }
 
-        window.setTimeout(() => {
+        setTimeout(() => {
           if (!app.isQuitting) {
             console.info('[FlexHubs] quitAndInstall did not exit — relaunching app to apply update');
             app.relaunch();

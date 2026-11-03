@@ -594,6 +594,10 @@ declare global {
         token: string,
         payloadJson: string,
       ) => Promise<ApiResult<unknown>>;
+      inviteCallMeetingParticipant: (
+        token: string,
+        payloadJson: string,
+      ) => Promise<ApiResult<unknown>>;
       getDeclinedCallMeetingInvites: (
         token: string,
         conversationId: string,

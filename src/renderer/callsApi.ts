@@ -308,3 +308,13 @@ export function loadDeclinedCallMeetingInvites(
     window.electronAPI.getDeclinedCallMeetingInvites(token, conversationId, callId),
   );
 }
+
+export function inviteUserToCallMeeting(payload: {
+  conversationId: string;
+  callId: string;
+  userId: string;
+}): Promise<ApiResult<unknown>> {
+  return withToken((token) =>
+    window.electronAPI.inviteCallMeetingParticipant(token, JSON.stringify(payload)),
+  );
+}
