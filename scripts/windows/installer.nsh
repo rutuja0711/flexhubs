@@ -1,6 +1,4 @@
 ; FlexHubs Desktop — electron-builder NSIS hooks (see electron-builder.win.yml).
-!include "LogicLib.nsh"
-!include "nsDialogs.nsh"
 
 !macro customInstall
   ReadEnvStr $0 LOCALAPPDATA
@@ -11,6 +9,12 @@
     RMDir /r "$0\FlexHubsDesktop"
   flexhubsLegacyDone:
 !macroend
+
+; Finish-page shortcuts use electron-builder link vars ($appExe, $newStartMenuLink, …).
+; Those are not defined while BUILD_UNINSTALLER compiles the uninstaller stub (-WX treats warn 6000 as error).
+!ifndef BUILD_UNINSTALLER
+!include "LogicLib.nsh"
+!include "nsDialogs.nsh"
 
 Function FlexHubsCreateStartMenuShortcut
   !ifdef MENU_FILENAME
@@ -95,3 +99,4 @@ FunctionEnd
   !define MUI_PAGE_CUSTOMFUNCTION_LEAVE FlexHubsFinishPageLeaveShortcutOptions
   !insertmacro MUI_PAGE_FINISH
 !macroend
+!endif
