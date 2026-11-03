@@ -2,6 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FiDownload, FiExternalLink, FiRotateCw, FiX, FiZoomIn, FiZoomOut, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 import { normalizeUploadUrl } from '../../shared/profile';
+import {
+  canStreamHostedMediaInDesktop,
+  isFlexHubsHostedAssetUrl,
+  resolveStreamingMediaDisplayUrl,
+} from '../authenticatedMedia';
 import { RemoteImage } from '../RemoteImage';
 import { fetchMediaBlob, isFlexHubsHostedMediaUrl } from '../mediaBlob';
 
@@ -66,7 +71,25 @@ function MediaPreviewModal({
     setZoom(1);
     setRotation(0);
     setError('');
-    setResolvedVideoUrl(item.kind === 'video' && !isFlexHubsHostedMediaUrl(item.url) ? item.url : null);
+
+    if (item.kind !== 'video') {
+      setResolvedVideoUrl(null);
+      return;
+    }
+
+    const normalized = normalizeUploadUrl(item.url.trim());
+
+    if (!isFlexHubsHostedMediaUrl(normalized)) {
+      setResolvedVideoUrl(normalized);
+      return;
+    }
+
+    if (canStreamHostedMediaInDesktop()) {
+      setResolvedVideoUrl(resolveStreamingMediaDisplayUrl(normalized) ?? normalized);
+      return;
+    }
+
+    setResolvedVideoUrl(null);
   }, [item.url, item.kind]);
 
   const fileName = item.name?.trim() || (item.kind === 'video' ? 'video.mp4' : 'image.png');
@@ -110,7 +133,17 @@ function MediaPreviewModal({
   }, [item.url]);
 
   useEffect(() => {
-    if (item.kind !== 'video' || !isFlexHubsHostedMediaUrl(item.url)) {
+    if (item.kind !== 'video') {
+      return;
+    }
+
+    const normalized = normalizeUploadUrl(item.url.trim());
+
+    if (!isFlexHubsHostedMediaUrl(normalized)) {
+      return;
+    }
+
+    if (canStreamHostedMediaInDesktop()) {
       return;
     }
 

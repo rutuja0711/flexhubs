@@ -1,22 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FiDownload } from 'react-icons/fi';
+import { FiCheck, FiDownload, FiRefreshCw } from 'react-icons/fi';
 import { fetchMediaBlobWithProgress } from '../mediaBlob';
 import { SendingProgressRing } from '../ui/SendingProgressRing';
-import { beginChatFileDrag, warmChatFileDragPath } from './startChatFileDrag';
-
-type FileAttachmentCardProps = {
-  url: string;
-  name: string;
-  isSending?: boolean;
-  sendProgress?: number | null;
-  isOwn?: boolean;
-};
-
-function readFileExtension(fileName: string): string {
-  const base = fileName.trim().split(/[\\/]/).pop() ?? fileName;
-  const match = base.match(/\.([a-z0-9]{1,8})$/i);
-  return match ? match[1].toUpperCase() : 'FILE';
-}
+import { AttachmentFileIcon } from './AttachmentFileIcon';
+import {
+  attachmentTypeLabel,
+  categorizeAttachmentFile,
+  readFileExtension,
+} from './attachmentFileMeta';
+import { beginChatFileDrag } from './startChatFileDrag';
+import { useAttachmentTransfer } from './useAttachmentTransfer';
 
 export function formatFileSize(bytes: number): string {
   if (!Number.isFinite(bytes) || bytes <= 0) {
@@ -35,64 +28,68 @@ export function formatFileSize(bytes: number): string {
   return mb >= 10 ? `${Math.round(mb)} MB` : `${mb.toFixed(1)} MB`;
 }
 
-function buildMetaLine(extension: string, sizeBytes: number | null): string {
+type FileAttachmentCardProps = {
+  url: string;
+  name: string;
+  isSending?: boolean;
+  sendProgress?: number | null;
+  isOwn?: boolean;
+};
+
+function buildMetaLine(
+  typeLabel: string,
+  sizeBytes: number | null,
+  statusLine: string | null,
+): string {
+  if (statusLine) {
+    return statusLine;
+  }
+
   const sizeLabel = sizeBytes ? formatFileSize(sizeBytes) : null;
   if (sizeLabel) {
-    return `${extension} • ${sizeLabel}`;
+    return `${typeLabel} · ${sizeLabel}`;
   }
 
-  return extension;
+  return typeLabel;
 }
 
-function downloadedStorageKey(url: string): string {
-  return `flexhubs:file-downloaded:${url}`;
-}
-
-function readPersistedDownloaded(url: string): boolean {
-  try {
-    return sessionStorage.getItem(downloadedStorageKey(url)) === '1';
-  } catch {
-    return false;
-  }
-}
-
-function persistDownloaded(url: string): void {
-  try {
-    sessionStorage.setItem(downloadedStorageKey(url), '1');
-  } catch {
-    // Ignore storage failures.
-  }
-}
-
-function triggerBlobDownload(blob: Blob, fileName: string): void {
-  const objectUrl = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = objectUrl;
-  anchor.download = fileName;
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
-}
-
-function DocumentTypeIcon({ extension }: { extension: string }) {
-  const label = extension.length > 4 ? extension.slice(0, 4) : extension;
-
+function AttachmentProgressBar({
+  progressBarWidth,
+  isOwn,
+  label,
+}: {
+  progressBarWidth: number | undefined;
+  isOwn: boolean;
+  label: string;
+}) {
   return (
-    <div className="relative flex h-[46px] w-[38px] shrink-0 items-end justify-center pb-0.5">
-      <svg
-        viewBox="0 0 32 40"
-        className="h-[42px] w-[34px] text-app-muted/75"
-        aria-hidden="true"
+    <div className="mt-3 space-y-1">
+      <div
+        className="h-[3px] overflow-hidden rounded-full bg-black/[0.08] dark:bg-white/10"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={typeof progressBarWidth === 'number' ? progressBarWidth : undefined}
+        aria-label={label}
       >
-        <path
-          fill="currentColor"
-          d="M6 2h14l6 6v28a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"
-        />
-        <path fill="currentColor" fillOpacity="0.45" d="M20 2v6h6" />
-        <rect x="4" y="26" width="24" height="10" rx="1" fill="currentColor" fillOpacity="0.35" />
-      </svg>
-      <span className="absolute bottom-[7px] left-1/2 max-w-[30px] -translate-x-1/2 truncate text-[9px] font-bold leading-none tracking-tight text-white drop-shadow-sm">
-        {label}
-      </span>
+        {typeof progressBarWidth === 'number' ? (
+          <div
+            className={`h-full rounded-full transition-[width] duration-200 ease-out ${
+              isOwn ? 'bg-white/90' : 'bg-accent'
+            }`}
+            style={{ width: `${progressBarWidth}%` }}
+          />
+        ) : (
+          <div
+            className={`h-full w-1/3 animate-pulse rounded-full ${isOwn ? 'bg-white/70' : 'bg-accent/80'}`}
+          />
+        )}
+      </div>
+      {typeof progressBarWidth === 'number' ? (
+        <p className={`text-[10px] tabular-nums ${isOwn ? 'text-white/65' : 'text-app-muted'}`}>
+          {label} · {progressBarWidth}%
+        </p>
+      ) : null}
     </div>
   );
 }
@@ -105,86 +102,32 @@ export function FileAttachmentCard({
   isOwn = false,
 }: FileAttachmentCardProps) {
   const extension = readFileExtension(name);
-  const [downloading, setDownloading] = useState(false);
-  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
-  const [knownSizeBytes, setKnownSizeBytes] = useState<number | null>(null);
-  const [downloadError, setDownloadError] = useState(false);
-  const [downloaded, setDownloaded] = useState(() => readPersistedDownloaded(url));
+  const category = categorizeAttachmentFile(name);
+  const typeLabel = attachmentTypeLabel(category, extension);
 
-  useEffect(() => {
-    setDownloaded(readPersistedDownloaded(url));
-  }, [url]);
+  const transfer = useAttachmentTransfer({ url, name, isSending, sendProgress });
+  const {
+    knownSizeBytes,
+    downloadError,
+    downloaded,
+    showSendProgress,
+    showDownloadProgress,
+    ringProgress,
+    progressBarWidth,
+    handleDownload,
+  } = transfer;
 
-  useEffect(() => {
-    if (isSending || !url || url.startsWith('blob:')) {
-      return;
-    }
-
-    void warmChatFileDragPath(url, name);
-  }, [isSending, name, url]);
-
-  const metaLine = buildMetaLine(extension, knownSizeBytes);
-  const showDownloadAction = !downloaded || isSending || downloadError;
-  const showSendProgress = isSending;
-  const showDownloadProgress = downloading && !isSending;
-  const ringProgress = showSendProgress
-    ? sendProgress
+  const statusLine = showSendProgress
+    ? 'Uploading…'
     : showDownloadProgress
-      ? downloadProgress
-      : null;
+      ? 'Downloading…'
+      : downloadError
+        ? 'Download failed — tap to retry'
+        : downloaded && !isSending
+          ? 'Downloaded'
+          : null;
 
-  const insetClass = isOwn
-    ? 'bg-black/12 dark:bg-black/25'
-    : 'bg-black/[0.06] dark:bg-black/22';
-
-  const handleDownload = useCallback(async () => {
-    if (isSending || downloading) {
-      return;
-    }
-
-    setDownloading(true);
-    setDownloadError(false);
-    setDownloadProgress(0);
-
-    try {
-      let blob: Blob;
-
-      if (url.startsWith('blob:') || url.startsWith('data:')) {
-        const response = await fetch(url);
-        blob = await response.blob();
-        setKnownSizeBytes(blob.size);
-        setDownloadProgress(100);
-      } else {
-        blob = await fetchMediaBlobWithProgress(url, (loaded, total) => {
-          if (total && total > 0) {
-            setKnownSizeBytes(total);
-            setDownloadProgress(Math.min(100, Math.round((loaded / total) * 100)));
-          } else if (loaded > 0) {
-            setKnownSizeBytes(loaded);
-            setDownloadProgress(null);
-          }
-        });
-        setKnownSizeBytes(blob.size);
-        setDownloadProgress(100);
-      }
-
-      triggerBlobDownload(blob, name);
-      setDownloaded(true);
-      persistDownloaded(url);
-      setDownloadError(false);
-    } catch {
-      setDownloadError(true);
-      setDownloadProgress(null);
-    } finally {
-      window.setTimeout(() => {
-        setDownloading(false);
-        setDownloadProgress(null);
-      }, 400);
-    }
-  }, [downloading, isSending, name, url]);
-
-  const progressBarWidth =
-    typeof ringProgress === 'number' ? ringProgress : showDownloadProgress ? undefined : 0;
+  const metaLine = buildMetaLine(typeLabel, knownSizeBytes, statusLine);
 
   const canDrag =
     Boolean(window.electronAPI?.startChatFileDragFromPath) &&
@@ -192,74 +135,103 @@ export function FileAttachmentCard({
     Boolean(url) &&
     !url.startsWith('blob:');
 
+  const cardSurface = isOwn
+    ? 'border-white/15 bg-gradient-to-br from-white/[0.14] via-white/[0.08] to-white/[0.04] shadow-sm shadow-black/10'
+    : 'border-app-border/80 bg-app-surface/95 shadow-sm shadow-black/[0.04] dark:border-accent/15 dark:bg-gradient-to-br dark:from-app-elevated dark:via-app-surface dark:to-app-elevated/80';
+
+  const iconWrap = isOwn
+    ? 'bg-white/15 text-white ring-1 ring-white/20'
+    : 'bg-accent/[0.08] text-accent ring-1 ring-accent/15';
+
+  const actionButton = isOwn
+    ? 'border-white/20 bg-white/10 text-white hover:bg-white/20'
+    : 'border-accent/20 bg-app-inset/50 text-accent hover:bg-accent/10 hover:border-accent/35';
+
   return (
     <div
       draggable={canDrag}
       title={canDrag ? 'Drag to Desktop, Finder, or another app' : undefined}
-      className={`relative min-w-[min(100%,280px)] max-w-sm overflow-hidden rounded-xl ${insetClass} px-3 py-2.5 ${
+      className={`group/card relative min-w-[min(100%,300px)] max-w-sm overflow-hidden rounded-2xl border px-3 py-3 transition-shadow duration-200 hover:shadow-md ${cardSurface} ${
         canDrag ? 'cursor-grab active:cursor-grabbing' : ''
       }`}
       onDragStart={(event) => beginChatFileDrag(event, url, name, { disabled: isSending })}
     >
-      <div className="flex items-center gap-2.5">
-        <DocumentTypeIcon extension={extension} />
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/25 to-transparent opacity-80" />
 
-        <div className="min-w-0 flex-1 py-0.5">
-          <p className="line-clamp-2 text-[13px] font-medium leading-snug text-inherit">{name}</p>
-          <p className="mt-0.5 text-[11px] font-medium text-inherit/55">
-            {downloadError ? 'Download failed — tap to retry' : metaLine}
+      <div className="flex items-start gap-3">
+        <div
+          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-xl ${iconWrap}`}
+        >
+          <AttachmentFileIcon category={category} className="h-[22px] w-[22px]" />
+        </div>
+
+        <div className="min-w-0 flex-1 pt-0.5">
+          <p
+            className={`break-words text-[13px] font-semibold leading-snug ${
+              isOwn ? 'text-white' : 'text-app-text'
+            }`}
+          >
+            {name}
+          </p>
+          <p
+            className={`mt-1 text-[11px] font-medium leading-snug ${
+              downloadError
+                ? isOwn
+                  ? 'text-red-100'
+                  : 'text-red-400'
+                : isOwn
+                  ? 'text-white/60'
+                  : 'text-app-muted'
+            }`}
+          >
+            {metaLine}
           </p>
         </div>
 
-        {showDownloadAction ? (
-          <button
-            type="button"
-            aria-label={downloading ? 'Downloading file' : 'Download file'}
-            disabled={isSending}
-            className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors ${
-              isSending ? 'cursor-default opacity-80' : 'hover:bg-black/10 dark:hover:bg-white/10'
-            }`}
-            onClick={() => {
-              void handleDownload();
-            }}
-          >
-            {showSendProgress || showDownloadProgress ? (
-              <SendingProgressRing
-                progress={ringProgress}
-                size={36}
-                showLabel={typeof ringProgress === 'number'}
-                className={isOwn ? 'text-white/90' : 'text-accent-soft'}
-              />
-            ) : (
-              <FiDownload className="h-[22px] w-[22px] text-inherit/70" strokeWidth={1.75} />
-            )}
-          </button>
-        ) : null}
+        <button
+          type="button"
+          aria-label={
+            showSendProgress
+              ? 'Uploading file'
+              : showDownloadProgress
+                ? 'Downloading file'
+                : downloadError
+                  ? 'Retry download'
+                  : downloaded && !isSending
+                    ? 'Download again'
+                    : 'Download file'
+          }
+          disabled={isSending && !showSendProgress}
+          className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-all duration-150 active:scale-95 ${actionButton} ${
+            isSending && !showSendProgress ? 'cursor-default opacity-50' : ''
+          }`}
+          onClick={() => {
+            void handleDownload();
+          }}
+        >
+          {showSendProgress || showDownloadProgress ? (
+            <SendingProgressRing
+              progress={ringProgress}
+              size={34}
+              showLabel={typeof ringProgress === 'number'}
+              className={isOwn ? 'text-white' : 'text-accent'}
+            />
+          ) : downloadError ? (
+            <FiRefreshCw className="h-[18px] w-[18px]" strokeWidth={2} />
+          ) : downloaded && !isSending ? (
+            <FiCheck className="h-[18px] w-[18px]" strokeWidth={2.5} />
+          ) : (
+            <FiDownload className="h-[18px] w-[18px]" strokeWidth={2} />
+          )}
+        </button>
       </div>
 
       {showSendProgress || showDownloadProgress ? (
-        <div
-          className="mt-2.5 h-1 overflow-hidden rounded-full bg-black/10 dark:bg-white/10"
-          role="progressbar"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={typeof progressBarWidth === 'number' ? progressBarWidth : undefined}
-        >
-          {typeof progressBarWidth === 'number' ? (
-            <div
-              className={`h-full rounded-full transition-[width] duration-200 ease-out ${
-                isOwn ? 'bg-white/85' : 'bg-accent'
-              }`}
-              style={{ width: `${progressBarWidth}%` }}
-            />
-          ) : (
-            <div
-              className={`h-full w-1/3 animate-pulse rounded-full ${
-                isOwn ? 'bg-white/70' : 'bg-accent/80'
-              }`}
-            />
-          )}
-        </div>
+        <AttachmentProgressBar
+          progressBarWidth={progressBarWidth}
+          isOwn={isOwn}
+          label={showSendProgress ? 'Uploading' : 'Downloading'}
+        />
       ) : null}
     </div>
   );

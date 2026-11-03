@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ConversationItem, ConversationKind, DirectChatMetadata } from '../../shared/chat';
+import type { ConversationItem, ConversationKind, DirectChatMetadata, PresenceStatus } from '../../shared/chat';
 import type { ProfileSettings } from '../../shared/profile';
 import { NotificationStatusBanner } from './NotificationStatusBanner';
 import type { TeammateItem } from '../../shared/messages';
@@ -17,6 +17,8 @@ import { NewConversationModal } from './NewConversationModal';
 import { SearchField } from './SearchField';
 import { TeammatesSection } from './TeammatesSection';
 type ChatTab = 'all' | ConversationKind;
+
+const EMPTY_PRESENCE_MAP = new Map<string, PresenceStatus>();
 
 type ChatSidebarProps = {
   workspaceName: string;
@@ -48,6 +50,9 @@ type ChatSidebarProps = {
   onPrepareConversationContextMenu?: () => void;
   openingTeammateId?: string | null;
   directChatMetadata?: Record<string, DirectChatMetadata>;
+  presenceByUserId?: ReadonlyMap<string, PresenceStatus>;
+  viewerUserId?: string | null;
+  viewerSharePresence?: boolean;
   notificationSettings?: ProfileSettings | null;
   onOpenNotificationSettings?: () => void;
 };
@@ -82,6 +87,9 @@ export function ChatSidebar({
   onPrepareConversationContextMenu,
   openingTeammateId = null,
   directChatMetadata = {},
+  presenceByUserId = EMPTY_PRESENCE_MAP,
+  viewerUserId = null,
+  viewerSharePresence = true,
   notificationSettings = null,
   onOpenNotificationSettings,
 }: ChatSidebarProps) {
@@ -442,6 +450,9 @@ export function ChatSidebar({
             ) : null}
             <ConversationList
               conversations={filteredConversations}
+              presenceByUserId={presenceByUserId}
+              viewerUserId={viewerUserId}
+              viewerSharePresence={viewerSharePresence}
               typingPreviews={typingPreviews}
               selectedId={selectedId}
               onSelect={onSelect}

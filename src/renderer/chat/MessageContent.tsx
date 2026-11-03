@@ -14,13 +14,11 @@ import {
 } from '../../shared/messages';
 import { RemoteImage } from '../RemoteImage';
 import { FileAttachmentCard } from './FileAttachmentCard';
+import { MediaMessagePreview } from './MediaMessagePreview';
 import { VoiceNoteBubble } from './VoiceNoteBubble';
-import { RemoteVideo } from '../RemoteVideo';
 import { SendingProgressRing } from '../ui/SendingProgressRing';
-import { openMediaPreview } from './MediaPreviewHost';
 import { PollMessage } from './PollMessage';
 import { CallMessage } from './CallMessage';
-import { beginChatFileDrag, warmChatFileDragPath } from './startChatFileDrag';
 
 type MessageContentProps = {
   message: Pick<MessageItem, 'content' | 'media' | 'messageType' | 'deletedForEveryone' | 'poll'>;
@@ -200,7 +198,7 @@ export function MessageContent({
   const hasCaption = Boolean(visibleText);
 
   return (
-    <div className="w-fit max-w-full space-y-2">
+    <div className="w-fit max-w-full space-y-2.5">
       {media.map((item) => {
         if (isVoiceMediaAttachment(item, message.messageType) && item.url) {
           return (
@@ -243,105 +241,34 @@ export function MessageContent({
           );
         }
 
-        const mediaBody = (
-          <div
-            className={`overflow-hidden rounded-2xl ${isVideo ? 'ring-1 ring-black/10 dark:ring-white/10 shadow-sm' : ''} ${mediaFrameClass} ${isSending ? 'min-h-[160px] min-w-[160px] bg-black/5 dark:bg-white/5 flex items-center justify-center' : ''}`}
-          >
-            {isVideo ? (
-              <div
-                className={`js-media-preview-item block w-full ${
-                  canDragChatMedia(item.url, isSending) ? 'cursor-grab active:cursor-grabbing' : ''
-                }`}
-                draggable={canDragChatMedia(item.url, isSending)}
-                title={
-                  canDragChatMedia(item.url, isSending)
-                    ? 'Drag to Desktop, Finder, or another app'
-                    : undefined
-                }
-                onMouseEnter={() => {
-                  void warmChatFileDragPath(item.url, item.name ?? 'video.mp4');
-                }}
-                onDragStart={(event) =>
-                  beginChatFileDrag(event, item.url, item.name ?? 'video.mp4', { disabled: isSending })
-                }
-                data-media-url={item.url}
-                data-media-name={item.name ?? ''}
-                data-media-kind="video"
-                onDoubleClick={() => {
-                  if (isSending) {
-                    return;
-                  }
-
-                  openMediaPreview({
-                    url: item.url,
-                    name: item.name ?? undefined,
-                    kind: 'video',
-                  });
-                }}
-              >
-                <RemoteVideo
-                  src={previewUrl}
-                  controls={!isSending}
-                  playsInline
-                  muted={isSending}
-                  preload="metadata"
-                  className="block h-auto max-h-72 w-full rounded-2xl bg-app-chat-hover object-contain"
-                />
-              </div>
-            ) : isPreviewable ? (
-              <button
-                type="button"
-                disabled={isSending}
-                draggable={canDragChatMedia(item.url, isSending)}
-                className={`block w-full text-left transition-transform js-media-preview-item ${
-                  isSending
-                    ? 'cursor-default'
-                    : canDragChatMedia(item.url, isSending)
-                      ? 'cursor-grab active:cursor-grabbing hover:scale-[1.01]'
-                      : 'cursor-zoom-in hover:scale-[1.01]'
-                }`}
-                title={
-                  canDragChatMedia(item.url, isSending)
-                    ? 'Drag to Desktop, Finder, or another app'
-                    : undefined
-                }
-                onMouseEnter={() => {
-                  void warmChatFileDragPath(item.url, item.name ?? 'image');
-                }}
-                onDragStart={(event) =>
-                  beginChatFileDrag(event, item.url, item.name ?? 'image', { disabled: isSending })
-                }
-                data-media-url={item.url}
-                data-media-name={item.name ?? ''}
-                data-media-kind="image"
-                onClick={() =>
-                  openMediaPreview({
-                    url: item.url,
-                    name: item.name ?? undefined,
-                    kind: 'image',
-                  })
-                }
-              >
-                <RemoteImage
-                  src={item.kind === 'gif' ? item.url : previewUrl}
-                  alt={item.name ?? mediaLabel(item.kind)}
-                  loading="lazy"
-                  className="max-h-72 w-full rounded-2xl bg-transparent object-contain"
-                />
-              </button>
-            ) : (
-              <RemoteImage
-                src={item.kind === 'gif' ? item.url : previewUrl}
-                alt={item.name ?? mediaLabel(item.kind)}
-                loading="lazy"
-                className="max-h-72 w-full rounded-2xl bg-transparent object-contain"
+        if (isPreviewable || isVideo) {
+          return (
+            <div key={item.url} className={mediaFrameClass}>
+              <MediaMessagePreview
+                url={item.url}
+                previewUrl={previewUrl}
+                name={item.name ?? mediaLabel(item.kind)}
+                kind={isVideo ? 'video' : item.kind === 'gif' ? 'gif' : 'image'}
+                isSending={isSending}
+                sendProgress={sendProgress}
+                isOwn={isOwn}
+                canDrag={canDragChatMedia(item.url, isSending)}
               />
-            )}
-          </div>
+            </div>
+          );
+        }
+
+        const mediaBody = (
+          <RemoteImage
+            src={item.kind === 'gif' ? item.url : previewUrl}
+            alt={item.name ?? mediaLabel(item.kind)}
+            loading="lazy"
+            className="max-h-72 w-full rounded-2xl bg-transparent object-contain"
+          />
         );
 
         return (
-          <div key={item.url}>
+          <div key={item.url} className={mediaFrameClass}>
             {wrapWithSendOverlay(mediaBody, isSending, sendProgress)}
           </div>
         );
@@ -356,7 +283,7 @@ export function MessageContent({
           </span>
         ) : (
           <p
-            className={`min-w-0 whitespace-pre-wrap break-words ${hasCaption && media.length > 0 ? 'max-w-sm px-3.5 pt-2' : ''}`}
+            className={`min-w-0 whitespace-pre-wrap break-words ${hasCaption && media.length > 0 ? 'max-w-sm px-3.5 pt-2 pb-0' : ''}`}
           >
             {highlightContent(visibleText, highlightTerm)}
           </p>

@@ -3,7 +3,7 @@ import { decoratePreviewText, formatMessagePreview, normalizeMessage } from './m
 
 export type ConversationKind = 'direct' | 'hub';
 
-export type PresenceStatus = 'online' | 'away' | 'dnd' | 'offline';
+export type PresenceStatus = 'online' | 'away' | 'busy' | 'dnd' | 'offline';
 
 export type ConversationItem = {
   id: string;
@@ -20,6 +20,7 @@ export type ConversationItem = {
   isSelf: boolean;
   status: PresenceStatus | null;
   peerStatusMessage?: string | null;
+  peerSharePresence?: boolean;
   unreadCount: number;
   peerUserId: string | null;
   channelId: string | null;
@@ -97,6 +98,22 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function readString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function readBoolean(value: unknown): boolean | null {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+
+  if (value === 'true') {
+    return true;
+  }
+
+  if (value === 'false') {
+    return false;
+  }
+
+  return null;
 }
 
 function readNumber(value: unknown): number | null {
@@ -365,9 +382,53 @@ function readConversationUnread(record: Record<string, unknown>): number {
 }
 
 function inferPresence(record: Record<string, unknown>): PresenceStatus | null {
-  const status = String(record.status ?? record.presence ?? record.userStatus ?? '').toLowerCase();
+  const raw =
+    readString(record.presenceStatus) ??
+    readString(record.status) ??
+    readString(record.presence) ??
+    readString(record.userStatus) ??
+    readString(record.onlineStatus) ??
+    readString(record.state);
 
-  if (status.includes('online') || status === 'available') {
+  if (record.isOnline === true || record.online === true) {
+    return 'online';
+  }
+
+  if ((record.isOnline === false || record.online === false) && !raw) {
+    return 'offline';
+  }
+
+  if (!raw) {
+    return null;
+  }
+
+  const status = raw.toLowerCase().replace(/[\s_-]+/g, '');
+
+  if (status === 'online' || status === 'available' || status === 'active') {
+    return 'online';
+  }
+
+  if (status === 'dnd' || status.includes('donotdisturb')) {
+    return 'dnd';
+  }
+
+  if (status === 'busy') {
+    return 'busy';
+  }
+
+  if (status === 'away' || status === 'idle') {
+    return 'away';
+  }
+
+  if (status === 'offline') {
+    return 'offline';
+  }
+
+  if (status.includes('offline')) {
+    return 'offline';
+  }
+
+  if (status.includes('online') || status.includes('available')) {
     return 'online';
   }
 
@@ -375,12 +436,201 @@ function inferPresence(record: Record<string, unknown>): PresenceStatus | null {
     return 'away';
   }
 
-  if (status.includes('dnd') || status.includes('busy')) {
+  if (status.includes('dnd') || status.includes('disturb')) {
     return 'dnd';
   }
 
-  if (status.includes('offline')) {
+  if (status.includes('busy')) {
+    return 'busy';
+  }
+
+  return null;
+}
+
+export function normalizePresenceUserId(userId: string): string {
+  return userId.trim().toLowerCase();
+}
+
+export function lookupPresenceStatus(
+  statusByUserId: ReadonlyMap<string, PresenceStatus>,
+  userId: string | null | undefined,
+): PresenceStatus | undefined {
+  if (!userId) {
+    return undefined;
+  }
+
+  return statusByUserId.get(normalizePresenceUserId(userId));
+}
+
+function inferLivePresenceFromRecord(record: Record<string, unknown>): PresenceStatus | null {
+  const presenceStatus =
+    readString(record.status) ??
+    readString(record.presenceStatus) ??
+    readString(record.presence) ??
+    readString(record.onlineStatus);
+
+  if (presenceStatus) {
+    return mapApiPresenceToStatus(presenceStatus);
+  }
+
+  if (record.isOnline === true || record.online === true) {
+    return 'online';
+  }
+
+  if (record.isOnline === false || record.online === false) {
     return 'offline';
+  }
+
+  return null;
+}
+
+function readDirectPeerMemberSnapshot(
+  record: Record<string, unknown>,
+  viewerUserId: string | null,
+): { status: PresenceStatus | null; sharePresence: boolean } {
+  if (inferKind(record) !== 'direct') {
+    return { status: null, sharePresence: true };
+  }
+
+  const viewerId = viewerUserId ?? readViewerUserId(record);
+
+  for (const key of ['members', 'participants', 'users']) {
+    const value = record[key];
+
+    if (!Array.isArray(value)) {
+      continue;
+    }
+
+    for (const entry of value) {
+      const member = asRecord(entry);
+
+      if (!member) {
+        continue;
+      }
+
+      const user = asRecord(member.user) ?? asRecord(member.profile) ?? member;
+      const userId =
+        readString(user.id) ??
+        readString(member.userId) ??
+        readString(member.id);
+
+      if (!userId || userId === viewerId) {
+        continue;
+      }
+
+      const sharePresence =
+        readBoolean(user.sharePresence) ??
+        readBoolean(user.shareOnlineStatus) ??
+        readBoolean(member.sharePresence) ??
+        true;
+
+      const status =
+        mapApiPresenceToStatus(readString(user.status) ?? readString(member.status)) ??
+        inferPresence({
+          status: readString(user.status) ?? readString(member.status),
+          presenceStatus: readString(user.presenceStatus) ?? readString(member.presenceStatus),
+          presence: readString(user.presence) ?? readString(member.presence),
+        });
+
+      return { status, sharePresence };
+    }
+  }
+
+  for (const key of ['otherUser', 'peer', 'recipient', 'participant', 'partner', 'dmUser'] as const) {
+    const nestedUser = asRecord(record[key]);
+
+    if (!nestedUser) {
+      continue;
+    }
+
+    const nestedId =
+      readString(nestedUser.id) ??
+      readString(nestedUser.userId) ??
+      readString(nestedUser._id);
+
+    if (nestedId && nestedId !== viewerId) {
+      return {
+        status: mapApiPresenceToStatus(readString(nestedUser.status)),
+        sharePresence:
+          readBoolean(nestedUser.sharePresence) ??
+          readBoolean(nestedUser.shareOnlineStatus) ??
+          true,
+      };
+    }
+  }
+
+  return { status: null, sharePresence: true };
+}
+
+function readDirectPeerPresence(
+  record: Record<string, unknown>,
+  viewerUserId: string | null,
+): PresenceStatus | null {
+  if (inferKind(record) !== 'direct') {
+    return null;
+  }
+
+  const viewerId = viewerUserId ?? readViewerUserId(record);
+
+  for (const key of ['members', 'participants', 'users']) {
+    const value = record[key];
+
+    if (!Array.isArray(value)) {
+      continue;
+    }
+
+    for (const entry of value) {
+      const member = asRecord(entry);
+
+      if (!member) {
+        continue;
+      }
+
+      const user = asRecord(member.user) ?? asRecord(member.profile) ?? member;
+      const userId =
+        readString(user.id) ??
+        readString(member.userId) ??
+        readString(member.id);
+
+      if (!userId || userId === viewerId) {
+        continue;
+      }
+
+      const status = inferLivePresenceFromRecord({
+        presenceStatus:
+          readString(member.presenceStatus) ?? readString(user.presenceStatus) ?? undefined,
+        presence: readString(member.presence) ?? readString(user.presence) ?? undefined,
+        isOnline: member.isOnline ?? user.isOnline,
+        online: member.online ?? user.online,
+        onlineStatus:
+          readString(member.onlineStatus) ?? readString(user.onlineStatus) ?? undefined,
+      });
+
+      if (status) {
+        return status;
+      }
+    }
+  }
+
+  for (const key of ['otherUser', 'peer', 'recipient', 'participant', 'partner', 'dmUser'] as const) {
+    const nestedUser = asRecord(record[key]);
+
+    if (!nestedUser) {
+      continue;
+    }
+
+    const nestedId =
+      readString(nestedUser.id) ??
+      readString(nestedUser.userId) ??
+      readString(nestedUser._id);
+
+    if (nestedId && nestedId !== viewerId) {
+      const status = inferLivePresenceFromRecord(nestedUser);
+
+      if (status) {
+        return status;
+      }
+    }
   }
 
   return null;
@@ -391,7 +641,12 @@ export function mapApiPresenceToStatus(value: string | null | undefined): Presen
     return null;
   }
 
-  return inferPresence({ status: value });
+  return inferPresence({ presenceStatus: value, status: value });
+}
+
+/** Live presence from `/realtime/presence` or presence events — unknown values are offline. */
+export function mapLivePresenceToStatus(value: string | null | undefined): PresenceStatus {
+  return mapApiPresenceToStatus(value) ?? 'offline';
 }
 
 function readDirectPeerUserId(
@@ -1023,6 +1278,14 @@ export function normalizeConversation(
   const draftPreview = readDraftPreview(source);
   const { subtitle, isDraftPreview } = buildConversationSubtitle(messagePreview, draftPreview);
 
+  const isSelf =
+    source.isSelf === true || source.isYourself === true || title.toLowerCase().includes('yourself');
+
+  const peerSnapshot =
+    inferKind(source) === 'direct' && !isSelf
+      ? readDirectPeerMemberSnapshot(source, viewerId)
+      : { status: readDirectPeerPresence(source, viewerId), sharePresence: true };
+
   return {
     id: readConversationId(source, index),
     kind: inferKind(source),
@@ -1035,8 +1298,9 @@ export function normalizeConversation(
     avatarUrl: avatar.url,
     avatarInitials: avatar.initials,
     isPinned: readConversationPinned(source),
-    isSelf: source.isSelf === true || source.isYourself === true || title.toLowerCase().includes('yourself'),
-    status: inferPresence(source),
+    isSelf,
+    status: peerSnapshot.status,
+    peerSharePresence: inferKind(source) === 'direct' && !isSelf ? peerSnapshot.sharePresence : undefined,
     unreadCount: readConversationUnread(source),
     peerUserId: readDirectPeerUserId(source, viewerId),
     channelId: readHubChannelId(source),
@@ -1277,12 +1541,20 @@ export function mergeConversationLists(
     const incomingTime = conversationRecency(conversation);
     const timestamp =
       previous && previousTime > incomingTime ? previous.timestamp : conversation.timestamp;
+    const preserveLiveDirectPresence =
+      Boolean(previous) && conversation.kind === 'direct' && !conversation.isSelf;
 
     byId.set(conversation.id, {
       ...previous,
       ...conversation,
       timestamp,
       isPinned: conversation.isPinned,
+      ...(preserveLiveDirectPresence
+        ? {
+            status: previous.status,
+            peerStatusMessage: previous.peerStatusMessage,
+          }
+        : {}),
     });
   }
 
@@ -1409,6 +1681,21 @@ export type DirectChatMetadata = {
   peerUserId: string;
   displayName: string;
 };
+
+export function collectDirectPeerUserIds(conversations: ConversationItem[]): string[] {
+  return [
+    ...new Set(
+      conversations
+        .filter(
+          (conversation) =>
+            conversation.kind === 'direct' &&
+            !conversation.isSelf &&
+            Boolean(conversation.peerUserId),
+        )
+        .map((conversation) => conversation.peerUserId as string),
+    ),
+  ];
+}
 
 export function applyStoredDirectChatMetadata(
   conversations: ConversationItem[],

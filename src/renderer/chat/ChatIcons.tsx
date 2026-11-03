@@ -281,6 +281,7 @@ export function EnhanceSparkleIcon({ className }: { className?: string }) {
 const STATUS_COLORS = {
   online: 'bg-[#3ecf8e]',
   away: 'bg-[#f5c451]',
+  busy: 'bg-orange-500',
   dnd: 'bg-accent',
   offline: 'bg-[#666666]',
 } as const;

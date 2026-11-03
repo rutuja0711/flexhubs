@@ -255,7 +255,11 @@ export function normalizeSavedMessages(payload: unknown): SavedMessageItem[] {
         senderName: senderName ?? '',
         conversationId:
           readString(record.conversationId) ??
+          readString(record.conversation_id) ??
           readString(asRecord(record.conversation)?.id) ??
+          readString(asRecord(record.conversation)?.channelId) ??
+          readString(asRecord(record.channel)?.id) ??
+          readString(record.channelId) ??
           (message ? readString(message.conversationId) : null),
         messageId:
           readString(record.messageId) ??

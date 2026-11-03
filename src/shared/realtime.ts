@@ -91,12 +91,14 @@ export type RealtimeEvent = {
 export type RealtimeStatusPayload = {
   enabled: boolean;
   mode: string | null;
+  redis?: boolean;
 };
 
 export type PresenceItem = {
   userId: string;
   status: string;
   statusMessage: string;
+  isOnline?: boolean | null;
 };
 
 function extractArray(payload: unknown, keys: string[]): unknown[] {
@@ -121,39 +123,185 @@ function extractArray(payload: unknown, keys: string[]): unknown[] {
   return [];
 }
 
-export function normalizePresencePayload(payload: unknown): PresenceItem[] {
-  const record = asRecord(payload);
+function collectPresenceFromOnlineIdLists(record: Record<string, unknown>): PresenceItem[] {
+  const items: PresenceItem[] = [];
 
-  if (record) {
-    const mapLike =
-      asRecord(record.presence) ??
-      asRecord(record.users) ??
-      asRecord(record.statuses);
+  for (const key of ['onlineUserIds', 'onlineIds', 'onlineUsers'] as const) {
+    const value = record[key];
 
-    if (mapLike && !Array.isArray(record.presence) && !Array.isArray(record.users)) {
-      return Object.entries(mapLike)
-        .map(([userId, value]) => {
-          const entry = asRecord(value);
-          const status =
-            typeof value === 'string'
-              ? value
-              : readString(entry?.status) ?? readString(entry?.presence);
+    if (!Array.isArray(value)) {
+      continue;
+    }
 
-          if (!status) {
-            return null;
-          }
-
-          return {
-            userId,
-            status,
-            statusMessage: readUserStatusMessage(entry ?? { status: value }),
-          };
-        })
-        .filter((item): item is PresenceItem => item !== null);
+    for (const entry of value) {
+      if (typeof entry === 'string' && entry.trim()) {
+        items.push({
+          userId: entry.trim(),
+          status: 'ONLINE',
+          statusMessage: '',
+        });
+      }
     }
   }
 
-  return extractArray(payload, ['presence', 'users', 'items', 'data'])
+  return items;
+}
+
+export function resolveLivePresenceStatusString(record: Record<string, unknown>): string | null {
+  return readPresenceStatusValue(record);
+}
+
+function mergePresenceItems(items: PresenceItem[]): PresenceItem[] {
+  const byUser = new Map<string, PresenceItem>();
+
+  for (const item of items) {
+    byUser.set(item.userId.trim(), item);
+  }
+
+  return [...byUser.values()];
+}
+
+function readPresenceStatusValue(record: Record<string, unknown>): string | null {
+  const status =
+    readString(record.presenceStatus) ??
+    readString(record.presence) ??
+    readString(record.onlineStatus) ??
+    readString(record.state) ??
+    readString(record.status);
+
+  if (status) {
+    return status;
+  }
+
+  const online = readBoolean(record.isOnline) ?? readBoolean(record.online);
+
+  if (online === true) {
+    return 'ONLINE';
+  }
+
+  if (online === false) {
+    return 'OFFLINE';
+  }
+
+  return null;
+}
+
+function buildPresenceItem(
+  userId: string,
+  record: Record<string, unknown>,
+  status: string,
+): PresenceItem {
+  return {
+    userId,
+    status,
+    statusMessage: readUserStatusMessage(record),
+    isOnline: readBoolean(record.isOnline) ?? readBoolean(record.online),
+  };
+}
+
+function presenceEntryFromMapValue(
+  userId: string,
+  value: unknown,
+): PresenceItem | null {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+
+    if (!trimmed) {
+      return null;
+    }
+
+    return buildPresenceItem(userId, { status: trimmed }, trimmed);
+  }
+
+  const entry = asRecord(value);
+
+  if (!entry) {
+    return null;
+  }
+
+  const status = readPresenceStatusValue(entry);
+
+  if (!status) {
+    return null;
+  }
+
+  return buildPresenceItem(userId, entry, status);
+}
+
+function presenceEntriesFromMapLike(mapLike: Record<string, unknown>): PresenceItem[] {
+  return Object.entries(mapLike)
+    .map(([userId, value]) => presenceEntryFromMapValue(userId, value))
+    .filter((item): item is PresenceItem => item !== null);
+}
+
+export function normalizePresencePayload(payload: unknown): PresenceItem[] {
+  if (Array.isArray(payload)) {
+    return normalizePresencePayload({ items: payload });
+  }
+
+  const record = asRecord(payload);
+
+  if (record) {
+    const fromOnlineLists = collectPresenceFromOnlineIdLists(record);
+
+    if (fromOnlineLists.length > 0) {
+      return mergePresenceItems(fromOnlineLists);
+    }
+
+    const singleUserId =
+      readString(record.userId) ??
+      readString(asRecord(record.user)?.id) ??
+      readString(asRecord(record.user)?.userId);
+    const singleStatus = readPresenceStatusValue(record);
+
+    if (singleUserId && singleStatus) {
+      return [buildPresenceItem(singleUserId, record, singleStatus)];
+    }
+
+    if (Array.isArray(record.data)) {
+      const nested = normalizePresencePayload(record.data);
+
+      if (nested.length > 0) {
+        return nested;
+      }
+    }
+
+    const dataRecord = asRecord(record.data);
+
+    if (dataRecord) {
+      const nested = normalizePresencePayload(dataRecord);
+
+      if (nested.length > 0) {
+        return nested;
+      }
+    }
+
+    for (const key of ['presence', 'users', 'statuses', 'results', 'presenceByUserId', 'presences'] as const) {
+      const value = record[key];
+
+      if (Array.isArray(value)) {
+        const nested = normalizePresencePayload({ items: value });
+
+        if (nested.length > 0) {
+          return nested;
+        }
+
+        continue;
+      }
+
+      const mapLike = asRecord(value);
+
+      if (mapLike) {
+        const entries = presenceEntriesFromMapLike(mapLike);
+
+        if (entries.length > 0) {
+          return entries;
+        }
+      }
+    }
+  }
+
+  return extractArray(payload, ['presence', 'users', 'items', 'data', 'results'])
     .map(asRecord)
     .filter((item): item is Record<string, unknown> => item !== null)
     .map((entry) => {
@@ -161,22 +309,25 @@ export function normalizePresencePayload(payload: unknown): PresenceItem[] {
       const userId =
         readString(entry.userId) ??
         readString(user.id) ??
-        readString(entry.id);
+        readString(user.userId) ??
+        readString(entry.id) ??
+        readString(entry._id) ??
+        readString(user._id);
 
       const status =
-        readString(entry.status) ??
-        readString(entry.presence) ??
-        readString(user.status);
+        readPresenceStatusValue(entry) ??
+        readPresenceStatusValue({
+          presenceStatus: user.presenceStatus,
+          presence: user.presence,
+          isOnline: user.isOnline,
+          online: user.online,
+        });
 
       if (!userId || !status) {
         return null;
       }
 
-      return {
-        userId,
-        status,
-        statusMessage: readUserStatusMessage(entry),
-      };
+      return buildPresenceItem(userId, { ...entry, ...user, status }, status);
     })
     .filter((item): item is PresenceItem => item !== null);
 }
@@ -279,6 +430,7 @@ export function normalizeRealtimeStatus(payload: unknown): RealtimeStatusPayload
   return {
     enabled,
     mode,
+    redis: record.redis === true,
   };
 }
 
@@ -781,31 +933,41 @@ export function isUnreadUpdateEvent(type: string): boolean {
 export function isPresenceEvent(type: string): boolean {
   const normalized = type.toLowerCase();
 
-  return normalized === 'presence' || normalized.includes('presence');
+  return (
+    normalized === 'presence' ||
+    normalized.includes('presence') ||
+    normalized === 'status' ||
+    normalized === 'user_status' ||
+    normalized === 'user:status'
+  );
 }
 
 export function extractPresenceUpdate(
   payload: unknown,
 ): { userId: string; status: string; statusMessage?: string } | null {
-  const record = asRecord(payload);
+  const record = asRecord(unwrapRealtimePayload(payload));
 
   if (!record) {
     return null;
   }
 
-  const nested = asRecord(record.presence) ?? asRecord(record.user);
+  const inner = asRecord(record.payload) ?? asRecord(record.data) ?? record;
+  const nested = asRecord(inner.presence) ?? asRecord(inner.user) ?? asRecord(record.presence) ?? asRecord(record.user);
   const userId =
+    readString(inner.userId) ??
     readString(record.userId) ??
     readString(nested?.id) ??
+    readString(nested?.userId) ??
     readString(record.id);
   const status =
-    readString(record.presenceStatus) ??
-    readString(record.status) ??
-    readString(record.presence) ??
-    readString(nested?.presenceStatus) ??
-    readString(nested?.status);
+    resolveLivePresenceStatusString(inner) ??
+    resolveLivePresenceStatusString(record) ??
+    (nested ? resolveLivePresenceStatusString(nested) : null);
 
-  const statusMessage = readUserStatusMessageUpdate(record);
+  const statusMessage =
+    readUserStatusMessageUpdate(inner) ??
+    readUserStatusMessageUpdate(record) ??
+    readUserStatusMessageUpdate(nested ?? {});
 
   if (!userId || (!status && statusMessage === undefined)) {
     return null;

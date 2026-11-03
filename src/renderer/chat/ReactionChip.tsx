@@ -59,10 +59,10 @@ export function ReactionChip({
         ref={buttonRef}
         type="button"
         aria-label={authorLabel ? `${emoji} reacted by ${authorLabel}` : `React with ${emoji}`}
-        className={`rounded-full border px-2.5 py-0.5 text-xs font-medium transition-all duration-150 active:scale-95 shadow-sm ${
+        className={`rounded-full border px-2 py-0.5 text-[11px] font-medium transition-all duration-150 active:scale-[0.98] ${
           reactedByMe
-            ? 'border-accent/60 bg-accent/20 text-accent-soft font-semibold shadow-accent/20'
-            : 'border-app-border/60 bg-app-surface/80 text-app-text/90 hover:border-app-border-strong hover:bg-app-chat-hover'
+            ? 'border-accent/50 bg-accent/15 text-accent shadow-sm shadow-accent/10'
+            : 'border-app-border/50 bg-app-surface/90 text-app-text/85 hover:border-accent/25 hover:bg-app-chat-hover'
         }`}
         onClick={onClick}
         onMouseEnter={openTooltip}

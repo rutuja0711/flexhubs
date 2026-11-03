@@ -1,12 +1,13 @@
 import { API_BASE_URL } from '../shared/api';
 import { getUnreachableRemainingMs } from './apiRequest';
+import { isRedisPresenceMode } from '../shared/presence';
 import {
   fetchRealtimeStatus,
   fetchRealtimeToken,
   sendRealtimeHeartbeat,
 } from './realtimeApi';
 
-const HEARTBEAT_MS = 30_000;
+const HEARTBEAT_MS = 20_000;
 const RECONNECT_BASE_MS = 5_000;
 const RECONNECT_MAX_MS = 60_000;
 
@@ -18,6 +19,10 @@ type StatusHandler = (status: RealtimeConnectionStatus) => void;
 export type { RealtimeConnectionStatus };
 
 let sessionToken: string | null = null;
+let redisPresenceEnabled = false;
+let lastRealtimeEnabled = false;
+let lastRealtimeMode: string | null = null;
+let cachedHeartbeatStatus = 'ONLINE';
 let abortController: AbortController | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -72,6 +77,56 @@ function scheduleReconnect(reason?: string): void {
     reconnectTimer = null;
     void connect(sessionToken as string);
   }, delay);
+}
+
+function sendHeartbeatIfNeeded(): void {
+  if (!sessionToken || !redisPresenceEnabled || getUnreachableRemainingMs() > 0) {
+    return;
+  }
+
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+
+  void sendRealtimeHeartbeat(sessionToken, {
+    status: cachedHeartbeatStatus,
+    timezone,
+  });
+}
+
+export function setRealtimeHeartbeatStatus(status: string): void {
+  const trimmed = status.trim();
+  cachedHeartbeatStatus = trimmed || 'ONLINE';
+}
+
+export function getRealtimeServerSnapshot(): {
+  enabled: boolean;
+  mode: string | null;
+  redisPresence: boolean;
+} {
+  return {
+    enabled: lastRealtimeEnabled,
+    mode: lastRealtimeMode,
+    redisPresence: redisPresenceEnabled,
+  };
+}
+
+export async function probeRealtimeServerStatus(
+  authToken: string,
+): Promise<{ enabled: boolean; mode: string | null; redisPresence: boolean } | null> {
+  const statusResult = await fetchRealtimeStatus(authToken);
+
+  if (!statusResult.ok) {
+    return null;
+  }
+
+  lastRealtimeEnabled = statusResult.data.enabled;
+  lastRealtimeMode = statusResult.data.mode;
+  redisPresenceEnabled = isRedisPresenceMode(statusResult.data);
+
+  return {
+    enabled: lastRealtimeEnabled,
+    mode: lastRealtimeMode,
+    redisPresence: redisPresenceEnabled,
+  };
 }
 
 function parseSseChunk(chunk: string, onEvent: EventHandler): void {
@@ -190,9 +245,20 @@ async function connect(authToken: string): Promise<void> {
       return;
     }
 
+    lastRealtimeEnabled = statusResult.data.enabled;
+    lastRealtimeMode = statusResult.data.mode;
+
     if (!statusResult.data.enabled) {
       setStatus('unavailable');
+      redisPresenceEnabled = false;
       return;
+    }
+
+    redisPresenceEnabled = isRedisPresenceMode(statusResult.data);
+
+    if (redisPresenceEnabled && !heartbeatTimer) {
+      void sendHeartbeatIfNeeded();
+      heartbeatTimer = setInterval(sendHeartbeatIfNeeded, HEARTBEAT_MS);
     }
 
     const tokenResult = await fetchRealtimeToken(authToken);
@@ -248,14 +314,6 @@ export async function startRealtimeStream(authToken: string): Promise<void> {
   clearReconnectTimer();
   abortController?.abort();
 
-  if (!heartbeatTimer) {
-    heartbeatTimer = setInterval(() => {
-      if (sessionToken && getUnreachableRemainingMs() === 0) {
-        void sendRealtimeHeartbeat(sessionToken);
-      }
-    }, HEARTBEAT_MS);
-  }
-
   await connect(authToken);
 }
 
@@ -265,6 +323,7 @@ export function stopRealtimeStream(): void {
   reconnectAttempt = 0;
   connecting = false;
   loggedNetworkWait = false;
+  redisPresenceEnabled = false;
   clearTimers();
   abortController?.abort();
   abortController = null;

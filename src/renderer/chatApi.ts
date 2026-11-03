@@ -255,6 +255,20 @@ export async function loadUserPresence(
   return withToken((token) => window.electronAPI.getUserPresence(token, userIds));
 }
 
+export async function loadRealtimeServerStatus(): Promise<
+  ApiResult<{
+    enabled: boolean;
+    mode: string | null;
+    redisPresence: boolean;
+  }>
+> {
+  if (!window.electronAPI?.getRealtimeServerStatus) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getRealtimeServerStatus(token));
+}
+
 export async function loadPendingFriends(): Promise<
   ApiResult<import('../shared/messages').PendingFriendItem[]>
 > {

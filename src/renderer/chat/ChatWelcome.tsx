@@ -3,6 +3,7 @@ import { BuildingIcon, UserPlusIcon } from './ChatIcons';
 type ChatWelcomeProps = {
   workspaceName: string;
   onFindPeople: () => void;
+
 };
 
 export function ChatWelcome({ workspaceName, onFindPeople }: ChatWelcomeProps) {

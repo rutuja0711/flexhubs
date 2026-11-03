@@ -1,6 +1,9 @@
 import { memo, useCallback, useRef, useState } from 'react';
 import { FiMoreHorizontal } from 'react-icons/fi';
 import type { ConversationItem } from '../../shared/chat';
+import { type PresenceStatus } from '../../shared/chat';
+import { canViewPresence } from '../../shared/presencePrivacy';
+import { presenceStatusForPeer } from '../../shared/presence';
 import { formatConversationTimestamp } from './format';
 import { Avatar, StackedAvatar, PinIcon, PresenceDot } from './ChatIcons';
 import {
@@ -10,6 +13,9 @@ import {
 
 type ConversationRowProps = {
   conversation: ConversationItem;
+  presenceByUserId: ReadonlyMap<string, PresenceStatus>;
+  viewerUserId: string | null;
+  viewerSharePresence: boolean;
   typingPreview?: string;
   selected: boolean;
   onSelect: (id: string) => void;
@@ -22,6 +28,9 @@ type ConversationRowProps = {
 
 export const ConversationRow = memo(function ConversationRow({
   conversation,
+  presenceByUserId,
+  viewerUserId,
+  viewerSharePresence,
   typingPreview,
   selected,
   onSelect,
@@ -32,6 +41,33 @@ export const ConversationRow = memo(function ConversationRow({
   menuBusy = false,
 }: ConversationRowProps) {
   const displayTitle = conversation.isSelf ? `${conversation.title} (Yourself)` : conversation.title;
+  const isDirectChat = conversation.kind !== 'hub' && !conversation.isSelf;
+  const canViewPeerPresence =
+    isDirectChat &&
+    Boolean(conversation.peerUserId) &&
+    canViewPresence(
+      { id: viewerUserId ?? '', sharePresence: viewerSharePresence },
+      {
+        id: conversation.peerUserId ?? '',
+        sharePresence: conversation.peerSharePresence ?? true,
+      },
+    );
+  const peerPresence = canViewPeerPresence
+    ? (() => {
+        const fromMap = presenceStatusForPeer(presenceByUserId, conversation.peerUserId);
+        const bootstrap = conversation.status;
+
+        if (fromMap && fromMap !== 'offline') {
+          return fromMap;
+        }
+
+        if (bootstrap && bootstrap !== 'offline') {
+          return bootstrap;
+        }
+
+        return fromMap ?? bootstrap ?? 'offline';
+      })()
+    : null;
   const rowRef = useRef<HTMLDivElement>(null);
 
   const openContextMenu = useCallback(
@@ -54,8 +90,8 @@ export const ConversationRow = memo(function ConversationRow({
       ref={rowRef}
       className={`group relative flex w-full items-center gap-3 rounded-[16px] px-3 py-2.5 transition-colors duration-150 ${
         selected
-          ? 'bg-app-elevated border border-accent/25 shadow-sm'
-          : 'border border-transparent hover:bg-app-chat-hover/70'
+          ? 'border border-accent/30 bg-accent/[0.07] shadow-sm shadow-accent/10 dark:bg-accent/[0.12]'
+          : 'border border-transparent hover:bg-app-chat-hover/80'
       }`}
       onMouseEnter={() => onPrefetch?.(conversation.id)}
       onContextMenu={(event) => {
@@ -90,10 +126,12 @@ export const ConversationRow = memo(function ConversationRow({
           ) : (
             <Avatar imageUrl={conversation.avatarUrl} initials={conversation.avatarInitials} />
           )}
-          <PresenceDot
-            status={conversation.status}
-            surround={selected ? 'elevated' : 'sidebar'}
-          />
+          {canViewPeerPresence ? (
+            <PresenceDot
+              status={peerPresence}
+              surround={selected ? 'elevated' : 'sidebar'}
+            />
+          ) : null}
           {conversation.unreadCount > 0 ? (
             <span
               className={`absolute -right-1 -top-1 z-10 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[0.625rem] font-bold leading-none text-white shadow-sm shadow-accent/40 ring-2 ${
@@ -184,6 +222,9 @@ export const ConversationRow = memo(function ConversationRow({
 
 type ConversationListProps = {
   conversations: ConversationItem[];
+  presenceByUserId: ReadonlyMap<string, PresenceStatus>;
+  viewerUserId: string | null;
+  viewerSharePresence: boolean;
   typingPreviews?: Record<string, string>;
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -197,6 +238,9 @@ type ConversationListProps = {
 
 export function ConversationList({
   conversations,
+  presenceByUserId,
+  viewerUserId,
+  viewerSharePresence,
   typingPreviews = {},
   selectedId,
   onSelect,
@@ -240,6 +284,9 @@ export function ConversationList({
           <ConversationRow
             key={conversation.id}
             conversation={conversation}
+            presenceByUserId={presenceByUserId}
+            viewerUserId={viewerUserId}
+            viewerSharePresence={viewerSharePresence}
             typingPreview={typingPreviews[conversation.id]}
             selected={selectedId === conversation.id}
             onSelect={onSelect}

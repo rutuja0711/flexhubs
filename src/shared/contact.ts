@@ -86,7 +86,11 @@ export function formatContactPresenceLabel(
     return 'Away';
   }
 
-  if (normalized === 'dnd' || normalized === 'busy') {
+  if (normalized === 'busy') {
+    return 'Busy';
+  }
+
+  if (normalized === 'dnd') {
     return 'Do not disturb';
   }
 
@@ -129,6 +133,10 @@ export function presenceDotClass(status: PresenceStatus | null): string {
 
   if (status === 'away') {
     return 'bg-amber-500';
+  }
+
+  if (status === 'busy') {
+    return 'bg-orange-500';
   }
 
   if (status === 'dnd') {

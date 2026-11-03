@@ -179,6 +179,64 @@ export function peekAuthenticatedMediaUrl(rawUrl: string | null | undefined): st
   return objectUrlCache.get(normalized) ?? null;
 }
 
+/** Desktop app injects auth on flexhubs.in media requests — videos can stream from HTTPS. */
+export function canStreamHostedMediaInDesktop(): boolean {
+  return typeof window !== 'undefined' && Boolean(window.electronAPI?.fetchAuthenticatedMedia);
+}
+
+export function resolveStreamingMediaDisplayUrl(rawUrl: string | null | undefined): string | null {
+  if (!rawUrl?.trim()) {
+    return null;
+  }
+
+  const normalized = normalizeUploadUrl(rawUrl.trim());
+
+  if (
+    normalized.startsWith('blob:') ||
+    normalized.startsWith('data:') ||
+    !isFlexHubsHostedAssetUrl(normalized)
+  ) {
+    return normalized;
+  }
+
+  if (canStreamHostedMediaInDesktop()) {
+    return normalized;
+  }
+
+  return peekAuthenticatedMediaUrl(normalized);
+}
+
+/** Warm blob cache for images; for streamable video URLs this is a no-op. */
+export function prefetchAuthenticatedMediaUrls(urls: Array<string | null | undefined>): void {
+  for (const raw of urls) {
+    if (!raw?.trim()) {
+      continue;
+    }
+
+    const normalized = normalizeUploadUrl(raw.trim());
+    if (!isFlexHubsHostedAssetUrl(normalized)) {
+      continue;
+    }
+
+    if (canStreamHostedMediaInDesktop() && isLikelyVideoMediaUrl(normalized)) {
+      continue;
+    }
+
+    if (objectUrlCache.has(normalized) || inflight.has(normalized)) {
+      continue;
+    }
+
+    void resolveAuthenticatedMediaUrl(normalized).catch(() => {
+      // Best-effort prefetch.
+    });
+  }
+}
+
+function isLikelyVideoMediaUrl(url: string): boolean {
+  const path = url.split('?')[0]?.toLowerCase() ?? '';
+  return /\.(mp4|mov|webm|m4v|mkv|avi)(\?|$)/i.test(path) || path.includes('/video');
+}
+
 export async function fetchAuthenticatedMediaBlob(rawUrl: string): Promise<Blob> {
   const normalized = normalizeUploadUrl(rawUrl.trim());
 

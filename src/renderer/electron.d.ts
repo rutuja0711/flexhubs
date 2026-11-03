@@ -493,6 +493,15 @@ declare global {
         token: string,
       ) => Promise<ApiResult<OrganizationMemberItem[]>>;
       startRealtime: (token: string) => Promise<{ ok: true }>;
+      getRealtimeServerStatus: (
+        token: string,
+      ) => Promise<
+        ApiResult<{
+          enabled: boolean;
+          mode: string | null;
+          redisPresence: boolean;
+        }>
+      >;
       stopRealtime: () => Promise<{ ok: true }>;
       sendTyping: (
         token: string,

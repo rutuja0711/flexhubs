@@ -63,12 +63,14 @@ import {
   loadHubInvites,
   loadMessageDraft,
   loadMessageById,
+  loadMessageConversation,
   loadNotificationSettings,
   loadOrganizationMembers,
   loadPendingFriends,
   loadSavedMessages,
   loadUnreadCount,
   loadUserPresence,
+  loadRealtimeServerStatus,
   loadUserProfile,
   markConversationRead,
   markConversationUnread,
@@ -135,8 +137,14 @@ import {
 import { clearProfileCache, readPeerProfile, writePeerProfile } from './profileCache';
 import { useConfirm } from './ui/ConfirmDialog';
 import { useToast } from './ui/Toast';
-import type { ConversationItem, DirectChatMetadata } from '../shared/chat';
-import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationByAnyId, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, readConversationSnoozeState, sanitizeDirectDisplayName, withConversationSnoozed, buildConversationSnoozePayload, formatConversationSnoozeUntil, resolveConversationForMessage, resolveTypingConversationId, buildConversationListPreview, areConversationSidebarListsEqual, mergeConversationMemberPreview } from '../shared/chat';
+import type { ConversationItem, DirectChatMetadata, PresenceStatus } from '../shared/chat';
+import {
+  mergePresenceItemsForRequestedUsers,
+  mergeResolvedPresenceMaps,
+  bootstrapPresenceFromConversations,
+  mapLivePresenceUpdateStatus,
+} from '../shared/presence';
+import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationByAnyId, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, readConversationSnoozeState, sanitizeDirectDisplayName, withConversationSnoozed, buildConversationSnoozePayload, formatConversationSnoozeUntil, resolveConversationForMessage, resolveTypingConversationId, buildConversationListPreview, areConversationSidebarListsEqual, mergeConversationMemberPreview, collectDirectPeerUserIds, lookupPresenceStatus, normalizePresenceUserId } from '../shared/chat';
 import { enrichCallHistoryItems, type CallHistoryItem } from '../shared/calls';
 import type {
   MessageItem,
@@ -540,6 +548,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     userIsSuperAdmin(getStoredUser()) ? 'superadmin' : 'chat',
   );
   const [conversations, setConversations] = useState<ConversationItem[]>([]);
+  const [presenceByUserId, setPresenceByUserId] = useState<Map<string, PresenceStatus>>(
+    () => new Map(),
+  );
+  const bootstrapPresenceRef = useRef<Map<string, PresenceStatus>>(new Map());
+  const redisPresencePollingRef = useRef(false);
   const [conversationPlaceholders, setConversationPlaceholders] = useState<Record<string, ConversationItem>>({});
   const [teammates, setTeammates] = useState<TeammateItem[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -739,6 +752,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const isTypingActiveRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
   const messagesRef = useRef<MessageItem[]>([]);
+  const reactionInFlightRef = useRef<Set<string>>(new Set());
   const mainViewRef = useRef<MainView>('chat');
   const userIdRef = useRef<string | null>(null);
   const notificationSettingsRef = useRef<ProfileSettings | null>(null);
@@ -2085,16 +2099,36 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
 
-      const statusByUserId = new Map(
-        result.data.map((item) => [item.userId, mapApiPresenceToStatus(item.status)] as const),
+      const livePollHadRows = result.data.length > 0;
+      const redisMode = redisPresencePollingRef.current;
+      const treatMissingAsOffline = redisMode && livePollHadRows;
+
+      const { statusByUserId: liveByUserId, statusMessageByUserId } = mergePresenceItemsForRequestedUsers(
+        result.data,
+        unique,
+        { treatMissingAsOffline },
       );
-      const statusMessageByUserId = new Map(
-        result.data.map((item) => [item.userId, item.statusMessage] as const),
+
+      const merged = mergeResolvedPresenceMaps(
+        bootstrapPresenceRef.current,
+        liveByUserId,
+        unique,
+        { livePollHadRows: redisMode && livePollHadRows },
       );
+
+      setPresenceByUserId((current) => {
+        const next = new Map(current);
+
+        for (const [userId, status] of merged) {
+          next.set(userId, status);
+        }
+
+        return next;
+      });
 
       setTeammates((current) =>
         current.map((teammate) => {
-          const statusMessage = statusMessageByUserId.get(teammate.id);
+          const statusMessage = statusMessageByUserId.get(normalizePresenceUserId(teammate.id));
 
           if (statusMessage === undefined) {
             return teammate;
@@ -2104,21 +2138,31 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }),
       );
 
+      const requestedPeerKeys = new Set(unique.map(normalizePresenceUserId));
+
       setConversations((current) => {
         const next = applyDraftPreviews(
           current.map((conversation) => {
-            if (!conversation.peerUserId) {
+            if (
+              !conversation.peerUserId ||
+              conversation.kind === 'hub' ||
+              conversation.isSelf
+            ) {
               return conversation;
             }
 
-            const status = statusByUserId.get(conversation.peerUserId);
-            const peerStatusMessage = statusMessageByUserId.get(conversation.peerUserId);
+            const peerKey = normalizePresenceUserId(conversation.peerUserId);
 
-            if (!status && peerStatusMessage === undefined) {
+            if (!requestedPeerKeys.has(peerKey)) {
               return conversation;
             }
 
-            const nextStatus = status ?? conversation.status;
+            const nextStatus =
+              merged.get(peerKey) ??
+              lookupPresenceStatus(liveByUserId, conversation.peerUserId) ??
+              conversation.status ??
+              'offline';
+            const peerStatusMessage = statusMessageByUserId.get(peerKey);
             const nextPeerStatusMessage =
               peerStatusMessage !== undefined ? peerStatusMessage : conversation.peerStatusMessage;
 
@@ -2131,7 +2175,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
             return {
               ...conversation,
-              ...(status ? { status } : {}),
+              status: nextStatus,
               ...(peerStatusMessage !== undefined ? { peerStatusMessage } : {}),
             };
           }),
@@ -2142,6 +2186,45 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     },
     [applyDraftPreviews, handleUnauthorized],
   );
+
+  const syncRedisPresenceMode = useCallback(async () => {
+    const result = await loadRealtimeServerStatus();
+
+    if (result.ok) {
+      redisPresencePollingRef.current = result.data.redisPresence;
+    }
+  }, []);
+
+  const refreshPresenceRef = useRef(refreshPresence);
+  refreshPresenceRef.current = refreshPresence;
+
+  useEffect(() => {
+    bootstrapPresenceRef.current = bootstrapPresenceFromConversations(conversations);
+
+    setPresenceByUserId((current) => {
+      const next = new Map(current);
+      let changed = false;
+
+      for (const [userId, status] of bootstrapPresenceRef.current) {
+        const existing = next.get(userId);
+
+        if (existing === status) {
+          continue;
+        }
+
+        if (!existing || existing === 'offline' || status !== 'offline') {
+          next.set(userId, status);
+          changed = true;
+        }
+      }
+
+      return changed ? next : current;
+    });
+  }, [conversations]);
+
+  useEffect(() => {
+    void syncRedisPresenceMode();
+  }, [syncRedisPresenceMode]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -2241,18 +2324,38 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       setPlanComplianceRules([]);
     }
 
-    const presenceUserIds = [
-      ...conversationsResult.data.conversations
-        .map((conversation) => conversation.peerUserId)
-        .filter((id): id is string => Boolean(id)),
-      ...(membersResult?.ok ? membersResult.data.map((member) => member.id) : []),
-    ];
+    const conversationsForPresence =
+      membersResult?.ok
+        ? commitConversationList(initialConversations, {
+            seedFromApi: false,
+            currentUserId: getUserId(currentUser),
+          })
+        : initialConversations;
 
-    void refreshPresence(presenceUserIds);
+    void refreshPresence(collectDirectPeerUserIds(conversationsForPresence));
     } finally {
       setLoading(false);
     }
   }, [commitConversationList, handleUnauthorized, hydrateHubMemberAvatars, refreshPresence]);
+
+  useEffect(() => {
+    const syncSidebarPresence = () => {
+      const peerIds = collectDirectPeerUserIds(conversationsRef.current);
+
+      if (peerIds.length === 0) {
+        return;
+      }
+
+      void refreshPresence(peerIds);
+    };
+
+    syncSidebarPresence();
+    const intervalId = window.setInterval(syncSidebarPresence, 30_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [refreshPresence]);
 
   const loadThread = useCallback(
     async (conversationId: string) => {
@@ -2893,12 +2996,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
         if (!areConversationSidebarListsEqual(current, next)) {
           hydrateHubMemberAvatars(next);
+          void refreshPresence(collectDirectPeerUserIds(next));
         }
 
         return areConversationSidebarListsEqual(current, next) ? current : next;
       });
     }
-  }, [commitConversationList, handleUnauthorized, hydrateHubMemberAvatars]);
+  }, [commitConversationList, handleUnauthorized, hydrateHubMemberAvatars, refreshPresence]);
 
   const openHubFromNotification = useCallback(
     async (channelId: string | null, inviteId: string | null) => {
@@ -3240,7 +3344,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             removedReaction: reactionPatch.removedReaction,
           });
 
-          if (conversationId === activeConversationId) {
+          const hasAuthoritativeReactionPayload =
+            Boolean(reactionPatch.message) ||
+            Boolean(reactionPatch.reactions?.length) ||
+            Boolean(reactionPatch.addedReaction) ||
+            Boolean(reactionPatch.removedReaction);
+
+          if (conversationId === activeConversationId && !hasAuthoritativeReactionPayload) {
             refreshMessageReactions(conversationId, reactionPatch.messageId);
           }
 
@@ -3325,8 +3435,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         const presenceUpdate = extractPresenceUpdate(event.payload);
 
         if (presenceUpdate) {
-          const status = mapApiPresenceToStatus(presenceUpdate.status);
-
           if (presenceUpdate.statusMessage !== undefined) {
             setTeammates((current) =>
               current.map((teammate) =>
@@ -3337,17 +3445,42 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             );
           }
 
-          if (status || presenceUpdate.statusMessage !== undefined) {
+          if (presenceUpdate.status) {
+            const peerKey = normalizePresenceUserId(presenceUpdate.userId);
+            const liveStatus = mapLivePresenceUpdateStatus(presenceUpdate.status);
+
+            setPresenceByUserId((current) => {
+              const next = new Map(current);
+              next.set(peerKey, liveStatus);
+              return next;
+            });
+
             setConversations((current) =>
               applyDraftPreviews(
                 current.map((conversation) =>
-                  conversation.peerUserId === presenceUpdate.userId
+                  conversation.peerUserId &&
+                  normalizePresenceUserId(conversation.peerUserId) === peerKey
                     ? {
                         ...conversation,
-                        ...(status ? { status } : {}),
+                        status: liveStatus,
                         ...(presenceUpdate.statusMessage !== undefined
                           ? { peerStatusMessage: presenceUpdate.statusMessage }
                           : {}),
+                      }
+                    : conversation,
+                ),
+              ),
+            );
+          } else if (presenceUpdate.statusMessage !== undefined) {
+            setConversations((current) =>
+              applyDraftPreviews(
+                current.map((conversation) =>
+                  conversation.peerUserId &&
+                  normalizePresenceUserId(conversation.peerUserId) ===
+                    normalizePresenceUserId(presenceUpdate.userId)
+                    ? {
+                        ...conversation,
+                        peerStatusMessage: presenceUpdate.statusMessage,
                       }
                     : conversation,
                 ),
@@ -3523,6 +3656,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       if (status === 'connected' && previous !== 'connected') {
         void syncNotificationsRef.current();
         void syncPresenceToServer();
+        void syncRedisPresenceMode();
+        const peerIds = collectDirectPeerUserIds(conversationsRef.current);
+
+        if (peerIds.length > 0) {
+          void refreshPresenceRef.current(peerIds);
+        }
       }
     });
 
@@ -4070,21 +4209,38 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   handleSelectConversationRef.current = handleSelectConversation;
 
-  const handleOpenInChat = (conversationId: string | null, messageId?: string | null) => {
-    if (!conversationId) {
-      toast.error('This item is not linked to a conversation.');
-      return;
-    }
+  const handleOpenInChat = useCallback(
+    async (rawConversationId: string | null, messageId?: string | null) => {
+      if (!messageId) {
+        toast.error('Could not find the original message.');
+        if (rawConversationId) {
+          handleSelectConversation(rawConversationId);
+        }
+        return;
+      }
 
-    if (!messageId) {
-      toast.error('Could not find the original message.');
-      handleSelectConversation(conversationId);
-      return;
-    }
+      const conversationLookup = await loadMessageConversation(messageId);
+      let conversationId = rawConversationId;
 
-    setMainView('chat');
-    handleSelectConversation(conversationId, messageId, { forceReload: false });
-  };
+      if (conversationLookup.ok) {
+        conversationId = conversationLookup.data.conversationId;
+      } else if (!conversationId) {
+        if (handleUnauthorized(conversationLookup.status)) {
+          return;
+        }
+
+        toast.error(conversationLookup.error || 'Could not find the conversation for this message.');
+        return;
+      }
+
+      const matched = findConversationByAnyId(conversationsRef.current, conversationId);
+      const targetConversationId = matched?.id ?? conversationId;
+
+      setMainView('chat');
+      handleSelectConversation(targetConversationId, messageId, { forceReload: false });
+    },
+    [handleSelectConversation, handleUnauthorized],
+  );
 
   const handleOpenDirectChat = useCallback(
     async (userId: string, options?: { displayName?: string; username?: string }) => {
@@ -5100,86 +5256,138 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     const currentUserId = getUserId(user);
-    if (!currentUserId) return;
-
-    // Find the message in either main chat or thread cache
-    let targetMessage = messages.find(m => m.id === messageId);
-    if (!targetMessage && threadCacheRef.current[selectedId]) {
-      targetMessage = threadCacheRef.current[selectedId].messages.find(m => m.id === messageId);
+    if (!currentUserId) {
+      return;
     }
 
-    let finalResult;
+    if (reactionInFlightRef.current.has(messageId)) {
+      return;
+    }
 
-    const existingReactions = targetMessage ? targetMessage.reactions.filter(r => r.userId === currentUserId) : [];
-    const exactMatch = existingReactions.find(r => r.emoji === emoji);
+    reactionInFlightRef.current.add(messageId);
 
-    // OPTIMISTIC UPDATE: Prevents rapid double-clicks from causing race conditions
-    setMessages((current) =>
-      current.map((message) => {
-        if (message.id === messageId) {
-          const isToggleOff = existingReactions.length === 1 && exactMatch;
-          const newReactions = message.reactions.filter((r) => r.userId !== currentUserId);
-          if (!isToggleOff) {
-            newReactions.push({ emoji, userId: currentUserId, username: user?.name || '' });
-          }
-          return { ...message, reactions: newReactions };
+    const applyOptimisticReactions = (messages: MessageItem[]) =>
+      messages.map((message) => {
+        if (message.id !== messageId) {
+          return message;
         }
-        return message;
-      }),
+
+        const hasExact = message.reactions.some(
+          (reaction) => reaction.userId === currentUserId && reaction.emoji === emoji,
+        );
+
+        if (hasExact) {
+          return {
+            ...message,
+            reactions: message.reactions.filter(
+              (reaction) => !(reaction.userId === currentUserId && reaction.emoji === emoji),
+            ),
+          };
+        }
+
+        const withoutMine = message.reactions.filter((reaction) => reaction.userId !== currentUserId);
+        return {
+          ...message,
+          reactions: [
+            ...withoutMine,
+            { emoji, userId: currentUserId, username: user?.name || '' },
+          ],
+        };
+      });
+
+    let targetMessage = messagesRef.current.find((item) => item.id === messageId);
+    if (!targetMessage) {
+      const threadCache = threadCacheRef.current[selectedId];
+      targetMessage = threadCache?.messages.find((item) => item.id === messageId);
+    }
+
+    const togglingOff = Boolean(
+      targetMessage?.reactions.some(
+        (reaction) => reaction.userId === currentUserId && reaction.emoji === emoji,
+      ),
     );
 
-    if (targetMessage) {
+    setMessages((current) => applyOptimisticReactions(current));
+    patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
+      applyOptimisticReactions(current),
+    );
 
-      if (exactMatch) {
-        // Toggle off exact match. Also clear any other rogue reactions.
-        for (const reaction of existingReactions) {
-          const removeResult = await removeMessageReaction(selectedId, messageId, reaction.emoji);
-          if (reaction.emoji === emoji && !removeResult.ok) {
-            if (handleUnauthorized(removeResult.status)) return;
-            setThreadError(removeResult.error);
+    try {
+      if (togglingOff) {
+        const removeResult = await removeMessageReaction(selectedId, messageId, emoji);
+        if (!removeResult.ok) {
+          if (handleUnauthorized(removeResult.status)) {
             return;
           }
-          if (reaction.emoji === emoji) {
-            finalResult = removeResult;
-          }
-        }
-      } else if (existingReactions.length > 0) {
-        // Changed emoji: remove all old ones, then fall through to add new one
-        for (const reaction of existingReactions) {
-          const removeResult = await removeMessageReaction(selectedId, messageId, reaction.emoji);
-          if (!removeResult.ok && handleUnauthorized(removeResult.status)) return;
-        }
-      }
-    }
-
-    if (!finalResult) {
-      finalResult = await addMessageReaction(selectedId, messageId, emoji);
-      if (!finalResult.ok) {
-        if (handleUnauthorized(finalResult.status)) {
+          setThreadError(removeResult.error);
           return;
         }
-        setThreadError(finalResult.error);
+
+        const resultData = removeResult.data;
+        setMessages((current) =>
+          current.map((message) =>
+            message.id === messageId
+              ? preserveMessageOwnership(mergeMessageUpdates(message, resultData), message, currentUserId)
+              : message,
+          ),
+        );
+        patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
+          current.map((message) =>
+            message.id === messageId
+              ? preserveMessageOwnership(mergeMessageUpdates(message, resultData), message, currentUserId)
+              : message,
+          ),
+        );
         return;
       }
+
+      const otherMine =
+        targetMessage?.reactions.filter(
+          (reaction) => reaction.userId === currentUserId && reaction.emoji !== emoji,
+        ) ?? [];
+
+      for (const reaction of otherMine) {
+        const removeResult = await removeMessageReaction(selectedId, messageId, reaction.emoji);
+        if (!removeResult.ok && handleUnauthorized(removeResult.status)) {
+          return;
+        }
+      }
+
+      const addResult = await addMessageReaction(selectedId, messageId, emoji);
+      if (!addResult.ok) {
+        if (handleUnauthorized(addResult.status)) {
+          return;
+        }
+        setThreadError(addResult.error);
+        return;
+      }
+
+      const resultData = addResult.data;
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === messageId
+            ? preserveMessageOwnership(
+                mergeMessageUpdates(message, resultData, { replaceReactions: true }),
+                message,
+                currentUserId,
+              )
+            : message,
+        ),
+      );
+      patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
+        current.map((message) =>
+          message.id === messageId
+            ? preserveMessageOwnership(
+                mergeMessageUpdates(message, resultData, { replaceReactions: true }),
+                message,
+                currentUserId,
+              )
+            : message,
+        ),
+      );
+    } finally {
+      reactionInFlightRef.current.delete(messageId);
     }
-
-    const resultData = finalResult.data;
-
-    setMessages((current) =>
-      current.map((message) =>
-        message.id === messageId
-          ? preserveMessageOwnership(mergeMessageUpdates(message, resultData), message, currentUserId)
-          : message,
-      ),
-    );
-
-    patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
-      current.map((message) =>
-        message.id === messageId
-          ? preserveMessageOwnership(mergeMessageUpdates(message, resultData), message, currentUserId)
-          : message,
-      ),
-    );
   };
 
   const handleVotePoll = async (messageId: string, optionId: string) => {
@@ -6131,7 +6339,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           focusMessageId={focusMessageId}
           unreadAnchorMessageId={threadUnreadAnchorId}
           initialScrollSnapshot={
-            selectedId ? getConversationScrollSnapshot(selectedId) ?? null : null
+            focusMessageId || !selectedId
+              ? null
+              : getConversationScrollSnapshot(selectedId) ?? null
           }
           onSaveScrollPosition={(snapshot) => {
             if (selectedId) {
@@ -6325,6 +6535,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         selfLabel={selfLabel}
         openingTeammateId={openingTeammateId}
         directChatMetadata={directChatMetadata}
+        presenceByUserId={presenceByUserId}
+        viewerUserId={getUserId(user)}
+        viewerSharePresence={normalizeUserProfile(user).shareOnlineStatus ?? true}
         conversations={conversationsForSidebar}
         typingPreviews={typingPreviews}
         teammates={teammates}

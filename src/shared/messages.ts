@@ -746,8 +746,16 @@ export function groupMessageReactions(
   currentUserId: string | null,
 ): { emoji: string; count: number; reactedByMe: boolean }[] {
   const groups = new Map<string, { count: number; reactedByMe: boolean }>();
+  const seenByEmoji = new Map<string, Set<string>>();
 
   for (const reaction of reactions) {
+    const reactors = seenByEmoji.get(reaction.emoji) ?? new Set<string>();
+    if (reactors.has(reaction.userId)) {
+      continue;
+    }
+    reactors.add(reaction.userId);
+    seenByEmoji.set(reaction.emoji, reactors);
+
     const existing = groups.get(reaction.emoji) ?? { count: 0, reactedByMe: false };
     groups.set(reaction.emoji, {
       count: existing.count + 1,
@@ -1663,23 +1671,64 @@ function decoratePreviewLabel(label: string): string {
     return trimmed;
   }
 
+  // File names (zip, pdf, etc.) — plain text, no emoji in the sidebar.
+  if (/\.[a-z0-9]{1,8}$/i.test(trimmed) || /^file$/i.test(trimmed)) {
+    return trimmed;
+  }
+
   if (/^gif$/i.test(trimmed)) {
-    return 'GIF';
+    return '🎞️ GIF';
   }
 
   if (/^sticker$/i.test(trimmed)) {
-    return 'Sticker';
+    return '🏷️ Sticker';
   }
 
   if (/^poll$/i.test(trimmed)) {
-    return 'Poll';
+    return '📊 Poll';
+  }
+
+  if (/^video$/i.test(trimmed)) {
+    return '🎥 Video';
   }
 
   if (/^(photo|image)$/i.test(trimmed)) {
-    return 'Photo';
+    return '📷 Photo';
   }
 
   return trimmed;
+}
+
+export function formatAttachmentPreviewLabel(
+  item: Pick<MessageMedia, 'kind' | 'name' | 'url'>,
+  messageType?: string | null,
+): string {
+  const resolved = withResolvedAttachmentKind(
+    { kind: item.kind, name: item.name, url: item.url, previewUrl: null },
+    messageType,
+  );
+
+  if (resolved.kind === 'sticker') {
+    return 'Sticker';
+  }
+
+  if (resolved.kind === 'gif') {
+    return 'GIF';
+  }
+
+  if (resolved.kind === 'file') {
+    return resolved.name?.trim() || 'File';
+  }
+
+  if (resolved.kind === 'video' || isVideoMediaItem(resolved, messageType)) {
+    return 'Video';
+  }
+
+  if (resolved.kind === 'image') {
+    return 'Photo';
+  }
+
+  return 'Photo';
 }
 
 export function decoratePreviewText(preview: string): string {
@@ -1725,14 +1774,7 @@ export function formatMessagePreview(
 
   if (message.media.length > 0) {
     const primary = message.media[0];
-    const label =
-      primary.kind === 'sticker'
-        ? 'Sticker'
-        : primary.kind === 'gif'
-          ? 'GIF'
-          : primary.kind === 'file'
-            ? primary.name ?? 'File'
-            : 'Photo';
+    const label = formatAttachmentPreviewLabel(primary, message.messageType);
     return trimmedContent ? `${trimmedContent} (${label})` : label;
   }
 
@@ -1740,6 +1782,7 @@ export function formatMessagePreview(
   if (type.includes('sticker')) return 'Sticker';
   if (type.includes('gif')) return 'GIF';
   if (type.includes('file')) return 'File';
+  if (type.includes('video')) return 'Video';
   if (type.includes('image')) return 'Photo';
   if (type.includes('poll')) return 'Poll';
 

@@ -6,10 +6,10 @@
   :root,
   .light,
   .dark {
-    --accent-rgb: 128 61 76;
-    --accent-hover-rgb: 106 51 64;
-    --accent-active-rgb: 90 43 53;
-    --accent-soft-rgb: 166 93 109;
+    --accent-rgb: 136 24 24;
+    --accent-hover-rgb: 112 18 18;
+    --accent-active-rgb: 92 14 14;
+    --accent-soft-rgb: 176 72 72;
   }
 
   :root,
@@ -36,7 +36,7 @@
     --app-inset-active: #e2e6f0;
     --app-avatar-fallback: #e2e8f0;
     --app-message-in: #ffffff;
-    --app-message-out: #803d4c;
+    --app-message-out: #881818;
     --app-message-out-text: #ffffff;
     --app-placeholder: #94a3b8;
     --app-glass-bg: rgba(255, 255, 255, 0.97);
@@ -70,7 +70,7 @@
     --app-inset-active: #20222f;
     --app-avatar-fallback: #242634;
     --app-message-in: #191a23;
-    --app-message-out: #803d4c;
+    --app-message-out: #881818;
     --app-message-out-text: #ffffff;
     --app-placeholder: #5d6175;
     --app-glass-bg: rgba(19, 20, 27, 0.8);
@@ -345,8 +345,8 @@
 
   /* Selected Conversation Card */
   .conversation-card-active {
-    background-color: var(--app-chat-active);
-    box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb) / 0.3), 0 4px 16px -2px rgba(0, 0, 0, 0.25);
+    background-color: color-mix(in srgb, rgb(var(--accent-rgb)) 10%, var(--app-chat-active));
+    box-shadow: inset 0 0 0 1px rgba(var(--accent-rgb) / 0.28), 0 4px 16px -2px rgba(0, 0, 0, 0.2);
   }
 
   /* Respect reduced motion */

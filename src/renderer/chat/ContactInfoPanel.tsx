@@ -19,7 +19,7 @@ import {
   FiMessageSquare,
 } from 'react-icons/fi';
 import type { ConversationItem } from '../../shared/chat';
-import { mapApiPresenceToStatus, type PresenceStatus } from '../../shared/chat';
+import { mapApiPresenceToStatus, normalizePresenceUserId, type PresenceStatus } from '../../shared/chat';
 import {
   formatContactPresenceLabel,
   mapContactPresenceStatus,
@@ -159,7 +159,9 @@ export function ContactInfoPanel({
     if (!result.ok) {
       return;
     }
-    const item = result.data.find((entry) => entry.userId === peerUserId);
+    const item = result.data.find(
+      (entry) => normalizePresenceUserId(entry.userId) === normalizePresenceUserId(peerUserId),
+    );
     if (item) {
       setLiveStatus(mapApiPresenceToStatus(item.status));
     }

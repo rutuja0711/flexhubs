@@ -17,6 +17,7 @@ import {
   shouldShowUploadProgress,
 } from '../../shared/messages';
 import { loadMessageById } from '../chatApi';
+import { prefetchAuthenticatedMediaUrls } from '../authenticatedMedia';
 import { fetchMediaBlob } from '../mediaBlob';
 import { formatConversationTimestamp, formatMessageDayDivider, messageDayKey } from './format';
 import { Avatar, EnhanceSparkleIcon } from './ChatIcons';
@@ -345,7 +346,7 @@ function MessageTimeInline({
 
   return (
     <span
-      className={`inline-flex items-center gap-1 whitespace-nowrap text-[0.6875rem] leading-none ${
+      className={`inline-flex items-center gap-1 whitespace-nowrap text-[0.625rem] leading-none tracking-wide ${
         message.isOwn
           ? 'text-app-message-out-text/75'
           : 'text-app-muted'
@@ -385,6 +386,39 @@ function MessageTimeInline({
         />
       ) : null}
     </span>
+  );
+}
+
+function MessageTimeFooter({
+  message,
+  messages,
+  conversationId,
+  conversationDetails,
+  currentUserId,
+  conversationKind,
+  onRetryMessage,
+}: {
+  message: MessageItem;
+  messages: MessageItem[];
+  conversationId?: string;
+  conversationDetails?: Record<string, unknown> | null;
+  currentUserId: string | null;
+  conversationKind?: string;
+  onRetryMessage?: (messageId: string) => void;
+}) {
+  return (
+    <div className="mt-0.5 flex w-full justify-end pr-0.5 opacity-90">
+      <MessageTimeInline
+        message={message}
+        messages={messages}
+        conversationId={conversationId}
+        conversationDetails={conversationDetails}
+        currentUserId={currentUserId}
+        conversationKind={conversationKind}
+        onRetryMessage={onRetryMessage}
+        className={message.isOwn ? '' : '!text-app-muted'}
+      />
+    </div>
   );
 }
 
@@ -502,12 +536,12 @@ const MessageRow = memo(function MessageRow({
   };
 
   const bubbleClassName = `${
-    bubbleHasMediaCaption ? 'inline-flex w-fit max-w-full flex-col overflow-hidden p-0' : 'inline-block w-fit max-w-full px-3.5 py-2'
-  } rounded-[18px] text-sm leading-relaxed border border-black/20 dark:border-white/20 text-app-text ${
-    message.isOwn ? 'self-end' : 'self-start'
+    bubbleHasMediaCaption ? 'inline-flex w-fit max-w-full flex-col overflow-hidden p-0' : 'inline-block w-fit max-w-full px-3.5 py-2.5'
+  } rounded-[18px] text-sm leading-relaxed transition-shadow duration-150 ${
+    message.isOwn
+      ? 'self-end border border-white/12 bg-app-message-out text-app-message-out-text shadow-sm shadow-black/15'
+      : 'self-start border border-app-border-subtle bg-app-message-in text-app-text shadow-sm shadow-black/[0.03] dark:shadow-black/20'
   }`;
-  const bubbleCaptionPad = bubbleHasMediaCaption ? 'px-3.5' : '';
-
   return (
     <div
       data-message-id={message.id}
@@ -601,63 +635,23 @@ const MessageRow = memo(function MessageRow({
                       onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
                     }
                   />
-                  <div className="mt-0.5 flex justify-end">
-                    <MessageTimeInline {...timeInlineProps} className="!text-app-muted" />
-                  </div>
                 </div>
               ) : (
                 <div className={bubbleClassName}>
-                  {isTextOnly ? (
-                    message.isOwn ? (
-                      <>
-                        <MessageContent
-                          message={message}
-                          highlightTerm={highlightTerm}
-                          currentUserId={currentUserId}
-                          {...mediaSendProps}
-                          onVotePoll={
-                            onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
-                          }
-                        />
-                        <div className="mt-1.5 flex justify-end">
-                          <MessageTimeInline {...timeInlineProps} />
-                        </div>
-                      </>
-                    ) : (
-                      <div className="grid grid-cols-[minmax(0,1fr)_auto] items-end gap-x-1.5">
-                        <span className="min-w-0 whitespace-pre-wrap break-words break-all text-left">
-                          <MessageContent
-                            message={message}
-                            highlightTerm={highlightTerm}
-                            compact
-                            currentUserId={currentUserId}
-                            {...mediaSendProps}
-                            onVotePoll={
-                              onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
-                            }
-                          />
-                        </span>
-                        <MessageTimeInline {...timeInlineProps} className="pb-[1px]" />
-                      </div>
-                    )
-                  ) : (
-                    <>
-                      <MessageContent
-                        message={message}
-                        highlightTerm={highlightTerm}
-                        currentUserId={currentUserId}
-                        {...mediaSendProps}
-                        onVotePoll={
-                          onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
-                        }
-                      />
-                      <div className={`mt-1.5 flex justify-end ${bubbleHasMediaCaption ? `${bubbleCaptionPad} pb-2` : ''}`}>
-                        <MessageTimeInline {...timeInlineProps} />
-                      </div>
-                    </>
-                  )}
+                  <MessageContent
+                    message={message}
+                    highlightTerm={highlightTerm}
+                    compact={isTextOnly && !message.isOwn}
+                    currentUserId={currentUserId}
+                    {...mediaSendProps}
+                    onVotePoll={
+                      onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
+                    }
+                  />
                 </div>
               )}
+
+              <MessageTimeFooter {...timeInlineProps} />
 
               {reactionGroups.length > 0 ? (
                 <div
@@ -680,7 +674,7 @@ const MessageRow = memo(function MessageRow({
             </div>
 
             <div
-              className={`glass-panel mb-1 flex shrink-0 items-center gap-0.5 rounded-xl px-1 py-0.5 shadow-lg opacity-0 transition-all duration-200 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 ${
+              className={`glass-panel mb-1 flex shrink-0 items-center gap-0.5 rounded-xl border border-app-border/60 px-1 py-0.5 shadow-lg opacity-0 transition-all duration-200 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 ${
                 message.isOwn ? 'flex-row-reverse' : 'flex-row'
               }`}
             >
@@ -865,7 +859,34 @@ export function MessageList({
     null,
   );
   const restoredScrollForConversationRef = useRef<string | null>(null);
+  const completedScrollTargetRef = useRef<string | null>(null);
+  const completedScrollRequestKeyRef = useRef(0);
   const showInitialLoading = loading && messages.length === 0;
+
+  useEffect(() => {
+    completedScrollTargetRef.current = null;
+    completedScrollRequestKeyRef.current = 0;
+    lastMessageIdRef.current = null;
+    loadOlderScrollSnapshotRef.current = null;
+    restoredScrollForConversationRef.current = null;
+    stickToBottomRef.current = true;
+    suppressAutoScrollRef.current = false;
+  }, [conversationId]);
+
+  useEffect(() => {
+    const urls: string[] = [];
+    for (const message of messages) {
+      for (const item of message.media ?? []) {
+        if (item.url) {
+          urls.push(item.url);
+        }
+        if (item.previewUrl && item.previewUrl !== item.url) {
+          urls.push(item.previewUrl);
+        }
+      }
+    }
+    prefetchAuthenticatedMediaUrls(urls);
+  }, [messages]);
 
   const persistScrollPosition = useCallback(() => {
     if (!conversationId || !onSaveScrollPosition) {
@@ -920,21 +941,33 @@ export function MessageList({
   }, [pendingScrollToMessageId, scrollToMessageId]);
 
   useEffect(() => {
-    if (!scrollToMessageId || showInitialLoading) {
+    const scrollTargetId = scrollToMessageId ?? pendingScrollToMessageId;
+
+    if (!scrollTargetId || showInitialLoading) {
+      return;
+    }
+
+    if (
+      completedScrollTargetRef.current === scrollTargetId &&
+      completedScrollRequestKeyRef.current === scrollRequestKey
+    ) {
       return;
     }
 
     let attempts = 0;
     let frame = 0;
-    const maxAttempts = 48;
+    const maxAttempts = 96;
 
     const tryScroll = () => {
       const container = scrollContainerRef.current;
-      const element = container?.querySelector(`[data-message-id="${scrollToMessageId}"]`);
+      const element = container?.querySelector(`[data-message-id="${scrollTargetId}"]`);
 
       if (container && element instanceof HTMLElement) {
         stickToBottomRef.current = false;
         suppressAutoScrollRef.current = true;
+        completedScrollTargetRef.current = scrollTargetId;
+        completedScrollRequestKeyRef.current = scrollRequestKey;
+        lastMessageIdRef.current = messages[messages.length - 1]?.id ?? null;
 
         const elementTop =
           element.getBoundingClientRect().top -
@@ -944,7 +977,7 @@ export function MessageList({
           elementTop - container.clientHeight / 2 + element.getBoundingClientRect().height / 2;
 
         container.scrollTop = Math.max(0, Math.min(targetTop, container.scrollHeight - container.clientHeight));
-        onScrollToMessageComplete?.(scrollToMessageId);
+        onScrollToMessageComplete?.(scrollTargetId);
         return;
       }
 
@@ -957,26 +990,49 @@ export function MessageList({
     frame = window.requestAnimationFrame(tryScroll);
 
     return () => window.cancelAnimationFrame(frame);
-  }, [messages, onScrollToMessageComplete, scrollRequestKey, scrollToMessageId, showInitialLoading]);
+  }, [
+    messages,
+    onScrollToMessageComplete,
+    pendingScrollToMessageId,
+    scrollRequestKey,
+    scrollToMessageId,
+    showInitialLoading,
+  ]);
 
   useEffect(() => {
     if (pendingScrollToMessageId) {
       stickToBottomRef.current = false;
       suppressAutoScrollRef.current = true;
-    } else if (initialScrollSnapshot && !initialScrollSnapshot.stickToBottom) {
+      return;
+    }
+
+    if (scrollToMessageId) {
+      stickToBottomRef.current = false;
+      suppressAutoScrollRef.current = true;
+      return;
+    }
+
+    if (initialScrollSnapshot && !initialScrollSnapshot.stickToBottom) {
       stickToBottomRef.current = false;
       suppressAutoScrollRef.current = false;
-    } else if (initialScrollSnapshot?.stickToBottom) {
-      stickToBottomRef.current = true;
-      suppressAutoScrollRef.current = false;
-    } else {
-      stickToBottomRef.current = true;
-      suppressAutoScrollRef.current = false;
+      return;
     }
-    lastMessageIdRef.current = null;
-    loadOlderScrollSnapshotRef.current = null;
-    restoredScrollForConversationRef.current = null;
-  }, [conversationId, initialScrollSnapshot, pendingScrollToMessageId]);
+
+    if (initialScrollSnapshot?.stickToBottom) {
+      stickToBottomRef.current = true;
+      suppressAutoScrollRef.current = false;
+      return;
+    }
+
+    if (completedScrollTargetRef.current) {
+      stickToBottomRef.current = false;
+      suppressAutoScrollRef.current = true;
+      return;
+    }
+
+    stickToBottomRef.current = true;
+    suppressAutoScrollRef.current = false;
+  }, [initialScrollSnapshot, pendingScrollToMessageId, scrollToMessageId]);
 
   useEffect(() => {
     return () => {
@@ -1112,6 +1168,7 @@ export function MessageList({
       isInitialLoad &&
       !pendingScrollToMessageId &&
       !scrollToMessageId &&
+      !completedScrollTargetRef.current &&
       conversationId &&
       restoredScrollForConversationRef.current !== conversationId &&
       initialScrollSnapshot &&
@@ -1166,7 +1223,7 @@ export function MessageList({
     }
 
     const shouldScroll =
-      (isInitialLoad && !pendingScrollToMessageId && !scrollToMessageId) ||
+      (isInitialLoad && !pendingScrollToMessageId && !scrollToMessageId && !completedScrollTargetRef.current) ||
       isOwnNewMessage ||
       (appendedNewMessage && stickToBottomRef.current);
 
@@ -1261,7 +1318,7 @@ export function MessageList({
         ref={scrollContainerRef}
         className="message-list-scroll flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 py-4"
       >
-        <div ref={contentRef} className="flex flex-col gap-4">
+        <div ref={contentRef} className="flex flex-col gap-2.5">
         {loadingOlder ? (
           <div className="flex justify-center py-2 text-xs text-app-muted" role="status">
             Loading earlier messages…

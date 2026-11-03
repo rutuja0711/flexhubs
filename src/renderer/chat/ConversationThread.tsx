@@ -446,42 +446,27 @@ export function ConversationThread({
     [scrollToMessageInThread],
   );
 
-  useEffect(() => {
+  const focusThreadScrollSignature = useMemo(() => {
     if (!focusMessageId) {
+      return '';
+    }
+
+    if (!messages.some((message) => message.id === focusMessageId)) {
+      return '';
+    }
+
+    const firstId = messages[0]?.id ?? '';
+    const lastId = messages[messages.length - 1]?.id ?? '';
+    return `${focusMessageId}:${messages.length}:${firstId}:${lastId}`;
+  }, [focusMessageId, messages]);
+
+  useEffect(() => {
+    if (!focusThreadScrollSignature || loading) {
       return;
     }
 
-    if (loading) {
-      return;
-    }
-
-    if (mainChatMessages.some((message) => message.id === focusMessageId)) {
-      jumpToMessage(focusMessageId);
-      return;
-    }
-
-    const target = messages.find((message) => message.id === focusMessageId);
-    if (!target) {
-      return;
-    }
-
-    if (threadsEnabled && isThreadReply(target)) {
-      const rootId = target.threadRootId ?? null;
-      const root = rootId ? messages.find((message) => message.id === rootId) : null;
-      if (root) {
-        setThreadRootMessage(root);
-      }
-      onFocusMessageHandled?.();
-    }
-  }, [
-    focusMessageId,
-    jumpToMessage,
-    loading,
-    mainChatMessages,
-    messages,
-    onFocusMessageHandled,
-    threadsEnabled,
-  ]);
+    jumpToMessage(focusMessageId!);
+  }, [focusMessageId, focusThreadScrollSignature, jumpToMessage, loading]);
 
   const handlePinnedBannerJump = () => {
     if (!featuredPinnedMessage) {
@@ -725,7 +710,7 @@ export function ConversationThread({
   return (
     <div className="flex h-full w-full flex-row overflow-hidden">
       <div className="flex h-full flex-1 min-h-0 min-w-0 flex-col bg-app-chat-bg relative">
-        <header className="flex items-center justify-between border-b border-app-border bg-app-chat-bg/90 backdrop-blur-md px-6 py-3.5 z-20">
+        <header className="flex items-center justify-between border-b border-app-border/80 bg-app-chat-bg/95 backdrop-blur-md px-6 py-3 z-20">
         <div
           className="group min-w-0 cursor-pointer text-left transition-opacity hover:opacity-90"
           onClick={openInfoPanel}
@@ -1005,7 +990,7 @@ export function ConversationThread({
         error={error}
         highlightTerm={searchOpen && searchQuery.trim() ? searchQuery : ''}
         highlightedMessageIds={highlightedMessageIds}
-        scrollToMessageId={bannerScrollTargetId}
+        scrollToMessageId={bannerScrollTargetId ?? focusMessageId}
         pendingScrollToMessageId={focusMessageId}
         scrollRequestKey={scrollRequestKey}
         scrollRestoreKey={scrollRestoreKey}
@@ -1018,9 +1003,6 @@ export function ConversationThread({
         onJumpToMessage={jumpToMessage}
         onScrollToMessageComplete={(messageId) => {
           setBannerScrollTargetId(null);
-          if (messageId && focusMessageId && messageId === focusMessageId && !loading) {
-            onFocusMessageHandled?.();
-          }
           if (messageId) {
             const timeoutId = window.setTimeout(() => {
               setHighlightedMessageIds((current) => current.filter((id) => id !== messageId));

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FiBell, FiChevronDown, FiUserMinus, FiX } from 'react-icons/fi';
-import { mapApiPresenceToStatus, type PresenceStatus } from '../../shared/chat';
+import { mapApiPresenceToStatus, normalizePresenceUserId, type PresenceStatus } from '../../shared/chat';
 import {
   formatContactPresenceLabel,
   mapContactPresenceStatus,
@@ -284,7 +284,7 @@ export function GroupSidebar({
         const status = mapApiPresenceToStatus(item.status);
 
         if (status) {
-          nextPresence.set(item.userId, status);
+          nextPresence.set(normalizePresenceUserId(item.userId), status);
         }
       }
 
@@ -630,7 +630,8 @@ export function GroupSidebar({
                 );
                 const liveStatus = redactIdentity
                   ? null
-                  : presenceByUserId.get(admin.id) ?? mapContactPresenceStatus(admin.status);
+                  : presenceByUserId.get(normalizePresenceUserId(admin.id)) ??
+                    mapContactPresenceStatus(admin.status);
                 const presenceLabel = redactIdentity
                   ? ''
                   : formatContactPresenceLabel(liveStatus, admin.lastSeenAt);
@@ -685,7 +686,8 @@ export function GroupSidebar({
                 );
                 const liveStatus = redactIdentity
                   ? null
-                  : presenceByUserId.get(member.id) ?? mapContactPresenceStatus(member.status);
+                  : presenceByUserId.get(normalizePresenceUserId(member.id)) ??
+                    mapContactPresenceStatus(member.status);
                 const presenceLabel = redactIdentity
                   ? ''
                   : formatContactPresenceLabel(liveStatus, member.lastSeenAt);

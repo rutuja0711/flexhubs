@@ -649,6 +649,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('user:organization-members-detailed', token),
   startRealtime: (token: string): Promise<{ ok: true }> =>
     ipcRenderer.invoke('realtime:start', token),
+  getRealtimeServerStatus: (
+    token: string,
+  ): Promise<
+    ApiResult<{
+      enabled: boolean;
+      mode: string | null;
+      redisPresence: boolean;
+    }>
+  > => ipcRenderer.invoke('realtime:server-status', token),
   stopRealtime: (): Promise<{ ok: true }> => ipcRenderer.invoke('realtime:stop'),
   sendTyping: (
     token: string,

@@ -67,10 +67,10 @@ export function VoiceNoteBubble({ src, isOwn = false }: VoiceNoteBubbleProps) {
 
   return (
     <div
-      className={`flex min-w-[240px] max-w-[min(100%,280px)] items-center gap-3 rounded-[18px] px-3 py-2.5 shadow-sm ${
+      className={`flex min-w-[240px] max-w-[min(100%,280px)] items-center gap-3 rounded-2xl border px-3 py-2.5 shadow-sm ${
         isOwn
-          ? 'bg-gradient-to-br from-accent via-accent to-[#632a38] text-white shadow-accent/20'
-          : 'bg-app-surface ring-1 ring-app-border/70 text-app-text'
+          ? 'border-white/12 bg-app-message-out text-app-message-out-text shadow-black/15'
+          : 'border-app-border/70 bg-app-surface text-app-text dark:border-accent/10'
       }`}
     >
       <audio

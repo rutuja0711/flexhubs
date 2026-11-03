@@ -26,6 +26,11 @@ import {
   readPersistedAuthSession,
   writePersistedAuthSession,
 } from './main/desktopAuthStorage';
+import {
+  bootstrapAuthenticatedMediaRequestToken,
+  installAuthenticatedMediaRequestInterceptor,
+  setAuthenticatedMediaRequestToken,
+} from './main/authenticatedMediaRequest';
 import { API_BASE_URL } from './shared/auth';
 import {
   fetchInviteRegistrationDetails,
@@ -116,6 +121,8 @@ import {
   setRealtimeHandlers,
   startRealtimeStream,
   stopRealtimeStream,
+  probeRealtimeServerStatus,
+  setRealtimeHeartbeatStatus,
 } from './main/realtimeStream';
 import {
   sendTypingIndicator,
@@ -485,10 +492,12 @@ ipcMain.handle('auth:write-session', (_event, payload: { token: string; user: un
   }
 
   writePersistedAuthSession({ token, user: payload.user ?? null });
+  setAuthenticatedMediaRequestToken(token);
   return { ok: true as const };
 });
 ipcMain.handle('auth:clear-session', () => {
   clearPersistedAuthSession();
+  setAuthenticatedMediaRequestToken(null);
   return { ok: true as const };
 });
 ipcMain.handle('auth:register', (_event, payloadJson: string) => {
@@ -1136,11 +1145,13 @@ ipcMain.handle('user:update-profile', (_event, token: string, updatesJson: strin
 });
 ipcMain.handle(
   'user:update-status',
-  (_event, token: string, status: string, message?: string) =>
-    updateUserStatus(token, {
+  async (_event, token: string, status: string, message?: string) => {
+    setRealtimeHeartbeatStatus(status);
+    return updateUserStatus(token, {
       status: status as import('../shared/profile').UserPresenceStatus,
       message,
-    }),
+    });
+  },
 );
 ipcMain.handle('user:update-timezone', (_event, token: string, timezone: string) =>
   updateUserTimezone(token, timezone),
@@ -1252,6 +1263,15 @@ ipcMain.handle('realtime:access-token', (_event, token: string) => fetchRealtime
 ipcMain.handle('realtime:start', async (_event, token: string) => {
   await startRealtimeStream(token);
   return { ok: true as const };
+});
+ipcMain.handle('realtime:server-status', async (_event, token: string) => {
+  const snapshot = await probeRealtimeServerStatus(token);
+
+  if (!snapshot) {
+    return { ok: false as const, error: 'Unable to load realtime status.' };
+  }
+
+  return { ok: true as const, data: snapshot };
 });
 ipcMain.handle('realtime:stop', () => {
   stopRealtimeStream();
@@ -1907,6 +1927,8 @@ app.whenReady().then(() => {
   });
 
   setupDisplayMediaHandler();
+  installAuthenticatedMediaRequestInterceptor();
+  bootstrapAuthenticatedMediaRequestToken();
   logScreenCaptureStartupHint();
   logNotificationStartupHint();
 

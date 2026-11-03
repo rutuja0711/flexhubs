@@ -1166,10 +1166,10 @@ export function MessageInput({
       ) : null}
 
       <div
-        className={`relative flex flex-col rounded-[24px] border bg-app-surface-input/90 backdrop-blur-md transition-all duration-200 shadow-composer focus-within:shadow-composer-focus ${
+        className={`relative flex flex-col rounded-[22px] border bg-app-surface/95 backdrop-blur-md transition-all duration-200 shadow-composer focus-within:border-accent/45 focus-within:shadow-composer-focus ${
           replyingToMessage ? 'rounded-t-none border-t-0' : ''
         } ${
-          displayError ? 'border-accent ring-2 ring-accent' : 'border-app-border focus-within:border-accent/60'
+          displayError ? 'border-accent ring-2 ring-accent/30' : 'border-app-border/80'
         }`}
       >
         <input
@@ -1370,7 +1370,7 @@ export function MessageInput({
               (!value.trim() && pendingAttachments.length === 0 && !pendingVoiceNote)
             }
             aria-label={isSending ? 'Sending message' : aiBusy ? 'Working' : 'Send message'}
-            className="mb-0.5 flex h-8 w-8 shrink-0 items-center justify-center self-end rounded-xl bg-gradient-to-br from-accent via-accent to-[#632a38] text-white shadow-md shadow-accent/30 transition-all duration-200 hover:shadow-accent-glow hover:scale-105 active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100 disabled:shadow-none"
+            className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center self-end rounded-xl bg-accent text-white shadow-md shadow-accent/25 transition-all duration-200 hover:bg-accent-hover hover:shadow-accent-glow active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100 disabled:shadow-none"
             onClick={handleSendAction}
           >
             <FiSend className="text-sm" />

@@ -10,6 +10,7 @@ import {
   type RealtimeClientConfig,
   type RealtimeStatusPayload,
 } from '../shared/realtime';
+import { normalizePresenceUserId } from '../shared/chat';
 import { apiGet, apiPatch, apiPost } from './apiRequest';
 
 function readMainSupabaseEnv(): Record<string, string | undefined> {
@@ -126,12 +127,21 @@ export async function setUserOnline(token: string): Promise<ApiResult<{ ok: true
   return { ok: true, data: { ok: true } };
 }
 
-export async function sendRealtimeHeartbeat(token: string): Promise<ApiResult<{ ok: true }>> {
+export async function sendRealtimeHeartbeat(
+  token: string,
+  body?: { status?: string; timezone?: string },
+): Promise<ApiResult<{ ok: true }>> {
+  const timezone =
+    body?.timezone?.trim() ||
+    Intl.DateTimeFormat().resolvedOptions().timeZone ||
+    'UTC';
+  const status = body?.status?.trim() || 'ONLINE';
+
   const result = await apiPost<unknown>(
     `${API_BASE_URL}/realtime/heartbeat`,
     token,
     'Realtime Heartbeat API',
-    {},
+    { status, timezone },
   );
 
   if (!result.ok) {
@@ -186,6 +196,53 @@ export async function sendTypingIndicator(
   return lastResult;
 }
 
+const PRESENCE_CHUNK_SIZE = 50;
+
+async function fetchPresenceChunk(
+  token: string,
+  userIds: string[],
+): Promise<import('../shared/realtime').PresenceItem[]> {
+  if (userIds.length === 0) {
+    return [];
+  }
+
+  const commaQuery = encodeURIComponent(userIds.join(','));
+  const commaResult = await apiGet<unknown>(
+    `${API_BASE_URL}/realtime/presence?userIds=${commaQuery}`,
+    token,
+    'Realtime Presence API',
+  );
+
+  if (commaResult.ok) {
+    const parsed = normalizePresencePayload(commaResult.data);
+
+    if (parsed.length > 0) {
+      return parsed;
+    }
+  }
+
+  const repeatedQuery = userIds.map((id) => `userIds=${encodeURIComponent(id)}`).join('&');
+  const repeatedResult = await apiGet<unknown>(
+    `${API_BASE_URL}/realtime/presence?${repeatedQuery}`,
+    token,
+    'Realtime Presence API',
+  );
+
+  if (repeatedResult.ok) {
+    const parsed = normalizePresencePayload(repeatedResult.data);
+
+    if (parsed.length > 0) {
+      return parsed;
+    }
+  }
+
+  if (commaResult.ok) {
+    return normalizePresencePayload(commaResult.data);
+  }
+
+  return [];
+}
+
 export async function fetchRealtimePresence(
   token: string,
   userIds: string[],
@@ -196,16 +253,31 @@ export async function fetchRealtimePresence(
     return { ok: true, data: [] };
   }
 
-  const query = encodeURIComponent(ids.join(','));
-  const result = await apiGet<unknown>(
-    `${API_BASE_URL}/realtime/presence?userIds=${query}`,
+  const probeQuery = encodeURIComponent(ids.join(','));
+  const probe = await apiGet<unknown>(
+    `${API_BASE_URL}/realtime/presence?userIds=${probeQuery}`,
     token,
     'Realtime Presence API',
   );
 
-  if (!result.ok) {
-    return result;
+  if (!probe.ok) {
+    return probe;
   }
 
-  return { ok: true, data: normalizePresencePayload(result.data) };
+  const merged = new Map<string, import('../shared/realtime').PresenceItem>();
+
+  for (let offset = 0; offset < ids.length; offset += PRESENCE_CHUNK_SIZE) {
+    const chunk = ids.slice(offset, offset + PRESENCE_CHUNK_SIZE);
+    const items = await fetchPresenceChunk(token, chunk);
+
+    for (const item of items) {
+      merged.set(normalizePresenceUserId(item.userId), item);
+    }
+  }
+
+  if (merged.size === 0) {
+    return { ok: true, data: normalizePresencePayload(probe.data) };
+  }
+
+  return { ok: true, data: [...merged.values()] };
 }
