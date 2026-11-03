@@ -42,8 +42,17 @@ if ($prepackaged) {
   if (Test-Path $appExe) {
     $setupSize = (Get-Item $dest).Length
     $appSize = (Get-Item $appExe).Length
-    if ($setupSize -lt ($appSize * 0.5)) {
-      throw "Staged file looks too small to be NSIS Setup.exe (setup=$setupSize app=$appSize). Wrong file copied?"
+    $minSetupBytes = 20MB
+
+    if ($setupSize -lt $minSetupBytes) {
+      throw "Staged file looks too small to be NSIS Setup.exe (setup=$setupSize bytes, minimum=$minSetupBytes). Wrong file copied?"
     }
+
+    # NSIS Setup.exe is LZMA-compressed; it is often well under half the raw app exe size.
+    if ($setupSize -lt ($appSize * 0.15)) {
+      throw "Staged installer is suspiciously small vs app exe (setup=$setupSize app=$appSize). Wrong file copied?"
+    }
+
+    Write-Host "Installer size check OK (setup=$setupSize appExe=$appSize)"
   }
 }
