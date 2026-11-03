@@ -13,7 +13,10 @@
 !macroend
 
 Function FlexHubsCreateStartMenuShortcut
-  !insertmacro createMenuDirectory
+  !ifdef MENU_FILENAME
+    CreateDirectory "$SMPROGRAMS\${MENU_FILENAME}"
+    ClearErrors
+  !endif
   CreateShortCut "$newStartMenuLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
   ClearErrors
   WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
