@@ -50,8 +50,11 @@ You can skip `xattr` entirely if **Open Anyway** in Privacy & Security already l
 
 1. Download **`FlexHubs-Setup.exe`** from Releases (not `FlexHubs Desktop.exe`, not a zip).
 2. Double-click **`FlexHubs-Setup.exe`** and follow the setup wizard (UAC may ask for permission).
-3. Choose install location and shortcuts when prompted; finish with **Launch FlexHubs Desktop** if you want to open the app immediately.
-4. Next time, open **Start Menu → FlexHubs Desktop** (or the Desktop shortcut). **Do not** re-run the installer from Downloads unless you are upgrading.
+3. Choose install location when prompted. On the **final step**, choose:
+   - **Add a shortcut on the Desktop** (recommended)
+   - **Add a shortcut to the Start Menu** (recommended — how you open the app after closing it)
+   - **Launch FlexHubs Desktop** (optional)
+4. Click **Finish**. Next time, open **Start Menu → FlexHubs** (under **FlexHubs** folder) or use the **Desktop** shortcut. **Do not** re-run the installer from Downloads unless you are upgrading.
 
 If opening the downloaded file only launches the app with **no install** and **no Start Menu entry**, the wrong file was uploaded or downloaded — use **`FlexHubs-Setup.exe`** (the NSIS installer), not the raw app executable.
 
@@ -71,7 +74,7 @@ Use **`FlexHubs-Setup.exe`** only — no portable zip builds.
 
 1. Download **`FlexHubs-Setup.exe`** from the **Releases** page (best) or CI artifacts.
 2. Run the installer wizard: Welcome → license → install location → progress → finish (optional launch).
-3. The installer registers **FlexHubs Desktop** in **Settings → Apps** and creates Start Menu / Desktop shortcuts when selected.
+3. The installer registers **FlexHubs Desktop** in **Settings → Apps**. On the **Finish** page, leave **Start Menu** and **Desktop** shortcuts checked unless you do not want them.
 4. Re-running a newer **`FlexHubs-Setup.exe`** **upgrades** in place; user data in AppData is preserved.
 5. On the blue SmartScreen screen: **More info → Run anyway** (unsigned builds only).
 6. If blocked by antivirus: add an exception for the installer or your FlexHubs install folder.

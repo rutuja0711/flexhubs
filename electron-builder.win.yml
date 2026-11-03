@@ -30,8 +30,10 @@ nsis:
   uninstallerIcon: assets/icon.ico
   installerHeaderIcon: assets/icon.ico
   license: assets/desktop-eula.txt
-  createDesktopShortcut: true
-  createStartMenuShortcut: true
+  # Shortcuts are created on the Finish page when the user checks the boxes
+  # (see scripts/windows/installer.nsh). Defaults are checked.
+  createDesktopShortcut: false
+  createStartMenuShortcut: false
   shortcutName: FlexHubs Desktop
   runAfterFinish: true
   menuCategory: FlexHubs
