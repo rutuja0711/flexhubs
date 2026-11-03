@@ -300,6 +300,7 @@ export function useCallManager({
   const [mediasoupLocalVideo, setMediasoupLocalVideo] = useState<MediaStream | null>(null);
   const [screenSharePickerOpen, setScreenSharePickerOpen] = useState(false);
   const [meetingHubMembers, setMeetingHubMembers] = useState<HubMemberSummary[]>([]);
+  const [meetingHubMembersLoaded, setMeetingHubMembersLoaded] = useState(false);
   const [meetingDeclinedInviteUserIds, setMeetingDeclinedInviteUserIds] = useState<string[]>([]);
   const [meetingInvitedUserIds, setMeetingInvitedUserIds] = useState<string[]>([]);
   const [meetingInviteBusyUserId, setMeetingInviteBusyUserId] = useState<string | null>(null);
@@ -555,6 +556,7 @@ export function useCallManager({
     setPendingJoinRequests([]);
     setAwaitingJoinApproval(false);
     setMeetingHubMembers([]);
+    setMeetingHubMembersLoaded(false);
     setMeetingDeclinedInviteUserIds([]);
     setMeetingInvitedUserIds([]);
     setMeetingInviteBusyUserId(null);
@@ -1431,8 +1433,14 @@ export function useCallManager({
     const bootstrapResult = await loadConversationBootstrap(active.conversationId);
 
     if (bootstrapResult.ok) {
-      setMeetingHubMembers(readHubMembersFromBootstrapPayload(bootstrapResult.data));
+      setMeetingHubMembers(
+        readHubMembersFromBootstrapPayload(
+          bootstrapResult.data.conversation ?? bootstrapResult.data,
+        ),
+      );
     }
+
+    setMeetingHubMembersLoaded(true);
 
     if (!isMeetingModerator(active)) {
       return;
@@ -2766,6 +2774,7 @@ export function useCallManager({
     pendingJoinRequests,
     awaitingJoinApproval,
     meetingHubMembers,
+    meetingHubMembersLoaded,
     meetingDeclinedInviteUserIds,
     meetingInvitedUserIds,
     meetingInviteBusyUserId,

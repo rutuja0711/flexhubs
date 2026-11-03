@@ -19,15 +19,23 @@ function readString(record: Record<string, unknown> | null, key: string): string
   return typeof value === 'string' ? value : '';
 }
 
+const MEMBER_LIST_KEYS = ['groupMembers', 'members', 'participants', 'users'] as const;
+
 function extractHubMemberRecords(hub: Record<string, unknown>): Record<string, unknown>[] {
-  if (Array.isArray(hub.groupMembers)) {
-    return hub.groupMembers
+  for (const key of MEMBER_LIST_KEYS) {
+    const value = hub[key];
+
+    if (!Array.isArray(value)) {
+      continue;
+    }
+
+    const records = value
       .map(asRecord)
       .filter((item): item is Record<string, unknown> => item !== null);
-  }
 
-  if (Array.isArray(hub.members)) {
-    return hub.members.map(asRecord).filter((item): item is Record<string, unknown> => item !== null);
+    if (records.length > 0) {
+      return records;
+    }
   }
 
   return [];
@@ -46,6 +54,7 @@ function mapHubMember(member: Record<string, unknown>): HubMemberSummary | null 
     readString(user, 'name') ||
     readString(user, 'username') ||
     readString(member, 'username') ||
+    readString(member, 'name') ||
     'Member';
 
   return {
@@ -55,27 +64,72 @@ function mapHubMember(member: Record<string, unknown>): HubMemberSummary | null 
   };
 }
 
-export function readHubMembersFromBootstrapPayload(payload: unknown): HubMemberSummary[] {
-  const record = asRecord(payload);
-  const hub = asRecord(record?.hub) ?? asRecord(record?.group) ?? record;
+function mergeMemberLists(...lists: HubMemberSummary[][]): HubMemberSummary[] {
+  const seen = new Set<string>();
+  const merged: HubMemberSummary[] = [];
 
+  for (const list of lists) {
+    for (const member of list) {
+      if (seen.has(member.id)) {
+        continue;
+      }
+
+      seen.add(member.id);
+      merged.push(member);
+    }
+  }
+
+  return merged.sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function readMembersFromHubRecord(hub: Record<string, unknown> | null): HubMemberSummary[] {
   if (!hub) {
     return [];
   }
 
-  const seen = new Set<string>();
   const members: HubMemberSummary[] = [];
 
   for (const raw of extractHubMemberRecords(hub)) {
     const mapped = mapHubMember(raw);
 
-    if (!mapped || seen.has(mapped.id)) {
-      continue;
+    if (mapped) {
+      members.push(mapped);
     }
-
-    seen.add(mapped.id);
-    members.push(mapped);
   }
 
-  return members.sort((left, right) => left.name.localeCompare(right.name));
+  return members;
+}
+
+/** Reads hub/group member lists from bootstrap, conversation, or hub detail payloads. */
+export function readHubMembersFromBootstrapPayload(payload: unknown): HubMemberSummary[] {
+  const record = asRecord(payload);
+
+  if (!record) {
+    return [];
+  }
+
+  const sources = [
+    record,
+    asRecord(record.hub),
+    asRecord(record.group),
+    asRecord(record.conversation),
+    asRecord(record.data),
+    asRecord(asRecord(record.data)?.conversation),
+  ];
+
+  const lists: HubMemberSummary[][] = [];
+
+  for (const source of sources) {
+    const members = readMembersFromHubRecord(source);
+
+    if (members.length > 0) {
+      lists.push(members);
+    }
+  }
+
+  return mergeMemberLists(...lists);
+}
+
+export function mergeHubMemberSummaries(...lists: HubMemberSummary[][]): HubMemberSummary[] {
+  return mergeMemberLists(...lists);
 }

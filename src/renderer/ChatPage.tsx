@@ -6423,6 +6423,20 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const showMeetingBanner =
     callManager.session.phase === 'idle' && Boolean(callManager.session.meetingBanner);
 
+  const meetingCallHubDetails = (() => {
+    const conversationId = callManager.session.conversationId;
+
+    if (!conversationId || !callManager.session.isGroup) {
+      return null;
+    }
+
+    if (selectedConversation?.id === conversationId && activeHubDetails) {
+      return activeHubDetails;
+    }
+
+    return getThreadCacheEntry(threadCacheRef.current, conversationId)?.activeHubDetails ?? null;
+  })();
+
   return (
     <div
       className={`flex h-full bg-app-chat-bg ${callImmersiveMode ? 'overflow-hidden bg-[#101114]' : ''}`}
@@ -6491,6 +6505,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           void callManager.removeRemoteParticipant(participantIdentity)
         }
         meetingHubMembers={callManager.meetingHubMembers}
+        meetingHubMembersLoaded={callManager.meetingHubMembersLoaded}
+        fallbackHubDetails={meetingCallHubDetails}
         meetingDeclinedInviteUserIds={callManager.meetingDeclinedInviteUserIds}
         meetingInvitedUserIds={callManager.meetingInvitedUserIds}
         meetingInviteBusyUserId={callManager.meetingInviteBusyUserId}

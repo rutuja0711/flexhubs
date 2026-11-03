@@ -6,6 +6,7 @@ import type { LocalParticipant, RemoteParticipant, Room } from 'livekit-client';
 import type { CallSession } from '../callManager';
 import { isMeetingModerator } from '../../shared/calls';
 import { CallFloatingPanel, type CallPanelLayout } from '../call/CallFloatingPanel';
+import { mergeHubMemberSummaries, readHubMembersFromBootstrapPayload } from '../call/hubMemberUtils';
 import type { HubMemberSummary } from '../call/hubMemberUtils';
 import { MediasoupMediaPlayback } from '../call/MediasoupMediaPlayback';
 import type { MediasoupRemotePeer } from '../call/mediasoupAdapter';
@@ -52,6 +53,8 @@ type CallOverlayProps = {
   onMuteParticipant: (participantIdentity: string, muted: boolean) => void;
   onRemoveParticipant: (participantIdentity: string) => void;
   meetingHubMembers?: HubMemberSummary[];
+  meetingHubMembersLoaded?: boolean;
+  fallbackHubDetails?: Record<string, unknown> | null;
   meetingDeclinedInviteUserIds?: string[];
   meetingInvitedUserIds?: string[];
   meetingInviteBusyUserId?: string | null;
@@ -113,6 +116,8 @@ export function CallOverlay({
   onMuteParticipant,
   onRemoveParticipant,
   meetingHubMembers = [],
+  meetingHubMembersLoaded = false,
+  fallbackHubDetails = null,
   meetingDeclinedInviteUserIds = [],
   meetingInvitedUserIds = [],
   meetingInviteBusyUserId = null,
@@ -288,6 +293,14 @@ export function CallOverlay({
   const showMeetingParticipantsSidebar =
     session.isGroup && panelLayout === 'fullscreen' && !usesMediasoup;
 
+  const effectiveHubMembers = mergeHubMemberSummaries(
+    meetingHubMembers,
+    readHubMembersFromBootstrapPayload(fallbackHubDetails),
+  );
+
+  const hubMembersLoading =
+    effectiveHubMembers.length === 0 && !meetingHubMembersLoaded && session.isGroup;
+
   const inCallParticipantRows: MeetingParticipantRow[] = (() => {
     if (!room) {
       return [];
@@ -301,8 +314,8 @@ export function CallOverlay({
 
     return participants.map((participant) => {
       const isLocal = participant.identity === localsIdentity;
-      const userId = resolveParticipantUserId(participant, meetingHubMembers);
-      const hubMember = meetingHubMembers.find((member) => member.id === userId);
+      const userId = resolveParticipantUserId(participant, effectiveHubMembers);
+      const hubMember = effectiveHubMembers.find((member) => member.id === userId);
 
       return {
         identity: participant.identity,
@@ -316,7 +329,7 @@ export function CallOverlay({
 
   const inCallUserIds = new Set(inCallParticipantRows.map((row) => row.userId));
 
-  const hubMembersNotInCall = meetingHubMembers.filter((member) => !inCallUserIds.has(member.id));
+  const hubMembersNotInCall = effectiveHubMembers.filter((member) => !inCallUserIds.has(member.id));
 
   const groupMeetingStage = usesMediasoup ? (
     showVideoLayout ? (
@@ -409,6 +422,7 @@ export function CallOverlay({
         <MeetingParticipantsSidebar
           inCall={inCallParticipantRows}
           hubMembersNotInCall={hubMembersNotInCall}
+          hubMembersLoading={hubMembersLoading}
           declinedUserIds={new Set(meetingDeclinedInviteUserIds)}
           invitedUserIds={new Set(meetingInvitedUserIds)}
           canInvite={canModerate && Boolean(onInviteUserToMeeting)}

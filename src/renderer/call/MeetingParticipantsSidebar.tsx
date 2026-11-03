@@ -12,6 +12,7 @@ export type MeetingParticipantRow = {
 type MeetingParticipantsSidebarProps = {
   inCall: MeetingParticipantRow[];
   hubMembersNotInCall: HubMemberSummary[];
+  hubMembersLoading?: boolean;
   declinedUserIds: ReadonlySet<string>;
   invitedUserIds: ReadonlySet<string>;
   canInvite: boolean;
@@ -63,6 +64,7 @@ function ParticipantListItem({ row }: { row: MeetingParticipantRow }) {
 export function MeetingParticipantsSidebar({
   inCall,
   hubMembersNotInCall,
+  hubMembersLoading = false,
   declinedUserIds,
   invitedUserIds,
   canInvite,
@@ -90,11 +92,21 @@ export function MeetingParticipantsSidebar({
           </ul>
         )}
 
-        {hubMembersNotInCall.length > 0 ? (
+        {canInvite || hubMembersNotInCall.length > 0 || hubMembersLoading ? (
           <>
             <p className="mt-5 px-2 pb-2 text-[11px] font-semibold uppercase tracking-wide text-white/35">
               Hub members not in call
             </p>
+            {hubMembersLoading && hubMembersNotInCall.length === 0 ? (
+              <p className="px-2 text-sm text-white/45">Loading hub members…</p>
+            ) : null}
+            {!hubMembersLoading && hubMembersNotInCall.length === 0 ? (
+              <p className="px-2 text-sm text-white/45">
+                {canInvite
+                  ? 'Everyone in this hub is in the call.'
+                  : 'No other hub members to show.'}
+              </p>
+            ) : null}
             <ul className="space-y-0.5">
               {hubMembersNotInCall.map((member) => {
                 const declined = declinedUserIds.has(member.id);
