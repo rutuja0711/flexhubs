@@ -1,4 +1,4 @@
-$installer = Join-Path $PWD "out/FlexHubs-Desktop-Setup.exe"
+$installer = Join-Path $PWD "out/FlexHubs-Setup.exe"
 
 if (-not (Test-Path $installer)) {
   Write-Error "Installer not found at $installer"

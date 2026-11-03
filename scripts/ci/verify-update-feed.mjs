@@ -31,15 +31,42 @@ async function main() {
   if (localPath) {
     const fs = await import('node:fs');
     const path = await import('node:path');
+    const crypto = await import('node:crypto');
     const resolved = path.resolve(localPath);
     if (!fs.existsSync(resolved)) {
       console.error(`File not found: ${resolved}`);
       process.exit(1);
     }
-    verifyYamlText(fs.readFileSync(resolved, 'utf8'), resolved);
+    const text = fs.readFileSync(resolved, 'utf8');
+    verifyYamlText(text, resolved);
+
+    if (process.argv.includes('--verify-sha512')) {
+      const pathMatch = text.match(/^path:\s*(.+)$/m);
+      const shaMatch = text.match(/^sha512:\s*(.+)$/m);
+      if (!pathMatch || !shaMatch) {
+        console.error('Metadata is missing path or sha512');
+        process.exit(1);
+      }
+      const assetPath = path.resolve(path.dirname(resolved), pathMatch[1].trim());
+      if (!fs.existsSync(assetPath)) {
+        console.error(`Artifact not found: ${assetPath}`);
+        process.exit(1);
+      }
+      const buffer = fs.readFileSync(assetPath);
+      const actualSha512 = crypto.createHash('sha512').update(buffer).digest('base64');
+      const expectedSha512 = shaMatch[1].trim();
+      if (actualSha512 !== expectedSha512) {
+        console.error('sha512 mismatch — metadata does not match the local artifact.');
+        console.error(`  expected: ${expectedSha512}`);
+        console.error(`  actual:   ${actualSha512}`);
+        process.exit(1);
+      }
+      console.log(`  sha512:   OK (${buffer.length} bytes)`);
+    }
+
     console.log('');
     console.log(
-      'Note: This only checks your local yml. Installed apps still need a PUBLIC URL (see below).',
+      'Note: Local metadata check only. Installed apps still need a PUBLIC URL for auto-update.',
     );
     return;
   }

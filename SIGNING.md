@@ -2,7 +2,7 @@
 
 macOS Gatekeeper and Windows SmartScreen **only trust signed builds**. There is no code-only workaround — you must sign the app in CI.
 
-After you add the GitHub secrets below, CI builds **`FlexHubs-Desktop.dmg`** and **`FlexHubs-Desktop-Setup.exe`** as signed (Mac also notarized).
+After you add the GitHub secrets below, CI builds **`FlexHubs-Desktop.dmg`** and **`FlexHubs-Setup.exe`** as signed (Mac also notarized).
 
 ## 1. Apple (Mac DMG)
 

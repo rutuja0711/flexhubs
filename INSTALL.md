@@ -2,7 +2,7 @@
 
 Unsigned builds trigger macOS Gatekeeper and Windows SmartScreen. **Right-click → Open** often fails if the file is still quarantined or the wrong file was opened.
 
-Official installers: **`FlexHubs-Desktop.dmg`** (Mac) and **`FlexHubs-Desktop-Setup.exe`** (Windows).
+Official installers: **`FlexHubs-Desktop.dmg`** (Mac) and **`FlexHubs-Setup.exe`** (Windows).
 
 ---
 
@@ -48,47 +48,48 @@ You can skip `xattr` entirely if **Open Anyway** in Privacy & Security already l
 
 **Do not** run the app from the Downloads folder every day. **Install once:**
 
-1. Download **`FlexHubs-Desktop-Setup.exe`** from Releases (not `FlexHubs Desktop.exe`, not a zip).
-2. Double-click **`FlexHubs-Desktop-Setup.exe`** once and wait until FlexHubs opens (install + first launch).
-3. Next time, open **Start Menu → FlexHubs Desktop** (or the Desktop shortcut). **Do not** open the Setup file in Downloads again.
+1. Download **`FlexHubs-Setup.exe`** from Releases (not `FlexHubs Desktop.exe`, not a zip).
+2. Double-click **`FlexHubs-Setup.exe`** and follow the setup wizard (UAC may ask for permission).
+3. Choose install location and shortcuts when prompted; finish with **Launch FlexHubs Desktop** if you want to open the app immediately.
+4. Next time, open **Start Menu → FlexHubs Desktop** (or the Desktop shortcut). **Do not** re-run the installer from Downloads unless you are upgrading.
 
-If opening the downloaded file only launches the app with **no install** and **no Start Menu entry**, the wrong file was uploaded or downloaded — it must be **`FlexHubs-Desktop-Setup.exe`** (the Squirrel installer), not the raw app executable.
+If opening the downloaded file only launches the app with **no install** and **no Start Menu entry**, the wrong file was uploaded or downloaded — use **`FlexHubs-Setup.exe`** (the NSIS installer), not the raw app executable.
 
-**Install location:** Squirrel installs per-user to `%LocalAppData%\FlexHubsDesktop`. There is **no “choose folder” wizard** in the current installer (unlike some MSI wizards). To pin elsewhere, use the Start Menu shortcut after install.
+**Install location:** Default is under **Program Files** (per-machine install). You can change the folder on the install-location step. Sign-in data and settings stay in **`%AppData%`** (outside the install folder) and are kept across upgrades and uninstall unless you remove them separately.
 
-## Windows — reliable method (Setup.exe)
+## Windows — reliable method (FlexHubs-Setup.exe)
 
 ### Before sending the app
 
 1. Open **GitHub → Releases → `desktop-latest`** (pre-release).
-2. Download **`FlexHubs-Desktop-Setup.exe`** directly from the release assets (**recommended** — avoids Chrome blocking Actions artifact zips).
-3. Fallback: GitHub Actions artifact **`FlexHubs-Desktop-Setup.exe`** (single installer file, not a portable zip).
+2. Download **`FlexHubs-Setup.exe`** directly from the release assets (**recommended** — avoids Chrome blocking Actions artifact zips).
+3. Fallback: GitHub Actions artifact from the **Build Desktop App** workflow (Windows job).
 
-Use **`FlexHubs-Desktop-Setup.exe`** only — no portable zip builds.
+Use **`FlexHubs-Setup.exe`** only — no portable zip builds.
 
 ### Tester steps
 
-1. Download **`FlexHubs-Desktop-Setup.exe`** from the **Releases** page (best) or the Actions artifact.
-2. Double-click it and wait for install to finish (FlexHubs-branded splash, then FlexHubs opens).
-3. The installer adds **Start Menu** and **Desktop** shortcuts automatically.
-4. Re-running the same installer **upgrades** the app in place.
+1. Download **`FlexHubs-Setup.exe`** from the **Releases** page (best) or CI artifacts.
+2. Run the installer wizard: Welcome → license → install location → progress → finish (optional launch).
+3. The installer registers **FlexHubs Desktop** in **Settings → Apps** and creates Start Menu / Desktop shortcuts when selected.
+4. Re-running a newer **`FlexHubs-Setup.exe`** **upgrades** in place; user data in AppData is preserved.
 5. On the blue SmartScreen screen: **More info → Run anyway** (unsigned builds only).
-6. If blocked by antivirus: add an exception for the installer or `%LocalAppData%\FlexHubsDesktop`.
+6. If blocked by antivirus: add an exception for the installer or your FlexHubs install folder.
 
-**Note:** Squirrel installs per-user to `%LocalAppData%\FlexHubsDesktop`. There is no custom install-path wizard.
+**Note:** Older Squirrel builds lived in `%LocalAppData%\FlexHubsDesktop`. The NSIS installer can remove that legacy copy during upgrade. Current releases install under Program Files by default.
 
 ### Chrome says “Dangerous download blocked”
 
 | Fix | How |
 |-----|-----|
-| **Use Releases (recommended)** | Repo → **Releases** → `desktop-latest` → download **FlexHubs-Desktop-Setup.exe** (direct file, not the Actions zip) |
+| **Use Releases (recommended)** | Repo → **Releases** → `desktop-latest` → download **FlexHubs-Setup.exe** (direct file, not the Actions zip) |
 | Use Edge or Firefox | Often allows the download when Chrome blocks it |
-| Use GitHub CLI | `gh release download desktop-latest -p FlexHubs-Desktop-Setup.exe` |
+| Use GitHub CLI | `gh release download desktop-latest -p FlexHubs-Setup.exe` |
 | Permanent fix | **Code-sign** the Windows installer (paid cert) — then browsers trust it |
 
 ### Windows Properties unblock
 
-1. Right-click **`FlexHubs-Desktop-Setup.exe` → Properties**
+1. Right-click **`FlexHubs-Setup.exe` → Properties**
 2. On **General**, tick **Unblock** (if shown) → **OK**
 3. Run the installer again.
 
@@ -96,8 +97,8 @@ Use **`FlexHubs-Desktop-Setup.exe`** only — no portable zip builds.
 
 | Mistake | Fix |
 |--------|-----|
-| Downloading **`FlexHubs-Desktop-windows-x64.zip`** from old builds | Use **`FlexHubs-Desktop-Setup.exe`** from Releases |
-| Using an old **`.msi`** | Uninstall from Settings → Apps, then use **Setup.exe** |
+| Downloading **`FlexHubs-Desktop-windows-x64.zip`** from old builds | Use **`FlexHubs-Setup.exe`** from Releases |
+| Using an old **`.msi`** or **`FlexHubs-Desktop-Setup.exe` (Squirrel)** | Uninstall from Settings → Apps, then use **`FlexHubs-Setup.exe`** |
 | “Change, repair, or remove” MSI screen | Old MSI installer — use **Setup.exe** instead |
 | Company PC with strict policy | IT must allow the app, or use web app at flexhubs.in |
 | SmartScreen with no "Run anyway" | Unblock in Properties; run as administrator |
@@ -114,7 +115,7 @@ Use **`FlexHubs-Desktop-Setup.exe`** only — no portable zip builds.
 
 ## Permanent fix (no warnings for all users)
 
-Follow **[SIGNING.md](./SIGNING.md)** to add Apple + Windows code signing secrets to GitHub Actions. CI will then publish signed `FlexHubs-Desktop.dmg` and `FlexHubs-Desktop-Setup.exe` without Gatekeeper/SmartScreen warnings.
+Follow **[SIGNING.md](./SIGNING.md)** to add Apple + Windows code signing secrets to GitHub Actions. CI will then publish signed `FlexHubs-Desktop.dmg` and `FlexHubs-Setup.exe` without Gatekeeper/SmartScreen warnings (reputation may still build over time for new certs).
 
 ---
 
@@ -123,7 +124,7 @@ Follow **[SIGNING.md](./SIGNING.md)** to add Apple + Windows code signing secret
 | Platform | Installer | Terms & path |
 |----------|-----------|----------------|
 | **macOS** | `FlexHubs-Desktop.dmg` — drag to Applications | No separate installer wizard. **First app launch** shows FlexHubs Terms & Privacy acceptance (packaged builds only). |
-| **Windows** | `FlexHubs-Desktop-Setup.exe` (Squirrel) | Per-user install to `%LocalAppData%\FlexHubsDesktop` — **no custom install folder wizard** (Squirrel limitation). **First app launch** shows the same terms acceptance. |
+| **Windows** | `FlexHubs-Setup.exe` (NSIS wizard) | Default **Program Files** (changeable in wizard). License step uses `assets/desktop-eula.txt`. Uninstall via **Settings → Apps**; user data in AppData is not removed by default. **First app launch** still shows in-app Terms acceptance. |
 
 ## Build installers (developers)
 
@@ -152,7 +153,7 @@ Unsigned builds: testers may need **Open Anyway** or `xattr -cr` (see Mac table 
 
 ### Windows Setup.exe (cannot be built on Mac)
 
-Squirrel.Windows installers must be built on **Windows** or in **GitHub Actions**:
+NSIS installers must be built on **Windows** or in **GitHub Actions**:
 
 **On a Windows PC:**
 
@@ -161,16 +162,18 @@ npm ci
 npm run make:win
 ```
 
-**Output:** `out/make/squirrel.windows/x64/FlexHubs-Desktop-Setup.exe` (name may match `setupExe` in `forge.config.ts`)
+**Output:** `out/make/nsis/FlexHubs-Setup.exe` (staged to `out/FlexHubs-Setup.exe` in CI)
 
-**From CI (recommended):** push to **`main`** (or run **Build Desktop App** workflow manually). Artifacts are uploaded to the GitHub Release tag **`desktop-latest`**:
+**Pipeline:** Electron Forge packages the app → `scripts/ci/build-windows-installer.mjs` runs **electron-builder** NSIS on the prepackaged folder (same app binary, no second Electron packager).
+
+**From CI (recommended):** push to **`main`** (or run **Build Desktop App** workflow manually). Assets on release tag **`desktop-latest`**:
 
 | File | Platform |
 |------|----------|
 | `FlexHubs-Desktop.dmg` | macOS (manual install) |
 | `FlexHubs-Desktop-mac.zip` | macOS (in-app auto-update) |
 | `latest-mac.yml` | macOS update metadata |
-| `FlexHubs-Desktop-Setup.exe` | Windows |
+| `FlexHubs-Setup.exe` | Windows (install + in-app auto-update) |
 | `latest.yml` | Windows update metadata |
 
 Download from: **GitHub → Releases → `desktop-latest`**.
@@ -178,7 +181,7 @@ Download from: **GitHub → Releases → `desktop-latest`**.
 ### What a proper release includes
 
 1. **Mac:** `FlexHubs-Desktop.dmg` for first install; CI also uploads `FlexHubs-Desktop-mac.zip` + `latest-mac.yml` for Update Center.
-2. **Windows:** `FlexHubs-Desktop-Setup.exe` + `latest.yml` (not old `.msi` or portable zips).
+2. **Windows:** `FlexHubs-Setup.exe` + `latest.yml` (SHA-512 verified by electron-updater).
 3. **First run:** legal gate + login; mic/camera/screen permissions when using calls.
 4. **Updates:** installed builds fetch **`latest-mac.yml`** from the rolling GitHub release **`desktop-latest`** (generic update feed). Bump **`version`** in `package.json` before every release — same version → “up to date” even if you rebuilt.
 

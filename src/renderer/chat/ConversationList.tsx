@@ -3,7 +3,7 @@ import { FiMoreHorizontal } from 'react-icons/fi';
 import type { ConversationItem } from '../../shared/chat';
 import { type PresenceStatus } from '../../shared/chat';
 import { canViewPresence } from '../../shared/presencePrivacy';
-import { presenceStatusForPeer } from '../../shared/presence';
+import { sidebarPresenceStatusForPeer } from '../../shared/presence';
 import { formatConversationTimestamp } from './format';
 import { Avatar, StackedAvatar, PinIcon, PresenceDot } from './ChatIcons';
 import {
@@ -53,20 +53,11 @@ export const ConversationRow = memo(function ConversationRow({
       },
     );
   const peerPresence = canViewPeerPresence
-    ? (() => {
-        const fromMap = presenceStatusForPeer(presenceByUserId, conversation.peerUserId);
-        const bootstrap = conversation.status;
-
-        if (fromMap && fromMap !== 'offline') {
-          return fromMap;
-        }
-
-        if (bootstrap && bootstrap !== 'offline') {
-          return bootstrap;
-        }
-
-        return fromMap ?? bootstrap ?? 'offline';
-      })()
+    ? sidebarPresenceStatusForPeer(
+        presenceByUserId,
+        conversation.peerUserId,
+        conversation.status,
+      )
     : null;
   const rowRef = useRef<HTMLDivElement>(null);
 

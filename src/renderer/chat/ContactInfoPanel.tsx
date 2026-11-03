@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   FiBell,
   FiCalendar,
@@ -19,7 +19,7 @@ import {
   FiMessageSquare,
 } from 'react-icons/fi';
 import type { ConversationItem } from '../../shared/chat';
-import { mapApiPresenceToStatus, normalizePresenceUserId, type PresenceStatus } from '../../shared/chat';
+import type { PresenceStatus } from '../../shared/chat';
 import {
   formatContactPresenceLabel,
   mapContactPresenceStatus,
@@ -28,6 +28,8 @@ import {
   presenceDotClass,
   type ContactUserProfile,
 } from '../../shared/contact';
+import { canViewPresence } from '../../shared/presencePrivacy';
+import { sidebarPresenceStatusForPeer } from '../../shared/presence';
 import {
   markUserBlocked,
   markUserUnblocked,
@@ -36,11 +38,13 @@ import {
   syncPeerBlockFromRelationship,
 } from '../blockedUsersSync';
 import { redactPeerProfileForViewerBlocked } from '../../shared/blocking';
-import { blockUser, loadFriendRelationship, loadUserPresence, loadUserProfile, unblockUser } from '../chatApi';
+import { blockUser, loadFriendRelationship, loadUserProfile, unblockUser } from '../chatApi';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
 import { Avatar, PinIcon } from './ChatIcons';
 import { ConversationSharedFiles } from './ConversationSharedFiles';
+
+const EMPTY_PRESENCE_MAP = new Map<string, PresenceStatus>();
 
 type ContactInfoPanelProps = {
   conversation: ConversationItem;
@@ -65,6 +69,10 @@ type ContactInfoPanelProps = {
   onBlockedUsersChanged?: () => void;
   peerIsBlocked?: boolean;
   peerBlockedViewer?: boolean;
+  presenceByUserId?: ReadonlyMap<string, PresenceStatus>;
+  viewerUserId?: string | null;
+  viewerSharePresence?: boolean;
+  onRefreshPeerPresence?: (peerUserId: string) => void;
 };
 
 type AccordionProps = {
@@ -100,6 +108,16 @@ function Accordion({ title, children, defaultOpen = false, trailing, badge }: Ac
   );
 }
 
+function profileBootstrapPresence(status: string | null | undefined): PresenceStatus | null {
+  const mapped = mapContactPresenceStatus(status ?? null);
+
+  if (!mapped || mapped === 'online') {
+    return null;
+  }
+
+  return mapped;
+}
+
 export function ContactInfoPanel({
   conversation,
   peerUserId,
@@ -123,19 +141,34 @@ export function ContactInfoPanel({
   onBlockedUsersChanged,
   peerIsBlocked = false,
   peerBlockedViewer = false,
+  presenceByUserId = EMPTY_PRESENCE_MAP,
+  viewerUserId = null,
+  viewerSharePresence = true,
+  onRefreshPeerPresence,
 }: ContactInfoPanelProps) {
   const toast = useToast();
   const confirm = useConfirm();
   const [profile, setProfile] = useState<ContactUserProfile | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [liveStatus, setLiveStatus] = useState<PresenceStatus | null>(null);
   const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
   const [blocking, setBlocking] = useState(false);
   const [relationshipBlocked, setRelationshipBlocked] = useState(false);
   const [relationshipLoading, setRelationshipLoading] = useState(true);
 
   const isBlocked = peerIsBlocked || relationshipBlocked;
+
+  const canViewPeerPresence = useMemo(
+    () =>
+      canViewPresence(
+        { id: viewerUserId ?? '', sharePresence: viewerSharePresence },
+        {
+          id: peerUserId,
+          sharePresence: conversation.peerSharePresence ?? profile?.sharePresence ?? true,
+        },
+      ),
+    [conversation.peerSharePresence, peerUserId, profile?.sharePresence, viewerSharePresence, viewerUserId],
+  );
 
   const loadProfile = useCallback(async () => {
     setLoading(true);
@@ -154,18 +187,9 @@ export function ContactInfoPanel({
     setProfile(normalized);
   }, [peerUserId]);
 
-  const refreshPresence = useCallback(async () => {
-    const result = await loadUserPresence([peerUserId]);
-    if (!result.ok) {
-      return;
-    }
-    const item = result.data.find(
-      (entry) => normalizePresenceUserId(entry.userId) === normalizePresenceUserId(peerUserId),
-    );
-    if (item) {
-      setLiveStatus(mapApiPresenceToStatus(item.status));
-    }
-  }, [peerUserId]);
+  const refreshPresence = useCallback(() => {
+    onRefreshPeerPresence?.(peerUserId);
+  }, [onRefreshPeerPresence, peerUserId]);
 
   const loadRelationship = useCallback(async () => {
     setRelationshipLoading(true);
@@ -189,17 +213,14 @@ export function ContactInfoPanel({
   }, [loadRelationship]);
 
   useEffect(() => {
-    if (peerBlockedViewer) {
-      setLiveStatus(null);
+    if (peerBlockedViewer || !canViewPeerPresence) {
       return;
     }
 
-    void refreshPresence();
-    const intervalId = window.setInterval(() => {
-      void refreshPresence();
-    }, 30_000);
+    refreshPresence();
+    const intervalId = window.setInterval(refreshPresence, 30_000);
     return () => window.clearInterval(intervalId);
-  }, [peerBlockedViewer, refreshPresence]);
+  }, [canViewPeerPresence, peerBlockedViewer, refreshPresence]);
 
   const displayName = profile?.name ?? conversation.title;
   const visibleProfile = profile
@@ -215,9 +236,26 @@ export function ContactInfoPanel({
         peerBlockedViewer,
       )
     : null;
-  const presenceStatus = peerBlockedViewer
-    ? null
-    : liveStatus ?? mapContactPresenceStatus(visibleProfile?.status ?? null) ?? null;
+
+  const presenceStatus: PresenceStatus | null = useMemo(() => {
+    if (peerBlockedViewer || !canViewPeerPresence) {
+      return null;
+    }
+
+    return sidebarPresenceStatusForPeer(
+      presenceByUserId,
+      peerUserId,
+      conversation.status ?? profileBootstrapPresence(visibleProfile?.status ?? null),
+    );
+  }, [
+    canViewPeerPresence,
+    conversation.status,
+    peerBlockedViewer,
+    peerUserId,
+    presenceByUserId,
+    visibleProfile?.status,
+  ]);
+
   const presenceLabel = formatContactPresenceLabel(
     presenceStatus,
     visibleProfile?.lastSeenAt ?? null,
@@ -297,14 +335,18 @@ export function ContactInfoPanel({
           <div className="flex items-center gap-1 mb-1">
             <h3 className="text-[17px] font-bold text-app-text">{displayName}</h3>
           </div>
-          {!peerBlockedViewer ? (
+          {!peerBlockedViewer && canViewPeerPresence ? (
             <div className="flex items-center gap-1.5 text-[13px] mb-1">
               <span
-                className={`w-2 h-2 rounded-full ${presenceStatus === 'online' ? 'bg-emerald-500' : 'bg-app-muted'}`}
-              ></span>
-              <span className="text-app-text font-medium">
-                {presenceStatus === 'online' ? 'Online' : presenceLabel}
-              </span>
+                className={`h-2 w-2 rounded-full ${presenceDotClass(presenceStatus)}`}
+                aria-hidden
+              />
+              <span className="text-app-text font-medium">{presenceLabel}</span>
+            </div>
+          ) : !peerBlockedViewer ? (
+            <div className="flex items-center gap-1.5 text-[13px] mb-1 text-app-muted">
+              <span className="h-2 w-2 rounded-full bg-app-muted" aria-hidden />
+              <span>Offline</span>
             </div>
           ) : null}
           {!peerBlockedViewer && visibleProfile?.role ? (
@@ -448,4 +490,3 @@ export function ContactInfoPanel({
     </div>
   );
 }
-

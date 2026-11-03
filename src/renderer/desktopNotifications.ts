@@ -237,6 +237,31 @@ export function markMessageNotificationShown(messageId: string): void {
   }
 }
 
+export function hasShownMessageAlert(messageId: string | null | undefined): boolean {
+  if (!messageId) {
+    return false;
+  }
+
+  return shownMessageIds.has(messageId) || inFlightAlertKeys.has(messageId);
+}
+
+export function shouldSkipDuplicateMessageNotification(
+  notification: NotificationItem,
+): boolean {
+  if (notification.messageId && hasShownMessageAlert(notification.messageId)) {
+    return true;
+  }
+
+  if (
+    isIncomingMessageNotification(notification) &&
+    wasConversationRecentlyAlerted(notification.conversationId)
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 function wasAlreadyShown(notification: NotificationItem): boolean {
   return collectNotificationAlertKeys(notification).some((key) => isAlertKeyKnown(key));
 }
@@ -392,6 +417,19 @@ export async function showDesktopNotification(
   onClick: () => void,
   conversation: Pick<ConversationItem, 'kind' | 'title'> | null = null,
 ): Promise<boolean> {
+  if (notification.messageId && hasShownMessageAlert(notification.messageId)) {
+    rememberShownNotification(notification);
+    return false;
+  }
+
+  if (
+    isIncomingMessageNotification(notification) &&
+    wasConversationRecentlyAlerted(notification.conversationId)
+  ) {
+    rememberShownNotification(notification);
+    return false;
+  }
+
   if (wasAlreadyShown(notification)) {
     rememberShownNotification(notification);
     return false;
@@ -561,6 +599,14 @@ export async function showIncomingMessageDesktopNotification(
   avatarUrl?: string | null,
 ): Promise<boolean> {
   if (isCallLogMessage(message)) {
+    return false;
+  }
+
+  if (hasShownMessageAlert(message.id)) {
+    return false;
+  }
+
+  if (wasConversationRecentlyAlerted(conversationId)) {
     return false;
   }
 

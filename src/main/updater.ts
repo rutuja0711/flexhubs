@@ -284,7 +284,7 @@ export function sanitizeUpdaterError(raw: string): string {
     lower.includes('err_updater') ||
     lower.includes('blockmap')
   ) {
-    return 'This update could not be applied automatically. Use Manual download to install the latest DMG once (same signed build as updates), then try again. You can also tap Retry to clear the cached download and redownload.';
+    return 'This update could not be applied automatically. Use Manual download to install the latest installer once (FlexHubs-Setup.exe from Releases), then try again. You can also tap Retry to clear the cached download and redownload.';
   }
 
   if (lower.includes('timed out') || lower.includes('timeout')) {

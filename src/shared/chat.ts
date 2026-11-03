@@ -532,7 +532,9 @@ function readDirectPeerMemberSnapshot(
           presence: readString(user.presence) ?? readString(member.presence),
         });
 
-      return { status, sharePresence };
+      const bootstrapStatus = status === 'online' ? null : status;
+
+      return { status: bootstrapStatus, sharePresence };
     }
   }
 

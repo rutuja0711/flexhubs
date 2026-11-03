@@ -1,18 +1,18 @@
-# Copies the Squirrel *installer* (FlexHubs-Desktop-Setup.exe), never the app exe (FlexHubs Desktop.exe).
+# Copies the NSIS installer (FlexHubs-Setup.exe), never the app exe (FlexHubs Desktop.exe).
 $ErrorActionPreference = "Stop"
 
-$setupDir = Join-Path $PWD "out/make/squirrel.windows/x64"
-$dest = Join-Path $PWD "out/FlexHubs-Desktop-Setup.exe"
+$setupDir = Join-Path $PWD "out/make/nsis"
+$dest = Join-Path $PWD "out/FlexHubs-Setup.exe"
 
 if (-not (Test-Path $setupDir)) {
-  throw "Squirrel output not found at $setupDir — run npm run make:win first."
+  throw "NSIS output not found at $setupDir — run npm run make:win first."
 }
 
-$installerName = "FlexHubs-Desktop-Setup.exe"
+$installerName = "FlexHubs-Setup.exe"
 $installer = Join-Path $setupDir $installerName
 
 if (-not (Test-Path $installer)) {
-  $fallback = Get-ChildItem -Path $setupDir -Filter "*-Setup.exe" -File |
+  $fallback = Get-ChildItem -Path $setupDir -Filter "*Setup*.exe" -File |
     Where-Object { $_.Name -ne "FlexHubs Desktop.exe" } |
     Select-Object -First 1
   if ($fallback) {
@@ -33,11 +33,17 @@ New-Item -ItemType Directory -Force -Path (Split-Path $dest) | Out-Null
 Copy-Item -Path $installer -Destination $dest -Force
 Write-Host "Staged installer: $installer -> $dest"
 
-$appExe = Join-Path $setupDir "FlexHubs Desktop.exe"
-if (Test-Path $appExe) {
-  $setupSize = (Get-Item $dest).Length
-  $appSize = (Get-Item $appExe).Length
-  if ($setupSize -lt ($appSize * 0.5)) {
-    throw "Staged file looks too small to be Squirrel Setup.exe (setup=$setupSize app=$appSize). Wrong file copied?"
+$prepackaged = Get-ChildItem -Path (Join-Path $PWD "out") -Directory |
+  Where-Object { $_.Name -match "win32" } |
+  Select-Object -First 1
+
+if ($prepackaged) {
+  $appExe = Join-Path $prepackaged.FullName "FlexHubs Desktop.exe"
+  if (Test-Path $appExe) {
+    $setupSize = (Get-Item $dest).Length
+    $appSize = (Get-Item $appExe).Length
+    if ($setupSize -lt ($appSize * 0.5)) {
+      throw "Staged file looks too small to be NSIS Setup.exe (setup=$setupSize app=$appSize). Wrong file copied?"
+    }
   }
 }

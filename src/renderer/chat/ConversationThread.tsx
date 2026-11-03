@@ -116,6 +116,9 @@ type ConversationThreadProps = {
   onBlockedUsersChanged?: () => void;
   blockedUserIds?: ReadonlySet<string>;
   blockedByPeerIds?: ReadonlySet<string>;
+  presenceByUserId?: ReadonlyMap<string, PresenceStatus>;
+  viewerSharePresence?: boolean;
+  onRefreshPeerPresence?: (peerUserId: string) => void;
 };
 
 export function ConversationThread({
@@ -173,6 +176,9 @@ export function ConversationThread({
   onBlockedUsersChanged,
   blockedUserIds,
   blockedByPeerIds,
+  presenceByUserId,
+  viewerSharePresence = true,
+  onRefreshPeerPresence,
 }: ConversationThreadProps) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -1265,6 +1271,10 @@ export function ConversationThread({
             conversation.peerUserId ? blockedUserIds?.has(conversation.peerUserId) === true : false
           }
           peerBlockedViewer={peerBlockedViewer}
+          presenceByUserId={presenceByUserId}
+          viewerUserId={currentUserId}
+          viewerSharePresence={viewerSharePresence}
+          onRefreshPeerPresence={onRefreshPeerPresence}
         />
       ) : null}
       {settingsOpen && isHubPanel ? (

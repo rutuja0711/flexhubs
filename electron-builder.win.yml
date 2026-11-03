@@ -1,0 +1,46 @@
+# Windows NSIS installer (built after Electron Forge packages the app).
+# See scripts/ci/build-windows-installer.mjs and INSTALL.md.
+appId: com.flexodyn.flexhubs
+productName: FlexHubs Desktop
+copyright: Copyright © Flexodyn Solutions. All rights reserved.
+
+directories:
+  output: out/make/nsis
+  buildResources: build
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: assets/icon.ico
+  publisherName: Flexodyn Solutions
+  legalTrademarks: FlexHubs
+  executableName: FlexHubs Desktop
+  signAndEditExecutable: true
+
+nsis:
+  oneClick: false
+  perMachine: true
+  allowToChangeInstallationDirectory: true
+  allowElevation: true
+  installerIcon: assets/icon.ico
+  uninstallerIcon: assets/icon.ico
+  installerHeaderIcon: assets/icon.ico
+  license: assets/desktop-eula.txt
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: FlexHubs Desktop
+  runAfterFinish: true
+  menuCategory: FlexHubs
+  artifactName: FlexHubs-Setup.${ext}
+  uninstallDisplayName: FlexHubs Desktop
+  deleteAppDataOnUninstall: false
+  installerLanguages:
+    - en_US
+  language: '1033'
+  displayLanguageSelector: false
+  warnRunningApplication: true
+  packElevateHelper: true
+  include: scripts/windows/installer.nsh
+  guid: 8f4c2a1b-6d3e-4f5a-9c8b-1e2d3f4a5b6c

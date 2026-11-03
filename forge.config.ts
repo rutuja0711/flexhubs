@@ -1,7 +1,6 @@
 import path from 'node:path';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 import { MakerDMG } from '@electron-forge/maker-dmg';
-import { MakerSquirrel } from '@electron-forge/maker-squirrel';
 import { MakerZIP } from '@electron-forge/maker-zip';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import {
@@ -56,27 +55,7 @@ const config: ForgeConfig = {
   },
   rebuildConfig: {},
   makers: [
-    ...(isWindowsHost
-      ? [
-          new MakerSquirrel({
-            name: 'FlexHubsDesktop',
-            authors: 'Flexodyn Solutions',
-            description: 'FlexHubs Desktop Application',
-            title: 'FlexHubs Desktop',
-            setupExe: 'FlexHubs-Desktop-Setup.exe',
-            setupIcon: path.join(__dirname, 'assets', 'icon.ico'),
-            loadingGif: path.join(__dirname, 'assets', 'install-loading.gif'),
-            noMsi: true,
-            ...(windowsSign
-              ? {
-                  certificateFile: windowsSign.certificateFile,
-                  certificatePassword: windowsSign.certificatePassword,
-                  windowsSign,
-                }
-              : {}),
-          }),
-        ]
-      : []),
+    /* Windows Setup.exe is built with NSIS (electron-builder) after forge package — see scripts/ci/build-windows-installer.mjs */
     ...(isDarwinHost
       ? [
           new MakerDMG({

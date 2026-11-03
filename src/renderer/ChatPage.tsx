@@ -165,8 +165,11 @@ import {
   bindMessageNotificationSound,
   peekNewNotifications,
   markNotificationSeen,
+  markMessageNotificationShown,
   seedNotificationSnapshot,
   registerNotificationNavigationFallback,
+  shouldSkipDuplicateMessageNotification,
+  hasShownMessageAlert,
   showCalendarEventReminder,
   showIncomingMessageDesktopNotification,
 } from './desktopNotifications';
@@ -1967,6 +1970,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             return true;
           }
 
+          if (shouldSkipDuplicateMessageNotification(notification)) {
+            return true;
+          }
+
           return false;
         },
       );
@@ -2101,7 +2108,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
       const livePollHadRows = result.data.length > 0;
       const redisMode = redisPresencePollingRef.current;
-      const treatMissingAsOffline = redisMode && livePollHadRows;
+      const treatMissingAsOffline = redisMode;
 
       const { statusByUserId: liveByUserId, statusMessageByUserId } = mergePresenceItemsForRequestedUsers(
         result.data,
@@ -2113,7 +2120,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         bootstrapPresenceRef.current,
         liveByUserId,
         unique,
-        { livePollHadRows: redisMode && livePollHadRows },
+        { livePollHadRows: redisMode || livePollHadRows },
       );
 
       setPresenceByUserId((current) => {
@@ -2200,26 +2207,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   useEffect(() => {
     bootstrapPresenceRef.current = bootstrapPresenceFromConversations(conversations);
-
-    setPresenceByUserId((current) => {
-      const next = new Map(current);
-      let changed = false;
-
-      for (const [userId, status] of bootstrapPresenceRef.current) {
-        const existing = next.get(userId);
-
-        if (existing === status) {
-          continue;
-        }
-
-        if (!existing || existing === 'offline' || status !== 'offline') {
-          next.set(userId, status);
-          changed = true;
-        }
-      }
-
-      return changed ? next : current;
-    });
   }, [conversations]);
 
   useEffect(() => {
@@ -3175,6 +3162,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         if (sender?.avatarUrl) avatarUrl = sender.avatarUrl;
       }
 
+      markMessageNotificationShown(message.id);
+
       void showIncomingMessageDesktopNotification(
         message,
         conversation,
@@ -3300,7 +3289,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }
 
           if (shouldNotifyIncoming) {
-            notifyIncomingMessage(message, resolvedConversationId, conversation);
+            if (!hasShownMessageAlert(message.id)) {
+              notifyIncomingMessage(message, resolvedConversationId, conversation);
+            }
           } else {
             void syncNotificationsRef.current();
           }
@@ -3316,7 +3307,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }
 
           if (shouldNotifyIncoming) {
-            notifyIncomingMessage(message, resolvedConversationId, conversation);
+            if (!hasShownMessageAlert(message.id)) {
+              notifyIncomingMessage(message, resolvedConversationId, conversation);
+            }
           } else {
             void syncNotificationsRef.current();
           }
@@ -3559,7 +3552,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
 
         if (shouldNotifyIncoming) {
-          notifyIncomingMessage(message, resolvedConversationId, conversation);
+          if (!hasShownMessageAlert(message.id)) {
+            notifyIncomingMessage(message, resolvedConversationId, conversation);
+          }
         } else {
           void syncNotifications();
         }
@@ -6254,6 +6249,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         <ConversationThread
           conversation={selectedConversationForDisplay ?? selectedConversation}
           blockedByPeerIds={blockedByPeerIds}
+          presenceByUserId={presenceByUserId}
+          viewerSharePresence={normalizeUserProfile(user).shareOnlineStatus ?? true}
+          onRefreshPeerPresence={(peerUserId) => {
+            void refreshPresence([peerUserId]);
+          }}
           hubDetails={selectedConversation.kind === 'hub' ? activeHubDetails : null}
           conversationDetails={activeHubDetails}
           pinnedMessageIds={pinnedMessageIds}

@@ -144,9 +144,17 @@ jobs:
           ./scripts/ci/stage-windows-installer.ps1
           node scripts/ci/generate-updater-metadata.mjs `
             --platform win `
-            --artifact out/FlexHubs-Desktop-Setup.exe `
-            --publish-name FlexHubs-Desktop-Setup.exe `
+            --artifact out/FlexHubs-Setup.exe `
+            --publish-name FlexHubs-Setup.exe `
             --out-dir out
+
+      - name: Verify Windows update feed and installer checksum
+        if: matrix.os == 'windows-latest' && github.ref == 'refs/heads/main'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path out/latest.yml)) { throw "Missing out/latest.yml" }
+          if (-not (Test-Path out/FlexHubs-Setup.exe)) { throw "Missing out/FlexHubs-Setup.exe" }
+          node scripts/ci/verify-update-feed.mjs --local out/latest.yml --verify-sha512
 
       - name: Publish Mac DMG to GitHub Release
         if: matrix.os == 'macos-latest' && github.ref == 'refs/heads/main'
@@ -161,7 +169,7 @@ jobs:
           Signed and notarized build from commit ${{ github.sha }}.
 
           **Mac:** \`FlexHubs-Desktop.dmg\`
-          **Windows:** \`FlexHubs-Desktop-Setup.exe\`
+          **Windows:** \`FlexHubs-Setup.exe\`
           EOF
           )"
           else
@@ -202,7 +210,7 @@ jobs:
           Signed build from commit ${{ github.sha }}.
 
           **Mac:** ``FlexHubs-Desktop.dmg``
-          **Windows:** ``FlexHubs-Desktop-Setup.exe``
+          **Windows:** ``FlexHubs-Setup.exe``
           "@
           } else {
             $notes = @"
@@ -222,6 +230,6 @@ jobs:
           }
 
           gh release upload $tag `
-            out/FlexHubs-Desktop-Setup.exe `
+            out/FlexHubs-Setup.exe `
             out/latest.yml `
             --repo $repo --clobber

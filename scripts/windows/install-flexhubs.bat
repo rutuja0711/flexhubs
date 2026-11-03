@@ -7,13 +7,13 @@ echo ==========================================
 echo.
 
 set "INSTALLER="
+if exist "%~dp0FlexHubs-Setup.exe" set "INSTALLER=%~dp0FlexHubs-Setup.exe"
 if exist "%~dp0Setup.exe" set "INSTALLER=%~dp0Setup.exe"
-if exist "%~dp0RELEASES" if exist "%~dp0FlexHubs Desktop Setup.exe" set "INSTALLER=%~dp0FlexHubs Desktop Setup.exe"
 
 if "%INSTALLER%"=="" (
-  echo Could not find Setup.exe in this folder.
+  echo Could not find FlexHubs-Setup.exe in this folder.
   echo.
-  echo Put this file in the same folder as Setup.exe from the download,
+  echo Download FlexHubs-Setup.exe from GitHub Releases, place it in this folder,
   echo then double-click install-flexhubs.bat again.
   echo.
   pause
@@ -28,7 +28,7 @@ echo Starting installer...
 start "" "%INSTALLER%"
 
 echo.
-echo If SmartScreen appears: click "More info" then "Run anyway".
-echo If nothing happens, right-click Setup.exe -^> Run as administrator.
+echo If SmartScreen appears: click "More info" then "Run anyway" (unsigned builds only).
+echo If nothing happens, right-click the installer -^> Run as administrator.
 echo.
 pause

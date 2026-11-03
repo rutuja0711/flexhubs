@@ -1,3 +1,8 @@
+/**
+ * Squirrel.Windows startup hooks for legacy installs (pre-NSIS).
+ * Current Windows releases use NSIS (FlexHubs-Setup.exe); shortcuts and uninstall are handled by the installer.
+ * Keep this handler so older Squirrel-based installs still upgrade cleanly until removed.
+ */
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { app } from 'electron';

@@ -81,8 +81,8 @@ export function resolveRemoteUserStatus(
     presentInLiveChannel?: boolean;
   },
 ): PresenceStatus {
-  if (options?.hasLiveEntry && liveStatus) {
-    return liveStatus;
+  if (options?.hasLiveEntry) {
+    return liveStatus ?? 'offline';
   }
 
   if (options?.livePollHadRows && !options?.hasLiveEntry) {
@@ -90,6 +90,11 @@ export function resolveRemoteUserStatus(
   }
 
   if (options?.presentInLiveChannel === false) {
+    return 'offline';
+  }
+
+  // Conversation list `members[].status` often stays ONLINE in DB after users disconnect.
+  if (bootstrapStatus === 'online') {
     return 'offline';
   }
 
@@ -153,7 +158,8 @@ export function bootstrapPresenceFromConversations(
       conversation.kind === 'hub' ||
       conversation.isSelf ||
       !conversation.peerUserId ||
-      !conversation.status
+      !conversation.status ||
+      conversation.status === 'online'
     ) {
       continue;
     }
@@ -162,6 +168,25 @@ export function bootstrapPresenceFromConversations(
   }
 
   return map;
+}
+
+/** Sidebar dot: live map first; never show stale bootstrap ONLINE from `/conversations`. */
+export function sidebarPresenceStatusForPeer(
+  presenceByUserId: ReadonlyMap<string, PresenceStatus>,
+  peerUserId: string | null | undefined,
+  bootstrapStatus: PresenceStatus | null | undefined,
+): PresenceStatus {
+  const live = presenceStatusForPeer(presenceByUserId, peerUserId);
+
+  if (live !== null) {
+    return live;
+  }
+
+  if (bootstrapStatus && bootstrapStatus !== 'online') {
+    return bootstrapStatus;
+  }
+
+  return 'offline';
 }
 
 export function mapLivePresenceUpdateStatus(status: string | null | undefined): PresenceStatus {

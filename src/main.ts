@@ -1605,6 +1605,31 @@ const createWindow = (): void => {
 
 };
 
+function focusPrimaryWindow(): void {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+
+  if (app.isReady()) {
+    createWindow();
+  }
+}
+
+const singleInstanceLock = app.requestSingleInstanceLock();
+
+if (!singleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    focusPrimaryWindow();
+  });
+}
+
 setNotificationHostWindowProvider(() => mainWindow);
 
 function isAllowedSessionPermission(permission: string): boolean {
