@@ -14,10 +14,12 @@ win:
       arch:
         - x64
   icon: assets/icon.ico
-  publisherName: Flexodyn Solutions
   legalTrademarks: FlexHubs
   executableName: FlexHubs Desktop
-  signAndEditExecutable: true
+  signAndEditExecutable: false
+  signExecutable: true
+  signtoolOptions:
+    publisherName: Flexodyn Solutions
 
 nsis:
   oneClick: false
@@ -40,7 +42,6 @@ nsis:
     - en_US
   language: '1033'
   displayLanguageSelector: false
-  warnRunningApplication: true
   packElevateHelper: true
   include: scripts/windows/installer.nsh
   guid: 8f4c2a1b-6d3e-4f5a-9c8b-1e2d3f4a5b6c

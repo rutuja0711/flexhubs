@@ -80,12 +80,16 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: npm run make:mac
 
-      - name: Build Windows x64 installer
+      - name: Package Windows x64 app
         if: matrix.os == 'windows-latest'
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
-        run: npm run make:win
+        run: npm run package:win
+
+      - name: Build Windows NSIS installer
+        if: matrix.os == 'windows-latest'
+        run: npm run installer:win
 
       - name: Verify Mac code signing
         if: matrix.os == 'macos-latest'

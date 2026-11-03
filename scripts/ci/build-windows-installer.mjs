@@ -64,6 +64,7 @@ function mapSigningEnv() {
 }
 
 function main() {
+  const pkg = JSON.parse(fs.readFileSync(path.join(projectRoot, 'package.json'), 'utf8'));
   const prepackaged = resolvePrepackagedDir();
   const configPath = path.join(projectRoot, 'electron-builder.win.yml');
   const outputDir = path.join(projectRoot, 'out', 'make', 'nsis');
@@ -72,6 +73,7 @@ function main() {
 
   console.log('[FlexHubs] Prepackaged app:', prepackaged);
   console.log('[FlexHubs] NSIS config:', configPath);
+  console.log('[FlexHubs] App version:', pkg.version);
 
   fs.mkdirSync(outputDir, { recursive: true });
 
@@ -88,8 +90,11 @@ function main() {
     '--x64',
     '--prepackaged',
     prepackaged,
+    '--projectDir',
+    projectRoot,
     '--config',
     configPath,
+    `-c.extraMetadata.version=${pkg.version}`,
     '--publish',
     'never',
   ];
