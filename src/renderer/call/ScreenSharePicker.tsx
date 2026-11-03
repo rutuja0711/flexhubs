@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { FiLayout, FiMonitor, FiX } from 'react-icons/fi';
 import type { ScreenCaptureSource, ScreenCaptureSourceKind } from '../../shared/screenShare';
 import { listScreenCaptureSources } from '../screenShareApi';
@@ -18,6 +18,7 @@ export function ScreenSharePicker({ open, onClose, onShare }: ScreenSharePickerP
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const sourcesCacheRef = useRef<Partial<Record<ScreenCaptureSourceKind, ScreenCaptureSource[]>>>({});
 
   const reset = useCallback(() => {
     setStep('choose-type');
@@ -26,6 +27,7 @@ export function ScreenSharePicker({ open, onClose, onShare }: ScreenSharePickerP
     setSelectedId(null);
     setLoading(false);
     setError('');
+    sourcesCacheRef.current = {};
   }, []);
 
   useEffect(() => {
@@ -35,6 +37,15 @@ export function ScreenSharePicker({ open, onClose, onShare }: ScreenSharePickerP
   }, [open, reset]);
 
   const loadSources = useCallback(async (kind: ScreenCaptureSourceKind) => {
+    const cached = sourcesCacheRef.current[kind];
+
+    if (cached && cached.length > 0) {
+      setSources(cached);
+      setError('');
+      setSelectedId(null);
+      return;
+    }
+
     setLoading(true);
     setError('');
     setSelectedId(null);
@@ -48,6 +59,7 @@ export function ScreenSharePicker({ open, onClose, onShare }: ScreenSharePickerP
       return;
     }
 
+    sourcesCacheRef.current[kind] = result.data;
     setSources(result.data);
 
     if (result.data.length === 0) {

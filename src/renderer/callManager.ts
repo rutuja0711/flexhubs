@@ -27,6 +27,7 @@ import {
 } from '../shared/calls';
 import { applyPreferredCallInputToLiveKitRoom } from './call/applyCallInputDevice';
 import { captureDesktopSource } from './call/captureDesktopSource';
+import { ensureScreenCapturePermission } from './callsApi';
 import { MediasoupCallSession, type MediasoupRemotePeer } from './call/mediasoupAdapter';
 import type { ScreenCaptureSource } from '../shared/screenShare';
 import {
@@ -296,6 +297,7 @@ export function useCallManager({
   const sessionRef = useRef(session);
   const roomRef = useRef<Room | null>(null);
   const screenShareTrackRef = useRef<MediaStreamTrack | null>(null);
+  const screenCaptureWarmupDoneRef = useRef(false);
   const mediasoupRef = useRef<MediasoupCallSession | null>(null);
   const removedFromMeetingRef = useRef(false);
   const pendingJoinConversationRef = useRef<ConversationItem | null>(null);
@@ -329,6 +331,20 @@ export function useCallManager({
   useEffect(() => {
     sessionRef.current = session;
   }, [session]);
+
+  useEffect(() => {
+    if (session.phase === 'idle') {
+      screenCaptureWarmupDoneRef.current = false;
+      return;
+    }
+
+    if (session.phase !== 'active' || !session.video || screenCaptureWarmupDoneRef.current) {
+      return;
+    }
+
+    screenCaptureWarmupDoneRef.current = true;
+    void ensureScreenCapturePermission();
+  }, [session.phase, session.video]);
 
   const reportError = useCallback(
     (message: string) => {
@@ -2445,6 +2461,8 @@ export function useCallManager({
           await startLiveKitScreenShare(room, stream);
           logCallDebug('[Calls] Screen sharing started');
         }
+
+        void ensureScreenCapturePermission();
       } catch (error) {
         const message = error instanceof Error ? error.message : 'Unable to share your screen.';
         const permissionLike =

@@ -414,6 +414,9 @@ if (handleSquirrelStartup()) {
 }
 
 const hardwareConfigPath = path.join(app.getPath('userData'), 'flexhubs-hardware.json');
+/** Avoid repeated macOS Screen Recording probes (each probe can re-open the system prompt). */
+let macScreenCaptureSessionVerified = false;
+let macScreenCaptureProbeCompleted = false;
 let displaySleepBlockerId: number | null = null;
 
 function readSavedHardwareAccelerationDisabled(): boolean | null {
@@ -1344,6 +1347,8 @@ ipcMain.handle(
         fetchWindowIcons: true,
       });
 
+      markMacScreenCaptureSessionVerified();
+
       return {
         ok: true as const,
         data: sources.map((source) => ({
@@ -1718,21 +1723,34 @@ async function ensureMacScreenCaptureAccess(): Promise<{ ok: true } | { ok: fals
     return { ok: true };
   }
 
-  const execPath = process.execPath;
-  const reportedStatus = systemPreferences.getMediaAccessStatus('screen');
-
-  console.log(`[ScreenShare] execPath: ${execPath}`);
-  console.log(`[ScreenShare] getMediaAccessStatus('screen'): ${reportedStatus}`);
-
-  if (reportedStatus === 'granted') {
+  if (macScreenCaptureSessionVerified) {
     return { ok: true };
   }
+
+  const reportedStatus = systemPreferences.getMediaAccessStatus('screen');
+
+  if (reportedStatus === 'granted') {
+    macScreenCaptureSessionVerified = true;
+    return { ok: true };
+  }
+
+  // Probe at most once per app session. Repeated desktopCapturer.getSources() calls
+  // can trigger macOS Screen Recording prompts even after the user already allowed access.
+  if (macScreenCaptureProbeCompleted) {
+    return { ok: true };
+  }
+
+  macScreenCaptureProbeCompleted = true;
+
+  console.log(`[ScreenShare] execPath: ${process.execPath}`);
+  console.log(`[ScreenShare] getMediaAccessStatus('screen'): ${reportedStatus}`);
 
   try {
     const sourceCount = await probeMacScreenCaptureSources();
     console.log(`[ScreenShare] Permission probe found ${sourceCount} capture source(s).`);
 
     if (sourceCount > 0) {
+      macScreenCaptureSessionVerified = true;
       return { ok: true };
     }
   } catch (error) {
@@ -1741,9 +1759,14 @@ async function ensureMacScreenCaptureAccess(): Promise<{ ok: true } | { ok: fals
 
   // macOS can report "denied" even after the user grants access (stale TCC cache,
   // wrong binary in the list, or dev app launched from Cursor/Terminal).
-  // Let getDisplayMedia attempt capture instead of blocking with a false negative.
+  // Let getUserMedia attempt capture instead of blocking with a false negative.
   console.warn('[ScreenShare] Proceeding despite inconclusive permission probe.');
   return { ok: true };
+}
+
+function markMacScreenCaptureSessionVerified(): void {
+  macScreenCaptureSessionVerified = true;
+  macScreenCaptureProbeCompleted = true;
 }
 
 function describeMacScreenCaptureFailure(): string {
