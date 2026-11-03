@@ -10,36 +10,48 @@
   flexhubsLegacyDone:
 !macroend
 
-; Finish-page shortcuts use electron-builder link vars ($appExe, $newStartMenuLink, …).
-; Those are not defined while BUILD_UNINSTALLER compiles the uninstaller stub (-WX treats warn 6000 as error).
 !ifndef BUILD_UNINSTALLER
 !include "LogicLib.nsh"
 !include "nsDialogs.nsh"
+
+; Do not reference $newStartMenuLink / $appExe / $launchLink here — those Var
+; names are declared later in electron-builder's template (-WX warns at compile time).
+
+Var FlexHubsLaunchLink
+Var FlexHubsDesktopShortcutCheckbox
+Var FlexHubsStartMenuShortcutCheckbox
+Var FlexHubsDesktopShortcutState
+Var FlexHubsStartMenuShortcutState
+
+!macro FlexHubsStartMenuLinkPath out
+  !ifdef MENU_FILENAME
+    StrCpy ${out} "$SMPROGRAMS\${MENU_FILENAME}\${SHORTCUT_NAME}.lnk"
+  !else
+    StrCpy ${out} "$SMPROGRAMS\${SHORTCUT_NAME}.lnk"
+  !endif
+!macroend
 
 Function FlexHubsCreateStartMenuShortcut
   !ifdef MENU_FILENAME
     CreateDirectory "$SMPROGRAMS\${MENU_FILENAME}"
     ClearErrors
   !endif
-  CreateShortCut "$newStartMenuLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
+  !insertmacro FlexHubsStartMenuLinkPath $R8
+  CreateShortCut "$R8" "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "" "$INSTDIR\${APP_EXECUTABLE_FILENAME}" 0 "" "" "${APP_DESCRIPTION}"
   ClearErrors
-  WinShell::SetLnkAUMI "$newStartMenuLink" "${APP_ID}"
-  StrCpy $launchLink "$newStartMenuLink"
+  WinShell::SetLnkAUMI "$R8" "${APP_ID}"
+  StrCpy $FlexHubsLaunchLink "$R8"
 FunctionEnd
 
 Function FlexHubsCreateDesktopShortcut
-  CreateShortCut "$newDesktopLink" "$appExe" "" "$appExe" 0 "" "" "${APP_DESCRIPTION}"
+  CreateShortCut "$DESKTOP\${SHORTCUT_NAME}.lnk" "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "" "$INSTDIR\${APP_EXECUTABLE_FILENAME}" 0 "" "" "${APP_DESCRIPTION}"
   ClearErrors
-  WinShell::SetLnkAUMI "$newDesktopLink" "${APP_ID}"
+  WinShell::SetLnkAUMI "$DESKTOP\${SHORTCUT_NAME}.lnk" "${APP_ID}"
   System::Call 'Shell32::SHChangeNotify(i 0x1002, i 0, i 0, i 0)'
 FunctionEnd
 
-Var FlexHubsDesktopShortcutCheckbox
-Var FlexHubsStartMenuShortcutCheckbox
-Var FlexHubsDesktopShortcutState
-Var FlexHubsStartMenuShortcutState
-
 Function FlexHubsFinishPageShowShortcutOptions
+  StrCpy $FlexHubsLaunchLink "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
   ${NSD_CreateCheckbox} 120u 105u 240u 10u "Add a shortcut on the Desktop"
   Pop $FlexHubsDesktopShortcutCheckbox
   ${NSD_SetState} $FlexHubsDesktopShortcutCheckbox ${BST_CHECKED}
@@ -50,11 +62,11 @@ Function FlexHubsFinishPageShowShortcutOptions
 FunctionEnd
 
 Function FlexHubsFinishPageLeaveShortcutOptions
+  StrCpy $FlexHubsLaunchLink "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+
   ${NSD_GetState} $FlexHubsStartMenuShortcutCheckbox $FlexHubsStartMenuShortcutState
   ${If} $FlexHubsStartMenuShortcutState == ${BST_CHECKED}
     Call FlexHubsCreateStartMenuShortcut
-  ${Else}
-    StrCpy $launchLink "$appExe"
   ${EndIf}
 
   ${NSD_GetState} $FlexHubsDesktopShortcutCheckbox $FlexHubsDesktopShortcutState
@@ -65,15 +77,13 @@ FunctionEnd
 
 Function FlexHubsFinishPagePreCheck
   ${If} ${isUpdated}
-    ${IfNot} ${FileExists} "$newStartMenuLink"
+    !insertmacro FlexHubsStartMenuLinkPath $R8
+    ${IfNot} ${FileExists} "$R8"
       Call FlexHubsCreateStartMenuShortcut
-    ${EndIf}
-    ${If} ${FileExists} "$newStartMenuLink"
-      StrCpy $launchLink "$newStartMenuLink"
     ${Else}
-      StrCpy $launchLink "$appExe"
+      StrCpy $FlexHubsLaunchLink "$R8"
     ${EndIf}
-    ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "--updated"
+    ${StdUtils.ExecShellAsUser} $0 "$FlexHubsLaunchLink" "open" "--updated"
     Abort
   ${EndIf}
 FunctionEnd
@@ -86,7 +96,7 @@ FunctionEnd
       ${Else}
         StrCpy $1 ""
       ${EndIf}
-      ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
+      ${StdUtils.ExecShellAsUser} $0 "$FlexHubsLaunchLink" "open" "$1"
     FunctionEnd
 
     !define MUI_FINISHPAGE_RUN
