@@ -16,6 +16,7 @@
 
 ; Do not reference $newStartMenuLink / $appExe / $launchLink here — those Var
 ; names are declared later in electron-builder's template (-WX warns at compile time).
+; Custom include is parsed before !addplugindir — no WinShell::, StdUtils::, or ${isUpdated} here.
 
 Var FlexHubsLaunchLink
 Var FlexHubsDesktopShortcutCheckbox
@@ -37,21 +38,18 @@ Function FlexHubsCreateStartMenuShortcut
     ClearErrors
   !endif
   !insertmacro FlexHubsStartMenuLinkPath $R8
-  CreateShortCut "$R8" "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "" "$INSTDIR\${APP_EXECUTABLE_FILENAME}" 0 "" "" "${APP_DESCRIPTION}"
+  CreateShortCut "$R8" "$INSTDIR\${PRODUCT_FILENAME}.exe" "" "$INSTDIR\${PRODUCT_FILENAME}.exe" 0 "" "" "${APP_DESCRIPTION}"
   ClearErrors
-  WinShell::SetLnkAUMI "$R8" "${APP_ID}"
   StrCpy $FlexHubsLaunchLink "$R8"
 FunctionEnd
 
 Function FlexHubsCreateDesktopShortcut
-  CreateShortCut "$DESKTOP\${SHORTCUT_NAME}.lnk" "$INSTDIR\${APP_EXECUTABLE_FILENAME}" "" "$INSTDIR\${APP_EXECUTABLE_FILENAME}" 0 "" "" "${APP_DESCRIPTION}"
+  CreateShortCut "$DESKTOP\${SHORTCUT_NAME}.lnk" "$INSTDIR\${PRODUCT_FILENAME}.exe" "" "$INSTDIR\${PRODUCT_FILENAME}.exe" 0 "" "" "${APP_DESCRIPTION}"
   ClearErrors
-  WinShell::SetLnkAUMI "$DESKTOP\${SHORTCUT_NAME}.lnk" "${APP_ID}"
-  System::Call 'Shell32::SHChangeNotify(i 0x1002, i 0, i 0, i 0)'
 FunctionEnd
 
 Function FlexHubsFinishPageShowShortcutOptions
-  StrCpy $FlexHubsLaunchLink "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+  StrCpy $FlexHubsLaunchLink "$INSTDIR\${PRODUCT_FILENAME}.exe"
   ${NSD_CreateCheckbox} 120u 105u 240u 10u "Add a shortcut on the Desktop"
   Pop $FlexHubsDesktopShortcutCheckbox
   ${NSD_SetState} $FlexHubsDesktopShortcutCheckbox ${BST_CHECKED}
@@ -62,7 +60,7 @@ Function FlexHubsFinishPageShowShortcutOptions
 FunctionEnd
 
 Function FlexHubsFinishPageLeaveShortcutOptions
-  StrCpy $FlexHubsLaunchLink "$INSTDIR\${APP_EXECUTABLE_FILENAME}"
+  StrCpy $FlexHubsLaunchLink "$INSTDIR\${PRODUCT_FILENAME}.exe"
 
   ${NSD_GetState} $FlexHubsStartMenuShortcutCheckbox $FlexHubsStartMenuShortcutState
   ${If} $FlexHubsStartMenuShortcutState == ${BST_CHECKED}
@@ -75,28 +73,11 @@ Function FlexHubsFinishPageLeaveShortcutOptions
   ${EndIf}
 FunctionEnd
 
-Function FlexHubsFinishPagePreCheck
-  ${If} ${isUpdated}
-    !insertmacro FlexHubsStartMenuLinkPath $R8
-    ${IfNot} ${FileExists} "$R8"
-      Call FlexHubsCreateStartMenuShortcut
-    ${Else}
-      StrCpy $FlexHubsLaunchLink "$R8"
-    ${EndIf}
-    ${StdUtils.ExecShellAsUser} $0 "$FlexHubsLaunchLink" "open" "--updated"
-    Abort
-  ${EndIf}
-FunctionEnd
-
 !macro customFinishPage
   !ifndef HIDE_RUN_AFTER_FINISH
     Function StartApp
-      ${If} ${isUpdated}
-        StrCpy $1 "--updated"
-      ${Else}
-        StrCpy $1 ""
-      ${EndIf}
-      ${StdUtils.ExecShellAsUser} $0 "$FlexHubsLaunchLink" "open" "$1"
+      ; ExecShell only — StdUtils/isUpdated cannot be used in this early include (see header comment).
+      ExecShell "open" "$FlexHubsLaunchLink"
     FunctionEnd
 
     !define MUI_FINISHPAGE_RUN
@@ -104,7 +85,6 @@ FunctionEnd
     !define MUI_FINISHPAGE_RUN_FUNCTION "StartApp"
   !endif
 
-  !define MUI_PAGE_CUSTOMFUNCTION_PRE FlexHubsFinishPagePreCheck
   !define MUI_PAGE_CUSTOMFUNCTION_SHOW FlexHubsFinishPageShowShortcutOptions
   !define MUI_PAGE_CUSTOMFUNCTION_LEAVE FlexHubsFinishPageLeaveShortcutOptions
   !insertmacro MUI_PAGE_FINISH
