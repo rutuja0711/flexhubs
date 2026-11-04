@@ -275,7 +275,7 @@ export async function createChannel(
       name: input.name,
       slug: input.slug ?? slugifyChannelName(input.name),
       description: input.description ?? '',
-      userIds: input.memberIds ?? [],
+      memberIds: input.memberIds ?? [],
     },
   );
 

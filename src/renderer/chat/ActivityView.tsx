@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { HubInviteItem } from '../../shared/features';
 import type { ConversationItem } from '../../shared/chat';
 import {
+  findHubInviteForNotification,
   isCalendarInviteNotification,
+  isGroupInviteNotification,
+  isHubInviteNotification,
+  isIncomingHubInviteNotification,
+  resolveHubInviteRespondId,
   resolveFriendRequestUserId,
   type NotificationItem,
   type PendingFriendItem,
@@ -45,18 +51,25 @@ type ActivityListItem = {
   notification: NotificationItem | null;
   isUnread: boolean;
   respondUserId: string | null;
+  respondHubInviteId: string | null;
   respondCalendarEventId: string | null;
 };
 
 function classifyNotification(item: NotificationItem): ActivityKind {
+  if (isIncomingHubInviteNotification(item)) {
+    return 'hub-invite';
+  }
+
   const haystack = `${item.type} ${item.title} ${item.body}`.toLowerCase();
 
   if (haystack.includes('reaction') || haystack.includes('reacted')) return 'reaction';
   if (haystack.includes('mention')) return 'mention';
   if (haystack.includes('reply') || haystack.includes('replied')) return 'reply';
   if (haystack.includes('calendar') || haystack.includes('event')) return 'calendar';
-  if (haystack.includes('hub') && (haystack.includes('invite') || haystack.includes('join'))) return 'hub-invite';
-  if (haystack.includes('friend request') || haystack.includes('added you')) return 'request';
+  if (isHubInviteNotification(item) || isGroupInviteNotification(item)) return 'hub-invite';
+  if (haystack.includes('friend request') || haystack.includes('sent you a friend request')) {
+    return 'request';
+  }
   if (haystack.includes('shared a file') || haystack.includes('.pdf')) return 'file';
   if (haystack.includes('voice message') || haystack.includes('audio call')) return 'voice';
   if (haystack.includes('shared a photo') || haystack.includes('photo')) return 'photo';
@@ -93,6 +106,7 @@ function ActivityRowContent({
   item,
   conversations,
   onRespondFriend,
+  onRespondHubInvite,
   isProcessing,
   calendarInviteStatusByEventId,
   onCalendarInviteResponded,
@@ -101,6 +115,7 @@ function ActivityRowContent({
   item: ActivityListItem;
   conversations: ConversationItem[];
   onRespondFriend?: (id: string, status: 'ACCEPTED' | 'DECLINED') => void;
+  onRespondHubInvite?: (inviteId: string, accept: boolean) => void;
   isProcessing?: boolean;
   calendarInviteStatusByEventId?: Record<string, string | null | undefined>;
   onCalendarInviteResponded?: () => void;
@@ -111,9 +126,72 @@ function ActivityRowContent({
     isProcessing,
   });
 
+  const showFriendActions = Boolean(item.respondUserId && onRespondFriend);
+  const showHubInviteActions = Boolean(item.respondHubInviteId && onRespondHubInvite);
+
   return (
-    <>
-      <FlexHubsDesktopNotification variant="activity" data={presentation} />
+    <div
+      className={`flex items-start gap-2 px-2 py-1.5 ${showFriendActions ? '' : ''}`}
+    >
+      <div className="min-w-0 flex-1">
+        <FlexHubsDesktopNotification variant="activity" data={presentation} />
+      </div>
+      {showFriendActions ? (
+        <div className="flex shrink-0 items-center gap-1.5 self-center pr-1">
+          <button
+            type="button"
+            title="Accept"
+            disabled={isProcessing}
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent text-white shadow-sm transition-transform hover:brightness-110 active:scale-95 disabled:opacity-50"
+            onClick={(event) => {
+              event.stopPropagation();
+              onRespondFriend?.(item.respondUserId!, 'ACCEPTED');
+            }}
+          >
+            <FiCheck className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            title="Decline"
+            disabled={isProcessing}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-app-border bg-app-card/80 text-app-muted transition-colors hover:bg-app-inset hover:text-app-text disabled:opacity-50"
+            onClick={(event) => {
+              event.stopPropagation();
+              onRespondFriend?.(item.respondUserId!, 'DECLINED');
+            }}
+          >
+            <FiX className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
+      {showHubInviteActions ? (
+        <div className="flex shrink-0 items-center gap-1.5 self-center pr-1">
+          <button
+            type="button"
+            title="Accept"
+            disabled={isProcessing}
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent text-white shadow-sm transition-transform hover:brightness-110 active:scale-95 disabled:opacity-50"
+            onClick={(event) => {
+              event.stopPropagation();
+              onRespondHubInvite?.(item.respondHubInviteId!, true);
+            }}
+          >
+            <FiCheck className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            title="Decline"
+            disabled={isProcessing}
+            className="flex h-9 w-9 items-center justify-center rounded-xl border border-app-border bg-app-card/80 text-app-muted transition-colors hover:bg-app-inset hover:text-app-text disabled:opacity-50"
+            onClick={(event) => {
+              event.stopPropagation();
+              onRespondHubInvite?.(item.respondHubInviteId!, false);
+            }}
+          >
+            <FiX className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
       {item.respondCalendarEventId ? (
         <CalendarEventInviteActions
           compact
@@ -123,7 +201,7 @@ function ActivityRowContent({
           onUnauthorized={onUnauthorized}
         />
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -241,12 +319,14 @@ function ActivitySplitFilterPicker({
 export type ActivityViewProps = {
   notifications: NotificationItem[];
   pendingFriends: PendingFriendItem[];
+  hubInvites: HubInviteItem[];
   conversations: ConversationItem[];
   loading: boolean;
   error: string;
   onRetry: () => void;
   onNotificationClick: (notification: NotificationItem) => void;
   onRespondFriend?: (id: string, status: 'ACCEPTED' | 'DECLINED') => void;
+  onRespondHubInvite?: (inviteId: string, accept: boolean) => void;
   onMarkAllRead?: () => void;
   calendarInviteStatusByEventId?: Record<string, string | null | undefined>;
   onCalendarInviteResponded?: () => void;
@@ -256,12 +336,14 @@ export type ActivityViewProps = {
 export function ActivityView({
   notifications,
   pendingFriends,
+  hubInvites,
   conversations,
   loading,
   error,
   onRetry,
   onNotificationClick,
   onRespondFriend,
+  onRespondHubInvite,
   onMarkAllRead,
   calendarInviteStatusByEventId,
   onCalendarInviteResponded,
@@ -337,12 +419,24 @@ export function ActivityView({
     }
   };
 
+  const handleRespondHubInvite = async (inviteId: string, accept: boolean) => {
+    if (!onRespondHubInvite) return;
+    setProcessingId(inviteId);
+    try {
+      await Promise.resolve(onRespondHubInvite(inviteId, accept));
+    } finally {
+      setProcessingId(null);
+    }
+  };
+
   const combinedItems = useMemo<ActivityListItem[]>(() => {
     const pendingUserIds = new Set(
       pendingFriends.map((item) => item.userId || item.id).filter(Boolean),
     );
+    const usedHubInviteIds = new Set<string>();
+    const items: ActivityListItem[] = [];
 
-    const pendingItems: ActivityListItem[] = pendingFriends.map((item) => ({
+    const pendingFriendItems: ActivityListItem[] = pendingFriends.map((item) => ({
       id: `pending-${item.id}`,
       title: item.title,
       body: item.body,
@@ -351,46 +445,115 @@ export function ActivityView({
       notification: null,
       isUnread: true,
       respondUserId: item.userId || item.id,
+      respondHubInviteId: null,
       respondCalendarEventId: null,
     }));
 
-    const notificationItems: ActivityListItem[] = notifications
-      .map((item) => {
-        const kind = classifyNotification(item);
-        const respondUserId =
-          kind === 'request' ? resolveFriendRequestUserId(item, conversations) : null;
-        const respondCalendarEventId =
-          isCalendarInviteNotification(item) && item.eventId ? item.eventId : null;
+    for (const notification of notifications) {
+      if (isIncomingHubInviteNotification(notification)) {
+        const matched = findHubInviteForNotification(notification, hubInvites);
+        const inviteId = matched?.id ?? notification.inviteId ?? null;
+        const respondHubInviteId = resolveHubInviteRespondId(notification, hubInvites);
+        const inviteRecord = inviteId
+          ? hubInvites.find((entry) => entry.id === inviteId)
+          : matched
+            ? hubInvites.find((entry) => entry.id === matched.id)
+            : undefined;
 
-        return {
-          id: item.id,
-          title: item.title,
-          body: formatNotificationDisplayBody(item.body),
-          createdAt: item.createdAt,
-          kind,
-          notification: item,
-          isUnread: !item.isRead,
-          respondUserId,
-          respondCalendarEventId,
-        };
-      })
-      .filter((item) => {
-        if (item.kind !== 'request' || !item.respondUserId) {
-          return true;
+        if (inviteId) {
+          usedHubInviteIds.add(inviteId);
+        } else if (respondHubInviteId && !respondHubInviteId.includes(':')) {
+          usedHubInviteIds.add(respondHubInviteId);
         }
 
-        return !pendingUserIds.has(item.respondUserId);
-      });
+        const hubName =
+          inviteRecord?.channelName ??
+          (notification.title.trim() && notification.title.trim().toLowerCase() !== 'hub invitation'
+            ? notification.title.trim()
+            : null) ??
+          notification.body.match(/added you to\s+(.+)$/i)?.[1]?.trim() ??
+          notification.body.match(/invited you to join\s+(.+)$/i)?.[1]?.trim() ??
+          'Hub';
+        const inviter =
+          inviteRecord?.inviterName ??
+          inviteRecord?.invitedBy ??
+          notification.body.match(/^(.+?)\s+(?:added you to|invited you to join)/i)?.[1]?.trim() ??
+          'Someone';
 
-    return [...pendingItems, ...notificationItems].sort(
+        items.push({
+          id: inviteId ? `hub-invite-${inviteId}` : notification.id,
+          title: hubName,
+          body: `${inviter} invited you to join`,
+          createdAt: notification.createdAt,
+          kind: 'hub-invite',
+          notification,
+          isUnread: !notification.isRead,
+          respondUserId: null,
+          respondHubInviteId,
+          respondCalendarEventId: null,
+        });
+        continue;
+      }
+
+      const kind = classifyNotification(notification);
+      const respondUserId =
+        kind === 'request' ? resolveFriendRequestUserId(notification, conversations) : null;
+      const respondCalendarEventId =
+        isCalendarInviteNotification(notification) && notification.eventId
+          ? notification.eventId
+          : null;
+
+      items.push({
+        id: notification.id,
+        title: notification.title,
+        body: formatNotificationDisplayBody(notification.body),
+        createdAt: notification.createdAt,
+        kind,
+        notification,
+        isUnread: !notification.isRead,
+        respondUserId,
+        respondHubInviteId: null,
+        respondCalendarEventId,
+      });
+    }
+
+    for (const invite of hubInvites) {
+      if (usedHubInviteIds.has(invite.id)) {
+        continue;
+      }
+
+      items.push({
+        id: `hub-invite-${invite.id}`,
+        title: invite.channelName,
+        body: `${invite.inviterName} invited you to join`,
+        createdAt: invite.createdAt,
+        kind: 'hub-invite',
+        notification: null,
+        isUnread: true,
+        respondUserId: null,
+        respondHubInviteId: invite.id,
+        respondCalendarEventId: null,
+      });
+    }
+
+    const filteredNotifications = items.filter((item) => {
+      if (item.kind !== 'request' || !item.respondUserId) {
+        return true;
+      }
+
+      return !pendingUserIds.has(item.respondUserId);
+    });
+
+    return [...pendingFriendItems, ...filteredNotifications].sort(
       (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
     );
-  }, [conversations, notifications, pendingFriends]);
+  }, [conversations, hubInvites, notifications, pendingFriends]);
 
   const filterItemsByCategory = (items: ActivityListItem[], filter: ActivityFilter) => {
     let next = items;
-    if (filter === 'Requests') next = next.filter((i) => i.kind === 'request');
-    else if (filter === 'Reactions') next = next.filter((i) => i.kind === 'reaction');
+    if (filter === 'Requests') {
+      next = next.filter((i) => i.kind === 'request' || i.kind === 'hub-invite');
+    } else if (filter === 'Reactions') next = next.filter((i) => i.kind === 'reaction');
     else if (filter === 'Mentions') next = next.filter((i) => i.kind === 'mention');
     else if (filter === 'Replies') next = next.filter((i) => i.kind === 'reply');
     else if (filter === 'Unread') next = next.filter((i) => i.isUnread);
@@ -433,7 +596,7 @@ export function ActivityView({
                 <div
                   key={item.id}
                   onClick={() => {
-                    if (item.kind === 'request') {
+                    if (item.kind === 'request' || item.kind === 'hub-invite') {
                       return;
                     }
 
@@ -441,14 +604,16 @@ export function ActivityView({
                       onNotificationClick(item.notification);
                     }
                   }}
-                  className={`border-b border-app-border/30 last:border-0 ${item.kind === 'request' ? '' : 'cursor-pointer'}`}
+                  className={`border-b border-app-border/30 last:border-0 ${item.kind === 'request' || item.kind === 'hub-invite' ? '' : 'cursor-pointer'}`}
                 >
                   <ActivityRowContent
                     item={item}
                     conversations={conversations}
                     onRespondFriend={handleRespondFriend}
+                    onRespondHubInvite={handleRespondHubInvite}
                     isProcessing={
-                      Boolean(item.respondUserId) && processingId === item.respondUserId
+                      (Boolean(item.respondUserId) && processingId === item.respondUserId) ||
+                      (Boolean(item.respondHubInviteId) && processingId === item.respondHubInviteId)
                     }
                     calendarInviteStatusByEventId={calendarInviteStatusByEventId}
                     onCalendarInviteResponded={onCalendarInviteResponded}
@@ -561,7 +726,9 @@ export function ActivityView({
               if (filter.id === 'All') count = combinedItems.filter((i) => i.isUnread).length;
               else if (filter.id === 'Unread') count = unreadCount;
               else if (filter.id === 'Requests') {
-                count = combinedItems.filter((i) => i.kind === 'request' && i.isUnread).length;
+                count = combinedItems.filter(
+                  (i) => (i.kind === 'request' || i.kind === 'hub-invite') && i.isUnread,
+                ).length;
               } else if (filter.id === 'Reactions') {
                 count = combinedItems.filter((i) => i.kind === 'reaction' && i.isUnread).length;
               } else if (filter.id === 'Mentions') {

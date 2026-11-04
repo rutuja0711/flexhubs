@@ -117,6 +117,7 @@ import { MeetingStartedBanner } from './call/MeetingStartedBanner';
 import { OrganizationView } from './chat/OrganizationView';
 import { SuperAdminView } from './chat/SuperAdminView';
 import { OrganizationInviteModal } from './chat/OrganizationInviteModal';
+import { dispatchOrganizationInvitesRefresh } from './organizationInvitesRefresh';
 import { PlanComplianceBanner } from './chat/PlanComplianceBanner';
 import { loadOrgSubscription, loadPlanCompliance } from './organizationApi';
 import {
@@ -144,7 +145,7 @@ import {
   bootstrapPresenceFromConversations,
   mapLivePresenceUpdateStatus,
 } from '../shared/presence';
-import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationByAnyId, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, readConversationSnoozeState, sanitizeDirectDisplayName, withConversationSnoozed, buildConversationSnoozePayload, formatConversationSnoozeUntil, resolveConversationForMessage, resolveTypingConversationId, buildConversationListPreview, areConversationSidebarListsEqual, mergeConversationMemberPreview, collectDirectPeerUserIds, lookupPresenceStatus, normalizePresenceUserId } from '../shared/chat';
+import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationByAnyId, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, readConversationSnoozeState, sanitizeDirectDisplayName, withConversationSnoozed, buildConversationSnoozePayload, formatConversationSnoozeUntil, resolveConversationForMessage, resolveTypingConversationId, buildConversationListPreview, areConversationSidebarListsEqual, mergeConversationMemberPreview, collectDirectPeerUserIds, collectSidebarPresenceUserIds, enrichSidebarConversationAvatars, sortSidebarTeammates, lookupPresenceStatus, normalizePresenceUserId } from '../shared/chat';
 import { enrichCallHistoryItems, type CallHistoryItem } from '../shared/calls';
 import type {
   MessageItem,
@@ -162,11 +163,13 @@ import { normalizeUserProfile, userCanManageOrganization } from '../shared/profi
 import { scheduleCalendarReminders } from './calendarReminders';
 import {
   alertNewDesktopNotifications,
+  alertNewPendingFriendRequests,
   bindMessageNotificationSound,
   peekNewNotifications,
   markNotificationSeen,
   markMessageNotificationShown,
   seedNotificationSnapshot,
+  seedPendingFriendsSnapshot,
   registerNotificationNavigationFallback,
   shouldSkipDuplicateMessageNotification,
   hasShownMessageAlert,
@@ -188,6 +191,7 @@ import {
   extractReactionEvent,
   extractTypingUpdate,
   formatTypingIndicatorLabel,
+  isCacheInvalidateEvent,
   isConversationUpdateEvent,
   isSameTypingUser,
   isMessageDeleteEvent,
@@ -311,6 +315,10 @@ function sortConversations(items: ConversationItem[]): ConversationItem[] {
   return [...items].sort((left, right) => {
     if (left.isPinned !== right.isPinned) {
       return left.isPinned ? -1 : 1;
+    }
+
+    if (left.isSelf !== right.isSelf) {
+      return left.isSelf ? -1 : 1;
     }
 
     const leftTime = Date.parse(left.timestamp);
@@ -679,6 +687,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const [activityNotifications, setActivityNotifications] = useState<NotificationItem[]>([]);
   const [activityPendingFriends, setActivityPendingFriends] = useState<PendingFriendItem[]>([]);
+  const [activityHubInvites, setActivityHubInvites] = useState<import('../shared/features').HubInviteItem[]>([]);
   const [activityLoading, setActivityLoading] = useState(false);
   const [activityError, setActivityError] = useState('');
 
@@ -1059,25 +1068,48 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           { name: teammate.name, username: teammate.username },
         ]),
       );
+      const teammateAvatars = new Map(
+        teammatesRef.current.map((teammate) => [teammate.id, teammate.avatarUrl] as const),
+      );
+      const peerAvatars = new Map<string, string | null>();
+      for (const conversation of items) {
+        if (conversation.kind !== 'direct' || !conversation.peerUserId) {
+          continue;
+        }
+
+        const cachedPeer = readPeerProfile(conversation.peerUserId);
+        if (cachedPeer?.avatarUrl) {
+          peerAvatars.set(conversation.peerUserId, cachedPeer.avatarUrl);
+        }
+      }
+
       const sorted = sortConversations(
-        dropBrokenDirectConversations(
-          dedupeDirectConversations(
-            repairConversationPeerIds(
-              reconcileDirectConversations(
-                applyStoredDirectChatMetadata(
-                  items,
-                  directChatMetadataRef.current,
+        enrichSidebarConversationAvatars(
+          dropBrokenDirectConversations(
+            dedupeDirectConversations(
+              repairConversationPeerIds(
+                reconcileDirectConversations(
+                  applyStoredDirectChatMetadata(
+                    items,
+                    directChatMetadataRef.current,
+                    selfName,
+                  ),
+                  viewerId,
                   selfName,
+                  teammateMap,
                 ),
                 viewerId,
-                selfName,
-                teammateMap,
               ),
-              viewerId,
             ),
+            viewerId,
+            selfName,
           ),
-          viewerId,
-          selfName,
+          {
+            viewerDisplayName: selfName,
+            viewerAvatarUrl: getUserAvatarUrl(userRef.current),
+            teammateAvatars,
+            peerAvatars,
+          },
         ),
       );
 
@@ -1182,7 +1214,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     (peerUserId: string, conversationId: string, fallbackName?: string) => {
       const selfName = getUserDisplayName(userRef.current);
 
-      const applyProfile = (displayName: string) => {
+      const applyProfile = (displayName: string, avatarUrl?: string | null) => {
         const trimmedName = sanitizeDirectDisplayName(displayName, selfName, fallbackName);
 
         if (isBrokenDirectTitle(trimmedName, selfName)) {
@@ -1194,7 +1226,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           commitConversationList(
             current.map((conversation) =>
               conversation.id === conversationId
-                ? patchDirectConversationMetadata(conversation, peerUserId, trimmedName)
+                ? patchDirectConversationMetadata(
+                    conversation,
+                    peerUserId,
+                    trimmedName,
+                    selfName,
+                    avatarUrl ?? conversation.avatarUrl,
+                  )
                 : conversation,
             ),
             { seedFromApi: false, currentUserId: userIdRef.current },
@@ -1208,7 +1246,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         const cachedName = cached.name.trim() || cached.username.trim();
 
         if (cachedName) {
-          applyProfile(cachedName);
+          applyProfile(cachedName, cached.avatarUrl);
         }
       }
 
@@ -1231,7 +1269,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           avatarUrl: profile.avatarUrl,
         });
 
-        applyProfile(displayName);
+        applyProfile(displayName, profile.avatarUrl);
       });
     },
     [commitConversationList, rememberDirectChatMetadata],
@@ -1976,6 +2014,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
           return false;
         },
+        conversationsRef.current,
       );
     },
     [isConversationSnoozed, refreshMessageFromNotification, shouldSuppressNotificationAlerts],
@@ -2060,6 +2099,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
       void refreshUnreadCount(notificationList);
 
+      if (!userInOrganization(userRef.current)) {
+        dispatchOrganizationInvitesRefresh();
+      }
+
       const pendingCache = pendingFriendsCacheRef.current;
       const pendingListStale =
         !pendingCache || Date.now() - pendingCache.fetchedAt >= PENDING_FRIENDS_CACHE_MS;
@@ -2076,9 +2119,26 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
               count: pending.data.length,
             };
             setActivityPendingFriends(pending.data);
+            if (options?.seedSnapshot) {
+              seedPendingFriendsSnapshot(pending.data);
+            } else {
+              void alertNewPendingFriendRequests(pending.data, () => {
+                setMainView('activity');
+              });
+            }
           }
         });
       }
+
+      void loadHubInvites().then((hubInvitesResult) => {
+        if (handleUnauthorized(hubInvitesResult.status)) {
+          return;
+        }
+
+        if (hubInvitesResult.ok) {
+          setActivityHubInvites(hubInvitesResult.data);
+        }
+      });
 
       if (options?.withLoading) {
         setActivityLoading(false);
@@ -2227,6 +2287,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     } else {
       const userPayload = meResult.data.user ?? meResult.data;
       setUser(userPayload);
+      if (!userInOrganization(userPayload)) {
+        dispatchOrganizationInvitesRefresh();
+      }
       const profile = normalizeUserProfile(userPayload);
       startPresenceManager(profile.status, profile.statusMessage);
 
@@ -2288,8 +2351,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     if (membersResult?.ok) {
       const currentUserId = getUserId(currentUser);
-      const nextTeammates = membersResult.data.filter(
-        (member) => member.id && member.id !== currentUserId,
+      const nextTeammates = sortSidebarTeammates(
+        membersResult.data.filter((member) => member.id && member.id !== currentUserId),
       );
       setTeammates(nextTeammates);
       teammatesRef.current = nextTeammates;
@@ -2319,7 +2382,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           })
         : initialConversations;
 
-    void refreshPresence(collectDirectPeerUserIds(conversationsForPresence));
+    void refreshPresence(
+      collectSidebarPresenceUserIds(conversationsForPresence, teammatesRef.current),
+    );
     } finally {
       setLoading(false);
     }
@@ -2327,7 +2392,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   useEffect(() => {
     const syncSidebarPresence = () => {
-      const peerIds = collectDirectPeerUserIds(conversationsRef.current);
+      const peerIds = collectSidebarPresenceUserIds(conversationsRef.current, teammatesRef.current);
 
       if (peerIds.length === 0) {
         return;
@@ -2983,7 +3048,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
         if (!areConversationSidebarListsEqual(current, next)) {
           hydrateHubMemberAvatars(next);
-          void refreshPresence(collectDirectPeerUserIds(next));
+          void refreshPresence(collectSidebarPresenceUserIds(next, teammatesRef.current));
         }
 
         return areConversationSidebarListsEqual(current, next) ? current : next;
@@ -3424,6 +3489,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
 
+      if (isCacheInvalidateEvent(type)) {
+        scheduleConversationsRefresh();
+        dispatchOrganizationInvitesRefresh();
+        void syncNotifications();
+        return;
+      }
+
       if (isPresenceEvent(type)) {
         const presenceUpdate = extractPresenceUpdate(event.payload);
 
@@ -3652,7 +3724,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         void syncNotificationsRef.current();
         void syncPresenceToServer();
         void syncRedisPresenceMode();
-        const peerIds = collectDirectPeerUserIds(conversationsRef.current);
+        const peerIds = collectSidebarPresenceUserIds(conversationsRef.current, teammatesRef.current);
 
         if (peerIds.length > 0) {
           void refreshPresenceRef.current(peerIds);
@@ -4238,8 +4310,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   );
 
   const handleOpenDirectChat = useCallback(
-    async (userId: string, options?: { displayName?: string; username?: string }) => {
+    async (userId: string, options?: { displayName?: string; username?: string; avatarUrl?: string | null }) => {
       const displayName = options?.displayName?.trim() || options?.username?.trim() || 'Direct message';
+      const rosterAvatar =
+        options?.avatarUrl ??
+        teammatesRef.current.find((member) => member.id === userId)?.avatarUrl ??
+        readPeerProfile(userId)?.avatarUrl ??
+        null;
       const existing = findConversationForPeerUserId(
         conversationsRef.current,
         userId,
@@ -4251,7 +4328,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         setConversations((current) =>
           upsertConversation(
             current,
-            patchDirectConversationMetadata(existing, userId, displayName),
+            patchDirectConversationMetadata(existing, userId, displayName, undefined, rosterAvatar),
           ),
         );
         prefetchDirectPeerProfile(userId, existing.id, displayName);
@@ -4273,7 +4350,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       const conversationId = result.data.conversationId;
       const baseConversation =
         result.data.conversation ?? buildPlaceholderDirectConversation(conversationId, userId, displayName);
-      const entry = patchDirectConversationMetadata(baseConversation, userId, displayName);
+      const entry = patchDirectConversationMetadata(
+        baseConversation,
+        userId,
+        displayName,
+        undefined,
+        rosterAvatar,
+      );
 
       rememberDirectChatMetadata(conversationId, userId, displayName);
       setConversations((current) => upsertConversation(current, entry));
@@ -4339,7 +4422,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
   };
 
-  const handleTeammateSelect = async (memberId: string) => {
+  const handleTeammateSelect = (memberId: string) => {
     const teammate = teammates.find((member) => member.id === memberId);
 
     if (!teammate) {
@@ -4347,16 +4430,35 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    setOpeningTeammateId(memberId);
+    const existing = findConversationForPeerUserId(
+      conversationsRef.current,
+      memberId,
+      directChatMetadataRef.current,
+    );
 
-    try {
-      await handleOpenDirectChat(teammate.id, {
+    if (existing) {
+      void handleOpenDirectChat(teammate.id, {
         displayName: teammate.name,
         username: teammate.username,
+        avatarUrl: teammate.avatarUrl,
       });
-    } finally {
-      setOpeningTeammateId(null);
+      return;
     }
+
+    let openingTimer: number | undefined = window.setTimeout(() => {
+      setOpeningTeammateId(memberId);
+    }, 500);
+
+    void handleOpenDirectChat(teammate.id, {
+      displayName: teammate.name,
+      username: teammate.username,
+      avatarUrl: teammate.avatarUrl,
+    }).finally(() => {
+      if (openingTimer !== undefined) {
+        window.clearTimeout(openingTimer);
+      }
+      setOpeningTeammateId(null);
+    });
   };
 
   const handleTeammateAddFriend = async (memberId: string) => {
@@ -5955,12 +6057,72 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     void loadActivityData();
   };
 
+  const handleRespondHubInvite = async (inviteId: string, accept: boolean) => {
+    const channelOnlyId = inviteId.startsWith('channel:') ? inviteId.slice('channel:'.length) : null;
+
+    if (channelOnlyId) {
+      if (!accept) {
+        showActionMessage('Hub invitation dismissed.');
+        void loadActivityData();
+        return;
+      }
+
+      const channelResult = await acceptHubInvite(channelOnlyId);
+      if (!channelResult.ok) {
+        if (handleUnauthorized(channelResult.status)) {
+          return;
+        }
+        setActivityError(channelResult.error);
+        return;
+      }
+
+      showActionMessage('Hub invitation accepted.');
+      void refreshConversations();
+      void loadActivityData();
+      void loadHubsData();
+      return;
+    }
+
+    const result = accept
+      ? await acceptHubInviteById(inviteId)
+      : await declineHubInvite(inviteId);
+
+    if (!result.ok && accept) {
+      const invite = activityHubInvites.find((entry) => entry.id === inviteId);
+      const channelId = invite?.conversationId || invite?.channelId;
+      if (channelId) {
+        const fallback = await acceptHubInvite(channelId);
+        if (fallback.ok) {
+          showActionMessage('Hub invitation accepted.');
+          void refreshConversations();
+          void loadActivityData();
+          void loadHubsData();
+          return;
+        }
+      }
+    }
+
+    if (!result.ok) {
+      if (handleUnauthorized(result.status)) {
+        return;
+      }
+      setActivityError(result.error);
+      return;
+    }
+
+    showActionMessage(accept ? 'Hub invitation accepted.' : 'Hub invitation declined.');
+    void refreshConversations();
+    void loadActivityData();
+    void loadHubsData();
+  };
+
   const renderMainPanel = () => {
     if (mainView === 'activity') {
       return (
         <ActivityView
           notifications={activityNotifications}
           pendingFriends={activityPendingFriends}
+          hubInvites={activityHubInvites}
           conversations={conversations}
           loading={activityLoading}
           error={activityError}
@@ -5970,6 +6132,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           onNotificationClick={handleNotificationClick}
           onRespondFriend={(userId, status) => {
             void handleRespondFriendRequest(userId, status);
+          }}
+          onRespondHubInvite={(inviteId, accept) => {
+            void handleRespondHubInvite(inviteId, accept);
           }}
           onMarkAllRead={() => {
             void syncNotifications({ withLoading: true, markAllRead: true });
@@ -6527,6 +6692,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         onUnauthorized={handleUnauthorized}
       />
       <OrganizationInviteModal
+        user={user}
         onUnauthorized={handleUnauthorized}
         onInviteResolved={() => {
           void loadData();
@@ -6611,7 +6777,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           void refreshConversations();
           handleSelectConversation(conversationId);
           setMainView('chat');
-          showActionMessage('Hub created successfully.');
+          if (memberIds.length > 0) {
+            showActionMessage(
+              `Hub created and ${memberIds.length} invitation${memberIds.length === 1 ? '' : 's'} sent.`,
+            );
+          } else {
+            showActionMessage('Hub created successfully.');
+          }
           return { ok: true };
         }}
         onCreateGroup={async (name, memberIds) => {

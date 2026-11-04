@@ -82,6 +82,12 @@ import {
   writeStoredPrivacySettings,
 } from '../privacySettingsStorage';
 import { clearProfileCache, readProfileCache, writeProfileCache } from '../profileCache';
+import {
+  isFlexHubsHostedAssetUrl,
+  peekAuthenticatedMediaUrl,
+  resolveAuthenticatedMediaUrl,
+} from '../authenticatedMedia';
+import { normalizeUploadUrl } from '../../shared/profile';
 
 type ProfileSettingsViewProps = {
   user: unknown;
@@ -164,6 +170,117 @@ function statusDotClass(statusUi: string): string {
   return STATUS_OPTIONS.find((option) => option.label === statusUi)?.dot ?? 'bg-green-500';
 }
 
+function resolveAvatarPreviewSrc(imageUrl: string | null): string | null {
+  if (!imageUrl?.trim()) {
+    return null;
+  }
+
+  const normalized = normalizeUploadUrl(imageUrl.trim());
+  if (normalized.startsWith('blob:') || normalized.startsWith('data:')) {
+    return normalized;
+  }
+
+  if (!isFlexHubsHostedAssetUrl(normalized)) {
+    return normalized;
+  }
+
+  return peekAuthenticatedMediaUrl(normalized) ?? normalized;
+}
+
+function AvatarPreviewCircle({
+  imageUrl,
+  initials,
+  uploading,
+  uploadSucceeded,
+  sizeClass = 'h-[4.5rem] w-[4.5rem]',
+}: {
+  imageUrl: string | null;
+  initials: string;
+  uploading?: boolean;
+  uploadSucceeded?: boolean;
+  sizeClass?: string;
+}) {
+  const [displaySrc, setDisplaySrc] = useState<string | null>(() => resolveAvatarPreviewSrc(imageUrl));
+  const [remoteFailed, setRemoteFailed] = useState(false);
+
+  useEffect(() => {
+    setRemoteFailed(false);
+    const immediate = resolveAvatarPreviewSrc(imageUrl);
+    setDisplaySrc(immediate);
+
+    if (!imageUrl?.trim()) {
+      return;
+    }
+
+    const normalized = normalizeUploadUrl(imageUrl.trim());
+    if (
+      !isFlexHubsHostedAssetUrl(normalized) ||
+      normalized.startsWith('blob:') ||
+      normalized.startsWith('data:')
+    ) {
+      return;
+    }
+
+    if (peekAuthenticatedMediaUrl(normalized)) {
+      return;
+    }
+
+    let cancelled = false;
+    void resolveAuthenticatedMediaUrl(imageUrl)
+      .then((nextSrc) => {
+        if (!cancelled) {
+          setDisplaySrc(nextSrc);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setRemoteFailed(true);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [imageUrl]);
+
+  const showDirect = Boolean(displaySrc) && (displaySrc?.startsWith('blob:') || displaySrc?.startsWith('data:'));
+  const showRemote = Boolean(displaySrc) && !showDirect && !remoteFailed;
+
+  return (
+    <div className={`relative shrink-0 overflow-hidden rounded-full bg-app-chat-hover ${sizeClass}`}>
+      {showDirect ? (
+        <img src={displaySrc!} alt="" className="h-full w-full object-cover" />
+      ) : showRemote ? (
+        <RemoteImage
+          src={displaySrc}
+          alt=""
+          loading="eager"
+          wrapperClassName="flex h-full w-full"
+          className="h-full w-full object-cover"
+          onError={() => setRemoteFailed(true)}
+        />
+      ) : (
+        <span className="flex h-full w-full items-center justify-center text-lg font-bold text-app-text">
+          {initials}
+        </span>
+      )}
+
+      {uploading ? (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/55 backdrop-blur-[1px]">
+          <span className="h-6 w-6 animate-spin rounded-full border-2 border-white/30 border-t-white" />
+          <span className="text-[10px] font-semibold text-white">Uploading…</span>
+        </div>
+      ) : null}
+
+      {uploadSucceeded && !uploading ? (
+        <div className="absolute inset-0 flex items-center justify-center bg-green-600/75 animate-in fade-in duration-200">
+          <FiCheck className="h-7 w-7 text-white" aria-hidden="true" />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function SectionCard({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
     <div className={`rounded-xl border border-app-border bg-app-surface shadow-xs ${className}`}>
@@ -219,6 +336,9 @@ export function ProfileSettingsView({
   const [savedStatusMessage, setSavedStatusMessage] = useState('');
   const [timezone, setTimezone] = useState('UTC');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [localAvatarPreviewUrl, setLocalAvatarPreviewUrl] = useState<string | null>(null);
+  const [avatarUploading, setAvatarUploading] = useState(false);
+  const [avatarUploadSucceeded, setAvatarUploadSucceeded] = useState(false);
   const [avatarTab, setAvatarTab] = useState<AvatarTab>('avatar');
   const [selectedStyle, setSelectedStyle] = useState('notionists');
   const [avatarSeed, setAvatarSeed] = useState('');
@@ -287,7 +407,29 @@ export function ProfileSettingsView({
     }
   };
   const saveTimeoutRef = useRef<number | undefined>(undefined);
+  const uploadSuccessTimeoutRef = useRef<number | undefined>(undefined);
+  const localPreviewRef = useRef<string | null>(null);
   const timezoneOptions = useMemo(() => getTimezoneOptions(), []);
+  const sessionAvatarUrl = useMemo(() => getUserAvatarUrl(user), [user]);
+
+  useEffect(() => {
+    return () => {
+      if (localPreviewRef.current) {
+        URL.revokeObjectURL(localPreviewRef.current);
+      }
+      if (uploadSuccessTimeoutRef.current) {
+        window.clearTimeout(uploadSuccessTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const clearLocalAvatarPreview = useCallback(() => {
+    if (localPreviewRef.current) {
+      URL.revokeObjectURL(localPreviewRef.current);
+      localPreviewRef.current = null;
+    }
+    setLocalAvatarPreviewUrl(null);
+  }, []);
 
   const persistLocalStatus = useCallback(
     (apiStatus: UserPresenceStatus, message: string) => {
@@ -329,7 +471,7 @@ export function ProfileSettingsView({
       setSavedStatusMessage(nextProfile.statusMessage);
       setManualPresenceStatus(nextProfile.status, nextProfile.statusMessage);
       setTimezone(nextProfile.timezone);
-      setAvatarUrl(nextProfile.avatarUrl);
+      setAvatarUrl(nextProfile.avatarUrl ?? sessionAvatarUrl);
       setAvatarTab(nextProfile.avatarMode ?? 'avatar');
       setSelectedStyle(nextProfile.avatarStyle ?? 'notionists');
       setAvatarSeed(nextProfile.avatarSeed ?? nextProfile.username ?? nextProfile.id ?? 'flexhubs');
@@ -343,7 +485,7 @@ export function ProfileSettingsView({
 
       onNotificationSettingsChange?.(nextSettings);
     },
-    [onNotificationSettingsChange],
+    [onNotificationSettingsChange, sessionAvatarUrl],
   );
 
   const persistSettings = useCallback(
@@ -443,12 +585,12 @@ export function ProfileSettingsView({
       }
 
       applyProfileSnapshot(cached.profile, settingsFromCache, cached.avatarStyles);
-      setAvatarUrl(cached.profile.avatarUrl);
+      setAvatarUrl(cached.profile.avatarUrl ?? sessionAvatarUrl);
       setLoading(false);
     }
 
     void refreshProfile({ silent: Boolean(cached) });
-  }, [applyProfileSnapshot, refreshProfile]);
+  }, [applyProfileSnapshot, refreshProfile, sessionAvatarUrl]);
 
   useEffect(() => {
     if (activeTab !== 'privacy') {
@@ -746,11 +888,16 @@ export function ProfileSettingsView({
   const handleAvatarSave = async (
     updates: Record<string, unknown>,
     successMessage = 'Profile updated.',
+    options?: { skipSavingFlag?: boolean },
   ): Promise<boolean> => {
-    setSaving(true);
+    if (!options?.skipSavingFlag) {
+      setSaving(true);
+    }
     setActionError('');
     const result = await saveUserProfile(updates);
-    setSaving(false);
+    if (!options?.skipSavingFlag) {
+      setSaving(false);
+    }
     if (!result.ok) {
       if (!onUnauthorized(result.status)) {
         setActionError(result.error);
@@ -823,6 +970,9 @@ export function ProfileSettingsView({
 
     onUserUpdated?.();
     toast.success(successMessage);
+    if (typeof updates.avatarUrl === 'string' || updates.avatarMode === 'upload') {
+      clearProfileCache();
+    }
     return true;
   };
 
@@ -883,8 +1033,15 @@ export function ProfileSettingsView({
       const file = (event.target as HTMLInputElement).files?.[0];
       if (!file) return;
       void (async () => {
-        setSaving(true);
+        clearLocalAvatarPreview();
+        const objectUrl = URL.createObjectURL(file);
+        localPreviewRef.current = objectUrl;
+        setLocalAvatarPreviewUrl(objectUrl);
+        setAvatarTab('upload');
+        setAvatarUploading(true);
+        setAvatarUploadSucceeded(false);
         setActionError('');
+
         try {
           const uploadResult = await uploadUserProfileImage(file);
           if (!uploadResult.ok) {
@@ -892,12 +1049,11 @@ export function ProfileSettingsView({
               setActionError(uploadResult.error);
               toast.error(uploadResult.error);
             }
-            setSaving(false);
             return;
           }
-          setAvatarTab('upload');
+
           setAvatarUrl(uploadResult.data.url);
-          await handleAvatarSave(
+          const saved = await handleAvatarSave(
             {
               avatarUrl: uploadResult.data.url,
               avatarMode: 'upload',
@@ -906,12 +1062,25 @@ export function ProfileSettingsView({
               avatarSeed: null,
             },
             'Profile picture updated.',
+            { skipSavingFlag: true },
           );
+
+          if (saved) {
+            clearLocalAvatarPreview();
+            setAvatarUploadSucceeded(true);
+            if (uploadSuccessTimeoutRef.current) {
+              window.clearTimeout(uploadSuccessTimeoutRef.current);
+            }
+            uploadSuccessTimeoutRef.current = window.setTimeout(() => {
+              setAvatarUploadSucceeded(false);
+            }, 2200);
+          }
         } catch (uploadError) {
           const message = uploadError instanceof Error ? uploadError.message : 'Failed to upload avatar.';
           setActionError(message);
           toast.error(message);
-          setSaving(false);
+        } finally {
+          setAvatarUploading(false);
         }
       })();
     };
@@ -967,15 +1136,19 @@ export function ProfileSettingsView({
 
   const displayName = profile.name || profile.username || 'Your account';
   const initials = getUserInitials(profile);
-  const previewAvatarUrl = (() => {
-    const savedMode = profile.avatarMode;
+  const effectiveSavedAvatarUrl = avatarUrl ?? profile.avatarUrl ?? sessionAvatarUrl;
 
-    if (savedMode === 'initials') {
+  const previewAvatarUrl = (() => {
+    if (localAvatarPreviewUrl) {
+      return localAvatarPreviewUrl;
+    }
+
+    if (avatarTab === 'initials') {
       return null;
     }
 
-    if (savedMode === 'upload') {
-      return avatarUrl ?? profile.avatarUrl;
+    if (avatarTab === 'upload') {
+      return effectiveSavedAvatarUrl;
     }
 
     return buildGeneratedAvatarUrl(selectedStyle, avatarSeed);
@@ -1056,21 +1229,12 @@ export function ProfileSettingsView({
                 <SectionCard className="flex flex-col gap-6 p-6 sm:flex-row sm:items-start sm:gap-8">
                   <div className="flex shrink-0 flex-col items-center gap-3 sm:items-start">
                     <div className="relative h-[4.5rem] w-[4.5rem]">
-                      <div className="h-full w-full overflow-hidden rounded-full bg-app-chat-hover">
-                        {previewAvatarUrl ? (
-                          <RemoteImage
-                            src={previewAvatarUrl}
-                            alt=""
-                            loading="eager"
-                            wrapperClassName="flex h-full w-full"
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <span className="flex h-full w-full items-center justify-center text-lg font-bold text-app-text">
-                            {initials}
-                          </span>
-                        )}
-                      </div>
+                      <AvatarPreviewCircle
+                        imageUrl={previewAvatarUrl}
+                        initials={initials}
+                        uploading={avatarUploading}
+                        uploadSucceeded={avatarUploadSucceeded}
+                      />
                       <span
                         className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-app-surface ${statusDotClass(statusUi)}`}
                         aria-hidden="true"
@@ -1204,24 +1368,35 @@ export function ProfileSettingsView({
                     ) : null}
 
                     {avatarTab === 'upload' ? (
-                      <div className="flex items-center gap-4">
-                        {avatarUrl ? (
-                          <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-full bg-app-chat-hover">
-                            <RemoteImage
-                              src={avatarUrl}
-                              alt=""
-                              wrapperClassName="flex h-full w-full"
-                              className="h-full w-full object-cover"
-                            />
-                          </div>
-                        ) : null}
-                        <button
-                          type="button"
-                          onClick={handleUploadAvatar}
-                          className="rounded-lg border border-app-border px-4 py-2 text-sm font-medium hover:bg-app-chat-hover"
-                        >
-                          {avatarUrl ? 'Replace photo' : 'Choose photo'}
-                        </button>
+                      <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                        <AvatarPreviewCircle
+                          imageUrl={previewAvatarUrl}
+                          initials={initials}
+                          uploading={avatarUploading}
+                          uploadSucceeded={avatarUploadSucceeded}
+                          sizeClass="h-16 w-16"
+                        />
+                        <div className="flex flex-col gap-2">
+                          <button
+                            type="button"
+                            disabled={avatarUploading}
+                            onClick={handleUploadAvatar}
+                            className="rounded-lg border border-app-border px-4 py-2 text-sm font-medium hover:bg-app-chat-hover disabled:cursor-wait disabled:opacity-60"
+                          >
+                            {avatarUploading
+                              ? 'Uploading…'
+                              : previewAvatarUrl
+                                ? 'Replace photo'
+                                : 'Choose photo'}
+                          </button>
+                          {avatarUploadSucceeded ? (
+                            <p className="text-xs font-medium text-green-500">Photo updated successfully.</p>
+                          ) : (
+                            <p className="text-xs text-app-muted">
+                              JPG or PNG. You will see a preview here while it uploads.
+                            </p>
+                          )}
+                        </div>
                       </div>
                     ) : null}
 

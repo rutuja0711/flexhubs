@@ -1,15 +1,18 @@
 import { formatCallLogPreview, formatNotificationDisplayBody, parseCallLogContent } from '../shared/calls';
 import { buildConversationListPreview, type ConversationItem } from '../shared/chat';
-import type { MessageItem, NotificationItem } from '../shared/messages';
-import { isCallLogMessage } from '../shared/messages';
+import type { MessageItem, NotificationItem, PendingFriendItem } from '../shared/messages';
 import { getUserId } from '../shared/user';
 import { getStoredUser } from './authApi';
 import { APP_LOGO_SYMBOL_SRC } from './brand/logoAssets';
 import { playMessageNotificationSound } from './messageSound';
+import { shouldDeliverDesktopNotifications } from './pushNotifications';
 import {
   mapMessageToNotificationData,
   mapNotificationItemToFlexHubsData,
+  mapPendingFriendToFlexHubsData,
+  resolveNotificationPresentationType,
 } from './ui/notifications/FlexHubsDesktopNotification';
+import { isCallLogMessage } from '../shared/messages';
 
 let notificationSnapshotReady = false;
 const knownNotificationKeys = new Set<string>();
@@ -416,6 +419,7 @@ export async function showDesktopNotification(
   notification: NotificationItem,
   onClick: () => void,
   conversation: Pick<ConversationItem, 'kind' | 'title'> | null = null,
+  conversations: ConversationItem[] = [],
 ): Promise<boolean> {
   if (notification.messageId && hasShownMessageAlert(notification.messageId)) {
     rememberShownNotification(notification);
@@ -479,11 +483,18 @@ export async function showDesktopNotification(
   }
 
   const presentation = mapNotificationItemToFlexHubsData(notification, {
-    conversations: [],
+    conversations,
+    onClick,
   });
 
-  presentation.title = title;
-  presentation.body = body;
+  if (isIncomingMessageNotification(notification)) {
+    presentation.title = title;
+    presentation.body = body;
+  } else if (resolveNotificationPresentationType(notification) !== 'friend_request') {
+    presentation.title = title;
+    presentation.body = body || presentation.body;
+  }
+
   presentation.isUnread = !notification.isRead;
 
   const tag = notification.messageId ? `message-${notification.messageId}` : notificationKey;
@@ -527,6 +538,7 @@ export async function alertNewDesktopNotifications(
   onNewNotification?: (notification: NotificationItem) => void,
   resolveConversation?: (notification: NotificationItem) => ConversationItem | null,
   shouldSkip?: (notification: NotificationItem) => boolean,
+  conversations: ConversationItem[] = [],
 ): Promise<void> {
   if (!notificationSnapshotReady) {
     seedNotificationSnapshot(notifications);
@@ -553,6 +565,7 @@ export async function alertNewDesktopNotifications(
       notification,
       () => onClick(notification),
       resolveConversation?.(notification) ?? null,
+      conversations,
     );
   }
 }
@@ -704,4 +717,69 @@ export async function showCalendarEventReminder(
   onClick: () => void,
 ): Promise<void> {
   await openDesktopNotification(title || 'Calendar event', body, `calendar-${title}-${body}`, onClick);
+}
+
+export async function showWorkspaceInviteDesktopNotification(
+  organizationLabel: string,
+  role: string,
+  onClick: () => void,
+): Promise<void> {
+  const label = organizationLabel.trim() || 'your team workspace';
+  const body = `You've been invited to join ${label} as ${role || 'Member'}`;
+
+  await openDesktopNotification(
+    'Workspace invitation',
+    body,
+    `org-invite-${organizationLabel || role}`,
+    onClick,
+  );
+}
+
+const knownPendingFriendUserIds = new Set<string>();
+let pendingFriendsSnapshotReady = false;
+
+export function seedPendingFriendsSnapshot(items: PendingFriendItem[]): void {
+  knownPendingFriendUserIds.clear();
+  for (const item of items) {
+    const key = item.userId || item.id;
+    if (key) {
+      knownPendingFriendUserIds.add(key);
+    }
+  }
+  pendingFriendsSnapshotReady = true;
+}
+
+export async function alertNewPendingFriendRequests(
+  items: PendingFriendItem[],
+  onClick: () => void,
+): Promise<void> {
+  if (!shouldDeliverDesktopNotifications()) {
+    if (!pendingFriendsSnapshotReady) {
+      seedPendingFriendsSnapshot(items);
+    }
+    return;
+  }
+
+  if (!pendingFriendsSnapshotReady) {
+    seedPendingFriendsSnapshot(items);
+    return;
+  }
+
+  for (const item of items) {
+    const key = item.userId || item.id;
+    if (!key || knownPendingFriendUserIds.has(key)) {
+      continue;
+    }
+
+    knownPendingFriendUserIds.add(key);
+    const presentation = mapPendingFriendToFlexHubsData(item);
+
+    void openDesktopNotification(
+      presentation.title,
+      presentation.body || 'Sent you a friend request',
+      `friend-request-${key}`,
+      onClick,
+      { ...presentation, tag: `friend-request-${key}` },
+    );
+  }
 }

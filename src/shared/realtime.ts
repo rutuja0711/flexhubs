@@ -930,6 +930,11 @@ export function isUnreadUpdateEvent(type: string): boolean {
   return normalized.includes('unread') || normalized.includes('notification');
 }
 
+export function isCacheInvalidateEvent(type: string): boolean {
+  const normalized = type.toLowerCase().replace(/_/g, ':');
+  return normalized === 'cache:invalidate' || normalized.includes('cache') && normalized.includes('invalidate');
+}
+
 export function isPresenceEvent(type: string): boolean {
   const normalized = type.toLowerCase();
 

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FiBell, FiChevronDown, FiUserMinus, FiX } from 'react-icons/fi';
+import { FiBell, FiChevronDown, FiClock, FiPlus, FiUserMinus, FiUserPlus, FiX } from 'react-icons/fi';
 import { mapApiPresenceToStatus, normalizePresenceUserId, type PresenceStatus } from '../../shared/chat';
 import {
   formatContactPresenceLabel,
@@ -17,15 +17,20 @@ import {
   CONVERSATION_SNOOZE_OPTIONS,
   conversationSnoozeUntil,
   formatConversationSnoozeUntil,
+  mergeHubPanelRecord,
   readConversationSnoozed,
   readHubChannelId,
+  resolveHubViewerIsAdmin,
 } from '../../shared/chat';
 import type { ChannelInviteItem } from '../../shared/features';
+import type { TeammateItem } from '../../shared/messages';
 import {
+  addConversationMembers,
   deleteHubChannel,
   leaveConversation,
   loadChannelInvites,
   loadConversationBootstrap,
+  loadOrganizationMembers,
   renameConversation,
   revokeHubChannelInvite,
   updateConversationNotificationSettings,
@@ -33,9 +38,11 @@ import {
   updateHubChannelName,
   updateHubChannelSettings,
 } from '../chatApi';
+import { SearchField } from './SearchField';
 import { formatConversationTimestamp } from './format';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
+import { getStoredUser } from '../authApi';
 type GroupSidebarProps = {
   conversation: ConversationItem;
   hubDetails?: Record<string, unknown> | null;
@@ -124,30 +131,10 @@ function extractHubMembers(hub: Record<string, unknown>): Record<string, unknown
 }
 
 function resolveHubAdmin(hub: Record<string, unknown>, currentUserId: string | null): boolean {
-  if (hub.isAdmin === true || hub.isOwner === true) {
-    return true;
-  }
-
-  const myRole = String(hub.myRole ?? hub.role ?? '').toUpperCase();
-  if (myRole === 'ADMIN' || myRole.includes('FOUNDER') || myRole.includes('OWNER')) {
-    return true;
-  }
-
-  if (!currentUserId) {
-    return false;
-  }
-
-  for (const member of extractHubMembers(hub)) {
-    const user = asRecord(member.user);
-    const memberId = readRecordString(user, 'id') || readRecordString(member, 'userId') || readRecordString(member, 'id');
-    const role = String(member.role ?? '').toUpperCase();
-
-    if (memberId === currentUserId && (role === 'ADMIN' || role.includes('FOUNDER') || role.includes('OWNER'))) {
-      return true;
-    }
-  }
-
-  return false;
+  const storedUser = asRecord(getStoredUser());
+  return resolveHubViewerIsAdmin(hub, currentUserId, {
+    isOrganizationAdmin: storedUser?.isOrganizationAdmin === true,
+  });
 }
 
 type HubPanelState = {
@@ -166,7 +153,9 @@ function deriveHubPanelState(
   conversation: ConversationItem,
   currentUserId: string | null,
 ): HubPanelState {
-  if (!hub) {
+  const merged = hub ? mergeHubPanelRecord(hub) : null;
+
+  if (!merged) {
     return {
       displayName: conversation.title,
       slug: '',
@@ -179,20 +168,20 @@ function deriveHubPanelState(
     };
   }
 
-  const members = extractHubMembers(hub);
+  const members = extractHubMembers(merged);
   const admins = members.filter((member) => String(member.role ?? '').toUpperCase() === 'ADMIN');
-  const notificationSettings = asRecord(hub.notificationSettings);
+  const notificationSettings = asRecord(merged.notificationSettings);
 
   return {
-    displayName: readRecordString(hub, 'name') || conversation.title,
-    slug: readRecordString(hub, 'slug'),
-    description: readRecordString(hub, 'description'),
-    readReceiptsEnabled: hub.readReceiptsEnabled !== false,
+    displayName: readRecordString(merged, 'name') || conversation.title,
+    slug: readRecordString(merged, 'slug'),
+    description: readRecordString(merged, 'description'),
+    readReceiptsEnabled: merged.readReceiptsEnabled !== false,
     memberCount: members.length > 0 ? members.length : 1,
     adminCount: admins.length > 0 ? admins.length : 1,
-    isAdmin: resolveHubAdmin(hub, currentUserId),
+    isAdmin: resolveHubAdmin(merged, currentUserId),
     snoozed:
-      readConversationSnoozed(hub) ||
+      readConversationSnoozed(merged) ||
       conversation.notificationsSnoozed === true ||
       notificationSettings?.snoozed === true,
   };
@@ -235,6 +224,11 @@ export function GroupSidebar({
   const [pendingInvites, setPendingInvites] = useState<ChannelInviteItem[]>([]);
   const [invitesLoading, setInvitesLoading] = useState(false);
   const [revokingInviteId, setRevokingInviteId] = useState<string | null>(null);
+  const [invitePanelOpen, setInvitePanelOpen] = useState(false);
+  const [orgTeammates, setOrgTeammates] = useState<TeammateItem[]>([]);
+  const [orgMembersLoading, setOrgMembersLoading] = useState(false);
+  const [inviteQuery, setInviteQuery] = useState('');
+  const [invitingUserId, setInvitingUserId] = useState<string | null>(null);
   const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
   const [presenceByUserId, setPresenceByUserId] = useState<Map<string, PresenceStatus>>(new Map());
   const [loadedHubDetails, setLoadedHubDetails] = useState<Record<string, unknown> | null>(hubDetails);
@@ -262,6 +256,37 @@ export function GroupSidebar({
     () => hubMembers.filter((member) => !hubAdmins.some((admin) => admin.id === member.id)),
     [hubAdmins, hubMembers],
   );
+
+  const displayHubAdmins = useMemo((): HubMemberDisplay[] => {
+    if (hubAdmins.length > 0) {
+      return hubAdmins;
+    }
+
+    if (!isAdmin || !currentUserId) {
+      return [];
+    }
+
+    const stored = getStoredUser();
+    const storedRecord = asRecord(stored);
+    const name =
+      readRecordString(storedRecord, 'name') ||
+      readRecordString(storedRecord, 'displayName') ||
+      readRecordString(storedRecord, 'username') ||
+      'You';
+
+    return [
+      {
+        id: currentUserId,
+        name: name.toLowerCase().includes('(you)') ? name : `${name} (you)`,
+        bio: readRecordString(storedRecord, 'bio') || null,
+        avatarUrl: storedRecord ? resolveAvatarUrl(storedRecord) : null,
+        avatarInitials: initialsFromName(name),
+        role: 'ADMIN',
+        lastSeenAt: null,
+        status: null,
+      },
+    ];
+  }, [currentUserId, hubAdmins, isAdmin]);
 
   useEffect(() => {
     const userIds = hubMembers.map((member) => member.id);
@@ -331,9 +356,12 @@ export function GroupSidebar({
 
   useEffect(() => {
     if (hubDetails) {
-      return;
+      const merged = mergeHubPanelRecord(hubDetails);
+      setLoadedHubDetails(merged);
     }
+  }, [hubDetails]);
 
+  useEffect(() => {
     let cancelled = false;
     setRefreshing(true);
 
@@ -344,11 +372,13 @@ export function GroupSidebar({
         }
 
         if (!result.ok) {
-          setError(result.error);
+          if (!hubDetails) {
+            setError(result.error);
+          }
           return;
         }
 
-        const conversationRecord = asRecord(result.data.conversation) ?? {};
+        const conversationRecord = mergeHubPanelRecord(asRecord(result.data.conversation) ?? {}) ?? {};
         const state = deriveHubPanelState(conversationRecord, conversation, currentUserId);
         setLoadedHubDetails(conversationRecord);
         setDisplayName(state.displayName);
@@ -361,7 +391,7 @@ export function GroupSidebar({
         setSnoozed(state.snoozed);
       })
       .catch(() => {
-        if (!cancelled) {
+        if (!cancelled && !hubDetails) {
           setError('Failed to load hub details.');
         }
       })
@@ -379,6 +409,95 @@ export function GroupSidebar({
   useEffect(() => {
     void loadPendingInvites();
   }, [loadPendingInvites]);
+
+  useEffect(() => {
+    if (!invitePanelOpen || !isAdmin) {
+      return;
+    }
+
+    let cancelled = false;
+    setOrgMembersLoading(true);
+
+    void Promise.all([loadOrganizationMembers(), loadPendingInvites()]).then(([membersResult]) => {
+      if (cancelled) {
+        return;
+      }
+
+      setOrgMembersLoading(false);
+
+      if (membersResult.ok) {
+        setOrgTeammates(membersResult.data);
+      } else {
+        setOrgTeammates([]);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [invitePanelOpen, isAdmin, loadPendingInvites]);
+
+  const hubMemberIds = useMemo(() => new Set(hubMembers.map((member) => member.id)), [hubMembers]);
+
+  const pendingInviteUserIds = useMemo(
+    () => new Set(pendingInvites.map((invite) => invite.userId).filter(Boolean)),
+    [pendingInvites],
+  );
+
+  const normalizedInviteQuery = inviteQuery.trim().toLowerCase();
+
+  const filteredPendingInvites = useMemo(() => {
+    return pendingInvites.filter((invite) => {
+      if (invite.userId && hubMemberIds.has(invite.userId)) {
+        return false;
+      }
+
+      if (!normalizedInviteQuery) {
+        return true;
+      }
+
+      const label = `${invite.username} ${invite.email}`.toLowerCase();
+      return label.includes(normalizedInviteQuery);
+    });
+  }, [hubMemberIds, normalizedInviteQuery, pendingInvites]);
+
+  const inviteCandidates = useMemo(() => {
+    return orgTeammates.filter((member) => {
+      if (member.id === currentUserId) {
+        return false;
+      }
+
+      if (hubMemberIds.has(member.id) || pendingInviteUserIds.has(member.id)) {
+        return false;
+      }
+
+      if (!normalizedInviteQuery) {
+        return true;
+      }
+
+      const haystack = `${member.name} ${member.username}`.toLowerCase();
+      return haystack.includes(normalizedInviteQuery);
+    });
+  }, [currentUserId, hubMemberIds, normalizedInviteQuery, orgTeammates, pendingInviteUserIds]);
+
+  const handleSendHubInvite = async (userId: string) => {
+    setInvitingUserId(userId);
+    setError('');
+
+    const result = await addConversationMembers(conversation.id, [userId]);
+
+    setInvitingUserId(null);
+
+    if (!result.ok) {
+      setError(result.error);
+      toast.error(result.error);
+      return;
+    }
+
+    toast.success('Invitation sent.');
+    void loadPendingInvites();
+    onConversationUpdated();
+  };
 
   const subtitle = useMemo(() => {
     const parts = [`${memberCount} member${memberCount === 1 ? '' : 's'}`, `${adminCount} admin`];
@@ -596,11 +715,30 @@ export function GroupSidebar({
       <header className="flex flex-col border-b border-app-border/50 px-5 py-4">
         <div className="flex items-start justify-between">
           <div className="min-w-0 flex-1">
-            <span className="mb-0.5 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub Info</span>
-            <h2 className="truncate text-base font-semibold text-app-text tracking-tight">{displayName || conversation.title}</h2>
-            <p className="mt-0.5 text-xs text-app-muted">
-              {refreshing ? 'Refreshing hub details...' : subtitle}
-            </p>
+            {invitePanelOpen ? (
+              <>
+                <button
+                  type="button"
+                  className="mb-2 inline-flex items-center gap-1 text-xs font-semibold text-accent-soft hover:text-accent"
+                  onClick={() => {
+                    setInvitePanelOpen(false);
+                    setInviteQuery('');
+                  }}
+                >
+                  ← Back
+                </button>
+                <h2 className="text-base font-semibold text-app-text tracking-tight">Invite members</h2>
+                <p className="mt-0.5 text-xs text-app-muted">Send invitations to organization members</p>
+              </>
+            ) : (
+              <>
+                <span className="mb-0.5 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub Info</span>
+                <h2 className="truncate text-base font-semibold text-app-text tracking-tight">{displayName || conversation.title}</h2>
+                <p className="mt-0.5 text-xs text-app-muted">
+                  {refreshing ? 'Refreshing hub details...' : subtitle}
+                </p>
+              </>
+            )}
           </div>
           <button
             type="button"
@@ -614,15 +752,267 @@ export function GroupSidebar({
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {invitePanelOpen ? (
+          <div className="p-5 space-y-5">
+            <SearchField
+              value={inviteQuery}
+              placeholder="Search organization members..."
+              variant="modal"
+              onChange={setInviteQuery}
+            />
+
+            {orgMembersLoading || invitesLoading ? (
+              <p className="text-xs text-app-muted">Loading teammates...</p>
+            ) : null}
+
+            {filteredPendingInvites.length > 0 ? (
+              <section>
+                <p className="mb-2 text-[10px] font-bold tracking-wider text-app-muted uppercase">
+                  Pending invitations
+                </p>
+                <div className="space-y-2">
+                  {filteredPendingInvites.map((invite) => {
+                    const label = invite.username || invite.email || 'Invited user';
+                    const isRevoking = revokingInviteId === invite.id;
+
+                    return (
+                      <div
+                        key={invite.id}
+                        className="flex items-center gap-3 rounded-2xl border border-app-border/60 bg-app-card/50 px-3.5 py-2.5"
+                      >
+                        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent-soft">
+                          <FiClock className="text-base" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="truncate text-sm font-medium text-app-text">{label}</p>
+                            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-semibold text-accent-soft">
+                              Pending
+                            </span>
+                          </div>
+                          <p className="text-xs text-app-muted">Invitation sent · waiting for response</p>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={isRevoking || Boolean(revokingInviteId)}
+                          aria-label={`Revoke invite for ${label}`}
+                          className="shrink-0 text-app-muted hover:text-accent-soft disabled:opacity-50"
+                          onClick={() => {
+                            void handleRevokeInvite(invite);
+                          }}
+                        >
+                          <FiX />
+                        </button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </section>
+            ) : null}
+
+            <section>
+              <p className="mb-2 text-[10px] font-bold tracking-wider text-app-muted uppercase">Invite more</p>
+              {inviteCandidates.length === 0 ? (
+                <p className="text-xs text-app-muted">
+                  {normalizedInviteQuery
+                    ? 'No organization members match that search.'
+                    : 'Everyone in your organization is already in this hub or has a pending invitation.'}
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {inviteCandidates.map((member) => {
+                    const busy = invitingUserId === member.id;
+                    const liveStatus = presenceByUserId.get(normalizePresenceUserId(member.id));
+
+                    return (
+                      <div
+                        key={member.id}
+                        className="flex items-center gap-3 rounded-2xl border border-app-border/60 bg-app-card/50 px-3.5 py-2.5"
+                      >
+                        <button
+                          type="button"
+                          disabled={busy || Boolean(invitingUserId)}
+                          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-white shadow-sm disabled:opacity-50"
+                          aria-label={`Invite ${member.name}`}
+                          onClick={() => {
+                            void handleSendHubInvite(member.id);
+                          }}
+                        >
+                          <FiPlus className="text-lg" />
+                        </button>
+                        <div className="relative shrink-0">
+                          <Avatar imageUrl={member.avatarUrl} initials={member.initials} size="sm" />
+                          {liveStatus ? (
+                            <span
+                              className={`absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full ring-2 ring-app-surface ${presenceDotClass(liveStatus)}`}
+                              aria-hidden="true"
+                            />
+                          ) : null}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-medium text-app-text">{member.name}</p>
+                          <p className="text-xs text-app-muted">
+                            {liveStatus ? formatContactPresenceLabel(liveStatus) : 'Offline'}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          </div>
+        ) : (
+          <>
+        {isAdmin ? (
+          <section className="border-b border-app-border/50 p-5">
+            <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub details</span>
+
+            <label className="mb-1 block text-xs font-medium text-app-muted">Display name</label>
+            <input
+              type="text"
+              value={displayName}
+              disabled={saving}
+              className="mb-2 w-full rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-60 transition-all"
+              onChange={(event) => setDisplayName(event.target.value)}
+            />
+            <p className="mb-3 text-xs text-app-muted">
+              {memberCount} member{memberCount === 1 ? '' : 's'} · {adminCount} admin
+              {adminCount === 1 ? '' : 's'}
+            </p>
+
+            {slug ? <p className="mb-3 text-xs text-app-muted">Slug: #{slug}</p> : null}
+
+            <label className="mb-1 block text-xs font-medium text-app-muted">Description</label>
+            <textarea
+              value={description}
+              maxLength={500}
+              rows={4}
+              disabled={saving}
+              placeholder="Describe this hub..."
+              className="mb-1 w-full resize-none rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-60 transition-all"
+              onChange={(event) => setDescription(event.target.value)}
+            />
+            <p className="mb-4 text-right text-xs text-app-muted">{description.length}/500</p>
+
+            <button
+              type="button"
+              disabled={saving}
+              className="w-full rounded-xl bg-gradient-to-r from-accent to-[#632a38] py-2.5 text-sm font-semibold text-white shadow-md shadow-accent/20 transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
+              onClick={() => {
+                void handleSaveDetails();
+              }}
+            >
+              {saving ? 'Saving...' : 'Save hub details'}
+            </button>
+          </section>
+        ) : description.trim() ? (
+          <section className="border-b border-app-border/50 p-5">
+            <span className="mb-2 block text-[10px] font-bold tracking-wider text-app-muted uppercase">About</span>
+            <p className="text-sm leading-relaxed text-app-text">{description.trim()}</p>
+          </section>
+        ) : null}
+
         <ConversationSharedFiles conversationId={conversation.id} />
 
-        {hubAdmins.length > 0 ? (
+        {isAdmin ? (
+          <section className="border-b border-app-border/50 p-5">
+            <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub settings</span>
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-app-text">Read receipts</p>
+                <p className="text-xs text-app-muted">Show who has read each message in this hub.</p>
+              </div>
+              <button
+                type="button"
+                role="switch"
+                aria-checked={readReceiptsEnabled}
+                disabled={saving}
+                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+                  readReceiptsEnabled ? 'bg-accent' : 'bg-app-inset-active'
+                }`}
+                onClick={() => {
+                  void handleReadReceiptsChange(!readReceiptsEnabled);
+                }}
+              >
+                <span
+                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-xs transition-transform ${
+                    readReceiptsEnabled ? 'left-[22px]' : 'left-0.5'
+                  }`}
+                />
+              </button>
+            </div>
+          </section>
+        ) : null}
+
+        <section className="border-b border-app-border/50 p-5">
+          <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">
+            Snooze notifications
+          </span>
+          <div className="relative">
+            <button
+              type="button"
+              disabled={snoozeSaving}
+              onClick={() => setSnoozeMenuOpen((open) => !open)}
+              className="flex w-full items-center justify-between rounded-2xl border border-app-border/60 bg-app-card/60 px-3.5 py-3 text-left transition-all hover:bg-app-card hover:border-app-border disabled:opacity-50"
+            >
+              <div className="flex items-center gap-3 min-w-0 flex-1">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-app-inset text-app-muted">
+                  <FiBell className="text-base" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-app-text">Snooze for this hub</p>
+                  <p className="mt-0.5 text-xs text-app-muted">
+                    {snoozed
+                      ? formatConversationSnoozeUntil(snoozedUntil, snoozedForever)
+                      : "You'll receive alerts for new messages in this conversation."}
+                  </p>
+                </div>
+              </div>
+              <FiChevronDown
+                className={`ml-2 shrink-0 text-app-muted transition-transform ${snoozeMenuOpen ? 'rotate-180' : ''}`}
+              />
+            </button>
+            {snoozeMenuOpen ? (
+              <div className="absolute z-10 mt-2 w-full rounded-2xl border border-app-border/80 bg-app-surface/95 backdrop-blur-xl p-1.5 shadow-xl">
+                {snoozed ? (
+                  <button
+                    type="button"
+                    disabled={snoozeSaving}
+                    onClick={() => {
+                      void handleSnooze('off');
+                    }}
+                    className="flex w-full items-center gap-2 rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-app-inset transition-colors disabled:opacity-50"
+                  >
+                    <FiBell className="text-sm text-accent-soft" />
+                    Turn notifications back on
+                  </button>
+                ) : null}
+                {CONVERSATION_SNOOZE_OPTIONS.map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    disabled={snoozeSaving}
+                    onClick={() => {
+                      void handleSnooze(option.value);
+                    }}
+                    className="block w-full rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-app-inset transition-colors disabled:opacity-50"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </section>
+
+        {displayHubAdmins.length > 0 || isAdmin ? (
           <section className="border-b border-app-border/50 p-5">
             <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">
               Hub admins
             </span>
             <div className="space-y-3">
-              {hubAdmins.map((admin) => {
+              {displayHubAdmins.map((admin) => {
                 const redactIdentity = shouldRedactUserIdentity(
                   admin.id,
                   blockedUsers,
@@ -669,6 +1059,19 @@ export function GroupSidebar({
                 );
               })}
             </div>
+
+            {isAdmin ? (
+              <button
+                type="button"
+                className="mt-4 flex w-full items-center gap-2.5 rounded-2xl px-1 py-2 text-left transition-colors hover:bg-app-card/60"
+                onClick={() => setInvitePanelOpen(true)}
+              >
+                <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-accent text-white shadow-sm">
+                  <FiPlus className="text-base" strokeWidth={2.5} aria-hidden="true" />
+                </span>
+                <span className="text-sm font-semibold text-accent-soft">Invite members</span>
+              </button>
+            ) : null}
           </section>
         ) : null}
 
@@ -719,205 +1122,11 @@ export function GroupSidebar({
             </div>
           </section>
         ) : null}
-
-        {isAdmin ? (
-          <section className="border-b border-app-border/50 p-5">
-            <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub details</span>
-
-            <label className="mb-1 block text-xs font-medium text-app-muted">Display name</label>
-            <input
-              type="text"
-              value={displayName}
-              disabled={saving}
-              className="mb-2 w-full rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-60 transition-all"
-              onChange={(event) => setDisplayName(event.target.value)}
-            />
-            <p className="mb-3 text-xs text-app-muted">
-              {memberCount} member{memberCount === 1 ? '' : 's'} · {adminCount} admin
-              {adminCount === 1 ? '' : 's'}
-            </p>
-
-            {slug ? <p className="mb-3 text-xs text-app-muted">Slug: #{slug}</p> : null}
-
-            <label className="mb-1 block text-xs font-medium text-app-muted">Description</label>
-            <textarea
-              value={description}
-              maxLength={500}
-              rows={4}
-              disabled={saving}
-              placeholder="Describe this hub..."
-              className="mb-1 w-full resize-none rounded-xl border border-app-border/70 bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-60 transition-all"
-              onChange={(event) => setDescription(event.target.value)}
-            />
-            <p className="mb-4 text-right text-xs text-app-muted">{description.length}/500</p>
-
-            <button
-              type="button"
-              disabled={saving}
-              className="w-full rounded-xl bg-gradient-to-r from-accent to-[#632a38] py-2.5 text-sm font-semibold text-white shadow-md shadow-accent/20 transition-all hover:brightness-110 active:scale-[0.98] disabled:opacity-50"
-              onClick={() => {
-                void handleSaveDetails();
-              }}
-            >
-              {saving ? 'Saving...' : 'Save hub details'}
-            </button>
-          </section>
-        ) : description.trim() ? (
-          <section className="border-b border-app-border/50 p-5">
-            <span className="mb-2 block text-[10px] font-bold tracking-wider text-app-muted uppercase">About</span>
-            <p className="text-sm leading-relaxed text-app-text">{description.trim()}</p>
-          </section>
-        ) : null}
-
-        {isAdmin ? (
-          <section className="border-b border-app-border/50 p-5">
-            <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Hub settings</span>
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium text-app-text">Read receipts</p>
-                <p className="text-xs text-app-muted">Show when members have read messages.</p>
-              </div>
-              <button
-                type="button"
-                role="switch"
-                aria-checked={readReceiptsEnabled}
-                disabled={saving}
-                className={`relative h-6 w-11 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
-                  readReceiptsEnabled ? 'bg-accent' : 'bg-app-inset-active'
-                }`}
-                onClick={() => {
-                  void handleReadReceiptsChange(!readReceiptsEnabled);
-                }}
-              >
-                <span
-                  className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow-xs transition-transform ${
-                    readReceiptsEnabled ? 'left-[22px]' : 'left-0.5'
-                  }`}
-                />
-              </button>
-            </div>
-          </section>
-        ) : null}
-
-        {isAdmin ? (
-          <section className="border-b border-app-border/50 p-5">
-            <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">
-              Pending invites
-            </span>
-            <p className="mb-3 text-xs text-app-muted">
-              People invited to this hub who have not joined yet.
-            </p>
-
-            {invitesLoading ? (
-              <p className="text-xs text-app-muted">Loading invites...</p>
-            ) : pendingInvites.length === 0 ? (
-              <p className="rounded-2xl border border-dashed border-app-border/70 p-4 text-center text-xs text-app-muted">
-                No pending invites.
-              </p>
-            ) : (
-              <div className="space-y-2">
-                {pendingInvites.map((invite) => {
-                  const label = invite.username || invite.email || 'Invited user';
-                  const isRevoking = revokingInviteId === invite.id;
-
-                  return (
-                    <div
-                      key={invite.id}
-                      className="flex items-center justify-between gap-3 rounded-2xl border border-app-border/60 bg-app-card/50 px-3.5 py-2.5"
-                    >
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-app-text">{label}</p>
-                        <p className="truncate text-xs text-app-muted">
-                          {invite.email && invite.username ? invite.email : null}
-                          {invite.createdAt ? (
-                            <>
-                              {invite.email && invite.username ? ' · ' : ''}
-                              {formatConversationTimestamp(invite.createdAt)}
-                            </>
-                          ) : null}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={isRevoking || Boolean(revokingInviteId)}
-                        className="flex shrink-0 items-center gap-1.5 rounded-xl border border-accent-soft/30 px-2.5 py-1 text-xs font-medium text-accent-soft transition-colors hover:bg-accent-soft/10 disabled:opacity-50"
-                        onClick={() => {
-                          void handleRevokeInvite(invite);
-                        }}
-                      >
-                        <FiUserMinus className="text-sm" />
-                        {isRevoking ? 'Revoking...' : 'Revoke'}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-        ) : null}
-
-        <section className="border-t border-app-border/50 p-5">
-          <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">
-            Snooze notifications
-          </span>
-          <div className="relative">
-            <button
-              type="button"
-              disabled={snoozeSaving}
-              onClick={() => setSnoozeMenuOpen((open) => !open)}
-              className="flex w-full items-center justify-between rounded-2xl border border-app-border/60 bg-app-card/60 px-3.5 py-3 text-left transition-all hover:bg-app-card hover:border-app-border disabled:opacity-50"
-            >
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-app-inset text-app-muted">
-                  <FiBell className="text-base" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-app-text">Snooze for this hub</p>
-                  <p className="mt-0.5 text-xs text-app-muted">
-                    {snoozed
-                      ? formatConversationSnoozeUntil(snoozedUntil, snoozedForever)
-                      : 'Notifications on'}
-                  </p>
-                </div>
-              </div>
-              <FiChevronDown
-                className={`ml-2 shrink-0 text-app-muted transition-transform ${snoozeMenuOpen ? 'rotate-180' : ''}`}
-              />
-            </button>
-            {snoozeMenuOpen ? (
-              <div className="absolute z-10 mt-2 w-full rounded-2xl border border-app-border/80 bg-app-surface/95 backdrop-blur-xl p-1.5 shadow-xl">
-                {snoozed ? (
-                  <button
-                    type="button"
-                    disabled={snoozeSaving}
-                    onClick={() => {
-                      void handleSnooze('off');
-                    }}
-                    className="flex w-full items-center gap-2 rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-app-inset transition-colors disabled:opacity-50"
-                  >
-                    <FiBell className="text-sm text-accent-soft" />
-                    Turn notifications back on
-                  </button>
-                ) : null}
-                {CONVERSATION_SNOOZE_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    disabled={snoozeSaving}
-                    onClick={() => {
-                      void handleSnooze(option.value);
-                    }}
-                    className="block w-full rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-app-inset transition-colors disabled:opacity-50"
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-        </section>
+          </>
+        )}
       </div>
 
+      {!invitePanelOpen ? (
       <div className="space-y-2 border-t border-app-border/50 bg-app-surface/60 backdrop-blur-md p-5">
         {error ? (
           <p className="text-center text-xs text-accent-soft" role="alert">
@@ -949,6 +1158,7 @@ export function GroupSidebar({
           {leaving ? 'Leaving...' : 'Leave Hub'}
         </button>
       </div>
+      ) : null}
     </div>
   );
 }

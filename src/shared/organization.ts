@@ -11,7 +11,19 @@ function readString(value: unknown): string | null {
 }
 
 function readNumber(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return value;
+  }
+
+  if (typeof value === 'string' && value.trim()) {
+    const parsed = Number(value);
+
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
 }
 
 function extractArray(payload: unknown, keys: string[]): unknown[] {
@@ -49,6 +61,8 @@ export type OrganizationInviteItem = {
   roleId: string | null;
   createdAt: string;
   registerUrl?: string;
+  organizationName?: string;
+  inviterName?: string;
 };
 
 export function toProductionRegisterUrl(registerUrl: string | null | undefined): string | null {
@@ -94,6 +108,7 @@ export type OrganizationSeatsInfo = {
   used: number;
   total: number;
   remaining: number;
+  planTier?: string | null;
 };
 
 export type OrgInvoiceItem = {
@@ -149,6 +164,7 @@ export function normalizeOrganizationRoles(payload: unknown): OrganizationRoleIt
 
 function mapOrganizationInviteRecord(record: Record<string, unknown>, index: number): OrganizationInviteItem {
   const role = asRecord(record.role);
+  const organization = asRecord(record.organization);
 
   return {
     id: readString(record.id) ?? `invite-${index}`,
@@ -157,6 +173,11 @@ function mapOrganizationInviteRecord(record: Record<string, unknown>, index: num
     roleId: readString(record.roleId) ?? readString(role?.id),
     createdAt: readString(record.createdAt) ?? '',
     registerUrl: readString(record.registerUrl) ?? undefined,
+    organizationName:
+      readString(organization?.name) ??
+      readString(record.organizationName) ??
+      undefined,
+    inviterName: readString(record.inviterName) ?? readString(record.inviterUsername) ?? undefined,
   };
 }
 
@@ -187,19 +208,39 @@ export function normalizeOrganizationInvites(payload: unknown): OrganizationInvi
 }
 
 export function normalizeOrganizationSeats(payload: unknown): OrganizationSeatsInfo {
-  const record = asRecord(payload) ?? {};
-  const used = readNumber(record.used) ?? readNumber(record.usedSeats) ?? readNumber(record.inUse) ?? 0;
-  const total =
-    readNumber(record.total) ??
-    readNumber(record.totalSeats) ??
-    readNumber(record.seatLimit) ??
-    readNumber(record.limit) ??
+  const root = asRecord(payload) ?? {};
+  const seatUsage = asRecord(root.seatUsage) ?? root;
+
+  const used =
+    readNumber(seatUsage.seatsUsed) ??
+    readNumber(seatUsage.used) ??
+    readNumber(seatUsage.usedSeats) ??
+    readNumber(seatUsage.inUse) ??
+    readNumber(root.used) ??
+    readNumber(root.usedSeats) ??
     0;
+
+  const total =
+    readNumber(seatUsage.seatLimit) ??
+    readNumber(seatUsage.total) ??
+    readNumber(seatUsage.totalSeats) ??
+    readNumber(seatUsage.limit) ??
+    readNumber(root.total) ??
+    readNumber(root.totalSeats) ??
+    readNumber(root.seatLimit) ??
+    readNumber(root.limit) ??
+    0;
+
+  const remaining =
+    readNumber(seatUsage.seatsRemaining) ??
+    readNumber(root.remaining) ??
+    Math.max(0, total - used);
 
   return {
     used,
     total,
-    remaining: Math.max(0, readNumber(record.remaining) ?? total - used),
+    remaining: Math.max(0, remaining),
+    planTier: readString(seatUsage.planTier) ?? readString(root.planTier),
   };
 }
 

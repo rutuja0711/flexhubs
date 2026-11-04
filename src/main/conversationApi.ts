@@ -636,7 +636,12 @@ export async function setConversationFavorite(
 }
 
 export async function addConversationMembers(token: string, conversationId: string, userIds: string[]): Promise<ApiResult<unknown>> {
-  return apiPost<unknown>(`${API_BASE_URL}/conversations/${conversationId}/members`, token, 'Add Conversation Members API', { userIds });
+  return apiPost<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/members`,
+    token,
+    'Add Conversation Members API',
+    { memberIds: userIds },
+  );
 }
 
 export async function removeConversationMember(token: string, conversationId: string, userId: string): Promise<ApiResult<unknown>> {
@@ -715,7 +720,7 @@ export async function createGroupConversation(
     `${API_BASE_URL}/conversations/group`,
     token,
     'Create Group Conversation API',
-    { name, userIds, memberIds: userIds },
+    { name, memberIds: userIds },
   );
 
   if (!result.ok) {

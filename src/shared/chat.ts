@@ -1775,11 +1775,123 @@ export function filterTeammatesWithoutDirectChat<T extends { id: string; name: s
   );
 }
 
+export function isGeneratedAvatarUrl(url: string | null | undefined): boolean {
+  if (!url?.trim()) {
+    return false;
+  }
+
+  return /dicebear\.com/i.test(url);
+}
+
+export function enrichSidebarConversationAvatars(
+  conversations: ConversationItem[],
+  options: {
+    viewerDisplayName?: string | null;
+    viewerAvatarUrl?: string | null;
+    teammateAvatars?: ReadonlyMap<string, string | null>;
+    peerAvatars?: ReadonlyMap<string, string | null>;
+  },
+): ConversationItem[] {
+  const { viewerDisplayName, viewerAvatarUrl, teammateAvatars, peerAvatars } = options;
+
+  return conversations.map((conversation) => {
+    if (conversation.isSelf) {
+      const normalizedTitle = conversation.title.trim().toLowerCase();
+      const shouldRenameSelf =
+        Boolean(viewerDisplayName?.trim()) &&
+        (normalizedTitle.includes('saved') ||
+          normalizedTitle.includes('yourself') ||
+          normalizedTitle === 'direct message');
+
+      const nextTitle = shouldRenameSelf ? viewerDisplayName!.trim() : conversation.title;
+      const nextAvatar =
+        viewerAvatarUrl ??
+        (conversation.avatarUrl && !isGeneratedAvatarUrl(conversation.avatarUrl)
+          ? conversation.avatarUrl
+          : null) ??
+        conversation.avatarUrl;
+
+      if (nextTitle === conversation.title && nextAvatar === conversation.avatarUrl) {
+        return conversation;
+      }
+
+      return {
+        ...conversation,
+        title: nextTitle,
+        avatarUrl: nextAvatar,
+        avatarInitials: initialsFromName(nextTitle),
+      };
+    }
+
+    if (conversation.kind !== 'direct' || !conversation.peerUserId) {
+      return conversation;
+    }
+
+    const rosterUrl = teammateAvatars?.get(conversation.peerUserId) ?? null;
+    const cachedPeerUrl = peerAvatars?.get(conversation.peerUserId) ?? null;
+    const currentUrl = conversation.avatarUrl;
+
+    let preferredUrl: string | null = null;
+
+    if (rosterUrl) {
+      preferredUrl = rosterUrl;
+    } else if (cachedPeerUrl) {
+      preferredUrl = cachedPeerUrl;
+    } else if (currentUrl && !isGeneratedAvatarUrl(currentUrl)) {
+      preferredUrl = currentUrl;
+    }
+
+    if (!preferredUrl || preferredUrl === currentUrl) {
+      return conversation;
+    }
+
+    if (currentUrl && !isGeneratedAvatarUrl(currentUrl) && !rosterUrl && !cachedPeerUrl) {
+      return conversation;
+    }
+
+    return { ...conversation, avatarUrl: preferredUrl };
+  });
+}
+
+const SIDEBAR_PRESENCE_RANK: Record<PresenceStatus, number> = {
+  online: 0,
+  away: 1,
+  busy: 2,
+  dnd: 3,
+  offline: 4,
+};
+
+export function sortSidebarTeammates<T extends { id: string; name: string }>(
+  teammates: T[],
+  presenceByUserId?: ReadonlyMap<string, PresenceStatus>,
+): T[] {
+  return [...teammates].sort((left, right) => {
+    const leftRank = SIDEBAR_PRESENCE_RANK[presenceByUserId?.get(left.id) ?? 'offline'] ?? 4;
+    const rightRank = SIDEBAR_PRESENCE_RANK[presenceByUserId?.get(right.id) ?? 'offline'] ?? 4;
+
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+
+    return left.name.localeCompare(right.name);
+  });
+}
+
+export function collectSidebarPresenceUserIds(
+  conversations: ConversationItem[],
+  teammates: ReadonlyArray<{ id: string }>,
+): string[] {
+  return [
+    ...new Set([...collectDirectPeerUserIds(conversations), ...teammates.map((teammate) => teammate.id)]),
+  ];
+}
+
 export function patchDirectConversationMetadata(
   conversation: ConversationItem,
   peerUserId: string,
   title: string,
   selfDisplayName?: string | null,
+  avatarUrl?: string | null,
 ): ConversationItem {
   const resolvedTitle = sanitizeDirectDisplayName(title, selfDisplayName, conversation.title);
 
@@ -1788,6 +1900,7 @@ export function patchDirectConversationMetadata(
     kind: 'direct',
     peerUserId,
     title: resolvedTitle,
+    avatarUrl: avatarUrl ?? conversation.avatarUrl,
     avatarInitials: initialsFromName(resolvedTitle),
   };
 }
@@ -1970,6 +2083,118 @@ function statsFromHubRecord(record: Record<string, unknown>): { memberCount: num
     (admins.length > 0 ? admins.length : 0);
 
   return { memberCount, adminCount };
+}
+
+export function mergeHubPanelRecord(source: Record<string, unknown> | null): Record<string, unknown> | null {
+  if (!source) {
+    return null;
+  }
+
+  const channel = asRecord(source.channel);
+  const hub = asRecord(source.hub);
+  const group = asRecord(source.group);
+  const nested = channel ?? hub ?? group;
+  const membership = asRecord(source.membership) ?? asRecord(nested?.membership);
+
+  const merged: Record<string, unknown> = nested ? { ...nested, ...source } : { ...source };
+
+  if (membership) {
+    merged.membership = membership;
+
+    if (merged.myRole === undefined && membership.role !== undefined) {
+      merged.myRole = membership.role;
+    }
+
+    if (merged.role === undefined && membership.role !== undefined) {
+      merged.role = membership.role;
+    }
+  }
+
+  const members =
+    source.members ?? source.groupMembers ?? nested?.members ?? nested?.groupMembers;
+
+  if (Array.isArray(members)) {
+    merged.members = members;
+    merged.groupMembers = members;
+  }
+
+  return merged;
+}
+
+export function resolveHubViewerIsAdmin(
+  hub: Record<string, unknown> | null,
+  currentUserId: string | null,
+  options?: { isOrganizationAdmin?: boolean },
+): boolean {
+  if (!currentUserId) {
+    return false;
+  }
+
+  if (options?.isOrganizationAdmin === true) {
+    return true;
+  }
+
+  if (!hub) {
+    return false;
+  }
+
+  const record = mergeHubPanelRecord(hub) ?? hub;
+
+  if (record.isAdmin === true || record.isOwner === true || record.youAreAdmin === true) {
+    return true;
+  }
+
+  for (const key of ['myRole', 'role', 'currentUserRole', 'viewerRole', 'membershipRole'] as const) {
+    const role = String(record[key] ?? '').toUpperCase();
+
+    if (role === 'ADMIN' || role.includes('FOUNDER') || role.includes('OWNER')) {
+      return true;
+    }
+  }
+
+  const membership = asRecord(record.membership);
+  const membershipRole = String(membership?.role ?? '').toUpperCase();
+
+  if (membershipRole === 'ADMIN' || membershipRole.includes('FOUNDER') || membershipRole.includes('OWNER')) {
+    return true;
+  }
+
+  const members = collectHubMembers(record);
+
+  for (const member of members) {
+    if (!isHubAdminMember(member)) {
+      continue;
+    }
+
+    const user = asRecord(member.user);
+    const memberId =
+      readString(user?.id) ?? readString(member.userId) ?? readString(member.id);
+
+    if (memberId === currentUserId) {
+      return true;
+    }
+  }
+
+  if (members.length === 1) {
+    const member = members[0];
+    const user = asRecord(member.user) ?? member;
+    const memberId = readString(user.id) ?? readString(member.userId) ?? readString(member.id);
+
+    if (memberId === currentUserId) {
+      return true;
+    }
+  }
+
+  const createdBy =
+    readString(record.createdById) ??
+    readString(record.ownerId) ??
+    readString(record.createdBy);
+
+  if (createdBy === currentUserId) {
+    return true;
+  }
+
+  return false;
 }
 
 export function readHubMemberStats(hub: Record<string, unknown> | null): {

@@ -1,4 +1,6 @@
 import type { WorkspaceBillingPeriod, WorkspacePlanId } from './workspace';
+import { fromApiBillingPeriod } from './workspace';
+import type { OrganizationSeatsInfo } from './organization';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
@@ -120,24 +122,93 @@ const DEFAULT_PLANS: PaymentPlanItem[] = [
   },
 ];
 
-function normalizePlanId(value: unknown, index = 0): WorkspacePlanId {
+function resolvePlanId(value: unknown): WorkspacePlanId | null {
   const raw = String(value ?? '').toLowerCase().trim();
 
-  if (raw.includes('starter')) return 'starter';
-  if (raw.includes('business')) return 'business';
-  if (raw.includes('custom')) return 'custom';
-  if (raw.includes('team')) return 'team';
+  if (!raw) {
+    return null;
+  }
 
-  const byIndex: WorkspacePlanId[] = ['starter', 'team', 'business', 'custom'];
-  return byIndex[index] ?? 'team';
+  if (raw.includes('custom')) return 'custom';
+  if (raw.includes('business')) return 'business';
+  if (raw.includes('team')) return 'team';
+  if (raw.includes('starter')) return 'starter';
+
+  return null;
+}
+
+function normalizePlanId(value: unknown, index = 0): WorkspacePlanId {
+  return resolvePlanId(value) ?? (['starter', 'team', 'business', 'custom'] as const)[index] ?? 'team';
+}
+
+function pickNumber(...values: unknown[]): number | null {
+  for (const value of values) {
+    const parsed = readNumber(value);
+
+    if (parsed !== null && parsed >= 0) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
+function pickString(...values: unknown[]): string | null {
+  for (const value of values) {
+    const parsed = readString(value);
+
+    if (parsed) {
+      return parsed;
+    }
+  }
+
+  return null;
 }
 
 function normalizeBillingPeriod(value: unknown): WorkspaceBillingPeriod {
-  const raw = String(value ?? '').toLowerCase();
+  const raw = pickString(value);
 
-  if (raw.includes('annual') || raw.includes('year')) return 'annual';
-  if (raw.includes('semi') || raw.includes('6')) return '6months';
-  return 'monthly';
+  if (!raw) {
+    return 'monthly';
+  }
+
+  return fromApiBillingPeriod(raw);
+}
+
+export function mergeOrgSubscriptionWithSeats(
+  subscription: OrgSubscriptionInfo | null,
+  seats: OrganizationSeatsInfo | null | undefined,
+): OrgSubscriptionInfo | null {
+  if (!subscription) {
+    if (!seats || seats.total <= 0) {
+      return null;
+    }
+
+    const planId = resolvePlanId(seats.planTier);
+
+    if (!planId) {
+      return null;
+    }
+
+    const defaultPlan = DEFAULT_PLANS.find((plan) => plan.id === planId);
+
+    return {
+      planId,
+      planName: defaultPlan?.name ?? planId,
+      teamSize: seats.total,
+      usedSeats: seats.used,
+      billingPeriod: 'monthly',
+      status: 'active',
+      activatedAt: '',
+      renewsAt: '',
+    };
+  }
+
+  return {
+    ...subscription,
+    teamSize: subscription.teamSize > 0 ? subscription.teamSize : (seats?.total ?? 0),
+    usedSeats: subscription.usedSeats > 0 ? subscription.usedSeats : (seats?.used ?? 0),
+  };
 }
 
 export function normalizePaymentPlans(payload: unknown): PaymentPlanItem[] {
@@ -199,63 +270,52 @@ export function normalizeOrgSubscription(payload: unknown): OrgSubscriptionInfo 
     return null;
   }
 
-  const record =
-    asRecord(root.subscription) ??
-    asRecord(root.orgSubscription) ??
-    asRecord(root.data) ??
-    root;
+  const details = asRecord(root.subscription) ?? root;
+  const organization = asRecord(details.organization);
+  const seatUsage = asRecord(details.seatUsage);
 
-  const plan = asRecord(record.plan) ?? record;
-  const planId = normalizePlanId(
-    plan.id ?? plan.tier ?? record.planId ?? record.planTier ?? root.planTier,
+  const planId = resolvePlanId(
+    organization?.planTier ?? details.planTier ?? seatUsage?.planTier,
   );
-  const planName =
-    readString(plan.name) ??
-    readString(plan.label) ??
-    readString(record.planName) ??
-    planId;
+
+  if (!planId) {
+    return null;
+  }
+
+  const defaultPlan = DEFAULT_PLANS.find((item) => item.id === planId);
+  const planName = defaultPlan?.name ?? planId;
+
+  const teamSize =
+    pickNumber(organization?.seatLimit, seatUsage?.seatLimit, details.seatLimit, details.memberCount) ?? 0;
+
+  const usedSeats = pickNumber(seatUsage?.seatsUsed, details.seatsUsed, details.membersInUse) ?? 0;
+
+  const billingRaw = pickString(details.billingPeriod, organization?.billingPeriod);
+
+  const status =
+    pickString(organization?.subscriptionStatus, details.subscriptionStatus, details.status) ?? 'active';
+
+  const activatedAt =
+    pickString(details.subscriptionActivatedAt, details.activatedAt, details.activatedOn) ?? '';
+
+  const renewsAt =
+    pickString(details.subscriptionExpiresAt, details.renewsAt, details.renewalDate) ?? '';
 
   return {
     planId,
     planName,
-    teamSize:
-      readNumber(record.teamSize) ??
-      readNumber(record.seats) ??
-      readNumber(record.memberLimit) ??
-      readNumber(record.maxMembers) ??
-      readNumber(root.memberLimit) ??
-      0,
-    usedSeats:
-      readNumber(record.usedSeats) ??
-      readNumber(record.membersInUse) ??
-      readNumber(record.used) ??
-      readNumber(record.seatsInUse) ??
-      readNumber(root.usedSeats) ??
-      0,
-    billingPeriod: normalizeBillingPeriod(
-      record.billingPeriod ?? record.interval ?? record.billingPeriodId ?? root.billingPeriod,
-    ),
-    status:
-      readString(record.status) ??
-      readString(record.subscriptionStatus) ??
-      readString(root.subscriptionStatus) ??
-      'active',
-    activatedAt:
-      readString(record.activatedAt) ??
-      readString(record.startedAt) ??
-      readString(record.createdAt) ??
-      '',
-    renewsAt:
-      readString(record.renewsAt) ??
-      readString(record.renewalDate) ??
-      readString(record.endsAt) ??
-      readString(record.nextBillingDate) ??
-      '',
+    teamSize,
+    usedSeats,
+    billingPeriod: billingRaw ? normalizeBillingPeriod(billingRaw) : 'monthly',
+    status,
+    activatedAt,
+    renewsAt,
   };
 }
 
 export function normalizePlanCompliance(payload: unknown): PlanComplianceInfo {
-  const record = asRecord(payload) ?? {};
+  const root = asRecord(payload) ?? {};
+  const record = asRecord(root.compliance) ?? root;
 
   const rulesRaw = extractArray(record.rules, ['items']).length
     ? extractArray(record.rules, ['items'])
@@ -263,12 +323,24 @@ export function normalizePlanCompliance(payload: unknown): PlanComplianceInfo {
       ? record.rules
       : [];
 
+  const issueRules = extractArray(record, ['issues'])
+    .map(asRecord)
+    .map((issue) => readString(issue?.message))
+    .filter((item): item is string => Boolean(item));
+
+  const rules =
+    rulesRaw.length > 0
+      ? rulesRaw
+          .map((item) =>
+            typeof item === 'string' ? item : readString(asRecord(item)?.text ?? asRecord(item)?.rule),
+          )
+          .filter((item): item is string => Boolean(item))
+      : issueRules;
+
   return {
     minSeats: readNumber(record.minSeats) ?? readNumber(record.minimumSeats) ?? 1,
     maxSeats: readNumber(record.maxSeats) ?? readNumber(record.maximumSeats),
-    rules: rulesRaw
-      .map((item) => (typeof item === 'string' ? item : readString(asRecord(item)?.text ?? asRecord(item)?.rule)))
-      .filter((item): item is string => Boolean(item)),
+    rules,
   };
 }
 

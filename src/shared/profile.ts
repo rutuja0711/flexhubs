@@ -422,6 +422,10 @@ export function resolveAvatarUrl(source: unknown): string | null {
     return normalizeUploadUrl(rawUrl);
   }
 
+  if (rawUrl && avatarMode !== 'initials' && record.useInitials !== true) {
+    return normalizeUploadUrl(rawUrl);
+  }
+
   const avatarStyle =
     readString(record.avatarStyle) ??
     readString(record.avatarStyleId) ??
@@ -699,7 +703,10 @@ export function userCanManageOrganization(
 
   if (
     record.isOrganizationAdmin === true ||
-    membership?.isOrganizationAdmin === true
+    membership?.isOrganizationAdmin === true ||
+    record.canManageOrganization === true ||
+    record.canManageBilling === true ||
+    organization?.canManageOrganization === true
   ) {
     return true;
   }

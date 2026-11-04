@@ -2521,9 +2521,87 @@ export function isGroupInviteNotification(notification: NotificationItem): boole
   const haystack = notificationHaystack(notification);
 
   return (
+    type === 'group_invite' ||
     (type.includes('group') && type.includes('invite')) ||
     haystack.includes('group invitation') ||
-    haystack.includes('group invite')
+    haystack.includes('group invite') ||
+    haystack.includes('hub invitation')
+  );
+}
+
+export function isIncomingHubInviteNotification(notification: NotificationItem): boolean {
+  if (isHubInviteNotification(notification) || isGroupInviteNotification(notification)) {
+    return true;
+  }
+
+  if (notification.type.toUpperCase() === 'GROUP_INVITE') {
+    return true;
+  }
+
+  const haystack = notificationHaystack(notification);
+  if (haystack.includes('added you to') && (haystack.includes('hub') || haystack.includes('channel'))) {
+    return true;
+  }
+
+  if (haystack.includes('invited you to join') && (haystack.includes('hub') || haystack.includes('channel'))) {
+    return true;
+  }
+
+  return false;
+}
+
+export const HUB_INVITE_CHANNEL_RESPOND_PREFIX = 'channel:';
+
+export function buildHubInviteChannelRespondId(channelId: string): string {
+  return `${HUB_INVITE_CHANNEL_RESPOND_PREFIX}${channelId}`;
+}
+
+export function parseHubInviteChannelRespondId(respondId: string): string | null {
+  if (!respondId.startsWith(HUB_INVITE_CHANNEL_RESPOND_PREFIX)) {
+    return null;
+  }
+
+  const channelId = respondId.slice(HUB_INVITE_CHANNEL_RESPOND_PREFIX.length).trim();
+  return channelId || null;
+}
+
+export function resolveHubInviteRespondId(
+  notification: NotificationItem,
+  hubInvites: ReadonlyArray<{ id: string; conversationId: string; channelId: string }>,
+): string | null {
+  const matched = findHubInviteForNotification(notification, hubInvites);
+  const inviteId = matched?.id ?? notification.inviteId ?? null;
+
+  if (inviteId) {
+    return inviteId;
+  }
+
+  const channelId =
+    notification.channelId ??
+    notification.conversationId ??
+    matched?.channelId ??
+    matched?.conversationId ??
+    null;
+
+  if (channelId) {
+    return buildHubInviteChannelRespondId(channelId);
+  }
+
+  return null;
+}
+
+export function findHubInviteForNotification(
+  notification: NotificationItem,
+  hubInvites: ReadonlyArray<{ id: string; conversationId: string; channelId: string }>,
+): { id: string; conversationId: string; channelId: string } | undefined {
+  const conversationId = notification.conversationId;
+
+  if (!conversationId) {
+    return undefined;
+  }
+
+  return hubInvites.find(
+    (invite) => invite.conversationId === conversationId || invite.channelId === conversationId,
   );
 }
 
@@ -2739,8 +2817,8 @@ export function normalizePendingFriends(payload: unknown): PendingFriendItem[] {
       return {
         id: readString(record.id) ?? userId ?? `friend-${index}`,
         userId,
-        title: 'Friend request',
-        body: `${name} sent you a friend request.`,
+        title: name,
+        body: 'Sent you a friend request',
         createdAt: readString(record.createdAt) ?? readString(record.timestamp) ?? '',
       };
     });

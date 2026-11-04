@@ -21,14 +21,14 @@ export function ChatWelcome({ workspaceName, onFindPeople }: ChatWelcomeProps) {
 
         <h2 className="mb-2 text-2xl font-bold tracking-tight text-app-text">Welcome to {shortName}</h2>
         <p className="mb-6 text-xs leading-relaxed text-app-muted">
-          Tap a teammate in the sidebar to start messaging.
+          Tap a teammate in the sidebar to start messaging. Friend requests are optional.
         </p>
 
         <div className="mb-6 inline-flex items-center gap-2 rounded-2xl bg-app-chat-panel/80 px-4 py-2 text-xs text-app-muted">
           <span className="text-accent-soft">
             <BuildingIcon />
           </span>
-          <span>{shortName} teammates appear in your sidebar.</span>
+          <span>{shortName} teammates appear at the top of the sidebar.</span>
         </div>
 
         <div>

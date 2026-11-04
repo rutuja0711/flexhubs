@@ -1,6 +1,7 @@
 import { API_BASE_URL } from '../shared/api';
 import type { ApiResult } from '../shared/api';
 import {
+  mergeOrgSubscriptionWithSeats,
   normalizeOrgSubscription,
   normalizePaymentPlans,
   normalizePlanCompliance,
@@ -8,6 +9,7 @@ import {
   type PaymentPlanItem,
   type PlanComplianceInfo,
 } from '../shared/payments';
+import { fetchOrganizationSeats } from './organizationsApi';
 import type {
   CreateOrgOrderInput,
   OrgOrderResult,
@@ -99,33 +101,28 @@ export async function fetchOrgSubscription(token: string): Promise<ApiResult<Org
     'Org Subscription API',
   );
 
-  if (orgResult.ok) {
-    return { ok: true, data: normalizeOrgSubscription(orgResult.data) };
-  }
-
-  if (!orgResult.status) {
+  if (!orgResult.ok) {
     return orgResult as ApiResult<OrgSubscriptionInfo | null>;
   }
 
-  const fallback = await apiGet<unknown>(
-    `${API_BASE_URL}/payments/subscription`,
-    token,
-    'Subscription API',
+  const normalized = normalizeOrgSubscription(orgResult.data);
+  const seatsResult = await fetchOrganizationSeats(token);
+  const merged = mergeOrgSubscriptionWithSeats(
+    normalized,
+    seatsResult.ok ? seatsResult.data : null,
   );
 
-  if (!fallback.ok) {
-    return fallback as ApiResult<OrgSubscriptionInfo | null>;
-  }
-
-  return { ok: true, data: normalizeOrgSubscription(fallback.data) };
+  return { ok: true, data: merged };
 }
 
 export async function fetchPlanCompliance(
   token: string | null,
-  planId: string,
-  teamSize: number,
+  _planId: string,
+  _teamSize: number,
 ): Promise<ApiResult<PlanComplianceInfo>> {
-  const url = `${API_BASE_URL}/payments/plan-compliance?planId=${encodeURIComponent(planId)}&teamSize=${teamSize}`;
+  const url = token
+    ? `${API_BASE_URL}/payments/plan-compliance`
+    : `${API_BASE_URL}/payments/plan-compliance?planId=${encodeURIComponent(_planId)}&teamSize=${_teamSize}`;
 
   if (token) {
     const result = await apiGet<unknown>(url, token, 'Plan Compliance API');

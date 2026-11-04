@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   FiBriefcase,
   FiClock,
-  FiCreditCard,
   FiEdit2,
   FiFileText,
   FiHeadphones,
@@ -20,7 +19,6 @@ import {
   billingPeriodMultiplier,
   calculatePlanTotal,
   getDefaultPaymentPlans,
-  type OrgSubscriptionInfo,
   type PaymentPlanItem,
 } from '../../shared/payments';
 import type {
@@ -267,7 +265,9 @@ export function OrganizationView({
             setSubscription(subscriptionResult.data);
             setSelectedPlanId(subscriptionResult.data.planId);
             setBillingPeriod(subscriptionResult.data.billingPeriod);
-            setTeamSize((current) => subscriptionResult.data?.teamSize || current || 11);
+            if (subscriptionResult.data.teamSize > 0) {
+              setTeamSize(subscriptionResult.data.teamSize);
+            }
           } else {
             setSubscription(null);
           }
@@ -724,8 +724,12 @@ export function OrganizationView({
     );
   }
 
-  const seatTotal = seats.total || subscription?.teamSize || teamSize;
-  const seatsRemaining = seats.remaining || Math.max(0, seatTotal - seats.used);
+  const seatTotal = seats.total > 0 ? seats.total : subscription?.teamSize ?? teamSize;
+  const seatsUsed = seats.used > 0 ? seats.used : subscription?.usedSeats ?? seats.used;
+  const seatsRemaining =
+    seats.remaining > 0 ? seats.remaining : Math.max(0, seatTotal - seatsUsed);
+  const activePlanLabel =
+    plans.find((plan) => plan.id === subscription?.planId)?.name ?? subscription?.planName ?? '';
   const displayedRules = complianceRules.length > 0 ? complianceRules : DEFAULT_PLAN_RULES;
 
   return (
@@ -738,12 +742,18 @@ export function OrganizationView({
         ) : null}
         {isOwner ? (
         <div className="flex items-start gap-3">
-          <FiCreditCard className="mt-1 text-accent" size={22} />
-          <div>
-            <h1 className="text-2xl font-bold text-app-text">Subscription</h1>
-            <p className="mt-1 text-sm text-app-muted">
-              Choose a plan and team size. Price is calculated per member.
-            </p>
+          <FiBriefcase className="mt-1 shrink-0 text-accent" size={22} />
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+            <div>
+              <h1 className="text-2xl font-bold text-app-text">Organization</h1>
+              <p className="mt-1 text-sm text-app-muted">
+                Manage subscription, invites, roles, and teammates for this workspace.
+              </p>
+            </div>
+            <span className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2.5 py-0.5 text-xs font-medium text-accent-soft">
+              <FiShield className="text-[10px]" />
+              Admin
+            </span>
           </div>
         </div>
         ) : (
@@ -757,7 +767,10 @@ export function OrganizationView({
           <section className="rounded-2xl bg-gradient-to-br from-accent/10 via-app-card/70 to-app-card/50 p-6 shadow-md">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-accent-soft">Active plan</p>
             <div className="mt-2 flex flex-wrap items-center gap-2.5">
-              <h2 className="text-xl font-bold capitalize text-app-text tracking-tight">{subscription.planName}</h2>
+              <h2 className="text-xl font-bold capitalize text-app-text tracking-tight">
+                {activePlanLabel}
+                {subscription.status.toLowerCase() === 'active' ? ' (Active)' : ''}
+              </h2>
               <span className="rounded-full bg-[#3ecf8e]/15 px-3 py-0.5 text-xs font-medium text-[#3ecf8e] capitalize">
                 {subscription.status}
               </span>
@@ -940,7 +953,7 @@ export function OrganizationView({
                   Invite teammates by email. They&apos;ll receive a link to register and join automatically.
                 </p>
                 <p className="mt-3 text-sm font-medium text-accent-soft">
-                  {seats.used}/{seatTotal} seats used · {seatsRemaining} remaining
+                  {seatsUsed}/{seatTotal} seats used · {seatsRemaining} remaining
                 </p>
                 <label className="mt-4 mb-1.5 block text-sm font-medium text-app-text">Email address</label>
                 <input

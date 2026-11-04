@@ -1572,7 +1572,36 @@ const createWindow = (): void => {
     console.warn('[FlexHubs] Main window became unresponsive.');
   });
 
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    console.error(
+      '[FlexHubs] Main window failed to load:',
+      errorCode,
+      errorDescription,
+      validatedURL,
+    );
+    if (!app.isPackaged && mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.show();
+      void mainWindow.webContents.openDevTools({ mode: 'detach' });
+    }
+  });
+
+  let devForceShowTimer: ReturnType<typeof setTimeout> | undefined;
+  if (!app.isPackaged) {
+    devForceShowTimer = setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+        console.warn(
+          '[FlexHubs] Dev: main window still hidden after 5s — showing anyway (check Vite on port 5173).',
+        );
+        mainWindow.show();
+        void mainWindow.webContents.openDevTools({ mode: 'detach' });
+      }
+    }, 5000);
+  }
+
   mainWindow.once('ready-to-show', () => {
+    if (devForceShowTimer) {
+      clearTimeout(devForceShowTimer);
+    }
     mainWindow?.show();
     applyApplicationIcon();
     updateDisplaySleepBlocker();
@@ -1639,11 +1668,13 @@ function focusPrimaryWindow(): void {
   }
 }
 
-const singleInstanceLock = app.requestSingleInstanceLock();
+const enableSingleInstanceLock = app.isPackaged;
+const singleInstanceLock = enableSingleInstanceLock ? app.requestSingleInstanceLock() : true;
 
 if (!singleInstanceLock) {
+  console.log('[FlexHubs] Another instance is already running — exiting.');
   app.quit();
-} else {
+} else if (enableSingleInstanceLock) {
   app.on('second-instance', () => {
     focusPrimaryWindow();
   });
@@ -2081,7 +2112,9 @@ app.on('before-quit', () => {
 app.on('window-all-closed', () => {
   console.log('[FlexHubs] All windows closed.');
   stopRealtimeStream();
-  app.quit();
+  if (process.platform !== 'darwin') {
+    app.quit();
+  }
 });
 
 function setupApplicationMenu(): void {

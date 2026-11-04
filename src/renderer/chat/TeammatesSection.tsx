@@ -1,14 +1,17 @@
 import { useState } from 'react';
 import { FiMessageSquare, FiUserPlus } from 'react-icons/fi';
+import type { DirectChatMetadata, PresenceStatus } from '../../shared/chat';
 import { shouldRedactUserIdentity } from '../../shared/blocking';
 import type { TeammateItem } from '../../shared/messages';
-import { Avatar } from './ChatIcons';
+import { sidebarPresenceStatusForPeer } from '../../shared/presence';
+import { Avatar, PresenceDot } from './ChatIcons';
 
 type TeammatesSectionProps = {
   teammates: TeammateItem[];
   openingTeammateId?: string | null;
   blockedUserIds?: ReadonlySet<string>;
   blockedByPeerIds?: ReadonlySet<string>;
+  presenceByUserId?: ReadonlyMap<string, PresenceStatus>;
   onSelect: (memberId: string) => void;
   onAddFriend: (memberId: string) => Promise<void>;
 };
@@ -18,6 +21,7 @@ export function TeammatesSection({
   openingTeammateId = null,
   blockedUserIds,
   blockedByPeerIds,
+  presenceByUserId,
   onSelect,
   onAddFriend,
 }: TeammatesSectionProps) {
@@ -67,16 +71,22 @@ export function TeammatesSection({
                 isOpening ? 'border-app-border/50 bg-app-chat-hover' : 'hover:bg-app-chat-hover/70 hover:border-app-border/40'
               }`}
             >
-              <Avatar
-                imageUrl={redactIdentity ? null : teammate.avatarUrl}
-                initials={teammate.initials}
-                size="sm"
-              />
+              <div className="relative shrink-0">
+                <Avatar
+                  imageUrl={redactIdentity ? null : teammate.avatarUrl}
+                  initials={teammate.initials}
+                  size="sm"
+                />
+                {!redactIdentity ? (
+                  <PresenceDot
+                    status={sidebarPresenceStatusForPeer(presenceByUserId ?? new Map(), teammate.id, null)}
+                    size="sm"
+                  />
+                ) : null}
+              </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-xs font-semibold text-app-text">{teammate.name}</p>
-                {isOpening ? (
-                  <p className="mt-0.5 truncate text-[11px] text-accent-soft">Opening chat...</p>
-                ) : !redactIdentity && teammate.statusMessage ? (
+                {!redactIdentity && teammate.statusMessage ? (
                   <p className="mt-0.5 truncate text-[11px] text-app-muted">{teammate.statusMessage}</p>
                 ) : null}
               </div>
@@ -101,7 +111,11 @@ export function TeammatesSection({
                   className="flex h-8 w-8 items-center justify-center rounded-xl text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text disabled:cursor-wait disabled:opacity-60"
                   onClick={() => onSelect(teammate.id)}
                 >
-                  <FiMessageSquare className="h-[17px] w-[17px]" strokeWidth={1.75} aria-hidden="true" />
+                  {isOpening ? (
+                    <span className="h-4 w-4 animate-spin rounded-full border-2 border-app-muted/30 border-t-accent" />
+                  ) : (
+                    <FiMessageSquare className="h-[17px] w-[17px]" strokeWidth={1.75} aria-hidden="true" />
+                  )}
                 </button>
               </div>
             </div>

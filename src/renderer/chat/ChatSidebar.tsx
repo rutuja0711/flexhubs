@@ -4,7 +4,7 @@ import type { ProfileSettings } from '../../shared/profile';
 import { NotificationStatusBanner } from './NotificationStatusBanner';
 import type { TeammateItem } from '../../shared/messages';
 import type { GlobalSearchResult, SearchPerson } from '../../shared/search';
-import { validateSearchQuery, filterTeammatesWithoutDirectChat } from '../../shared/chat';
+import { validateSearchQuery, filterTeammatesWithoutDirectChat, sortSidebarTeammates } from '../../shared/chat';
 import { validateSearchInput } from '../../shared/search';
 import { loadGlobalSearch } from '../chatApi';
 import { FiMoon, FiSun } from 'react-icons/fi';
@@ -232,16 +232,16 @@ export function ChatSidebar({
     const validation = validateSearchQuery(searchQuery);
 
     if (!validation.ok || !validation.value) {
-      return withoutExistingChats;
+      return sortSidebarTeammates(withoutExistingChats, presenceByUserId);
     }
 
     const query = validation.value.toLowerCase();
 
-    return withoutExistingChats.filter((teammate) => {
+    return sortSidebarTeammates(withoutExistingChats, presenceByUserId).filter((teammate) => {
       const haystack = `${teammate.name} ${teammate.username}`.toLowerCase();
       return haystack.includes(query);
     });
-  }, [conversations, directChatMetadata, isGlobalSearch, searchQuery, showTeammatesSection, teammates]);
+  }, [conversations, directChatMetadata, isGlobalSearch, presenceByUserId, searchQuery, showTeammatesSection, teammates]);
 
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
@@ -287,9 +287,10 @@ export function ChatSidebar({
             >
               <div className="flex items-center gap-2">
                 <span className="h-2 w-2 rounded-full bg-accent/80 ring-2 ring-accent/20" />
-                <h1 className="truncate text-sm font-semibold tracking-tight text-app-text">{workspaceName}</h1>
+                <h1 className="truncate text-sm font-semibold tracking-tight text-app-text">
+                  {workspaceName.includes('Workspace') ? workspaceName : `${workspaceName} Workspace`}
+                </h1>
               </div>
-              <p className="mt-0.5 pl-4 text-[11px] font-medium text-app-muted/80">Workspace</p>
             </button>
 
             <button
@@ -336,6 +337,7 @@ export function ChatSidebar({
 
       {!isGlobalSearch ? (
         <div className="border-b border-app-border px-4 py-2">
+          <p className="mb-2 px-1 text-[11px] font-semibold tracking-wide text-app-muted">Chats</p>
           <div
             ref={tabContainerRef}
             className="relative z-0 flex gap-0.5 rounded-full border border-app-border/80 bg-app-surface-input/70 p-0.5 shadow-inner shadow-black/5 dark:bg-app-inset/90"
@@ -473,6 +475,7 @@ export function ChatSidebar({
                 openingTeammateId={openingTeammateId}
                 blockedUserIds={blockedUserIds}
                 blockedByPeerIds={blockedByPeerIds}
+                presenceByUserId={presenceByUserId}
                 onSelect={onTeammateSelect}
                 onAddFriend={onTeammateAddFriend}
               />

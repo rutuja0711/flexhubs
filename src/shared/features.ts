@@ -118,8 +118,10 @@ export type ChannelItem = {
 export type HubInviteItem = {
   id: string;
   channelId: string;
+  conversationId: string;
   channelName: string;
   invitedBy: string;
+  inviterName: string;
   createdAt: string;
 };
 
@@ -479,15 +481,29 @@ export function normalizeHubInvites(payload: unknown): HubInviteItem[] {
         id: readString(record.id) ?? `invite-${index}`,
         channelId:
           readString(record.channelId) ??
+          readString(record.conversationId) ??
           readString(channel.id) ??
           '',
+        conversationId:
+          readString(record.conversationId) ??
+          readString(asRecord(record.conversation)?.id) ??
+          readString(record.channelId) ??
+          '',
         channelName:
+          readString(record.hubName) ??
           readString(record.channelName) ??
           readString(channel.name) ??
           'Hub',
         invitedBy:
           readString(record.invitedBy) ??
+          readString(record.inviterName) ??
           readString(asRecord(record.inviter)?.name) ??
+          readString(asRecord(record.invitedBy)?.username) ??
+          'Someone',
+        inviterName:
+          readString(record.inviterName) ??
+          readString(asRecord(record.invitedBy)?.username) ??
+          readString(record.invitedBy) ??
           'Someone',
         createdAt: readString(record.createdAt) ?? '',
       };

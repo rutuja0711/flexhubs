@@ -5,6 +5,7 @@ import {
   isCalendarRelatedNotification,
   isHubInviteNotification,
   isScheduledMessageNotification,
+  isGroupInviteNotification,
   resolveFriendRequestUserId,
 } from '../../../shared/messages';
 import type { FlexHubsNotificationData, NotificationPayloadType } from './FlexHubsDesktopNotification';
@@ -23,16 +24,70 @@ function initialsFromName(name: string): string {
   return (name.trim().slice(0, 2) || 'U').toUpperCase();
 }
 
-function parseSenderName(notification: NotificationItem): string {
+const GENERIC_NOTIFICATION_TITLES = new Set([
+  'notification',
+  'new message',
+  'friend request',
+]);
+
+function parseFriendRequestSenderName(
+  notification: NotificationItem,
+  conversations: ConversationItem[],
+): string {
   const body = notification.body.trim();
+  const sentMatch = body.match(/^(.+?)\s+sent you a friend request/i);
+
+  if (sentMatch?.[1]) {
+    return sentMatch[1].trim();
+  }
+
+  if (notification.actorUserId) {
+    const byPeer = conversations.find(
+      (conversation) => conversation.peerUserId === notification.actorUserId,
+    );
+
+    if (byPeer?.title.trim()) {
+      return byPeer.title.trim();
+    }
+  }
+
+  const title = notification.title.trim();
+  if (title && !GENERIC_NOTIFICATION_TITLES.has(title.toLowerCase())) {
+    return title;
+  }
+
+  return 'Someone';
+}
+
+function parseSenderName(
+  notification: NotificationItem,
+  conversations: ConversationItem[] = [],
+): string {
+  const body = notification.body.trim();
+  const sentMatch = body.match(/^(.+?)\s+sent you a friend request/i);
+
+  if (sentMatch?.[1]) {
+    return sentMatch[1].trim();
+  }
+
   const colonMatch = body.match(/^([^:\n]{1,64}):\s/);
   if (colonMatch?.[1]) {
     return colonMatch[1].trim();
   }
 
   const title = notification.title.trim();
-  if (title && title.toLowerCase() !== 'notification' && title.toLowerCase() !== 'new message') {
+  if (title && !GENERIC_NOTIFICATION_TITLES.has(title.toLowerCase())) {
     return title;
+  }
+
+  if (notification.actorUserId && conversations.length > 0) {
+    const byPeer = conversations.find(
+      (conversation) => conversation.peerUserId === notification.actorUserId,
+    );
+
+    if (byPeer?.title.trim()) {
+      return byPeer.title.trim();
+    }
   }
 
   return 'Someone';
@@ -74,11 +129,17 @@ function inferTypeFromBody(body: string): NotificationPayloadType | null {
   if (lower.includes('mentioned you') || lower.includes('@you')) {
     return 'mention';
   }
+  if (
+    lower.includes('added you to') ||
+    lower.includes('invited you to join') ||
+    lower.includes('hub invite') ||
+    lower.includes('group invitation') ||
+    lower.includes('group invite')
+  ) {
+    return 'hub_invite';
+  }
   if (lower.includes('friend request') || lower.includes('sent you a friend request')) {
     return 'friend_request';
-  }
-  if (lower.includes('invited you to join') || lower.includes('hub invite')) {
-    return 'hub_invite';
   }
   if (lower.includes('invited you to a meeting') || lower.includes('calendar event') || lower.includes('team sync')) {
     return 'calendar_event';
@@ -117,7 +178,13 @@ export function resolveNotificationPresentationType(
   if (notification.type.toLowerCase().includes('system') || stack.includes('subscription') || stack.includes('workspace')) {
     return 'system_notification';
   }
-  if (isHubInviteNotification(notification)) {
+  if (isHubInviteNotification(notification) || isGroupInviteNotification(notification)) {
+    return 'hub_invite';
+  }
+  if (
+    stack.includes('added you to') &&
+    (stack.includes('hub') || stack.includes('channel') || stack.includes('group'))
+  ) {
     return 'hub_invite';
   }
   if (isCalendarRelatedNotification(notification) && !isScheduledMessageNotification(notification)) {
@@ -132,7 +199,10 @@ export function resolveNotificationPresentationType(
   if (stack.includes('reply') || stack.includes('replied')) {
     return 'thread_reply';
   }
-  if (stack.includes('friend request') || stack.includes('added you')) {
+  if (
+    stack.includes('friend request') ||
+    stack.includes('sent you a friend request')
+  ) {
     return 'friend_request';
   }
   if (stack.includes('missed') && stack.includes('call')) {
@@ -167,16 +237,26 @@ function resolveAvatar(
   notification: NotificationItem,
   conversations: ConversationItem[],
 ): { avatarUrl: string | null; avatarInitials: string; title: string } {
-  const senderName = parseSenderName(notification);
+  const presentationType = resolveNotificationPresentationType(notification);
+  const senderName =
+    presentationType === 'friend_request'
+      ? parseFriendRequestSenderName(notification, conversations)
+      : parseSenderName(notification, conversations);
   const conversation = notification.conversationId
     ? conversations.find((item) => item.id === notification.conversationId)
     : null;
 
-  const directMatch = conversations.find(
-    (item) =>
-      item.kind === 'direct' &&
-      item.title.trim().toLowerCase() === senderName.toLowerCase(),
-  );
+  const directMatch =
+    conversations.find(
+      (item) =>
+        item.kind === 'direct' &&
+        item.title.trim().toLowerCase() === senderName.toLowerCase(),
+    ) ??
+    (notification.actorUserId
+      ? conversations.find(
+          (item) => item.kind === 'direct' && item.peerUserId === notification.actorUserId,
+        )
+      : undefined);
 
   const avatarUrl = directMatch?.avatarUrl ?? conversation?.avatarUrl ?? null;
   const avatarInitials =
@@ -282,11 +362,24 @@ export function mapNotificationItemToFlexHubsData(
   }
 
   if (type === 'friend_request') {
+    data.title = parseFriendRequestSenderName(notification, options.conversations);
+    data.avatarInitials = initialsFromName(data.title);
     data.body = 'Sent you a friend request';
   }
 
   if (type === 'hub_invite') {
-    data.body = notification.body.trim() || 'Invited you to join a hub';
+    const addedMatch = formattedBody.match(/^(.+?)\s+added you to\s+(.+)$/i);
+    const joinMatch = formattedBody.match(/^(.+?)\s+invited you to join\s+(.+)$/i);
+    if (joinMatch) {
+      data.title = joinMatch[2].trim();
+      data.body = `${joinMatch[1].trim()} invited you to join`;
+    } else if (addedMatch) {
+      data.title = addedMatch[2].trim();
+      data.body = `${addedMatch[1].trim()} added you to this hub`;
+    } else {
+      data.title = notification.title.trim() || 'Hub invitation';
+      data.body = formattedBody || 'Invited you to join a hub';
+    }
   }
 
   if (type === 'calendar_event') {
@@ -374,15 +467,35 @@ export function mapActivityListItemToFlexHubsData(
     return mapped;
   }
 
-  if (item.kind === 'request') {
+  if (item.kind === 'hub-invite') {
     return {
       id: item.id,
-      type: 'friend_request',
-      title: item.title || 'Friend request',
-      body: item.body?.trim() || 'Sent you a friend request',
+      type: 'hub_invite',
+      title: item.title,
+      body: item.body?.trim() || 'Accept or decline this invitation',
       timestamp: item.createdAt,
       isUnread: item.isUnread,
       avatarInitials: initialsFromName(item.title),
+      priority: 'high',
+      onClick: options.onClick,
+    };
+  }
+
+  if (item.kind === 'request') {
+    const nameFromBody = item.body.match(/^(.+?)\s+sent you a friend request/i)?.[1]?.trim();
+    const title =
+      (item.title && item.title.toLowerCase() !== 'friend request' ? item.title : null) ??
+      nameFromBody ??
+      'Someone';
+
+    return {
+      id: item.id,
+      type: 'friend_request',
+      title,
+      body: 'Accept or decline this request',
+      timestamp: item.createdAt,
+      isUnread: item.isUnread,
+      avatarInitials: initialsFromName(title),
       priority: 'high',
       onClick: options.onClick,
     };
@@ -401,11 +514,17 @@ export function mapActivityListItemToFlexHubsData(
 }
 
 export function mapPendingFriendToFlexHubsData(item: PendingFriendItem): FlexHubsNotificationData {
+  const nameFromBody = item.body.match(/^(.+?)\s+sent you a friend request/i)?.[1]?.trim();
+  const title =
+    (item.title && item.title.toLowerCase() !== 'friend request' ? item.title : null) ??
+    nameFromBody ??
+    'Someone';
+
   return {
     id: `pending-${item.id}`,
     type: 'friend_request',
-    title: item.title,
-    body: formatNotificationDisplayBody(item.body) || 'Sent you a friend request',
+    title,
+    body: 'Sent you a friend request',
     timestamp: item.createdAt,
     isUnread: true,
     avatarInitials: initialsFromName(item.title),
