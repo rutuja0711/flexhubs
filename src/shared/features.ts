@@ -518,7 +518,11 @@ export function normalizeFriends(payload: unknown): FriendItem[] {
       const user = asRecord(record.user) ?? record;
 
       return {
-        id: readString(record.id) ?? readString(user.id) ?? `friend-${index}`,
+        id:
+          readString(user.id) ??
+          readString(record.userId) ??
+          readString(record.id) ??
+          `friend-${index}`,
         name:
           readString(user.name) ??
           readString(user.displayName) ??

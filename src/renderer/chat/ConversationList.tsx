@@ -5,7 +5,7 @@ import { type PresenceStatus } from '../../shared/chat';
 import { canViewPresence } from '../../shared/presencePrivacy';
 import { sidebarPresenceStatusForPeer } from '../../shared/presence';
 import { formatConversationTimestamp } from './format';
-import { Avatar, StackedAvatar, PinIcon, PresenceDot } from './ChatIcons';
+import { Avatar, HubChannelAvatar, PinIcon, PresenceDot } from './ChatIcons';
 import {
   ConversationContextMenu,
   type ConversationContextMenuActions,
@@ -100,20 +100,9 @@ export const ConversationRow = memo(function ConversationRow({
         onClick={() => onSelect(conversation.id)}
         onFocus={() => onPrefetch?.(conversation.id)}
       >
-        <div className="relative box-content shrink-0 overflow-visible p-0.5">
+        <div className="relative isolate shrink-0">
           {conversation.kind === 'hub' ? (
-            <StackedAvatar
-              avatars={
-                conversation.memberAvatars && conversation.memberAvatars.length > 0
-                  ? conversation.memberAvatars
-                  : [{ url: conversation.avatarUrl, initials: conversation.avatarInitials }]
-              }
-              totalCount={
-                conversation.totalMemberCount ??
-                conversation.memberAvatars?.length ??
-                1
-              }
-            />
+            <HubChannelAvatar />
           ) : (
             <Avatar imageUrl={conversation.avatarUrl} initials={conversation.avatarInitials} />
           )}
@@ -125,7 +114,7 @@ export const ConversationRow = memo(function ConversationRow({
           ) : null}
           {conversation.unreadCount > 0 ? (
             <span
-              className={`absolute -right-1 -top-1 z-10 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[0.625rem] font-bold leading-none text-white shadow-sm shadow-accent/40 ring-2 ${
+              className={`absolute -right-0.5 -top-0.5 z-20 flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1 text-[0.625rem] font-bold leading-none text-white shadow-sm shadow-accent/40 ring-2 ${
                 selected ? 'ring-app-elevated' : 'ring-app-chat-sidebar'
               }`}
             >

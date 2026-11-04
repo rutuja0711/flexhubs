@@ -24,6 +24,10 @@ export type ConversationItem = {
   unreadCount: number;
   peerUserId: string | null;
   channelId: string | null;
+  /** Workspace hub (channel); web `isChannel`. */
+  isChannel?: boolean;
+  /** Group chat (not a channel); web `isGroup && !isChannel`. */
+  isGroupConversation?: boolean;
   notificationsSnoozed?: boolean;
   memberAvatars?: { url: string | null; initials: string }[];
   totalMemberCount?: number;
@@ -314,7 +318,33 @@ function readMemberCount(record: Record<string, unknown>): number | null {
   return largest > 0 ? largest : null;
 }
 
+function readConversationChannelFlags(record: Record<string, unknown>): {
+  isChannel: boolean;
+  isGroupConversation: boolean;
+} {
+  const type = String(record.type ?? record.kind ?? record.conversationType ?? '').toUpperCase();
+
+  const isChannel =
+    record.isChannel === true ||
+    record.isHub === true ||
+    type.includes('HUB') ||
+    type.includes('CHANNEL') ||
+    Boolean(record.hubId);
+
+  const isGroupConversation =
+    !isChannel &&
+    (record.isGroup === true || type === 'GROUP' || (type.includes('GROUP') && !type.includes('CHANNEL')));
+
+  return { isChannel, isGroupConversation };
+}
+
 function inferKind(record: Record<string, unknown>): ConversationKind {
+  const { isChannel, isGroupConversation } = readConversationChannelFlags(record);
+
+  if (isChannel || isGroupConversation) {
+    return 'hub';
+  }
+
   const type = String(record.type ?? record.kind ?? record.conversationType ?? '').toUpperCase();
 
   if (
@@ -333,20 +363,8 @@ function inferKind(record: Record<string, unknown>): ConversationKind {
 
   const memberCount = readMemberCount(record);
 
-  if (memberCount !== null && memberCount <= 2) {
+  if (memberCount !== null && memberCount <= 2 && !record.isGroup) {
     return 'direct';
-  }
-
-  if (
-    type.includes('HUB') ||
-    type.includes('CHANNEL') ||
-    type.includes('GROUP') ||
-    record.isHub === true ||
-    record.isChannel === true ||
-    record.isGroup === true ||
-    Boolean(record.hubId)
-  ) {
-    return 'hub';
   }
 
   if (Boolean(record.channelId) && memberCount !== null && memberCount > 2) {
@@ -1288,6 +1306,8 @@ export function normalizeConversation(
       ? readDirectPeerMemberSnapshot(source, viewerId)
       : { status: readDirectPeerPresence(source, viewerId), sharePresence: true };
 
+  const channelFlags = readConversationChannelFlags(source);
+
   return {
     id: readConversationId(source, index),
     kind: inferKind(source),
@@ -1306,6 +1326,8 @@ export function normalizeConversation(
     unreadCount: readConversationUnread(source),
     peerUserId: readDirectPeerUserId(source, viewerId),
     channelId: readHubChannelId(source),
+    isChannel: channelFlags.isChannel,
+    isGroupConversation: channelFlags.isGroupConversation,
     notificationsSnoozed: readConversationSnoozed(source),
     ...readConversationMembers(source),
   };
@@ -1773,6 +1795,127 @@ export function filterTeammatesWithoutDirectChat<T extends { id: string; name: s
   return teammates.filter(
     (teammate) => !teammateHasDirectChat(conversations, teammate, metadataByConversationId),
   );
+}
+
+/** Web: hide empty DMs from the main list; hubs/channels always show once joined. */
+export function isConversationStarted(conversation: ConversationItem): boolean {
+  if (conversation.isSelf) {
+    return true;
+  }
+
+  if (
+    conversation.kind === 'hub' ||
+    conversation.isChannel === true ||
+    conversation.isGroupConversation === true
+  ) {
+    return true;
+  }
+
+  if (conversation.unreadCount > 0) {
+    return true;
+  }
+
+  if (conversation.draftPreview?.trim()) {
+    return true;
+  }
+
+  if (conversation.messagePreview?.trim()) {
+    return true;
+  }
+
+  const subtitle = conversation.subtitle?.trim();
+
+  if (!subtitle || conversation.isDraftPreview) {
+    return false;
+  }
+
+  const normalized = subtitle.toLowerCase();
+
+  if (
+    normalized.includes('no messages yet') ||
+    normalized.includes('say hello') ||
+    normalized === 'start a conversation'
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
+export function collectStartedDirectPeerUserIds(conversations: ConversationItem[]): Set<string> {
+  const ids = new Set<string>();
+
+  for (const conversation of conversations) {
+    if (conversation.kind !== 'direct' || conversation.isSelf || !conversation.peerUserId) {
+      continue;
+    }
+
+    if (isConversationStarted(conversation)) {
+      ids.add(conversation.peerUserId);
+    }
+  }
+
+  return ids;
+}
+
+export function filterTeammatesForSidebar<T extends { id: string }>(
+  teammates: T[],
+  conversations: ConversationItem[],
+): T[] {
+  const activePeerIds = collectStartedDirectPeerUserIds(conversations);
+  return teammates.filter((teammate) => !activePeerIds.has(teammate.id));
+}
+
+export type SidebarConversationTab = 'all' | 'direct' | 'hub';
+
+export function filterConversationsForSidebarTab(
+  conversations: ConversationItem[],
+  tab: SidebarConversationTab,
+): ConversationItem[] {
+  return conversations.filter((conversation) => {
+    if (tab === 'all') {
+      return true;
+    }
+
+    if (tab === 'hub') {
+      return conversation.isChannel === true || conversation.isGroupConversation === true;
+    }
+
+    return (
+      conversation.kind === 'direct' &&
+      conversation.isChannel !== true &&
+      conversation.isGroupConversation !== true
+    );
+  });
+}
+
+export function filterStartedConversationsForSidebar(
+  conversations: ConversationItem[],
+  options?: { keepConversationId?: string | null },
+): ConversationItem[] {
+  const keepId = options?.keepConversationId ?? null;
+
+  return conversations.filter((conversation) => {
+    if (keepId && conversation.id === keepId) {
+      return true;
+    }
+
+    return isConversationStarted(conversation);
+  });
+}
+
+export function prepareSidebarConversationList(
+  conversations: ConversationItem[],
+  options?: {
+    tab?: SidebarConversationTab;
+    selectedId?: string | null;
+  },
+): ConversationItem[] {
+  const tab = options?.tab ?? 'all';
+  const started = filterStartedConversationsForSidebar(conversations, {
+    keepConversationId: options?.selectedId ?? null,
+  });
+  return filterConversationsForSidebarTab(started, tab);
 }
 
 export function isGeneratedAvatarUrl(url: string | null | undefined): boolean {

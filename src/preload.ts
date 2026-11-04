@@ -602,8 +602,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('features:delete-channel', token, channelId),
   sendFriendRequest: (token: string, userId: string): Promise<ApiResult<{ ok: true }>> =>
     ipcRenderer.invoke('features:friend-request', token, userId),
-  respondFriendRequest: (token: string, userId: string, status: 'ACCEPTED' | 'DECLINED'): Promise<ApiResult<{ ok: true }>> =>
-    ipcRenderer.invoke('features:respond-friend-request', token, userId, status),
+  respondFriendRequest: (
+    token: string,
+    requestId: string,
+    status: 'ACCEPTED' | 'DECLINED',
+  ): Promise<ApiResult<{ conversationId: string | null }>> =>
+    ipcRenderer.invoke('features:respond-friend-request', token, requestId, status),
   unsaveMessage: (
     token: string,
     conversationId: string,

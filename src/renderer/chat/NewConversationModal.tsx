@@ -497,8 +497,9 @@ export function NewConversationModal({
                             className="rounded-xl bg-accent px-4 py-2 text-xs font-semibold text-white shadow-sm disabled:opacity-50"
                             disabled={actionPending}
                             onClick={() => {
+                              const requestId = relationship?.requestId ?? result.id;
                               void runAction(
-                                () => respondFriendRequest(result.id, 'ACCEPTED'),
+                                () => respondFriendRequest(requestId, 'ACCEPTED'),
                                 'Friend request accepted.',
                               );
                             }}
@@ -510,8 +511,9 @@ export function NewConversationModal({
                             className="rounded-xl border border-app-border px-4 py-2 text-xs text-app-muted hover:text-app-text transition-colors disabled:opacity-50"
                             disabled={actionPending}
                             onClick={() => {
+                              const requestId = relationship?.requestId ?? result.id;
                               void runAction(
-                                () => respondFriendRequest(result.id, 'DECLINED'),
+                                () => respondFriendRequest(requestId, 'DECLINED'),
                                 'Friend request declined.',
                               );
                             }}

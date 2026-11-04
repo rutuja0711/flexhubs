@@ -86,9 +86,11 @@ async function parseResponse<T>(response: Response, label: string): Promise<ApiR
 
     const errorCode = typeof data.code === 'string' ? data.code : undefined;
 
+    const message = typeof data.message === 'string' ? data.message : undefined;
+
     return {
       ok: false,
-      error: data.error ?? fallbackError,
+      error: data.error ?? message ?? fallbackError,
       status: response.status,
       code: errorCode,
     };

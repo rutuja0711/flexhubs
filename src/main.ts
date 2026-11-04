@@ -1108,8 +1108,10 @@ ipcMain.handle('features:delete-channel', (_event, token: string, channelId: str
 ipcMain.handle('features:friend-request', (_event, token: string, userId: string) =>
   sendFriendRequest(token, userId),
 );
-ipcMain.handle('features:respond-friend-request', (_event, token: string, userId: string, status: 'ACCEPTED' | 'DECLINED') =>
-  respondFriendRequest(token, userId, status),
+ipcMain.handle(
+  'features:respond-friend-request',
+  (_event, token: string, requestId: string, status: 'ACCEPTED' | 'DECLINED') =>
+    respondFriendRequest(token, requestId, status),
 );
 ipcMain.handle(
   'features:unsave-message',

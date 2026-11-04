@@ -1,11 +1,10 @@
 import { useState, useRef, useEffect } from 'react';
-import { FiBell, FiLogOut, FiSettings, FiShield, FiSun, FiBookmark } from 'react-icons/fi';
+import { FiBell, FiLogOut, FiSettings, FiShield, FiBookmark } from 'react-icons/fi';
 import type { MainView } from '../../shared/nav';
 import { apiStatusToUi, userPresenceDotClass, type UserPresenceStatus } from '../../shared/profile';
 import { userIsSuperAdmin } from '../../shared/superadmin';
 import {
   Avatar,
-  BuildingIcon,
   CalendarNavIcon,
   CallsNavIcon,
   FlexLogo,
@@ -13,7 +12,6 @@ import {
   SparkleIcon,
 } from './ChatIcons';
 import { getUserAvatarUrl, getUserInitials, getUserDisplayName } from '../../shared/user';
-import { useTheme } from '../theme/ThemeProvider';
 import { getEffectivePresenceStatus, subscribePresenceManager } from '../presenceManager';
 
 type NavRailProps = {
@@ -21,16 +19,16 @@ type NavRailProps = {
   user: unknown;
   activeView: MainView;
   onNavigate: (view: MainView) => void;
+  onGoHome?: () => void;
   onOpenFlexAi?: () => void;
   onLogout?: () => void;
   hasUpdateBadge?: boolean;
 };
 
-export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexAi, onLogout, hasUpdateBadge }: NavRailProps) {
+export function NavRail({ unreadCount, user, activeView, onNavigate, onGoHome, onOpenFlexAi, onLogout, hasUpdateBadge }: NavRailProps) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [presenceStatus, setPresenceStatus] = useState<UserPresenceStatus>(() => getEffectivePresenceStatus());
   const menuRef = useRef<HTMLDivElement>(null);
-  const { theme, toggleTheme } = useTheme();
 
   useEffect(() => {
     const syncPresence = () => {
@@ -58,12 +56,22 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
   const showSuperAdminNav = userIsSuperAdmin(user);
   const menuIconClass = 'h-4 w-4 shrink-0 text-app-muted';
 
+  const isChatHome = activeView === 'chat';
+
   return (
     <aside className="relative z-[80] flex w-[76px] shrink-0 flex-col items-center overflow-visible border-r border-app-border bg-app-chat-rail py-4 transition-colors">
       <button
         type="button"
-        onClick={() => onNavigate('chat')}
-        className="group mb-6 flex h-12 w-12 items-center justify-center rounded-2xl p-2 transition-all duration-200 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:scale-105 active:scale-95 focus:outline-none"
+        onClick={() => {
+          if (onGoHome) {
+            onGoHome();
+            return;
+          }
+          onNavigate('chat');
+        }}
+        className={`group mb-6 flex h-12 w-12 items-center justify-center rounded-2xl p-2 transition-all duration-200 hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:scale-105 active:scale-95 focus:outline-none ${
+          isChatHome ? 'bg-black/[0.06] dark:bg-white/[0.1] ring-1 ring-accent/25' : ''
+        }`}
         aria-label="FlexHubs Home"
       >
         <FlexLogo className="h-9 w-9 transition-transform group-hover:scale-105" />
@@ -178,17 +186,6 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
                 </div>
                 {hasUpdateBadge && <span className="h-2 w-2 rounded-full bg-accent animate-pulse shrink-0" />}
               </button>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onNavigate('organization');
-                }}
-              >
-                <BuildingIcon className={menuIconClass} size={16} />
-                <span>Organization</span>
-              </button>
               {showSuperAdminNav ? (
                 <button
                   type="button"
@@ -202,17 +199,6 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onOpenFlexA
                   <span>Super Admin</span>
                 </button>
               ) : null}
-              <button
-                type="button"
-                className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-medium text-app-text transition-colors hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft"
-                onClick={() => {
-                  setMenuOpen(false);
-                  toggleTheme();
-                }}
-              >
-                <FiSun className={menuIconClass} strokeWidth={1.75} aria-hidden="true" />
-                <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
-              </button>
               <div className="my-1 h-px bg-app-border" />
               <button
                 type="button"

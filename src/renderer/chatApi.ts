@@ -824,14 +824,14 @@ export async function sendFriendRequest(
 }
 
 export async function respondFriendRequest(
-  userId: string,
+  requestId: string,
   status: 'ACCEPTED' | 'DECLINED',
-): Promise<ApiResult<{ ok: true }>> {
+): Promise<ApiResult<{ conversationId: string | null }>> {
   if (!window.electronAPI?.respondFriendRequest) {
     return unavailable();
   }
 
-  return withToken((token) => window.electronAPI.respondFriendRequest(token, userId, status));
+  return withToken((token) => window.electronAPI.respondFriendRequest(token, requestId, status));
 }
 
 export async function unsaveChatMessage(

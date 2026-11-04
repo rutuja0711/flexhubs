@@ -464,7 +464,11 @@ declare global {
       ) => Promise<ApiResult<{ ok: true }>>;
       deleteChannel: (token: string, channelId: string) => Promise<ApiResult<{ ok: true }>>;
       sendFriendRequest: (token: string, userId: string) => Promise<ApiResult<{ ok: true }>>;
-      respondFriendRequest: (token: string, userId: string, status: 'ACCEPTED' | 'DECLINED') => Promise<ApiResult<{ ok: true }>>;
+      respondFriendRequest: (
+        token: string,
+        requestId: string,
+        status: 'ACCEPTED' | 'DECLINED',
+      ) => Promise<ApiResult<{ conversationId: string | null }>>;
       getAvatarStyles: (token: string) => Promise<ApiResult<import('../shared/profile').AvatarStyleItem[]>>;
       getNotificationSettings: (token: string) => Promise<ApiResult<ProfileSettings>>;
       updateNotificationSettings: (

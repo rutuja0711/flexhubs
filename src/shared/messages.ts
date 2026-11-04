@@ -357,7 +357,10 @@ export type NotificationAction =
   | { kind: 'none' };
 
 export type PendingFriendItem = {
+  /** Pending request row id — use for PATCH /friends/:requestId/respond. */
   id: string;
+  requestId: string;
+  /** Sender user id (display / open DM fallback). */
   userId: string;
   title: string;
   body: string;
@@ -2464,16 +2467,42 @@ export function normalizeNotifications(payload: unknown): NotificationItem[] {
           readString(record.actorUserId) ??
           readString(record.fromUserId) ??
           readString(record.senderUserId) ??
-          readString(record.userId) ??
+          (asRecord(record.actor) ? readString(asRecord(record.actor)?.id) : null) ??
+          (asRecord(record.fromUser) ? readString(asRecord(record.fromUser)?.id) : null) ??
+          (asRecord(record.sender) ? readString(asRecord(record.sender)?.id) : null) ??
+          (asRecord(record.requester) ? readString(asRecord(record.requester)?.id) : null) ??
           readString(data?.actorUserId) ??
           readString(data?.fromUserId) ??
+          readString(data?.senderUserId) ??
+          readString(data?.requesterId) ??
+          (asRecord(data?.fromUser) ? readString(asRecord(data?.fromUser)?.id) : null) ??
+          (asRecord(data?.requester) ? readString(asRecord(data?.requester)?.id) : null) ??
+          readString(record.userId) ??
           readString(data?.userId) ??
           (asRecord(record.user) ? readString(asRecord(record.user)?.id) : null) ??
-          (asRecord(record.fromUser) ? readString(asRecord(record.fromUser)?.id) : null) ??
           (asRecord(data?.user) ? readString(asRecord(data?.user)?.id) : null) ??
           null,
       };
     });
+}
+
+function resolvePeerUserIdByDisplayName(
+  name: string,
+  conversations: ReadonlyArray<{ kind: string; title: string; peerUserId: string | null }>,
+): string | null {
+  const normalized = name.trim().toLowerCase();
+
+  if (!normalized) {
+    return null;
+  }
+
+  const direct = conversations.find(
+    (conversation) =>
+      conversation.kind === 'direct' &&
+      conversation.title.trim().toLowerCase() === normalized,
+  );
+
+  return direct?.peerUserId ?? null;
 }
 
 export function resolveFriendRequestUserId(
@@ -2488,13 +2517,17 @@ export function resolveFriendRequestUserId(
   const sentMatch = body.match(/^(.+?)\s+sent you a friend request/i);
 
   if (sentMatch) {
-    const name = sentMatch[1].trim();
-    const direct = conversations.find(
-      (conversation) => conversation.kind === 'direct' && conversation.title === name,
-    );
+    const fromBody = resolvePeerUserIdByDisplayName(sentMatch[1], conversations);
+    if (fromBody) {
+      return fromBody;
+    }
+  }
 
-    if (direct?.peerUserId) {
-      return direct.peerUserId;
+  const title = notification.title.trim();
+  if (title && !/friend request/i.test(title)) {
+    const fromTitle = resolvePeerUserIdByDisplayName(title, conversations);
+    if (fromTitle) {
+      return fromTitle;
     }
   }
 
@@ -2526,6 +2559,78 @@ export function isGroupInviteNotification(notification: NotificationItem): boole
     haystack.includes('group invitation') ||
     haystack.includes('group invite') ||
     haystack.includes('hub invitation')
+  );
+}
+
+export function isFriendRequestNotification(notification: NotificationItem): boolean {
+  const type = notification.type.toUpperCase();
+  if (type === 'FRIEND_REQUEST') {
+    return true;
+  }
+
+  const haystack = notificationHaystack(notification);
+  return haystack.includes('friend request') || haystack.includes('sent you a friend request');
+}
+
+/** Pending hub invite row (accept/decline via POST /hub-invites/:id/...). */
+export function isPendingHubInviteNotification(notification: NotificationItem): boolean {
+  return (
+    notification.type.toUpperCase() === 'GROUP_INVITE' &&
+    notification.title.trim().toLowerCase() === 'hub invitation'
+  );
+}
+
+/** User was already added to a group/hub — Open only, no accept/decline. */
+export function isGroupMembershipAddedNotification(notification: NotificationItem): boolean {
+  if (notification.type.toUpperCase() !== 'GROUP_INVITE') {
+    return false;
+  }
+
+  const title = notification.title.trim().toLowerCase();
+  if (title === 'group invitation') {
+    return true;
+  }
+
+  return /added you to/i.test(notification.body);
+}
+
+export function findFriendRequestNotificationForPending(
+  pending: PendingFriendItem,
+  notifications: ReadonlyArray<NotificationItem>,
+): NotificationItem | null {
+  for (const notification of notifications) {
+    if (!isFriendRequestNotification(notification)) {
+      continue;
+    }
+
+    if (pending.userId && notification.actorUserId === pending.userId) {
+      return notification;
+    }
+
+    const title = notification.title.trim().toLowerCase();
+    if (title === 'friend request') {
+      const bodyMatch = notification.body.match(/^(.+?)\s+sent you a friend request/i);
+      if (bodyMatch && bodyMatch[1].trim().toLowerCase() === pending.title.trim().toLowerCase()) {
+        return notification;
+      }
+    }
+  }
+
+  return null;
+}
+
+export function parseFriendRequestRespondConversationId(payload: unknown): string | null {
+  const record = asRecord(payload);
+  if (!record) {
+    return null;
+  }
+
+  const request = asRecord(record.request);
+  return (
+    readString(request?.conversationId) ??
+    readString(record.conversationId) ??
+    readString(asRecord(record.data)?.conversationId) ??
+    null
   );
 }
 
@@ -2801,27 +2906,37 @@ export function normalizePendingFriends(payload: unknown): PendingFriendItem[] {
     .map(asRecord)
     .filter((item): item is Record<string, unknown> => item !== null)
     .map((record, index) => {
-      const user = asRecord(record.user) ?? asRecord(record.fromUser) ?? record;
+      const sender =
+        asRecord(record.sender) ??
+        asRecord(record.user) ??
+        asRecord(record.fromUser) ??
+        asRecord(record.requester) ??
+        record;
       const name =
-        readString(user.name) ??
-        readString(user.displayName) ??
-        readString(user.username) ??
+        readString(sender.name) ??
+        readString(sender.displayName) ??
+        readString(sender.username) ??
         'Someone';
 
+      const requestId = readString(record.id) ?? readString(record.requestId) ?? '';
       const userId =
-        readString(user.id) ??
+        readString(sender.id) ??
+        readString(record.senderId) ??
+        readString(record.requesterId) ??
         readString(record.userId) ??
         readString(record.fromUserId) ??
         '';
 
       return {
-        id: readString(record.id) ?? userId ?? `friend-${index}`,
+        id: requestId || userId || `friend-${index}`,
+        requestId: requestId || userId || `friend-${index}`,
         userId,
         title: name,
         body: 'Sent you a friend request',
         createdAt: readString(record.createdAt) ?? readString(record.timestamp) ?? '',
       };
-    });
+    })
+    .filter((item) => Boolean(item.requestId.trim()) && Boolean(item.userId.trim()));
 }
 
 export function normalizeTeammates(payload: unknown): TeammateItem[] {

@@ -2021,7 +2021,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   );
 
   const syncNotifications = useCallback(
-    async (options?: { seedSnapshot?: boolean; withLoading?: boolean; markAllRead?: boolean }) => {
+    async (options?: {
+      seedSnapshot?: boolean;
+      withLoading?: boolean;
+      markAllRead?: boolean;
+      refreshActivitySources?: boolean;
+    }) => {
       if (options?.withLoading) {
         setActivityLoading(true);
         setActivityError('');
@@ -2105,9 +2110,38 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
       const pendingCache = pendingFriendsCacheRef.current;
       const pendingListStale =
-        !pendingCache || Date.now() - pendingCache.fetchedAt >= PENDING_FRIENDS_CACHE_MS;
+        options?.refreshActivitySources ||
+        !pendingCache ||
+        Date.now() - pendingCache.fetchedAt >= PENDING_FRIENDS_CACHE_MS;
 
-      if (pendingListStale) {
+      if (options?.withLoading && options?.refreshActivitySources) {
+        const [pendingResult, hubInvitesResult] = await Promise.all([
+          loadPendingFriends(),
+          loadHubInvites(),
+        ]);
+
+        if (handleUnauthorized(pendingResult.status) || handleUnauthorized(hubInvitesResult.status)) {
+          if (options?.withLoading) {
+            setActivityLoading(false);
+          }
+          return;
+        }
+
+        if (pendingResult.ok) {
+          pendingFriendsCacheRef.current = {
+            fetchedAt: Date.now(),
+            count: pendingResult.data.length,
+          };
+          setActivityPendingFriends(pendingResult.data);
+          if (options?.seedSnapshot) {
+            seedPendingFriendsSnapshot(pendingResult.data);
+          }
+        }
+
+        if (hubInvitesResult.ok) {
+          setActivityHubInvites(hubInvitesResult.data);
+        }
+      } else if (pendingListStale) {
         void loadPendingFriends().then((pending) => {
           if (handleUnauthorized(pending.status)) {
             return;
@@ -2128,17 +2162,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             }
           }
         });
+
+        void loadHubInvites().then((hubInvitesResult) => {
+          if (handleUnauthorized(hubInvitesResult.status)) {
+            return;
+          }
+
+          if (hubInvitesResult.ok) {
+            setActivityHubInvites(hubInvitesResult.data);
+          }
+        });
       }
-
-      void loadHubInvites().then((hubInvitesResult) => {
-        if (handleUnauthorized(hubInvitesResult.status)) {
-          return;
-        }
-
-        if (hubInvitesResult.ok) {
-          setActivityHubInvites(hubInvitesResult.data);
-        }
-      });
 
       if (options?.withLoading) {
         setActivityLoading(false);
@@ -2148,7 +2182,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   );
 
   const loadActivityData = useCallback(async () => {
-    await syncNotifications({ withLoading: true });
+    pendingFriendsCacheRef.current = null;
+    await syncNotifications({ withLoading: true, refreshActivitySources: true });
   }, [syncNotifications]);
 
   const refreshPresence = useCallback(
@@ -2362,6 +2397,19 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           currentUserId,
         }),
       );
+    } else if (friendsResult?.ok) {
+      const nextTeammates = sortSidebarTeammates(
+        friendsResult.data.map((friend) => ({
+          id: friend.id,
+          name: friend.name,
+          username: friend.username,
+          avatarUrl: null,
+          initials: getUserInitials({ name: friend.name }),
+          statusMessage: friend.status,
+        })),
+      );
+      setTeammates(nextTeammates);
+      teammatesRef.current = nextTeammates;
     }
 
     if (friendsResult?.ok) {
@@ -3055,6 +3103,36 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       });
     }
   }, [commitConversationList, handleUnauthorized, hydrateHubMemberAvatars, refreshPresence]);
+
+  useEffect(() => {
+    if (loading || conversations.length === 0) {
+      return;
+    }
+
+    if (conversations.some((conversation) => conversation.isSelf)) {
+      return;
+    }
+
+    void openSelfConversation().then((selfResult) => {
+      if (selfResult.ok) {
+        void refreshConversations();
+      }
+    });
+  }, [conversations, loading, refreshConversations]);
+
+  useEffect(() => {
+    if (mainView !== 'chat' && mainView !== 'activity') {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refreshConversations();
+    }, 120_000);
+
+    return () => {
+      window.clearInterval(intervalId);
+    };
+  }, [mainView, refreshConversations]);
 
   const openHubFromNotification = useCallback(
     async (channelId: string | null, inviteId: string | null) => {
@@ -4270,6 +4348,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     });
   }, []);
 
+  const handleGoToChatHome = useCallback(() => {
+    allowSuperAdminAutoLandingRef.current = false;
+    setFlexAiOpen(false);
+    setNewConversationOpen(false);
+    setFocusMessageId(null);
+    setSelectedId(null);
+    startTransition(() => {
+      setMainView('chat');
+    });
+  }, []);
+
   const handleOrganizationUserUpdated = useCallback((nextUser: unknown) => {
     setUser(nextUser);
   }, []);
@@ -4397,6 +4486,32 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return conversationId;
     },
     [commitConversationList, handleUnauthorized, prefetchDirectPeerProfile, rememberDirectChatMetadata, seedDirectChatMetadata, toast, upsertConversation],
+  );
+
+  const handleHubMemberDirectCall = useCallback(
+    async (userId: string, displayName: string, video: boolean) => {
+      const conversationId = await handleOpenDirectChat(userId, { displayName });
+
+      if (!conversationId) {
+        return;
+      }
+
+      const fromList =
+        findConversationByAnyId(conversationsRef.current, conversationId) ??
+        findConversationForPeerUserId(conversationsRef.current, userId, directChatMetadataRef.current);
+
+      const target = patchDirectConversationMetadata(
+        fromList ?? buildPlaceholderDirectConversation(conversationId, userId, displayName),
+        userId,
+        displayName,
+      );
+
+      void callManager.startDirectCall(
+        { ...target, peerUserId: userId, kind: 'direct' as const },
+        video,
+      );
+    },
+    [callManager, handleOpenDirectChat],
   );
 
   const handleSelectPerson = async (person: SearchPerson) => {
@@ -6042,78 +6157,70 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     showActionMessage('Message unsaved.');
   };
 
-  const handleRespondFriendRequest = async (userId: string, status: 'ACCEPTED' | 'DECLINED') => {
-    const result = await respondFriendRequest(userId, status);
+  const handleRespondFriendRequest = async (
+    requestId: string,
+    status: 'ACCEPTED' | 'DECLINED',
+    context: { userId: string; notificationId: string | null },
+  ) => {
+    const result = await respondFriendRequest(requestId, status);
 
     if (!result.ok) {
       if (handleUnauthorized(result.status)) {
         return;
       }
-      setActivityError(result.error);
+      showActionMessage(result.error || 'Could not update friend request.');
+      pendingFriendsCacheRef.current = null;
+      void loadActivityData();
       return;
     }
 
-    showActionMessage(`Friend request ${status.toLowerCase()}.`);
+    if (context.notificationId) {
+      void markNotificationRead(context.notificationId);
+    }
+
+    pendingFriendsCacheRef.current = null;
+    setActivityPendingFriends((current) => current.filter((item) => item.requestId !== requestId));
+    showActionMessage(status === 'ACCEPTED' ? 'Friend request accepted.' : 'Friend request declined.');
     void loadActivityData();
+    void refreshConversations();
+
+    if (status === 'ACCEPTED' && result.data.conversationId) {
+      handleSelectConversation(result.data.conversationId);
+    }
   };
 
-  const handleRespondHubInvite = async (inviteId: string, accept: boolean) => {
-    const channelOnlyId = inviteId.startsWith('channel:') ? inviteId.slice('channel:'.length) : null;
-
-    if (channelOnlyId) {
-      if (!accept) {
-        showActionMessage('Hub invitation dismissed.');
-        void loadActivityData();
-        return;
-      }
-
-      const channelResult = await acceptHubInvite(channelOnlyId);
-      if (!channelResult.ok) {
-        if (handleUnauthorized(channelResult.status)) {
-          return;
-        }
-        setActivityError(channelResult.error);
-        return;
-      }
-
-      showActionMessage('Hub invitation accepted.');
-      void refreshConversations();
-      void loadActivityData();
-      void loadHubsData();
-      return;
-    }
-
-    const result = accept
-      ? await acceptHubInviteById(inviteId)
-      : await declineHubInvite(inviteId);
-
-    if (!result.ok && accept) {
-      const invite = activityHubInvites.find((entry) => entry.id === inviteId);
-      const channelId = invite?.conversationId || invite?.channelId;
-      if (channelId) {
-        const fallback = await acceptHubInvite(channelId);
-        if (fallback.ok) {
-          showActionMessage('Hub invitation accepted.');
-          void refreshConversations();
-          void loadActivityData();
-          void loadHubsData();
-          return;
-        }
-      }
-    }
+  const handleRespondHubInvite = async (
+    inviteId: string,
+    accept: boolean,
+    linkedNotificationId?: string | null,
+  ) => {
+    const result = accept ? await acceptHubInviteById(inviteId) : await declineHubInvite(inviteId);
 
     if (!result.ok) {
       if (handleUnauthorized(result.status)) {
         return;
       }
-      setActivityError(result.error);
+      showActionMessage(result.error || 'Could not update hub invitation.');
+      void loadActivityData();
       return;
+    }
+
+    if (linkedNotificationId) {
+      void markNotificationRead(linkedNotificationId);
     }
 
     showActionMessage(accept ? 'Hub invitation accepted.' : 'Hub invitation declined.');
     void refreshConversations();
     void loadActivityData();
     void loadHubsData();
+
+    if (accept) {
+      const invite = activityHubInvites.find((entry) => entry.id === inviteId);
+      const conversationId = invite?.conversationId || invite?.channelId;
+      if (conversationId) {
+        handleSelectConversation(conversationId);
+      }
+    }
   };
 
   const renderMainPanel = () => {
@@ -6130,11 +6237,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             void loadActivityData();
           }}
           onNotificationClick={handleNotificationClick}
-          onRespondFriend={(userId, status) => {
-            void handleRespondFriendRequest(userId, status);
+          onRespondFriend={(requestId, status, context) => {
+            void handleRespondFriendRequest(requestId, status, context);
           }}
-          onRespondHubInvite={(inviteId, accept) => {
-            void handleRespondHubInvite(inviteId, accept);
+          onRespondHubInvite={(inviteId, accept, linkedNotificationId) => {
+            void handleRespondHubInvite(inviteId, accept, linkedNotificationId);
           }}
           onMarkAllRead={() => {
             void syncNotifications({ withLoading: true, markAllRead: true });
@@ -6571,6 +6678,15 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
               true,
             );
           }}
+          onMessageHubMember={(userId, displayName) => {
+            void handleOpenDirectChat(userId, { displayName });
+          }}
+          onVoiceCallHubMember={(userId, displayName) => {
+            void handleHubMemberDirectCall(userId, displayName, false);
+          }}
+          onVideoCallHubMember={(userId, displayName) => {
+            void handleHubMemberDirectCall(userId, displayName, true);
+          }}
         />
       );
     }
@@ -6709,6 +6825,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         user={user}
         activeView={mainView}
         onNavigate={handleNavigate}
+        onGoHome={handleGoToChatHome}
         onOpenFlexAi={() => setFlexAiOpen((current) => !current)}
         onLogout={() => void handleSignOut()}
         hasUpdateBadge={updateAvailable && !updateViewed}

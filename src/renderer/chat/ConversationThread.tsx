@@ -119,6 +119,9 @@ type ConversationThreadProps = {
   presenceByUserId?: ReadonlyMap<string, PresenceStatus>;
   viewerSharePresence?: boolean;
   onRefreshPeerPresence?: (peerUserId: string) => void;
+  onMessageHubMember?: (userId: string, displayName: string) => void;
+  onVoiceCallHubMember?: (userId: string, displayName: string) => void;
+  onVideoCallHubMember?: (userId: string, displayName: string) => void;
 };
 
 export function ConversationThread({
@@ -179,6 +182,9 @@ export function ConversationThread({
   presenceByUserId,
   viewerSharePresence = true,
   onRefreshPeerPresence,
+  onMessageHubMember,
+  onVoiceCallHubMember,
+  onVideoCallHubMember,
 }: ConversationThreadProps) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -1284,6 +1290,7 @@ export function ConversationThread({
           currentUserId={currentUserId}
           blockedUserIds={blockedUserIds}
           blockedByPeerIds={blockedByPeerIds}
+          callBusy={callBusy}
           onClose={() => setSettingsOpen(false)}
           onConversationUpdated={() => {
             onConversationUpdated?.();
@@ -1292,6 +1299,9 @@ export function ConversationThread({
           onHubDeleted={() => {
             onHubDeleted?.();
           }}
+          onMessageMember={onMessageHubMember}
+          onVoiceCallMember={onVoiceCallHubMember}
+          onVideoCallMember={onVideoCallHubMember}
         />
       ) : null}
       {settingsOpen && isGroupPanel ? (

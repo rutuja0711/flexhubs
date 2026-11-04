@@ -447,7 +447,8 @@ export function mapActivityListItemToFlexHubsData(
     kind: ActivityKind;
     notification: NotificationItem | null;
     isUnread: boolean;
-    respondUserId: string | null;
+    respondFriendRequestId?: string | null;
+    respondUserId?: string | null;
   },
   conversations: ConversationItem[],
   options: {

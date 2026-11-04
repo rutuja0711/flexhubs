@@ -31,7 +31,7 @@ export async function fetchUserSearch(
   query: string,
 ): Promise<ApiResult<SearchPerson[]>> {
   const result = await apiGet<unknown>(
-    `${API_BASE_URL}/users/search?q=${encodeURIComponent(query)}`,
+    `${API_BASE_URL}/users/search?q=${encodeURIComponent(query)}&scope=organization`,
     token,
     'User Search API',
   );

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FiBell, FiChevronDown, FiClock, FiPlus, FiUserMinus, FiUserPlus, FiX } from 'react-icons/fi';
+import { FiBell, FiChevronDown, FiClock, FiMessageSquare, FiPhone, FiPlus, FiUserMinus, FiUserPlus, FiVideo, FiX } from 'react-icons/fi';
 import { mapApiPresenceToStatus, normalizePresenceUserId, type PresenceStatus } from '../../shared/chat';
 import {
   formatContactPresenceLabel,
@@ -53,6 +53,10 @@ type GroupSidebarProps = {
   onConversationUpdated: () => void;
   onNotificationsSnoozedChange?: (snoozed: boolean) => void;
   onHubDeleted: () => void;
+  onMessageMember?: (userId: string, displayName: string) => void;
+  onVoiceCallMember?: (userId: string, displayName: string) => void;
+  onVideoCallMember?: (userId: string, displayName: string) => void;
+  callBusy?: boolean;
 };
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -197,6 +201,10 @@ export function GroupSidebar({
   onConversationUpdated,
   onNotificationsSnoozedChange,
   onHubDeleted,
+  onMessageMember,
+  onVoiceCallMember,
+  onVideoCallMember,
+  callBusy = false,
 }: GroupSidebarProps) {
   const blockedUsers = blockedUserIds ?? new Set<string>();
   const blockedByPeers = blockedByPeerIds ?? new Set<string>();
@@ -255,6 +263,14 @@ export function GroupSidebar({
   const hubRegularMembers = useMemo(
     () => hubMembers.filter((member) => !hubAdmins.some((admin) => admin.id === member.id)),
     [hubAdmins, hubMembers],
+  );
+
+  const hubChannelId = useMemo(
+    () =>
+      readHubChannelId(loadedHubDetails, conversation.channelId) ??
+      conversation.channelId ??
+      null,
+    [conversation.channelId, loadedHubDetails],
   );
 
   const displayHubAdmins = useMemo((): HubMemberDisplay[] => {
@@ -329,7 +345,13 @@ export function GroupSidebar({
 
     setInvitesLoading(true);
 
-    const result = await loadChannelInvites(conversation.id);
+    if (!hubChannelId) {
+      setPendingInvites([]);
+      setInvitesLoading(false);
+      return;
+    }
+
+    const result = await loadChannelInvites(hubChannelId);
 
     setInvitesLoading(false);
 
@@ -339,7 +361,7 @@ export function GroupSidebar({
     }
 
     setPendingInvites(result.data);
-  }, [conversation.id, isAdmin]);
+  }, [conversation.id, hubChannelId, isAdmin]);
 
   useEffect(() => {
     const state = deriveHubPanelState(hubDetails, conversation, currentUserId);
@@ -514,10 +536,18 @@ export function GroupSidebar({
       return;
     }
 
+    const channelId = hubChannelId;
+    if (!channelId) {
+      const message = 'Hub channel id is missing.';
+      setError(message);
+      toast.error(message);
+      return;
+    }
+
     setSaving(true);
     setError('');
 
-    const channelNameResult = await updateHubChannelName(conversation.id, name);
+    const channelNameResult = await updateHubChannelName(channelId, name);
     let nameError = '';
 
     if (!channelNameResult.ok) {
@@ -527,7 +557,7 @@ export function GroupSidebar({
       }
     }
 
-    const descriptionResult = await updateHubChannelDescription(conversation.id, description.trim());
+    const descriptionResult = await updateHubChannelDescription(channelId, description.trim());
 
     setSaving(false);
 
@@ -551,7 +581,13 @@ export function GroupSidebar({
     setReadReceiptsEnabled(enabled);
     setError('');
 
-    const result = await updateHubChannelSettings(conversation.id, {
+    if (!hubChannelId) {
+      toast.error('Hub channel id is missing.');
+      setReadReceiptsEnabled(!enabled);
+      return;
+    }
+
+    const result = await updateHubChannelSettings(hubChannelId, {
       readReceiptsEnabled: enabled,
     });
 
@@ -664,7 +700,13 @@ export function GroupSidebar({
     setDeleting(true);
     setError('');
 
-    const result = await deleteHubChannel(conversation.id);
+    if (!hubChannelId) {
+      setDeleting(false);
+      toast.error('Hub channel id is missing.');
+      return;
+    }
+
+    const result = await deleteHubChannel(hubChannelId);
 
     setDeleting(false);
 
@@ -696,7 +738,13 @@ export function GroupSidebar({
     setRevokingInviteId(invite.id);
     setError('');
 
-    const result = await revokeHubChannelInvite(conversation.id, invite.id);
+    if (!hubChannelId) {
+      setRevokingInviteId(null);
+      toast.error('Hub channel id is missing.');
+      return;
+    }
+
+    const result = await revokeHubChannelInvite(hubChannelId, invite.id);
 
     setRevokingInviteId(null);
 
@@ -881,7 +929,7 @@ export function GroupSidebar({
               {adminCount === 1 ? '' : 's'}
             </p>
 
-            {slug ? <p className="mb-3 text-xs text-app-muted">Slug: #{slug}</p> : null}
+            {slug ? <p className="mb-3 text-xs text-app-muted">Channel slug: {slug}</p> : null}
 
             <label className="mb-1 block text-xs font-medium text-app-muted">Description</label>
             <textarea
@@ -1096,7 +1144,7 @@ export function GroupSidebar({
                   : formatContactPresenceLabel(liveStatus, member.lastSeenAt);
 
                 return (
-                  <div key={member.id} className="flex items-center gap-3 rounded-2xl border border-app-border/60 bg-app-card/50 px-3.5 py-2.5 transition-colors hover:bg-app-card">
+                  <div key={member.id} className="flex items-center gap-2 rounded-2xl border border-app-border/60 bg-app-card/50 px-3 py-2.5 transition-colors hover:bg-app-card">
                     <div className="relative shrink-0">
                       <Avatar
                         imageUrl={redactIdentity ? null : member.avatarUrl}
@@ -1110,6 +1158,42 @@ export function GroupSidebar({
                         />
                       ) : null}
                     </div>
+                    {!redactIdentity && member.id !== currentUserId ? (
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        {onMessageMember ? (
+                          <button
+                            type="button"
+                            title={`Message ${member.name}`}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-inset hover:text-accent-soft"
+                            onClick={() => onMessageMember(member.id, member.name)}
+                          >
+                            <FiMessageSquare className="h-[17px] w-[17px]" strokeWidth={1.75} aria-hidden="true" />
+                          </button>
+                        ) : null}
+                        {onVoiceCallMember ? (
+                          <button
+                            type="button"
+                            title={`Call ${member.name}`}
+                            disabled={callBusy}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-inset hover:text-accent-soft disabled:opacity-40"
+                            onClick={() => onVoiceCallMember(member.id, member.name)}
+                          >
+                            <FiPhone className="h-[16px] w-[16px]" strokeWidth={1.75} aria-hidden="true" />
+                          </button>
+                        ) : null}
+                        {onVideoCallMember ? (
+                          <button
+                            type="button"
+                            title={`Video call ${member.name}`}
+                            disabled={callBusy}
+                            className="flex h-8 w-8 items-center justify-center rounded-lg text-app-muted transition-colors hover:bg-app-inset hover:text-accent-soft disabled:opacity-40"
+                            onClick={() => onVideoCallMember(member.id, member.name)}
+                          >
+                            <FiVideo className="h-[17px] w-[17px]" strokeWidth={1.75} aria-hidden="true" />
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : null}
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium text-app-text">{member.name}</p>
                       {!redactIdentity && presenceLabel ? (

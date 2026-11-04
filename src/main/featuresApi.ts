@@ -14,6 +14,7 @@ import type {
   SavedMessageItem,
 } from '../shared/features';
 import { normalizeCalendarEventsDetailed } from '../shared/extras';
+import { parseFriendRequestRespondConversationId } from '../shared/messages';
 import {
   normalizeBlockedUsers,
   normalizeChannelInvites,
@@ -415,21 +416,24 @@ export async function sendFriendRequest(
 
 export async function respondFriendRequest(
   token: string,
-  userId: string,
+  requestId: string,
   status: 'ACCEPTED' | 'DECLINED',
-): Promise<ApiResult<{ ok: true }>> {
+): Promise<ApiResult<{ conversationId: string | null }>> {
   const result = await apiPatch<unknown>(
-    `${API_BASE_URL}/friends/${userId}/respond`,
+    `${API_BASE_URL}/friends/${encodeURIComponent(requestId.trim())}/respond`,
     token,
     'Respond Friend Request API',
     { accept: status === 'ACCEPTED' },
   );
 
   if (!result.ok) {
-    return result;
+    return result as ApiResult<{ conversationId: string | null }>;
   }
 
-  return { ok: true, data: { ok: true } };
+  return {
+    ok: true,
+    data: { conversationId: parseFriendRequestRespondConversationId(result.data) },
+  };
 }
 
 export async function unsaveMessage(

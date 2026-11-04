@@ -93,6 +93,26 @@ export function BuildingIcon({ className = '', size = 16 }: { className?: string
   );
 }
 
+/** Hub / channel row avatar (web: # in a circle). */
+export function HubChannelAvatar({
+  className = '',
+  size = 'md',
+}: {
+  className?: string;
+  size?: 'sm' | 'md';
+} = {}) {
+  const sizeClass = size === 'sm' ? 'h-8 w-8 text-[15px]' : 'h-10 w-10 text-lg';
+
+  return (
+    <div
+      className={`flex shrink-0 items-center justify-center rounded-full bg-accent/20 font-bold text-accent shadow-sm dark:bg-accent/35 dark:text-white/95 ${sizeClass} ${className}`}
+      aria-hidden="true"
+    >
+      #
+    </div>
+  );
+}
+
 export function UserPlusIcon() {
   return (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">

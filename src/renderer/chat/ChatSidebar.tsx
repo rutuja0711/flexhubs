@@ -1,22 +1,22 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ConversationItem, ConversationKind, DirectChatMetadata, PresenceStatus } from '../../shared/chat';
+import type { ConversationItem, DirectChatMetadata, PresenceStatus } from '../../shared/chat';
 import type { ProfileSettings } from '../../shared/profile';
 import { NotificationStatusBanner } from './NotificationStatusBanner';
 import type { TeammateItem } from '../../shared/messages';
 import type { GlobalSearchResult, SearchPerson } from '../../shared/search';
-import { validateSearchQuery, filterTeammatesWithoutDirectChat, sortSidebarTeammates } from '../../shared/chat';
+import { validateSearchQuery, filterTeammatesForSidebar, prepareSidebarConversationList, sortSidebarTeammates, type SidebarConversationTab } from '../../shared/chat';
 import { validateSearchInput } from '../../shared/search';
 import { loadGlobalSearch } from '../chatApi';
 import { FiMoon, FiSun } from 'react-icons/fi';
 import { useTheme } from '../theme/ThemeProvider';
-import { PlusIcon } from './ChatIcons';
+import { PlusIcon, BuildingIcon } from './ChatIcons';
 import { ConversationList } from './ConversationList';
 import type { ConversationContextMenuActions } from './ConversationContextMenu';
 import { GlobalSearchResults } from './GlobalSearchResults';
 import { NewConversationModal } from './NewConversationModal';
 import { SearchField } from './SearchField';
 import { TeammatesSection } from './TeammatesSection';
-type ChatTab = 'all' | ConversationKind;
+type ChatTab = SidebarConversationTab;
 
 const EMPTY_PRESENCE_MAP = new Map<string, PresenceStatus>();
 
@@ -125,9 +125,25 @@ export function ChatSidebar({
         });
       }
     };
+
     updateIndicator();
     window.addEventListener('resize', updateIndicator);
-    return () => window.removeEventListener('resize', updateIndicator);
+
+    const container = tabContainerRef.current;
+    const observer =
+      container && typeof ResizeObserver !== 'undefined'
+        ? new ResizeObserver(() => {
+            updateIndicator();
+          })
+        : null;
+    if (container && observer) {
+      observer.observe(container);
+    }
+
+    return () => {
+      window.removeEventListener('resize', updateIndicator);
+      observer?.disconnect();
+    };
   }, [activeTab]);
 
   const isGlobalSearch = useMemo(() => {
@@ -174,16 +190,9 @@ export function ChatSidebar({
       return [];
     }
 
-    const tabItems = conversations.filter((conversation) => {
-      if (activeTab === 'all') {
-        return true;
-      }
-
-      if (activeTab === 'hub') {
-        return conversation.kind === 'hub';
-      }
-
-      return conversation.kind === 'direct';
+    const tabItems = prepareSidebarConversationList(conversations, {
+      tab: activeTab,
+      selectedId,
     });
     const validation = validateSearchQuery(searchQuery);
 
@@ -197,25 +206,7 @@ export function ChatSidebar({
       const haystack = `${conversation.title} ${conversation.subtitle}`.toLowerCase();
       return haystack.includes(query);
     });
-  }, [activeTab, conversations, isGlobalSearch, searchQuery]);
-
-  const hiddenOnOtherTabCount = useMemo(() => {
-    if (isGlobalSearch) {
-      return 0;
-    }
-
-    if (activeTab === 'all') {
-      return 0;
-    }
-
-    return conversations.filter((conversation) => {
-      if (activeTab === 'direct') {
-        return conversation.kind === 'hub';
-      }
-
-      return conversation.kind === 'direct';
-    }).length;
-  }, [activeTab, conversations, isGlobalSearch]);
+  }, [activeTab, conversations, isGlobalSearch, searchQuery, selectedId]);
 
   const showTeammatesSection = activeTab === 'all' || activeTab === 'direct';
 
@@ -224,11 +215,7 @@ export function ChatSidebar({
       return [];
     }
 
-    const withoutExistingChats = filterTeammatesWithoutDirectChat(
-      teammates,
-      conversations,
-      directChatMetadata,
-    );
+    const withoutExistingChats = filterTeammatesForSidebar(teammates, conversations);
     const validation = validateSearchQuery(searchQuery);
 
     if (!validation.ok || !validation.value) {
@@ -241,7 +228,7 @@ export function ChatSidebar({
       const haystack = `${teammate.name} ${teammate.username}`.toLowerCase();
       return haystack.includes(query);
     });
-  }, [conversations, directChatMetadata, isGlobalSearch, presenceByUserId, searchQuery, showTeammatesSection, teammates]);
+  }, [conversations, isGlobalSearch, presenceByUserId, searchQuery, showTeammatesSection, teammates]);
 
   const handleSearchChange = (value: string) => {
     setSearchQuery(value);
@@ -275,6 +262,7 @@ export function ChatSidebar({
           <div className="flex items-start justify-between gap-3">
             <button
               type="button"
+              title={workspaceName}
               className={`group min-w-0 flex-1 rounded-xl p-1.5 -m-1.5 text-left transition-colors ${
                 organizationNavEnabled ? 'hover:bg-app-chat-hover/80' : 'cursor-default'
               }`}
@@ -285,11 +273,18 @@ export function ChatSidebar({
                 }
               }}
             >
-              <div className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-accent/80 ring-2 ring-accent/20" />
-                <h1 className="truncate text-sm font-semibold tracking-tight text-app-text">
-                  {workspaceName.includes('Workspace') ? workspaceName : `${workspaceName} Workspace`}
-                </h1>
+              <div className="flex items-center gap-3">
+                <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-app-chat-hover/90 text-accent-soft ring-1 ring-app-border/40">
+                  <BuildingIcon size={18} />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h1 className="truncate text-sm font-semibold tracking-tight text-app-text">
+                    {workspaceName}
+                  </h1>
+                  <p className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-app-muted/80">
+                    Workspace
+                  </p>
+                </div>
               </div>
             </button>
 
@@ -340,7 +335,7 @@ export function ChatSidebar({
           <p className="mb-2 px-1 text-[11px] font-semibold tracking-wide text-app-muted">Chats</p>
           <div
             ref={tabContainerRef}
-            className="relative z-0 flex gap-0.5 rounded-full border border-app-border/80 bg-app-surface-input/70 p-0.5 shadow-inner shadow-black/5 dark:bg-app-inset/90"
+            className="relative z-0 grid grid-cols-3 gap-0.5 overflow-hidden rounded-full border border-app-border/80 bg-app-surface-input/70 p-0.5 shadow-inner shadow-black/5 dark:bg-app-inset/90"
           >
             <div
               className="pointer-events-none absolute left-0 top-0.5 bottom-0.5 rounded-full bg-white shadow-sm ring-1 ring-black/5 transition-all duration-250 ease-[cubic-bezier(0.2,0.8,0.2,1)] dark:bg-app-elevated dark:ring-white/5"
@@ -356,7 +351,8 @@ export function ChatSidebar({
                 tabRefs.current.all = el;
               }}
               type="button"
-              className={`relative z-10 min-w-0 flex-1 select-none whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] font-semibold leading-none tracking-tight transition-colors duration-200 sm:px-3 sm:text-xs ${
+              title="All"
+              className={`relative z-10 min-w-0 truncate select-none rounded-full px-1.5 py-1.5 text-center text-[10px] font-semibold leading-none tracking-tight transition-colors duration-200 ${
                 activeTab === 'all'
                   ? 'text-app-text'
                   : 'text-app-muted hover:text-app-text'
@@ -370,21 +366,23 @@ export function ChatSidebar({
                 tabRefs.current.direct = el;
               }}
               type="button"
-              className={`relative z-10 min-w-0 flex-1 select-none whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] font-semibold leading-none tracking-tight transition-colors duration-200 sm:px-3 sm:text-xs ${
+              title="Direct messages"
+              className={`relative z-10 min-w-0 truncate select-none rounded-full px-1.5 py-1.5 text-center text-[10px] font-semibold leading-none tracking-tight transition-colors duration-200 ${
                 activeTab === 'direct'
                   ? 'text-app-text'
                   : 'text-app-muted hover:text-app-text'
               }`}
               onClick={() => setActiveTab('direct')}
             >
-              Direct messages
+              Messages
             </button>
             <button
               ref={(el) => {
                 tabRefs.current.hub = el;
               }}
               type="button"
-              className={`relative z-10 min-w-0 flex-1 select-none whitespace-nowrap rounded-full px-2.5 py-1.5 text-[11px] font-semibold leading-none tracking-tight transition-colors duration-200 sm:px-3 sm:text-xs ${
+              title="Hubs"
+              className={`relative z-10 min-w-0 truncate select-none rounded-full px-1.5 py-1.5 text-center text-[10px] font-semibold leading-none tracking-tight transition-colors duration-200 ${
                 activeTab === 'hub'
                   ? 'text-app-text'
                   : 'text-app-muted hover:text-app-text'
@@ -444,12 +442,6 @@ export function ChatSidebar({
 
         {(!loading || conversations.length > 0) && !error && !isGlobalSearch ? (
           <>
-            {filteredConversations.length === 0 && hiddenOnOtherTabCount > 0 ? (
-              <p className="px-4 pb-2 text-xs text-app-muted">
-                {hiddenOnOtherTabCount} chat{hiddenOnOtherTabCount === 1 ? '' : 's'} on the{' '}
-                {activeTab === 'direct' ? 'Hubs' : 'Direct messages'} tab.
-              </p>
-            ) : null}
             <ConversationList
               conversations={filteredConversations}
               presenceByUserId={presenceByUserId}
