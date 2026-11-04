@@ -115,6 +115,10 @@ function normalizeReleaseNotes(value: unknown): string {
   return '';
 }
 
+/** Shown when a newer build is available and GitHub release notes are empty (edit each release). */
+const IN_APP_RELEASE_NOTE =
+  'Hubs, hub info, and Activity sync with web; sidebar and notification UI fixes.';
+
 export function UpdatesSettings() {
   const [updateState, setUpdateState] = useState<UpdateState>('up-to-date');
   const [currentVersion, setCurrentVersion] = useState<string>('');
@@ -698,11 +702,15 @@ export function UpdatesSettings() {
                 className="prose prose-sm prose-invert max-w-none text-sm text-app-text"
                 dangerouslySetInnerHTML={{ __html: releaseNotes }}
               />
+            ) : hasUpdate ||
+              updateState === 'available' ||
+              updateState === 'downloading' ||
+              updateState === 'paused' ||
+              updateState === 'ready' ? (
+              <p className="text-sm text-app-text">{IN_APP_RELEASE_NOTE}</p>
             ) : (
               <p className="text-sm text-app-muted">
-                {hasUpdate
-                  ? 'Release notes for this version will appear here when available.'
-                  : 'You already have the latest improvements for this version.'}
+                You already have the latest improvements for this version.
               </p>
             )}
           </div>
