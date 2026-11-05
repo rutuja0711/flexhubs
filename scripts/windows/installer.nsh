@@ -49,6 +49,8 @@ Function FlexHubsCreateDesktopShortcut
 FunctionEnd
 
 Function FlexHubsFinishPageShowShortcutOptions
+  ; Skip finish-page options during silent in-app updates (electron-updater /S).
+  IfSilent FlexHubsFinishPageShowShortcutOptionsDone
   StrCpy $FlexHubsLaunchLink "$INSTDIR\${PRODUCT_FILENAME}.exe"
   ${NSD_CreateCheckbox} 120u 105u 240u 10u "Add a shortcut on the Desktop"
   Pop $FlexHubsDesktopShortcutCheckbox
@@ -57,6 +59,7 @@ Function FlexHubsFinishPageShowShortcutOptions
   ${NSD_CreateCheckbox} 120u 120u 240u 10u "Add a shortcut to the Start Menu"
   Pop $FlexHubsStartMenuShortcutCheckbox
   ${NSD_SetState} $FlexHubsStartMenuShortcutCheckbox ${BST_CHECKED}
+  FlexHubsFinishPageShowShortcutOptionsDone:
 FunctionEnd
 
 Function FlexHubsFinishPageLeaveShortcutOptions

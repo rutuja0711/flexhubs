@@ -130,6 +130,7 @@ export function UpdatesSettings() {
   const [restartModalOpen, setRestartModalOpen] = useState(false);
   const [deferredRestartActive, setDeferredRestartActive] = useState(false);
   const [resumeBusy, setResumeBusy] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
   const isElectron = !!window.electronAPI;
   const currentVersionRef = useRef('');
   const updateStateRef = useRef<UpdateState>('up-to-date');
@@ -178,6 +179,9 @@ export function UpdatesSettings() {
     if (!result.ok) {
       setUpdateState('error');
       setErrorMessage(result.error?.trim() || 'Unable to check for updates right now.');
+      if (result.data?.version) {
+        setLatestVersion(formatVersion(String(result.data.version)));
+      }
       return;
     }
 
@@ -257,18 +261,18 @@ export function UpdatesSettings() {
     }
   }, []);
 
-  const checkForUpdates = useCallback(async (showCheckingImmediately = false) => {
+  const checkForUpdates = useCallback(async (showCheckingImmediately = false): Promise<CheckUpdatesResult | null> => {
     if (!window.electronAPI) {
-      return;
+      return null;
     }
 
     if (checkInFlightRef.current) {
-      return;
+      return null;
     }
 
     if (!navigator.onLine) {
       setUpdateState('offline');
-      return;
+      return null;
     }
 
     const requestId = checkRequestIdRef.current + 1;
@@ -296,20 +300,22 @@ export function UpdatesSettings() {
         clearTimeout(timeout);
       }
       if (checkRequestIdRef.current !== requestId) {
-        return;
+        return null;
       }
       applyCheckResult(result);
       await syncDownloadStatus();
+      return result;
     } catch {
       await minWaitPromise;
       if (timeout) {
         clearTimeout(timeout);
       }
       if (checkRequestIdRef.current !== requestId) {
-        return;
+        return null;
       }
       setUpdateState('error');
       setErrorMessage('Unable to check for updates right now.');
+      return null;
     } finally {
       if (checkRequestIdRef.current === requestId) {
         checkInFlightRef.current = false;
@@ -317,12 +323,61 @@ export function UpdatesSettings() {
     }
   }, [applyCheckResult, syncDownloadStatus]);
 
-  const retryUpdateCheck = useCallback(async () => {
+  const downloadUpdate = useCallback(async () => {
     setErrorMessage('');
-    await window.electronAPI.resetUpdateDownloadState?.();
+    setUpdateState('downloading');
     setDownloadProgress(0);
-    await checkForUpdates(true);
-  }, [checkForUpdates]);
+    const result = await window.electronAPI.downloadUpdate();
+    if (result.paused) {
+      setUpdateState('paused');
+      return;
+    }
+    if (!result.ok) {
+      setUpdateState('error');
+      setErrorMessage(result.error?.trim() || 'Update download failed. Tap Retry to try again.');
+      return;
+    }
+
+    setUpdateState('ready');
+    openRestartModal(latestVersion);
+  }, [latestVersion, openRestartModal]);
+
+  const retryUpdateCheck = useCallback(async () => {
+    if (retryBusy || !window.electronAPI) {
+      return;
+    }
+
+    setRetryBusy(true);
+    setErrorMessage('');
+    setUpdateState('checking');
+    checkInFlightRef.current = false;
+
+    try {
+      await window.electronAPI.resetUpdateDownloadState?.();
+      setDownloadProgress(0);
+
+      const result = await checkForUpdates(true);
+
+      if (result?.ok && result.status === 'available') {
+        await downloadUpdate();
+        return;
+      }
+
+      if (result?.ok && result.status === 'ready') {
+        openRestartModal(
+          result.data?.version ? formatVersion(String(result.data.version)) : latestVersion,
+        );
+        return;
+      }
+
+      if (result && !result.ok) {
+        setUpdateState('error');
+        setErrorMessage(result.error?.trim() || 'Unable to check for updates right now.');
+      }
+    } finally {
+      setRetryBusy(false);
+    }
+  }, [checkForUpdates, downloadUpdate, latestVersion, openRestartModal, retryBusy]);
 
   useEffect(() => {
     if (!isElectron || !window.electronAPI) {
@@ -395,6 +450,8 @@ export function UpdatesSettings() {
       const notes = normalizeReleaseNotes(info?.releaseNotes);
       if (notes) {
         setReleaseNotes(notes);
+      } else {
+        setReleaseNotes('');
       }
     });
 
@@ -428,11 +485,20 @@ export function UpdatesSettings() {
       openRestartModal(info?.version ? formatVersion(info.version) : undefined);
     });
 
-    const unsubError = api.onUpdaterEvent('error', (payload: { error?: string }) => {
-      if (typeof payload?.error === 'string' && payload.error.trim()) {
-        setUpdateState('error');
-        setErrorMessage(payload.error.trim());
+    const unsubError = api.onUpdaterEvent('error', (payload: { error?: string; version?: string }) => {
+      if (updateStateRef.current === 'checking' && checkInFlightRef.current) {
+        return;
       }
+
+      if (typeof payload?.version === 'string' && payload.version.trim()) {
+        setLatestVersion(formatVersion(payload.version));
+      }
+
+      const message = typeof payload?.error === 'string' ? payload.error.trim() : '';
+      setUpdateState('error');
+      setErrorMessage(
+        message || 'The update could not be applied automatically. Tap Retry to try again.',
+      );
     });
 
     return () => {
@@ -463,29 +529,6 @@ export function UpdatesSettings() {
 
     return () => window.clearTimeout(timeoutId);
   }, [updateState]);
-
-  const openReleasePage = () => {
-    void window.electronAPI.openDesktopReleasePage?.();
-  };
-
-  const downloadUpdate = async () => {
-    setErrorMessage('');
-    setUpdateState('downloading');
-    setDownloadProgress(0);
-    const result = await window.electronAPI.downloadUpdate();
-    if (result.paused) {
-      setUpdateState('paused');
-      return;
-    }
-    if (!result.ok) {
-      setUpdateState('error');
-      setErrorMessage(result.error?.trim() || 'Update download failed. Try again or use Manual download.');
-      return;
-    }
-
-    setUpdateState('ready');
-    openRestartModal(latestVersion);
-  };
 
   const pauseDownload = async () => {
     setErrorMessage('');
@@ -570,15 +613,13 @@ export function UpdatesSettings() {
 
   const versionLabel = currentVersion || 'Unknown';
   const latestLabel = latestVersion || versionLabel;
-  const showDownloadAction = updateState === 'available';
+  const patchAvailable = isVersionNewer(latestLabel, versionLabel);
+  const showDownloadAction =
+    updateState === 'available' || (updateState === 'error' && patchAvailable);
   const showPauseAction = updateState === 'downloading';
   const showResumeAction = updateState === 'paused';
-  const hasUpdate =
-    Boolean(latestVersion && currentVersion) && isVersionNewer(latestVersion, currentVersion);
 
-  const whatsNewTitle = hasUpdate
-    ? `What's new in ${latestLabel}`
-    : `What's new in ${latestLabel}`;
+  const whatsNewTitle = `What's new in ${latestLabel}`;
 
   return (
     <div className="mx-auto max-w-3xl animate-in fade-in slide-in-from-bottom-2 duration-300">
@@ -610,7 +651,7 @@ export function UpdatesSettings() {
           {updateState === 'offline' && <FiAlertCircle className="text-xl text-orange-500" />}
 
           <p className="text-sm font-medium text-app-text">
-            {updateState === 'checking' && 'Checking for updates…'}
+            {updateState === 'checking' && (retryBusy ? 'Retrying update…' : 'Checking for updates…')}
             {updateState === 'up-to-date' && "You're up to date."}
             {updateState === 'available' && 'A new update is ready to download.'}
             {updateState === 'downloading' && 'Downloading and installing update…'}
@@ -627,8 +668,11 @@ export function UpdatesSettings() {
           </p>
         )}
 
-        {updateState === 'error' && errorMessage && (
-          <p className="mb-4 text-sm text-app-text">{errorMessage}</p>
+        {updateState === 'error' && (
+          <p className="mb-4 text-sm text-app-text">
+            {errorMessage ||
+              'The update could not be applied automatically. Tap Retry to clear the cache and try again.'}
+          </p>
         )}
 
         {updateState === 'paused' && errorMessage && (
@@ -702,11 +746,7 @@ export function UpdatesSettings() {
                 className="prose prose-sm prose-invert max-w-none text-sm text-app-text"
                 dangerouslySetInnerHTML={{ __html: releaseNotes }}
               />
-            ) : hasUpdate ||
-              updateState === 'available' ||
-              updateState === 'downloading' ||
-              updateState === 'paused' ||
-              updateState === 'ready' ? (
+            ) : patchAvailable ? (
               <p className="text-sm text-app-text">{IN_APP_RELEASE_NOTE}</p>
             ) : (
               <p className="text-sm text-app-muted">
@@ -738,24 +778,20 @@ export function UpdatesSettings() {
             <button
               type="button"
               onClick={() => (updateState === 'error' ? void retryUpdateCheck() : void checkForUpdates(true))}
-              disabled={updateState === 'checking'}
+              disabled={updateState === 'checking' || retryBusy}
               className={`rounded-xl px-5 py-2.5 text-sm font-medium transition-colors ${
-                updateState === 'checking'
+                updateState === 'checking' || retryBusy
                   ? 'cursor-not-allowed bg-app-chat-hover/50 text-app-muted'
                   : 'bg-app-chat-hover text-app-text hover:bg-app-border'
               }`}
             >
-              {updateState === 'error' ? 'Retry' : updateState === 'checking' ? 'Checking…' : 'Check for updates'}
-            </button>
-          )}
-
-          {updateState === 'error' && (
-            <button
-              type="button"
-              onClick={openReleasePage}
-              className="rounded-xl border border-app-border bg-app-surface px-5 py-2.5 text-sm font-medium text-app-text transition-colors hover:bg-app-chat-hover"
-            >
-              Manual download
+              {updateState === 'error'
+                ? retryBusy
+                  ? 'Retrying…'
+                  : 'Retry'
+                : updateState === 'checking'
+                  ? 'Checking…'
+                  : 'Check for updates'}
             </button>
           )}
 

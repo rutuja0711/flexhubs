@@ -28,6 +28,38 @@ let deferredInstallTimer: ReturnType<typeof setTimeout> | null = null;
 
 const DEFERRED_INSTALL_MS = 15 * 60 * 1000;
 
+/** Apply a downloaded in-app update and exit. Windows must use silent NSIS (/S) or the full installer wizard reappears. */
+function applyDownloadedUpdateAndQuit(context: string): void {
+  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoRunAppAfterInstall = true;
+
+  const silentInstall = process.platform === 'win32';
+  console.info(
+    `[FlexHubs] ${context} — quitAndInstall(silent=${silentInstall}, runAfterInstall=true)`,
+  );
+
+  try {
+    autoUpdater.quitAndInstall(silentInstall, true);
+  } catch (error) {
+    console.warn('[FlexHubs] quitAndInstall failed:', error);
+  }
+
+  if (process.platform === 'win32') {
+    // Do not app.relaunch() on Windows — that races the NSIS updater and looks like "installing again".
+    setTimeout(() => {
+      console.info('[FlexHubs] Exiting so the Windows update installer can finish');
+      app.exit(0);
+    }, 1200);
+    return;
+  }
+
+  setTimeout(() => {
+    console.info('[FlexHubs] quitAndInstall did not exit — relaunching (macOS)');
+    app.relaunch();
+    app.exit(0);
+  }, 2500);
+}
+
 type PersistedDownloadPause = {
   version: string;
   progress: number;
@@ -87,12 +119,7 @@ function scheduleDeferredInstall(): void {
 
   deferredInstallTimer = setTimeout(() => {
     deferredInstallTimer = null;
-    try {
-      console.info('[FlexHubs] Deferred restart to apply update');
-      autoUpdater.quitAndInstall(false, true);
-    } catch (error) {
-      console.warn('[FlexHubs] Deferred install failed:', error);
-    }
+    applyDownloadedUpdateAndQuit('Deferred restart to apply update');
   }, DEFERRED_INSTALL_MS);
 }
 
@@ -284,7 +311,7 @@ export function sanitizeUpdaterError(raw: string): string {
     lower.includes('err_updater') ||
     lower.includes('blockmap')
   ) {
-    return 'This update could not be applied automatically. Use Manual download to install the latest installer once (FlexHubs-Setup.exe from Releases), then try again. You can also tap Retry to clear the cached download and redownload.';
+    return 'This update could not be applied automatically. Tap Retry to clear the cached download and try again.';
   }
 
   if (lower.includes('timed out') || lower.includes('timeout')) {
@@ -362,6 +389,7 @@ function attachAutoUpdaterListeners(): void {
     console.warn('[FlexHubs] Updater error:', message);
     sendToRenderer('updater:error', {
       error: sanitizeUpdaterError(message),
+      version: lastKnownAvailableVersion?.trim() || undefined,
     });
   });
 
@@ -387,6 +415,7 @@ function attachAutoUpdaterListeners(): void {
     }
 
     autoUpdater.autoInstallOnAppQuit = true;
+    autoUpdater.autoRunAppAfterInstall = true;
 
     sendToRenderer('updater:update-downloaded', {
       version: info.version,
@@ -865,23 +894,10 @@ function registerUpdaterIpcHandlers(): void {
 
     try {
       clearDeferredInstallTimer();
-      autoUpdater.autoInstallOnAppQuit = true;
       console.info('[FlexHubs] Quitting to apply update', pending.version);
 
       setImmediate(() => {
-        try {
-          autoUpdater.quitAndInstall(false, true);
-        } catch (error) {
-          console.warn('[FlexHubs] quitAndInstall failed:', error);
-        }
-
-        setTimeout(() => {
-          if (!app.isQuitting) {
-            console.info('[FlexHubs] quitAndInstall did not exit — relaunching app to apply update');
-            app.relaunch();
-            app.quit();
-          }
-        }, 2500);
+        applyDownloadedUpdateAndQuit('User chose restart to apply update');
       });
 
       return { ok: true };
