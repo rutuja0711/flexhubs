@@ -117,7 +117,7 @@ function normalizeReleaseNotes(value: unknown): string {
 
 /** Shown when a newer build is available and GitHub release notes are empty (edit each release). */
 const IN_APP_RELEASE_NOTE =
-  'Hubs, hub info, and Activity sync with web; sidebar and notification UI fixes.';
+  'Hubs, hub info, and Activity sync with web; sidebar and notification UI fixes. Update Center: reliable Retry, silent restart on Windows, in-place updates on Mac.';
 
 export function UpdatesSettings() {
   const [updateState, setUpdateState] = useState<UpdateState>('up-to-date');

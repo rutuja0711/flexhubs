@@ -28,7 +28,7 @@ let deferredInstallTimer: ReturnType<typeof setTimeout> | null = null;
 
 const DEFERRED_INSTALL_MS = 15 * 60 * 1000;
 
-/** Apply a downloaded in-app update and exit. Windows must use silent NSIS (/S) or the full installer wizard reappears. */
+/** Apply a downloaded in-app update and exit. Windows uses silent NSIS (/S); macOS replaces the app in place (no DMG). */
 function applyDownloadedUpdateAndQuit(context: string): void {
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.autoRunAppAfterInstall = true;
@@ -44,20 +44,11 @@ function applyDownloadedUpdateAndQuit(context: string): void {
     console.warn('[FlexHubs] quitAndInstall failed:', error);
   }
 
-  if (process.platform === 'win32') {
-    // Do not app.relaunch() on Windows — that races the NSIS updater and looks like "installing again".
-    setTimeout(() => {
-      console.info('[FlexHubs] Exiting so the Windows update installer can finish');
-      app.exit(0);
-    }, 1200);
-    return;
-  }
-
+  // Let electron-updater relaunch the updated app — never app.relaunch() here (races installer on Windows, double-launch on Mac).
   setTimeout(() => {
-    console.info('[FlexHubs] quitAndInstall did not exit — relaunching (macOS)');
-    app.relaunch();
+    console.info('[FlexHubs] Exiting to apply in-app update');
     app.exit(0);
-  }, 2500);
+  }, process.platform === 'win32' ? 1200 : 1800);
 }
 
 type PersistedDownloadPause = {
@@ -279,6 +270,14 @@ function ensureAutoUpdaterConfigured(): void {
   console.info('[FlexHubs] Update feed (in-app patch only):', DESKTOP_RELEASE_FEED_URL);
 }
 
+function manualInstallHint(): string {
+  if (process.platform === 'darwin') {
+    return 'Install once from FlexHubs-Desktop.dmg (GitHub → Releases → desktop-latest), drag to Applications, then use Update Center for patches.';
+  }
+
+  return 'Install once from FlexHubs-Setup.exe (GitHub → Releases → desktop-latest), then use Update Center for patches.';
+}
+
 /** User-safe message; full details stay in main-process logs only. */
 export function sanitizeUpdaterError(raw: string): string {
   const message = raw.trim();
@@ -297,7 +296,7 @@ export function sanitizeUpdaterError(raw: string): string {
   }
 
   if (lower.includes('sha512') || lower.includes('checksum') || lower.includes('hash')) {
-    return 'The update failed verification. Try again, or use Manual download.';
+    return `The update failed verification. Tap Retry. ${manualInstallHint()}`;
   }
 
   if (
@@ -323,7 +322,7 @@ export function sanitizeUpdaterError(raw: string): string {
     lower.includes('eperm') ||
     lower.includes('eacces')
   ) {
-    return 'macOS blocked updating the app in Applications. Quit FlexHubs, use Manual download to reinstall, then try Restart again.';
+    return `macOS blocked updating the app in Applications. Quit FlexHubs, ensure it lives in /Applications, then Retry. ${manualInstallHint()}`;
   }
 
   if (
@@ -914,7 +913,11 @@ function registerUpdaterIpcHandlers(): void {
   register('updater:get-pending-install', (): UpdaterPendingInstall => pendingInstallState());
 
   register('updater:open-release-page', () => {
-    void shell.openExternal(DESKTOP_RELEASE_PAGE);
+    const asset =
+      process.platform === 'darwin'
+        ? `${DESKTOP_RELEASE_FEED_URL}/FlexHubs-Desktop.dmg`
+        : `${DESKTOP_RELEASE_FEED_URL}/FlexHubs-Setup.exe`;
+    void shell.openExternal(asset);
     return { ok: true as const };
   });
 

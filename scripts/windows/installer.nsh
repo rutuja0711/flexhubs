@@ -63,6 +63,7 @@ Function FlexHubsFinishPageShowShortcutOptions
 FunctionEnd
 
 Function FlexHubsFinishPageLeaveShortcutOptions
+  IfSilent FlexHubsFinishPageLeaveShortcutOptionsDone
   StrCpy $FlexHubsLaunchLink "$INSTDIR\${PRODUCT_FILENAME}.exe"
 
   ${NSD_GetState} $FlexHubsStartMenuShortcutCheckbox $FlexHubsStartMenuShortcutState
@@ -74,6 +75,7 @@ Function FlexHubsFinishPageLeaveShortcutOptions
   ${If} $FlexHubsDesktopShortcutState == ${BST_CHECKED}
     Call FlexHubsCreateDesktopShortcut
   ${EndIf}
+  FlexHubsFinishPageLeaveShortcutOptionsDone:
 FunctionEnd
 
 !macro customFinishPage
