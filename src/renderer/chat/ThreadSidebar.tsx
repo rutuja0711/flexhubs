@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { FiX } from 'react-icons/fi';
 import type { MessageItem } from '../../shared/messages';
 import { registerThreadReplyMessages } from '../../shared/messages';
@@ -10,7 +10,7 @@ import {
   subscribeThreadReplies,
 } from '../threadRepliesStore';
 import { MessageContent } from './MessageContent';
-import { MessageInput } from './MessageInput';
+import { MessageInput, type MessageInputHandle } from './MessageInput';
 import { formatConversationTimestamp } from './format';
 import { Avatar } from './ChatIcons';
 type ThreadSidebarProps = {
@@ -53,6 +53,15 @@ export function ThreadSidebar({
   const [isSending, setIsSending] = useState(false);
   const [draftError, setDraftError] = useState('');
   const [replyingToMessage, setReplyingToMessage] = useState<MessageItem | null>(null);
+  const composerRef = useRef<MessageInputHandle>(null);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      composerRef.current?.focusComposer();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [rootMessage.id, conversationId]);
 
   const applyThreadMessages = (fetched: MessageItem[]) => {
     registerThreadReplyMessages(fetched, rootMessage.id);
@@ -227,6 +236,7 @@ export function ThreadSidebar({
           <span>Replying to <span className="text-app-text font-medium">{rootMessage.senderName}</span></span>
         </div>
         <MessageInput
+          ref={composerRef}
           compact
           value={draft}
           disabled={loading}

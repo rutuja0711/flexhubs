@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FiBarChart2, FiClock, FiImage, FiLink, FiMic, FiPaperclip, FiPlus, FiSend, FiSmile } from 'react-icons/fi';
 import { EnhanceSparkleIcon } from './ChatIcons';
@@ -41,6 +41,7 @@ type MessageInputProps = {
   aiReplyGenerating?: boolean;
   onCancelReply?: () => void;
   onChange: (value: string) => void;
+  onComposerBlur?: () => void;
   onSend: () => void;
   onSendMedia?: (item: GifPickerItem, kind: 'gif' | 'sticker') => void;
   onSendFile?: (file: File, caption?: string) => void;
@@ -52,6 +53,39 @@ type MessageInputProps = {
   compact?: boolean;
   currentUserId?: string | null;
 };
+
+export type MessageInputHandle = {
+  focusComposer: () => void;
+};
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(bytes >= 10240 ? 0 : 1)} KB`;
+  }
+
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function fileTypeLabel(file: File): string {
+  const extension = file.name.includes('.') ? file.name.split('.').pop()?.toUpperCase() : '';
+  if (extension) {
+    return extension;
+  }
+
+  if (file.type.startsWith('image/')) {
+    return 'IMAGE';
+  }
+
+  if (file.type.startsWith('video/')) {
+    return 'VIDEO';
+  }
+
+  return file.type.split('/')[1]?.toUpperCase() || 'FILE';
+}
 
 type MentionSuggestion = {
   id: string;
@@ -148,7 +182,8 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
-export function MessageInput({
+export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(function MessageInput(
+  {
   value,
   disabled,
   isSending,
@@ -158,6 +193,7 @@ export function MessageInput({
   aiReplyGenerating = false,
   onCancelReply,
   onChange,
+  onComposerBlur,
   onSend,
   onSendMedia,
   onSendFile,
@@ -168,7 +204,9 @@ export function MessageInput({
   onOpenFlexAi,
   compact = false,
   currentUserId = null,
-}: MessageInputProps) {
+},
+  ref,
+) {
   const toast = useToast();
   const [draftError, setDraftError] = useState('');
   const [isEnhanced, setIsEnhanced] = useState(false);
@@ -215,12 +253,39 @@ export function MessageInput({
   const voiceNoteInputRef = useRef<HTMLInputElement>(null);
   const dictationBaseRef = useRef('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const composerSurfaceRef = useRef<HTMLDivElement>(null);
+  const skipComposerBlurSaveRef = useRef(false);
+
+  useImperativeHandle(ref, () => ({
+    focusComposer: () => {
+      const textarea = textareaRef.current;
+      if (!textarea || textarea.disabled) {
+        return;
+      }
+
+      if (document.activeElement === textarea) {
+        const end = textarea.value.length;
+        textarea.setSelectionRange(end, end);
+        return;
+      }
+
+      skipComposerBlurSaveRef.current = true;
+      textarea.focus();
+      const end = textarea.value.length;
+      textarea.setSelectionRange(end, end);
+      window.requestAnimationFrame(() => {
+        skipComposerBlurSaveRef.current = false;
+      });
+    },
+  }));
   const aiMenuButtonRef = useRef<HTMLButtonElement>(null);
   const actionsMenuButtonRef = useRef<HTMLButtonElement>(null);
+  const pickerButtonRef = useRef<HTMLButtonElement>(null);
   const [aiMenuStyle, setAiMenuStyle] = useState<{ left: number; top: number } | null>(null);
   const [actionsMenuStyle, setActionsMenuStyle] = useState<{ left: number; top: number } | null>(
     null,
   );
+  const [pickerPanelStyle, setPickerPanelStyle] = useState<React.CSSProperties | null>(null);
   const [pendingAttachments, setPendingAttachments] = useState<{
     file: File;
     previewUrl: string;
@@ -434,6 +499,24 @@ export function MessageInput({
     } as any);
   }, [actionsMenuOpen]);
 
+  useLayoutEffect(() => {
+    if (!pickerOpen || !pickerButtonRef.current) {
+      setPickerPanelStyle(null);
+      return;
+    }
+
+    const rect = pickerButtonRef.current.getBoundingClientRect();
+    const width = Math.min(window.innerWidth - 32, 420);
+
+    setPickerPanelStyle({
+      position: 'fixed',
+      left: Math.max(16, Math.min(rect.right - width, window.innerWidth - width - 16)),
+      bottom: window.innerHeight - rect.top + 8,
+      width,
+      zIndex: 10_000,
+    });
+  }, [pickerOpen]);
+
   const insertAtCursor = (text: string) => {
     const textarea = textareaRef.current;
     const cursor = textarea?.selectionStart ?? value.length;
@@ -590,6 +673,44 @@ export function MessageInput({
   const displayError = draftError || error;
   const mediaDisabled = disabled || isSending || !onSendMedia;
   const fileDisabled = disabled || isSending || !onSendFile;
+
+  const addFilesToComposer = (files: File[]) => {
+    if (!files.length || fileDisabled) {
+      return;
+    }
+
+    const newAttachments = files.map((file) => {
+      const mimeType = file.type || 'application/octet-stream';
+      const isImage = mimeType.startsWith('image/');
+      const isVideo = mimeType.startsWith('video/');
+      const previewUrl = isImage || isVideo ? URL.createObjectURL(file) : '';
+      return { file, previewUrl, isImage, isVideo };
+    });
+
+    setPendingAttachments((current) => [...current, ...newAttachments]);
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  };
+
+  const handlePaste = (event: React.ClipboardEvent) => {
+    if (disabled || fileDisabled) {
+      return;
+    }
+
+    const fromItems = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+
+    const fromFiles = Array.from(event.clipboardData.files);
+    const files = fromItems.length > 0 ? fromItems : fromFiles;
+
+    if (!files.length) {
+      return;
+    }
+
+    event.preventDefault();
+    addFilesToComposer(files);
+  };
   const aiDisabled = disabled || isSending || aiBusy;
 
   const openPicker = (tab: MediaPickerTab = 'emoji') => {
@@ -807,16 +928,7 @@ export function MessageInput({
     const files = Array.from(e.dataTransfer.files);
     if (!files.length) return;
 
-    const newAttachments = files.map((file) => {
-      const mimeType = file.type || 'application/octet-stream';
-      const isImage = mimeType.startsWith('image/');
-      const isVideo = mimeType.startsWith('video/');
-      const previewUrl = isImage || isVideo ? URL.createObjectURL(file) : '';
-      return { file, previewUrl, isImage, isVideo };
-    });
-
-    setPendingAttachments((current) => [...current, ...newAttachments]);
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    addFilesToComposer(files);
   };
 
   const handleFileSelected = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -827,17 +939,7 @@ export function MessageInput({
       return;
     }
 
-    const newAttachments = files.map((file) => {
-      const mimeType = file.type || 'application/octet-stream';
-      const isImage = mimeType.startsWith('image/');
-      const isVideo = mimeType.startsWith('video/');
-      const previewUrl = isImage || isVideo ? URL.createObjectURL(file) : '';
-      return { file, previewUrl, isImage, isVideo };
-    });
-
-    setPendingAttachments((current) => [...current, ...newAttachments]);
-
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    addFilesToComposer(files);
   };
 
   const handleSendAction = () => {
@@ -1036,6 +1138,21 @@ export function MessageInput({
 
   const dragClasses = isDraggingOver ? 'bg-app-chat-hover/30 ring-2 ring-accent ring-inset rounded-xl transition-all' : '';
 
+  const handleComposerFocusOut = (event: React.FocusEvent) => {
+    if (skipComposerBlurSaveRef.current) {
+      return;
+    }
+
+    const surface = composerSurfaceRef.current;
+    const nextTarget = event.relatedTarget as Node | null;
+
+    if (surface && nextTarget && surface.contains(nextTarget)) {
+      return;
+    }
+
+    onComposerBlur?.();
+  };
+
   return (
     <div 
       className={`${compact ? '' : 'px-6 pb-4 pt-1.5'} ${dragClasses} relative`}
@@ -1063,12 +1180,18 @@ export function MessageInput({
               ) : attachment.isVideo ? (
                 <video src={attachment.previewUrl} className="h-16 w-16 shrink-0 rounded-xl object-cover bg-app-chat-hover" />
               ) : (
-                <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-xl bg-app-surface text-xs text-app-muted">
-                  File
+                <div className="flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-xl bg-app-chat-hover px-1 text-center">
+                  <span className="text-[10px] font-bold text-app-text">{fileTypeLabel(attachment.file)}</span>
+                  <span className="mt-0.5 text-[9px] text-app-muted">{formatFileSize(attachment.file.size)}</span>
                 </div>
               )}
               <div className="min-w-0 flex-1 pt-0.5">
                 <p className="truncate text-xs font-semibold text-app-text">{attachment.file.name}</p>
+                {!attachment.isImage && !attachment.isVideo ? (
+                  <p className="mt-0.5 text-[11px] text-app-muted">
+                    {fileTypeLabel(attachment.file)} · {formatFileSize(attachment.file.size)}
+                  </p>
+                ) : null}
                 {index === 0 && (
                   <p className="mt-0.5 text-[11px] text-app-muted">
                     {attachment.isImage || attachment.isVideo
@@ -1166,6 +1289,8 @@ export function MessageInput({
       ) : null}
 
       <div
+        ref={composerSurfaceRef}
+        onFocusOut={handleComposerFocusOut}
         className={`relative flex flex-col rounded-[22px] border bg-app-surface/95 backdrop-blur-md transition-all duration-200 shadow-composer focus-within:border-accent/45 focus-within:shadow-composer-focus ${
           replyingToMessage ? 'rounded-t-none border-t-0' : ''
         } ${
@@ -1194,16 +1319,6 @@ export function MessageInput({
           className="hidden"
           onChange={handleVoiceNoteFileSelected}
         />
-        <MediaPicker
-          open={pickerOpen}
-          onClose={() => setPickerOpen(false)}
-          onSelectMedia={handleMediaSelect}
-          onSelectEmoji={handleEmojiSelect}
-          initialTab={pickerTab}
-        />
-
-
-
         <div className={`flex items-end gap-1 ${compact ? 'px-1 py-1' : 'px-2 py-2'}`}>
           {voiceCaptureMode ? (
             <VoiceInlineRecording
@@ -1235,6 +1350,7 @@ export function MessageInput({
               handleChange(event.target.value);
               updateMentionState(event.target.value, event.target.selectionStart ?? event.target.value.length);
             }}
+            onPaste={handlePaste}
             onKeyDown={(event) => {
               if (mentionQuery !== null && mentionSuggestions.length > 0 && !mentionLoading) {
                 if (event.key === 'ArrowDown') {
@@ -1296,6 +1412,7 @@ export function MessageInput({
           )}
           <div className="flex shrink-0 items-center gap-0.5 self-end overflow-visible pb-0.5">
               <button
+                ref={pickerButtonRef}
                 type="button"
                 disabled={disabled || isSending || aiBusy}
                 aria-label="Insert emoji, GIF, or sticker"
@@ -1377,6 +1494,29 @@ export function MessageInput({
           </button>
         </div>
       </div>
+
+      {pickerOpen && pickerPanelStyle
+        ? createPortal(
+            <>
+              <button
+                type="button"
+                aria-label="Close emoji picker"
+                className="fixed inset-0 z-[9998] cursor-default"
+                onClick={() => setPickerOpen(false)}
+              />
+              <MediaPicker
+                open={pickerOpen}
+                onClose={() => setPickerOpen(false)}
+                onSelectMedia={handleMediaSelect}
+                onSelectEmoji={handleEmojiSelect}
+                initialTab={pickerTab}
+                panelClassName="fixed z-[10000] overflow-hidden rounded-2xl border border-app-border bg-app-elevated shadow-2xl isolate"
+                panelStyle={pickerPanelStyle}
+              />
+            </>,
+            document.body,
+          )
+        : null}
 
       {actionsMenuOpen && actionsMenuStyle
         ? createPortal(
@@ -1641,4 +1781,4 @@ export function MessageInput({
       />
     </div>
   );
-}
+});

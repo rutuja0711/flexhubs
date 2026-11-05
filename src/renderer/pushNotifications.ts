@@ -121,6 +121,11 @@ export async function ensureDesktopNotificationsReady(): Promise<void> {
   setDesktopNotificationsEnabled(true);
 
   if (!('Notification' in window) || Notification.permission !== 'default') {
+    if (Notification.permission === 'denied') {
+      void window.electronAPI?.logRendererDebug?.(
+        '[FlexHubs] macOS/Windows notifications blocked — enable FlexHubs Desktop in System Settings → Notifications.',
+      );
+    }
     return;
   }
 

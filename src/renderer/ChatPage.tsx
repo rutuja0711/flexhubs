@@ -145,7 +145,7 @@ import {
   bootstrapPresenceFromConversations,
   mapLivePresenceUpdateStatus,
 } from '../shared/presence';
-import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationByAnyId, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, readConversationSnoozeState, sanitizeDirectDisplayName, withConversationSnoozed, buildConversationSnoozePayload, formatConversationSnoozeUntil, resolveConversationForMessage, resolveTypingConversationId, buildConversationListPreview, areConversationSidebarListsEqual, mergeConversationMemberPreview, collectDirectPeerUserIds, collectSidebarPresenceUserIds, enrichSidebarConversationAvatars, sortSidebarTeammates, lookupPresenceStatus, normalizePresenceUserId } from '../shared/chat';
+import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationByAnyId, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, readConversationSnoozeState, sanitizeDirectDisplayName, withConversationSnoozed, buildConversationSnoozePayload, formatConversationSnoozeUntil, resolveConversationForMessage, resolveTypingConversationId, buildConversationListPreview, areConversationSidebarListsEqual, mergeConversationMemberPreview, collectDirectPeerUserIds, collectSidebarPresenceUserIds, enrichSidebarConversationAvatars, sortSidebarTeammates, lookupPresenceStatus, normalizePresenceUserId, applyPendingHubInvitesToConversations, hubConversationMatchesTarget, isHubChannelConversation, isJoinedHubConversation, markHubConversationsJoined } from '../shared/chat';
 import { enrichCallHistoryItems, type CallHistoryItem } from '../shared/calls';
 import type {
   MessageItem,
@@ -155,7 +155,7 @@ import type {
 } from '../shared/messages';
 import type { GifPickerItem } from '../shared/gifs';
 import type { ConversationBootstrap } from '../shared/messages';
-import { applyMessageDeletionToList, applyMessageReadReceipts, applyReactionPatch, buildScheduleMessageBody, clearThreadReplyRegistry, compareMessagesChronologically, enrichMessageReplies, extractPeerLastReadMessageIds, filterMainChatMessages, findFirstUnreadMessageId, formatMessagePreview, isAlreadyDeletedForEveryoneError, isDeletedMessage, markMessageDeletedForEveryone, mergeMessageListsChronologically, mergeMessageUpdates, mergeServerMessagesWithLocal, readLastReadMessageId, registerThreadReplyMessage, resolveMessageReadBy, resolveNotificationAction, resolveNotificationConversationId, resolveThreadRootId } from '../shared/messages';
+import { applyMessageDeletionToList, applyMessageReadReceipts, applyReactionPatch, buildScheduleMessageBody, clearThreadReplyRegistry, compareMessagesChronologically, enrichMessageReplies, extractPeerLastReadMessageIds, filterMainChatMessages, findFirstUnreadMessageId, findHubInviteForNotification, formatMessagePreview, isAlreadyDeletedForEveryoneError, isDeletedMessage, isPendingHubInviteNotification, markMessageDeletedForEveryone, mergeMessageListsChronologically, mergeMessageUpdates, mergeServerMessagesWithLocal, notificationMatchesHubInviteTarget, readLastReadMessageId, registerThreadReplyMessage, resolveMessageReadBy, resolveNotificationAction, resolveNotificationConversationId, resolveThreadRootId } from '../shared/messages';
 import type { AiTextResult } from '../shared/extras';
 import { hoursToSnoozePreset, inferFlexIntent } from '../shared/extras';
 import type { ProfileSettings } from '../shared/profile';
@@ -164,19 +164,19 @@ import { scheduleCalendarReminders } from './calendarReminders';
 import {
   alertNewDesktopNotifications,
   alertNewPendingFriendRequests,
+  alertNewPendingHubInvites,
   bindMessageNotificationSound,
   peekNewNotifications,
   markNotificationSeen,
-  markMessageNotificationShown,
   seedNotificationSnapshot,
   seedPendingFriendsSnapshot,
+  seedPendingHubInvitesSnapshot,
   registerNotificationNavigationFallback,
   shouldSkipDuplicateMessageNotification,
   hasShownMessageAlert,
   showCalendarEventReminder,
   showIncomingMessageDesktopNotification,
 } from './desktopNotifications';
-import { FlexHubsDesktopNotification, mapMessageToNotificationData } from './ui/notifications/FlexHubsDesktopNotification';
 import {
   ensureDesktopNotificationsReady,
   shouldDeliverDesktopNotifications,
@@ -244,23 +244,13 @@ import {
   writeThreadCacheEntry,
   type ThreadCacheStore,
 } from './threadCache';
+import { syncDesktopAppBadge } from './desktopAppBadge';
+import { clearDraftContentCache, setDraftContentCache } from './draftCache';
 import { appendThreadReply, clearThreadRepliesStore } from './threadRepliesStore';
 
-// Background refresh intervals (not initial load time).
-const UNREAD_POLL_MS = 180_000;
-const BELL_POLL_MS = 60_000;
-const NOTIFICATION_POLL_CONNECTED_MS = 180_000;
-const NOTIFICATION_POLL_DISCONNECTED_MS = 45_000;
 const PENDING_FRIENDS_CACHE_MS = 120_000;
-const CALENDAR_POLL_MS = 5 * 60_000;
-const DRAFT_SAVE_MS = 600;
 const TYPING_STOP_MS = 3_000;
 const TYPING_LABEL_MS = 5_000;
-const THREAD_POLL_MS = 20_000;
-
-function isAppWindowActive(): boolean {
-  return !document.hidden;
-}
 
 type FileFilter = 'all' | 'images' | 'docs' | 'other';
 
@@ -283,6 +273,49 @@ function isActivelyViewingConversation(
   }
 
   return document.hasFocus() && !document.hidden;
+}
+
+function notificationBelongsToConversation(
+  notification: NotificationItem,
+  conversationId: string,
+  conversations: ConversationItem[],
+): boolean {
+  if (notification.conversationId === conversationId) {
+    return true;
+  }
+
+  return resolveNotificationConversationId(notification, conversations) === conversationId;
+}
+
+function stripConversationMessageNotifications(
+  notifications: NotificationItem[],
+  conversationId: string,
+  conversations: ConversationItem[],
+): NotificationItem[] {
+  return notifications.filter(
+    (notification) => !notificationBelongsToConversation(notification, conversationId, conversations),
+  );
+}
+
+function resolveConversationUnreadCountOverride(
+  conversation: ConversationItem,
+  selectedConversationId: string | null,
+  mainView: MainView,
+  pendingReadSync: ReadonlySet<string>,
+): number {
+  if (
+    mainView === 'chat' &&
+    selectedConversationId === conversation.id &&
+    conversation.unreadCount > 0
+  ) {
+    return 0;
+  }
+
+  if (pendingReadSync.has(conversation.id) && conversation.unreadCount > 0) {
+    return 0;
+  }
+
+  return conversation.unreadCount;
 }
 
 function resolveTyperDisplayName(
@@ -746,14 +779,19 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const [newConversationOpen, setNewConversationOpen] = useState(false);
 
-  const markReadTimerRef = useRef<number | null>(null);
+  const pendingConversationReadSyncRef = useRef<Set<string>>(new Set());
+  const conversationReadSyncInFlightRef = useRef<Set<string>>(new Set());
   const refreshConversationsTimerRef = useRef<number | null>(null);
-  const draftSaveTimerRef = useRef<number | null>(null);
+  const draftSaveChainRef = useRef<Promise<void>>(Promise.resolve());
+  const draftPersistTokenRef = useRef(0);
+  const draftDirtyRef = useRef(false);
+  const composerReplyToIdRef = useRef<string | null>(null);
   const typingStopTimerRef = useRef<number | null>(null);
   const typingTimersRef = useRef<Map<string, number>>(new Map());
   const lastSavedDraftRef = useRef('');
+  const lastSavedReplyToIdRef = useRef<string | null>(null);
   const draftRef = useRef('');
-  const draftPreviewsRef = useRef<Record<string, string>>({});
+  const draftPreviewsRef = useRef<Record<string, string | null>>({});
   const threadCacheRef = useRef<ThreadCacheStore>({});
   const activeHubDetailsRef = useRef<Record<string, unknown> | null>(null);
   const prefetchInFlightRef = useRef<Set<string>>(new Set());
@@ -761,6 +799,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const prefetchTimerRef = useRef<Record<string, number>>({});
   const bootstrapStartedRef = useRef(false);
   const pendingFriendsCacheRef = useRef<{ fetchedAt: number; count: number } | null>(null);
+  const pendingHubInvitesCacheRef = useRef<{ fetchedAt: number; count: number } | null>(null);
   const isTypingActiveRef = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
   const messagesRef = useRef<MessageItem[]>([]);
@@ -787,6 +826,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const syncNotificationsRef = useRef<
     (options?: { seedSnapshot?: boolean; withLoading?: boolean; markAllRead?: boolean }) => Promise<void>
   >(async () => {});
+  const refreshConversationsRef = useRef<() => Promise<void>>(async () => {});
+  const refreshActiveThreadSilentlyRef = useRef<(conversationId: string) => Promise<void>>(async () => {});
+  const refreshUnreadCountRef = useRef<(notificationItems?: NotificationItem[]) => Promise<void>>(async () => {});
   const handleRealtimeEventRef = useRef<(rawEvent: unknown) => void>(() => {});
   const applyTypingUpdateRef = useRef<(typing: NonNullable<ReturnType<typeof extractTypingUpdate>>) => void>(() => {});
 
@@ -864,8 +906,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   useEffect(() => {
     if (!window.electronAPI) return;
 
-    // Check for updates shortly after startup
-    const timer = setTimeout(() => {
+    // One deferred update check shortly after startup (no recurring poll).
+    const updateCheckTimer = window.setTimeout(() => {
       void window.electronAPI?.checkForUpdates().catch(() => undefined);
     }, 5000);
 
@@ -892,14 +934,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       });
     });
 
-    // Remind user / check for updates every hour (3600000 ms)
-    const interval = setInterval(() => {
-      void window.electronAPI?.checkForUpdates().catch(() => undefined);
-    }, 60 * 60 * 1000);
-
     return () => {
-      clearTimeout(timer);
-      clearInterval(interval);
+      clearTimeout(updateCheckTimer);
       unsubAvailable();
     };
   }, []);
@@ -975,13 +1011,36 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     viewerUserId,
   ]);
 
-  const conversationsForSidebar = useMemo(
-    () =>
-      conversations.map((conversation) =>
-        redactDirectConversationForPeerBlock(conversation, blockedByPeerIds),
-      ),
-    [blockedByPeerIds, conversations],
-  );
+  const conversationsForSidebar = useMemo(() => {
+    const withHubMembership = applyPendingHubInvitesToConversations(
+      conversations,
+      activityHubInvites,
+    );
+
+    return withHubMembership.map((conversation) =>
+      redactDirectConversationForPeerBlock(conversation, blockedByPeerIds),
+    );
+  }, [activityHubInvites, blockedByPeerIds, conversations]);
+
+  useEffect(() => {
+    if (!selectedId || mainView !== 'chat') {
+      return;
+    }
+
+    const selected =
+      conversations.find((conversation) => conversation.id === selectedId) ?? null;
+
+    if (!selected) {
+      return;
+    }
+
+    const [resolved] = applyPendingHubInvitesToConversations([selected], activityHubInvites);
+
+    if (resolved && isHubChannelConversation(resolved) && !isJoinedHubConversation(resolved)) {
+      setSelectedId(null);
+      setMainView('activity');
+    }
+  }, [activityHubInvites, conversations, mainView, selectedId]);
 
   const selectedConversationForDisplay = useMemo(() => {
     if (!selectedConversation) {
@@ -1303,7 +1362,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    delete draftPreviewsRef.current[conversationId];
+    draftPreviewsRef.current[conversationId] = null;
   }, []);
 
   const syncThreadCache = useCallback(
@@ -1336,7 +1395,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     setActiveHubDetails(cached.activeHubDetails);
     setPinnedMessageIds(cached.pinnedMessageIds);
     setDraft(cached.draft);
-    lastSavedDraftRef.current = cached.draft;
+    lastSavedDraftRef.current = cached.draft.trim();
+    lastSavedReplyToIdRef.current = null;
+    draftDirtyRef.current = false;
+    setDraftContentCache(conversationId, cached.draft);
     setThreadError('');
     setDraftError('');
     setThreadLoading(false);
@@ -1354,36 +1416,92 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     return true;
   }, []);
 
-  const flushDraftSave = useCallback((conversationId: string, content: string) => {
-    if (draftSaveTimerRef.current) {
-      window.clearTimeout(draftSaveTimerRef.current);
-      draftSaveTimerRef.current = null;
-    }
+  const bumpDraftPersistToken = useCallback(() => {
+    draftPersistTokenRef.current += 1;
+    return draftPersistTokenRef.current;
+  }, []);
 
-    const trimmed = content.trim();
+  const flushDraftSave = useCallback(
+    (conversationId: string) => {
+      if (!conversationId || !draftDirtyRef.current) {
+        return;
+      }
 
-    if (!trimmed) {
-      if (lastSavedDraftRef.current.trim()) {
-        void clearChatDraft(conversationId).then((result) => {
+      const contentSnapshot = draftRef.current;
+      const replySnapshot = composerReplyToIdRef.current ?? null;
+      draftDirtyRef.current = false;
+
+      const runSave = async () => {
+        const persistToken = draftPersistTokenRef.current;
+        const content = contentSnapshot;
+        const trimmed = content.trim();
+        const normalizedReply = replySnapshot;
+
+        const applyPreview = (preview: string | null) => {
+          setDraftPreviewForConversation(conversationId, preview);
+          setDraftContentCache(conversationId, preview);
+          setConversations((current) => applyDraftPreviews(current));
+        };
+
+        if (!trimmed) {
+          if (!lastSavedDraftRef.current.trim() && lastSavedReplyToIdRef.current === null) {
+            return;
+          }
+
+          if (persistToken !== draftPersistTokenRef.current) {
+            return;
+          }
+
+          const result = await clearChatDraft(conversationId);
+
+          if (persistToken !== draftPersistTokenRef.current) {
+            return;
+          }
+
           if (result.ok) {
             lastSavedDraftRef.current = '';
+            lastSavedReplyToIdRef.current = null;
+            applyPreview(null);
+          } else {
+            draftDirtyRef.current = true;
           }
-        });
-      }
 
-      return;
-    }
+          return;
+        }
 
-    if (trimmed === lastSavedDraftRef.current) {
-      return;
-    }
+        if (
+          trimmed === lastSavedDraftRef.current.trim() &&
+          normalizedReply === lastSavedReplyToIdRef.current
+        ) {
+          return;
+        }
 
-    void saveChatDraft(conversationId, trimmed).then((result) => {
-      if (result.ok) {
-        lastSavedDraftRef.current = trimmed;
-      }
-    });
-  }, []);
+        if (persistToken !== draftPersistTokenRef.current) {
+          return;
+        }
+
+        const result = await saveChatDraft(conversationId, content, normalizedReply);
+
+        if (persistToken !== draftPersistTokenRef.current) {
+          return;
+        }
+
+        if (result.ok) {
+          const preview = result.data?.content?.trim() ?? trimmed;
+          lastSavedDraftRef.current = preview;
+          lastSavedReplyToIdRef.current = normalizedReply;
+          applyPreview(preview || null);
+        } else {
+          draftDirtyRef.current = true;
+        }
+      };
+
+      draftSaveChainRef.current = draftSaveChainRef.current.then(runSave).catch(() => {
+        draftDirtyRef.current = true;
+      });
+    },
+    [applyDraftPreviews, setDraftPreviewForConversation],
+  );
 
   const clearConversationUnread = useCallback(
     (conversationId: string) => {
@@ -1394,7 +1512,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           ),
         ),
       );
-      setActivityNotifications((current) => current.filter((n) => resolveNotificationConversationId(n, conversationsRef.current) !== conversationId));
     },
     [applyDraftPreviews],
   );
@@ -1603,18 +1720,37 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     clearProfileCache();
+    void window.electronAPI?.setAppBadge?.({ count: 0, mentionUnread: 0 });
     onSessionExpired();
   }, [confirm, onSessionExpired]);
 
   const activityNotificationsRef = useRef<NotificationItem[]>([]);
+  const activityHubInvitesRef = useRef<import('../shared/features').HubInviteItem[]>([]);
+  const hubsInvitesRef = useRef<import('../shared/features').HubInviteItem[]>([]);
 
   useEffect(() => {
     activityNotificationsRef.current = activityNotifications;
   }, [activityNotifications]);
 
+  useEffect(() => {
+    activityHubInvitesRef.current = activityHubInvites;
+  }, [activityHubInvites]);
+
+  useEffect(() => {
+    hubsInvitesRef.current = hubsInvites;
+  }, [hubsInvites]);
+
+  useEffect(() => {
+    syncDesktopAppBadge({
+      activityUnread: unreadCount,
+      notifications: activityNotifications,
+    });
+  }, [activityNotifications, unreadCount]);
+
   const refreshUnreadCount = useCallback(
     async (notificationItems?: NotificationItem[]) => {
       let pendingCount = 0;
+      let hubInviteCount = 0;
       const pendingCache = pendingFriendsCacheRef.current;
       const pendingCacheFresh =
         pendingCache && Date.now() - pendingCache.fetchedAt < PENDING_FRIENDS_CACHE_MS;
@@ -1631,13 +1767,35 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         pendingCount = pendingResult.ok ? pendingResult.data.length : 0;
         pendingFriendsCacheRef.current = { fetchedAt: Date.now(), count: pendingCount };
       }
+
+      const hubInviteCache = pendingHubInvitesCacheRef.current;
+      const hubInviteCacheFresh =
+        hubInviteCache && Date.now() - hubInviteCache.fetchedAt < PENDING_FRIENDS_CACHE_MS;
+
+      if (hubInviteCacheFresh) {
+        hubInviteCount = hubInviteCache.count;
+      } else {
+        const hubInvitesResult = await loadHubInvites();
+
+        if (handleUnauthorized(hubInvitesResult.status)) {
+          return;
+        }
+
+        hubInviteCount = hubInvitesResult.ok ? hubInvitesResult.data.length : 0;
+        pendingHubInvitesCacheRef.current = { fetchedAt: Date.now(), count: hubInviteCount };
+
+        if (hubInvitesResult.ok) {
+          setActivityHubInvites(hubInvitesResult.data);
+        }
+      }
+
       const listSource =
         notificationItems ??
         (activityNotificationsRef.current.length > 0 ? activityNotificationsRef.current : null);
 
       if (listSource) {
         const unreadFromNotifications = listSource.filter((item) => !item.isRead).length;
-        setUnreadCount(unreadFromNotifications + pendingCount);
+        setUnreadCount(unreadFromNotifications + pendingCount + hubInviteCount);
         return;
       }
 
@@ -1648,9 +1806,108 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       }
 
       const apiCount = countResult.ok ? countResult.data.count : 0;
-      setUnreadCount(apiCount + pendingCount);
+      setUnreadCount(apiCount + pendingCount + hubInviteCount);
     },
     [handleUnauthorized],
+  );
+
+  const clearHubInviteActivityState = useCallback(
+    (target: {
+      inviteId?: string | null;
+      conversationId?: string | null;
+      channelId?: string | null;
+    }) => {
+      const inviteId = target.inviteId?.trim() || null;
+
+      if (inviteId) {
+        setActivityHubInvites((current) => current.filter((entry) => entry.id !== inviteId));
+        setHubsInvites((current) => current.filter((entry) => entry.id !== inviteId));
+      }
+
+      pendingHubInvitesCacheRef.current = null;
+
+      const hubInviteCatalog = [...activityHubInvitesRef.current, ...hubsInvitesRef.current];
+      const removedNotifications = activityNotificationsRef.current.filter((notification) =>
+        notificationMatchesHubInviteTarget(notification, target, hubInviteCatalog),
+      );
+      const nextActivityNotifications = activityNotificationsRef.current.filter(
+        (notification) => !notificationMatchesHubInviteTarget(notification, target, hubInviteCatalog),
+      );
+
+      setActivityNotifications(nextActivityNotifications);
+      void refreshUnreadCount(nextActivityNotifications);
+
+      for (const notification of removedNotifications) {
+        if (!notification.isRead) {
+          void markNotificationRead(notification.id).then((readResult) => {
+            if (!readResult.ok) {
+              handleUnauthorized(readResult.status);
+            }
+          });
+        }
+      }
+    },
+    [handleUnauthorized, refreshUnreadCount],
+  );
+
+  const syncConversationReadState = useCallback(
+    (conversationId: string) => {
+      if (!conversationId) {
+        return;
+      }
+
+      pendingConversationReadSyncRef.current.add(conversationId);
+      clearConversationUnread(conversationId);
+
+      if (selectedIdRef.current === conversationId) {
+        setThreadUnreadAnchorId(null);
+      }
+
+      const conversations = conversationsRef.current;
+      const removedNotifications = activityNotificationsRef.current.filter((notification) =>
+        notificationBelongsToConversation(notification, conversationId, conversations),
+      );
+      const nextActivityNotifications = stripConversationMessageNotifications(
+        activityNotificationsRef.current,
+        conversationId,
+        conversations,
+      );
+
+      setActivityNotifications(nextActivityNotifications);
+      void refreshUnreadCount(nextActivityNotifications);
+
+      if (conversationReadSyncInFlightRef.current.has(conversationId)) {
+        return;
+      }
+
+      conversationReadSyncInFlightRef.current.add(conversationId);
+
+      void markConversationRead(conversationId)
+        .then((result) => {
+          if (!result.ok) {
+            pendingConversationReadSyncRef.current.delete(conversationId);
+            handleUnauthorized(result.status);
+            void refreshConversationsRef.current();
+            void syncNotificationsRef.current();
+            return;
+          }
+
+          for (const notification of removedNotifications) {
+            if (!notification.isRead) {
+              void markNotificationRead(notification.id).then((readResult) => {
+                if (!readResult.ok) {
+                  handleUnauthorized(readResult.status);
+                }
+              });
+            }
+          }
+        })
+        .finally(() => {
+          conversationReadSyncInFlightRef.current.delete(conversationId);
+          pendingConversationReadSyncRef.current.delete(conversationId);
+        });
+    },
+    [clearConversationUnread, handleUnauthorized, refreshUnreadCount],
   );
 
   const refreshBlockedUserIds = useCallback(async () => {
@@ -2068,30 +2325,39 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       }
 
       let notificationList = notifications.data;
-      const hasUnreadNotifications = notificationList.some((item) => !item.isRead);
-      const shouldAcknowledgeOnActivityView =
-        mainViewRef.current === 'activity' && hasUnreadNotifications && !options?.markAllRead;
 
-      if (shouldAcknowledgeOnActivityView) {
-        const markReadResult = await markAllNotificationsRead();
-
-        if (handleUnauthorized(markReadResult.status)) {
-          if (options?.withLoading) {
-            setActivityLoading(false);
-          }
-          return;
-        }
-
-        if (!markReadResult.ok) {
-          if (options?.withLoading) {
-            setActivityLoading(false);
-          }
-          return;
-        }
+      if (options?.markAllRead) {
+        notificationList = notificationList.map((item) => ({ ...item, isRead: true }));
       }
 
-      if (options?.markAllRead || shouldAcknowledgeOnActivityView) {
-        notificationList = notificationList.map((item) => ({ ...item, isRead: true }));
+      notificationList = notificationList.filter((notification) => {
+        if (!isPendingHubInviteNotification(notification)) {
+          return true;
+        }
+
+        const matched = findHubInviteForNotification(
+          notification,
+          activityHubInvitesRef.current,
+        );
+
+        if (!matched) {
+          return false;
+        }
+
+        const conversation = conversationsRef.current.find((item) =>
+          hubConversationMatchesTarget(item, matched),
+        );
+
+        return !(conversation && isJoinedHubConversation(conversation));
+      });
+
+      const activeConversationId = selectedIdRef.current;
+      if (activeConversationId && mainViewRef.current === 'chat') {
+        notificationList = stripConversationMessageNotifications(
+          notificationList,
+          activeConversationId,
+          conversationsRef.current,
+        );
       }
 
       setActivityNotifications(notificationList);
@@ -2139,9 +2405,21 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
 
         if (hubInvitesResult.ok) {
+          pendingHubInvitesCacheRef.current = {
+            fetchedAt: Date.now(),
+            count: hubInvitesResult.data.length,
+          };
           setActivityHubInvites(hubInvitesResult.data);
+          if (options?.seedSnapshot) {
+            seedPendingHubInvitesSnapshot(hubInvitesResult.data);
+          } else {
+            void alertNewPendingHubInvites(hubInvitesResult.data, () => {
+              setMainView('activity');
+            });
+          }
         }
-      } else if (pendingListStale) {
+      } else {
+        if (pendingListStale) {
         void loadPendingFriends().then((pending) => {
           if (handleUnauthorized(pending.status)) {
             return;
@@ -2162,16 +2440,35 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             }
           }
         });
+        }
 
+        const hubInviteCache = pendingHubInvitesCacheRef.current;
+        const hubInviteListStale =
+          !hubInviteCache ||
+          Date.now() - hubInviteCache.fetchedAt >= PENDING_FRIENDS_CACHE_MS;
+
+        if (hubInviteListStale) {
         void loadHubInvites().then((hubInvitesResult) => {
           if (handleUnauthorized(hubInvitesResult.status)) {
             return;
           }
 
           if (hubInvitesResult.ok) {
+            pendingHubInvitesCacheRef.current = {
+              fetchedAt: Date.now(),
+              count: hubInvitesResult.data.length,
+            };
             setActivityHubInvites(hubInvitesResult.data);
+            if (options?.seedSnapshot) {
+              seedPendingHubInvitesSnapshot(hubInvitesResult.data);
+            } else {
+              void alertNewPendingHubInvites(hubInvitesResult.data, () => {
+                setMainView('activity');
+              });
+            }
           }
         });
+        }
       }
 
       if (options?.withLoading) {
@@ -2183,6 +2480,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const loadActivityData = useCallback(async () => {
     pendingFriendsCacheRef.current = null;
+    pendingHubInvitesCacheRef.current = null;
     await syncNotifications({ withLoading: true, refreshActivitySources: true });
   }, [syncNotifications]);
 
@@ -2378,6 +2676,22 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     seedDirectChatMetadata(conversationsResult.data.conversations);
     hydrateHubMemberAvatars(initialConversations);
 
+    if (inOrg) {
+      void loadHubInvites().then((hubInvitesResult) => {
+        if (!hubInvitesResult.ok) {
+          handleUnauthorized(hubInvitesResult.status);
+          return;
+        }
+
+        pendingHubInvitesCacheRef.current = {
+          fetchedAt: Date.now(),
+          count: hubInvitesResult.data.length,
+        };
+        setActivityHubInvites(hubInvitesResult.data);
+        seedPendingHubInvitesSnapshot(hubInvitesResult.data);
+      });
+    }
+
     if (unreadCountResult.ok) {
       setUnreadCount(unreadCountResult.data.count);
     } else if (handleUnauthorized(unreadCountResult.status)) {
@@ -2450,11 +2764,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     };
 
     syncSidebarPresence();
-    const intervalId = window.setInterval(syncSidebarPresence, 30_000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
   }, [refreshPresence]);
 
   const loadThread = useCallback(
@@ -2585,17 +2894,37 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         );
 
         if (draftResult.ok) {
-          const content = draftResult.data.content;
-          nextDraft = content;
-          setDraft(content);
-          lastSavedDraftRef.current = content;
-          setDraftPreviewForConversation(conversationId, content.trim() || null);
+          const summary = draftResult.data;
+
+          if (summary?.content) {
+            nextDraft = summary.content;
+            setDraft(summary.content);
+            draftRef.current = summary.content;
+            lastSavedDraftRef.current = summary.content.trim();
+            lastSavedReplyToIdRef.current = summary.replyToId ?? null;
+            draftDirtyRef.current = false;
+            setDraftContentCache(conversationId, summary.content);
+            setDraftPreviewForConversation(conversationId, summary.content.trim() || null);
+          } else {
+            nextDraft = '';
+            setDraft('');
+            draftRef.current = '';
+            lastSavedDraftRef.current = '';
+            lastSavedReplyToIdRef.current = null;
+            draftDirtyRef.current = false;
+            clearDraftContentCache(conversationId);
+            setDraftPreviewForConversation(conversationId, null);
+          }
         } else if (!draftResult.ok && draftResult.status !== 404) {
           setDraftError(draftResult.error);
         } else {
           nextDraft = '';
           setDraft('');
+          draftRef.current = '';
           lastSavedDraftRef.current = '';
+          lastSavedReplyToIdRef.current = null;
+          draftDirtyRef.current = false;
+          clearDraftContentCache(conversationId);
           setDraftPreviewForConversation(conversationId, null);
         }
 
@@ -2616,20 +2945,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           void refreshPresence(memberIds);
         }
 
-        if (markReadTimerRef.current) {
-          window.clearTimeout(markReadTimerRef.current);
-        }
-
-        markReadTimerRef.current = window.setTimeout(() => {
-          void markConversationRead(conversationId).then((result) => {
-            if (result.ok) {
-              clearConversationUnread(conversationId);
-            }
-
-            handleUnauthorized(result.status);
-            void refreshUnreadCount();
-          });
-        }, 100);
+        syncConversationReadState(conversationId);
       } finally {
         if (conversationId === selectedIdRef.current) {
           setThreadLoading(false);
@@ -2637,7 +2953,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
       }
     },
-    [applyDraftPreviews, clearConversationUnread, commitConversationList, handleUnauthorized, hydrateConversationSnooze, patchHubMemberPreview, prefetchDirectPeerProfile, rememberDirectChatMetadata, refreshPresence, refreshUnreadCount, setDraftPreviewForConversation, syncThreadCache, user],
+    [applyDraftPreviews, commitConversationList, handleUnauthorized, hydrateConversationSnooze, patchHubMemberPreview, prefetchDirectPeerProfile, rememberDirectChatMetadata, refreshPresence, setDraftPreviewForConversation, syncConversationReadState, syncThreadCache, user],
   );
 
   const callManager = useCallManager({
@@ -2842,7 +3158,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
               return;
             }
 
-            const draftContent = draftResult.ok ? draftResult.data.content : '';
+            const draftContent =
+              draftResult.ok && draftResult.data?.content ? draftResult.data.content : '';
 
             writeThreadCacheEntry(threadCacheRef.current, conversationId, {
               messages: commitMessages(
@@ -3092,7 +3409,22 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     if (result.ok) {
       setConversations((current) => {
-        const next = commitConversationList(mergeConversationLists(current, result.data.conversations));
+        const merged = commitConversationList(mergeConversationLists(current, result.data.conversations));
+        const selectedConversationId = selectedIdRef.current;
+        const mainView = mainViewRef.current;
+        const pendingReadSync = pendingConversationReadSyncRef.current;
+        const next = merged.map((conversation) => {
+          const unreadCount = resolveConversationUnreadCountOverride(
+            conversation,
+            selectedConversationId,
+            mainView,
+            pendingReadSync,
+          );
+
+          return unreadCount === conversation.unreadCount
+            ? conversation
+            : { ...conversation, unreadCount };
+        });
 
         if (!areConversationSidebarListsEqual(current, next)) {
           hydrateHubMemberAvatars(next);
@@ -3103,6 +3435,101 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       });
     }
   }, [commitConversationList, handleUnauthorized, hydrateHubMemberAvatars, refreshPresence]);
+
+  const finalizeHubInviteAccept = useCallback(
+    async (options: {
+      inviteId?: string | null;
+      invite?: import('../shared/features').HubInviteItem | null;
+      acceptResult?: import('../shared/features').AcceptHubInviteResult | null;
+      channelIdFallback?: string | null;
+    }) => {
+      const invite =
+        options.invite ??
+        (options.inviteId
+          ? activityHubInvites.find((entry) => entry.id === options.inviteId) ??
+            hubsInvites.find((entry) => entry.id === options.inviteId)
+          : null);
+
+      const target = {
+        conversationId:
+          options.acceptResult?.conversationId ??
+          invite?.conversationId ??
+          options.channelIdFallback ??
+          invite?.channelId ??
+          null,
+        channelId:
+          options.acceptResult?.channelId ??
+          invite?.channelId ??
+          options.channelIdFallback ??
+          invite?.conversationId ??
+          null,
+      };
+
+      clearHubInviteActivityState({
+        inviteId: options.inviteId,
+        conversationId: target.conversationId,
+        channelId: target.channelId,
+      });
+
+      setConversations((current) =>
+        commitConversationList(markHubConversationsJoined(current, target), {
+          seedFromApi: false,
+          currentUserId: userIdRef.current,
+        }),
+      );
+
+      await refreshConversations();
+
+      const hubInvitesResult = await loadHubInvites();
+
+      if (hubInvitesResult.ok) {
+        const filtered = hubInvitesResult.data.filter((entry) => {
+          if (options.inviteId && entry.id === options.inviteId) {
+            return false;
+          }
+
+          const conversation = conversationsRef.current.find((item) =>
+            hubConversationMatchesTarget(item, {
+              conversationId: entry.conversationId,
+              channelId: entry.channelId,
+            }),
+          );
+
+          return !(conversation && isJoinedHubConversation(conversation));
+        });
+
+        pendingHubInvitesCacheRef.current = {
+          fetchedAt: Date.now(),
+          count: filtered.length,
+        };
+        setActivityHubInvites(filtered);
+      }
+
+      void loadHubsData();
+      void refreshUnreadCount();
+
+      setMainView('chat');
+
+      const resolved =
+        (target.conversationId
+          ? findConversationByAnyId(conversationsRef.current, target.conversationId)
+          : null) ??
+        (target.channelId ? findConversationByAnyId(conversationsRef.current, target.channelId) : null);
+
+      const openId = resolved?.id ?? target.conversationId ?? target.channelId;
+
+      if (openId) {
+        handleSelectConversationRef.current(openId);
+      }
+    },
+    [
+      clearHubInviteActivityState,
+      commitConversationList,
+      loadHubsData,
+      refreshConversations,
+      refreshUnreadCount,
+    ],
+  );
 
   useEffect(() => {
     if (loading || conversations.length === 0) {
@@ -3120,44 +3547,51 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     });
   }, [conversations, loading, refreshConversations]);
 
-  useEffect(() => {
-    if (mainView !== 'chat' && mainView !== 'activity') {
-      return;
-    }
-
-    const intervalId = window.setInterval(() => {
-      void refreshConversations();
-    }, 120_000);
-
-    return () => {
-      window.clearInterval(intervalId);
-    };
-  }, [mainView, refreshConversations]);
-
   const openHubFromNotification = useCallback(
     async (channelId: string | null, inviteId: string | null) => {
       if (channelId) {
         const existing = findConversationByAnyId(conversationsRef.current, channelId);
 
         if (existing) {
-          handleSelectConversationRef.current(existing.id);
-          return;
+          const inviteStillPending =
+            Boolean(inviteId) &&
+            (activityHubInvites.some((entry) => entry.id === inviteId) ||
+              hubsInvites.some((entry) => entry.id === inviteId));
+
+          const conversation = inviteStillPending
+            ? applyPendingHubInvitesToConversations(
+                [existing],
+                activityHubInvites.length > 0 ? activityHubInvites : hubsInvites,
+              )[0] ?? existing
+            : existing;
+
+          if (isJoinedHubConversation(conversation)) {
+            clearHubInviteActivityState({
+              inviteId,
+              conversationId: conversation.id,
+              channelId: conversation.channelId ?? channelId,
+            });
+            setMainView('chat');
+            handleSelectConversationRef.current(conversation.id);
+            return;
+          }
         }
       }
 
       if (inviteId) {
+        const inviteSnapshot =
+          activityHubInvites.find((entry) => entry.id === inviteId) ??
+          hubsInvites.find((entry) => entry.id === inviteId) ??
+          null;
         const result = await acceptHubInviteById(inviteId);
 
         if (result.ok) {
-          await refreshConversations();
-          void loadHubsData();
-
-          if (channelId) {
-            handleSelectConversationRef.current(channelId);
-          } else {
-            setMainView('hubs');
-          }
-
+          await finalizeHubInviteAccept({
+            inviteId,
+            invite: inviteSnapshot,
+            acceptResult: result.data,
+            channelIdFallback: channelId,
+          });
           toast.success('Hub invite accepted.');
           return;
         }
@@ -3165,13 +3599,29 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         if (handleUnauthorized(result.status)) {
           return;
         }
+
+        const fallbackConversation = channelId
+          ? findConversationByAnyId(conversationsRef.current, channelId)
+          : null;
+
+        if (fallbackConversation && isJoinedHubConversation(fallbackConversation)) {
+          clearHubInviteActivityState({
+            inviteId,
+            conversationId: fallbackConversation.id,
+            channelId: fallbackConversation.channelId ?? channelId,
+          });
+          setMainView('chat');
+          handleSelectConversationRef.current(fallbackConversation.id);
+          return;
+        }
       } else if (channelId) {
         const result = await acceptHubInvite(channelId);
 
         if (result.ok) {
-          await refreshConversations();
-          void loadHubsData();
-          handleSelectConversationRef.current(channelId);
+          await finalizeHubInviteAccept({
+            acceptResult: result.data,
+            channelIdFallback: channelId,
+          });
           toast.success('Joined hub successfully.');
           return;
         }
@@ -3179,12 +3629,31 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         if (handleUnauthorized(result.status)) {
           return;
         }
+
+        const fallbackConversation = findConversationByAnyId(conversationsRef.current, channelId);
+
+        if (fallbackConversation && isJoinedHubConversation(fallbackConversation)) {
+          clearHubInviteActivityState({
+            conversationId: fallbackConversation.id,
+            channelId: fallbackConversation.channelId ?? channelId,
+          });
+          setMainView('chat');
+          handleSelectConversationRef.current(fallbackConversation.id);
+          return;
+        }
       }
 
       setMainView('hubs');
       void loadHubsData();
     },
-    [handleUnauthorized, loadHubsData, refreshConversations],
+    [
+      activityHubInvites,
+      clearHubInviteActivityState,
+      finalizeHubInviteAccept,
+      handleUnauthorized,
+      hubsInvites,
+      loadHubsData,
+    ],
   );
 
   const scheduleConversationsRefresh = useCallback(() => {
@@ -3305,8 +3774,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         if (sender?.avatarUrl) avatarUrl = sender.avatarUrl;
       }
 
-      markMessageNotificationShown(message.id);
-
       void showIncomingMessageDesktopNotification(
         message,
         conversation,
@@ -3410,11 +3877,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           );
 
           if (!message.isOwn && message.senderId !== userId) {
-            void markConversationRead(resolvedConversationId).then((result) => {
-              if (result.ok) {
-                clearConversationUnread(resolvedConversationId);
-              }
-            });
+            syncConversationReadState(resolvedConversationId);
           }
         } else if (resolvedConversationId === activeConversationId) {
           if (incomingThreadRootId) {
@@ -3710,7 +4173,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
       }
     },
-    [applyDraftPreviews, applyTypingUpdate, callManager.clearMeetingBannerFromCallLog, clearConversationUnread, clearTypingUser, isConversationSnoozed, notifyIncomingMessage, patchMessageReactions, refreshActiveThreadSilently, refreshMessageReactions, scheduleConversationsRefresh, shouldSuppressNotificationAlerts, syncNotifications, touchConversationWithMessage],
+    [applyDraftPreviews, applyTypingUpdate, callManager.clearMeetingBannerFromCallLog, clearTypingUser, isConversationSnoozed, notifyIncomingMessage, patchMessageReactions, refreshActiveThreadSilently, refreshMessageReactions, scheduleConversationsRefresh, shouldSuppressNotificationAlerts, syncConversationReadState, syncNotifications, touchConversationWithMessage],
   );
 
   useEffect(() => {
@@ -3744,6 +4207,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   handleRealtimeEventRef.current = handleRealtimeEvent;
   syncNotificationsRef.current = syncNotifications;
+  refreshConversationsRef.current = refreshConversations;
+  refreshActiveThreadSilentlyRef.current = refreshActiveThreadSilently;
+  refreshUnreadCountRef.current = refreshUnreadCount;
 
   useEffect(() => {
     setTypingSignalingHandler((typing) => {
@@ -3800,8 +4266,16 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
       if (status === 'connected' && previous !== 'connected') {
         void syncNotificationsRef.current();
+        void refreshConversationsRef.current();
+        void refreshUnreadCountRef.current();
         void syncPresenceToServer();
         void syncRedisPresenceMode();
+        const activeId = selectedIdRef.current;
+
+        if (activeId) {
+          void refreshActiveThreadSilentlyRef.current(activeId);
+        }
+
         const peerIds = collectSidebarPresenceUserIds(conversationsRef.current, teammatesRef.current);
 
         if (peerIds.length > 0) {
@@ -3821,10 +4295,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         window.clearTimeout(refreshConversationsTimerRef.current);
       }
 
-      if (draftSaveTimerRef.current) {
-        window.clearTimeout(draftSaveTimerRef.current);
-      }
-
       if (typingStopTimerRef.current) {
         window.clearTimeout(typingStopTimerRef.current);
       }
@@ -3839,28 +4309,30 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   }, []);
 
   useEffect(() => {
-    if (!selectedId || mainView !== 'chat' || realtimeStatus === 'connected') {
-      return;
-    }
-
-    let pollInFlight = false;
-
-    const intervalId = window.setInterval(() => {
-      if (!isAppWindowActive() || pollInFlight) {
+    const catchUpAfterFocus = () => {
+      if (document.hidden) {
         return;
       }
 
-      pollInFlight = true;
-      void Promise.all([
-        refreshActiveThreadSilently(selectedId),
-        refreshConversations(),
-      ]).finally(() => {
-        pollInFlight = false;
-      });
-    }, THREAD_POLL_MS);
+      void syncNotificationsRef.current();
+      void refreshUnreadCountRef.current();
+      void refreshConversationsRef.current();
 
-    return () => window.clearInterval(intervalId);
-  }, [mainView, realtimeStatus, refreshActiveThreadSilently, refreshConversations, selectedId]);
+      const activeId = selectedIdRef.current;
+
+      if (activeId && mainViewRef.current === 'chat') {
+        void refreshActiveThreadSilentlyRef.current(activeId);
+      }
+    };
+
+    window.addEventListener('focus', catchUpAfterFocus);
+    document.addEventListener('visibilitychange', catchUpAfterFocus);
+
+    return () => {
+      window.removeEventListener('focus', catchUpAfterFocus);
+      document.removeEventListener('visibilitychange', catchUpAfterFocus);
+    };
+  }, []);
 
   const stopTyping = useCallback((conversationId: string) => {
     if (typingStopTimerRef.current) {
@@ -3918,11 +4390,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const handleDraftChange = useCallback(
     (value: string) => {
+      draftRef.current = value;
+      draftDirtyRef.current = true;
       setDraft(value);
 
       if (!selectedId) {
         return;
       }
+
+      setDraftContentCache(selectedId, value);
+      setDraftPreviewForConversation(selectedId, value.trim() || null);
+      setConversations((current) => applyDraftPreviews(current));
 
       if (value.trim()) {
         pulseTyping(selectedId);
@@ -3930,65 +4408,20 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         stopTyping(selectedId);
       }
     },
-    [pulseTyping, selectedId, stopTyping],
+    [applyDraftPreviews, pulseTyping, selectedId, setDraftPreviewForConversation, stopTyping],
   );
 
-  useEffect(() => {
-    if (!selectedId) {
+  const handleComposerBlur = useCallback(() => {
+    const conversationId = selectedIdRef.current;
+
+    if (!conversationId) {
       return;
     }
 
-    if (draftSaveTimerRef.current) {
-      window.clearTimeout(draftSaveTimerRef.current);
-    }
-
-    draftSaveTimerRef.current = window.setTimeout(() => {
-      if (draft === lastSavedDraftRef.current) {
-        return;
-      }
-
-      if (!draft.trim()) {
-        if (lastSavedDraftRef.current.trim()) {
-          void clearChatDraft(selectedId).then((result) => {
-            if (result.ok) {
-              lastSavedDraftRef.current = '';
-              setDraftPreviewForConversation(selectedId, null);
-              setConversations((current) => applyDraftPreviews(current));
-            }
-          });
-        }
-
-        return;
-      }
-
-      void saveChatDraft(selectedId, draft).then((result) => {
-        if (result.ok) {
-          lastSavedDraftRef.current = draft;
-          setDraftPreviewForConversation(selectedId, draft.trim());
-          setConversations((current) => applyDraftPreviews(current));
-        }
-      });
-    }, DRAFT_SAVE_MS);
-
-    return () => {
-      if (draftSaveTimerRef.current) {
-        window.clearTimeout(draftSaveTimerRef.current);
-      }
-    };
-  }, [applyDraftPreviews, draft, selectedId, setDraftPreviewForConversation]);
+    flushDraftSave(conversationId);
+  }, [flushDraftSave]);
 
   useEffect(() => {
-    if (!selectedId) {
-      return;
-    }
-
-    setDraftPreviewForConversation(selectedId, draft.trim() || null);
-    setConversations((current) => applyDraftPreviews(current));
-  }, [applyDraftPreviews, draft, selectedId, setDraftPreviewForConversation]);
-
-  useEffect(() => {
-    lastSavedDraftRef.current = '';
-
     return () => {
       if (selectedId && isTypingActiveRef.current) {
         stopTyping(selectedId);
@@ -4045,33 +4478,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   }, [mainView]);
 
   useEffect(() => {
-    const pollMs =
-      realtimeStatus === 'connected'
-        ? NOTIFICATION_POLL_CONNECTED_MS
-        : NOTIFICATION_POLL_DISCONNECTED_MS;
+    if (mainView !== 'activity') {
+      return;
+    }
 
-    const syncIfActive = () => {
-      if (isAppWindowActive()) {
-        void syncNotifications();
-      }
-    };
-
-    syncIfActive();
-
-    const intervalId = window.setInterval(syncIfActive, pollMs);
-
-    return () => window.clearInterval(intervalId);
-  }, [realtimeStatus, syncNotifications]);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      if (isAppWindowActive()) {
-        void loadCalendarData();
-      }
-    }, CALENDAR_POLL_MS);
-
-    return () => window.clearInterval(intervalId);
-  }, [loadCalendarData]);
+    void loadActivityData();
+  }, [loadActivityData, mainView]);
 
   useEffect(() => {
     if (!teammates.length) {
@@ -4092,32 +4504,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       );
     });
   }, [calendarEvents, openCalendarFromNotification]);
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      if (isAppWindowActive()) {
-        void refreshUnreadCount();
-      }
-    }, UNREAD_POLL_MS);
-
-    return () => window.clearInterval(intervalId);
-  }, [refreshUnreadCount]);
-
-  useEffect(() => {
-    if (mainView !== 'activity') {
-      return;
-    }
-
-    void loadActivityData();
-
-    const intervalId = window.setInterval(() => {
-      if (isAppWindowActive()) {
-        void syncNotifications();
-      }
-    }, BELL_POLL_MS);
-
-    return () => window.clearInterval(intervalId);
-  }, [loadActivityData, mainView, syncNotifications]);
 
   useEffect(() => {
     void loadSavedData({ silent: true });
@@ -4168,7 +4554,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     void loadThread(selectedId);
-  }, [selectedId, loadThread]);
+
+    return () => {
+      flushDraftSave(selectedId);
+    };
+  }, [flushDraftSave, loadThread, selectedId]);
 
   const focusMessageHydratingRef = useRef<string | null>(null);
 
@@ -4269,15 +4659,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     activeHubDetailsRef.current = activeHubDetails;
   }, [activeHubDetails]);
 
-  useEffect(
-    () => () => {
-      if (markReadTimerRef.current) {
-        window.clearTimeout(markReadTimerRef.current);
-      }
-    },
-    [],
-  );
-
   const handleSummarizeUnread = async () => {
     if (!selectedId) return;
     setSummaryPanelOpen(true);
@@ -4304,11 +4685,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     options?: { forceReload?: boolean },
   ) => {
     const outgoingId = selectedIdRef.current;
-    const outgoingDraft = draftRef.current;
 
     if (outgoingId && outgoingId !== conversationId) {
-      setDraftPreviewForConversation(outgoingId, outgoingDraft.trim() || null);
-      flushDraftSave(outgoingId, outgoingDraft);
+      setDraftPreviewForConversation(outgoingId, draftRef.current.trim() || null);
+      flushDraftSave(outgoingId);
       setConversations((current) => applyDraftPreviews(current));
     }
 
@@ -4335,6 +4715,28 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     } else {
       setThreadJumpSyncing(false);
       setFocusMessageId(null);
+    }
+
+    syncConversationReadState(conversationId);
+
+    const conversation = conversationsRef.current.find((item) => item.id === conversationId);
+
+    if (
+      conversation &&
+      isHubChannelConversation(conversation) &&
+      isJoinedHubConversation(conversation)
+    ) {
+      const staleInvite = [...activityHubInvitesRef.current, ...hubsInvitesRef.current].find(
+        (invite) => hubConversationMatchesTarget(conversation, invite),
+      );
+
+      if (staleInvite) {
+        clearHubInviteActivityState({
+          inviteId: staleInvite.id,
+          conversationId: conversation.id,
+          channelId: conversation.channelId,
+        });
+      }
     }
   };
 
@@ -4659,9 +5061,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       poll: null,
     };
 
+    bumpDraftPersistToken();
+    draftDirtyRef.current = false;
+    draftRef.current = '';
     setDraft('');
     lastSavedDraftRef.current = '';
+    lastSavedReplyToIdRef.current = null;
     setDraftError('');
+    clearDraftContentCache(conversationId);
     setDraftPreviewForConversation(conversationId, null);
     setConversations((current) => applyDraftPreviews(current));
     stopTyping(conversationId);
@@ -4673,12 +5080,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     if (handleUnauthorized(result.status)) {
       setMessages((current) => current.filter((message) => message.id !== localId));
+      draftRef.current = content;
+      draftDirtyRef.current = true;
       setDraft(content);
       return;
     }
 
     if (!result.ok) {
       setDraftError(result.error);
+      draftRef.current = content;
+      draftDirtyRef.current = true;
+      setDraft(content);
       setMessages((current) => markMessageStatus(current, localId, 'failed'));
       return;
     }
@@ -5152,8 +5564,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       threadRootId,
     });
     if (!threadRootId) {
+      bumpDraftPersistToken();
+      draftDirtyRef.current = false;
+      draftRef.current = '';
       setDraft('');
       lastSavedDraftRef.current = '';
+      lastSavedReplyToIdRef.current = null;
+      clearDraftContentCache(conversationId);
       setDraftPreviewForConversation(conversationId, null);
       setConversations((current) => applyDraftPreviews(current));
       void clearChatDraft(conversationId);
@@ -6194,6 +6611,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     accept: boolean,
     linkedNotificationId?: string | null,
   ) => {
+    const inviteSnapshot =
+      activityHubInvites.find((entry) => entry.id === inviteId) ??
+      hubsInvites.find((entry) => entry.id === inviteId) ??
+      null;
+
     const result = accept ? await acceptHubInviteById(inviteId) : await declineHubInvite(inviteId);
 
     if (!result.ok) {
@@ -6205,22 +6627,34 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    if (linkedNotificationId) {
-      void markNotificationRead(linkedNotificationId);
+    const inviteTarget = {
+      inviteId,
+      conversationId:
+        inviteSnapshot?.conversationId ??
+        (accept && result.data ? result.data.conversationId : null) ??
+        null,
+      channelId:
+        inviteSnapshot?.channelId ??
+        (accept && result.data ? result.data.channelId : null) ??
+        null,
+    };
+
+    if (accept) {
+      showActionMessage('Hub invitation accepted.');
+      await finalizeHubInviteAccept({
+        inviteId,
+        invite: inviteSnapshot,
+        acceptResult: result.data,
+      });
+      void loadActivityData();
+      return;
     }
 
-    showActionMessage(accept ? 'Hub invitation accepted.' : 'Hub invitation declined.');
+    showActionMessage('Hub invitation declined.');
+    clearHubInviteActivityState(inviteTarget);
     void refreshConversations();
     void loadActivityData();
     void loadHubsData();
-
-    if (accept) {
-      const invite = activityHubInvites.find((entry) => entry.id === inviteId);
-      const conversationId = invite?.conversationId || invite?.channelId;
-      if (conversationId) {
-        handleSelectConversation(conversationId);
-      }
-    }
   };
 
   const renderMainPanel = () => {
@@ -6245,6 +6679,21 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }}
           onMarkAllRead={() => {
             void syncNotifications({ withLoading: true, markAllRead: true });
+          }}
+          onMarkNotificationRead={(notificationId) => {
+            void markNotificationRead(notificationId).then((result) => {
+              if (!result.ok) {
+                handleUnauthorized(result.status);
+                return;
+              }
+
+              setActivityNotifications((current) => current.filter((item) => item.id !== notificationId));
+              void refreshUnreadCount();
+            });
+          }}
+          onOpenNotificationSettings={() => {
+            setProfileInitialTab('notifications');
+            handleNavigate('profile');
           }}
           calendarInviteStatusByEventId={calendarInviteStatusByEventId}
           onCalendarInviteResponded={() => {
@@ -6398,10 +6847,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             void loadHubsData();
           }}
           onAcceptInvite={async (inviteId) => {
+            const inviteSnapshot = hubsInvites.find((entry) => entry.id === inviteId) ?? null;
             const result = await acceptHubInviteById(inviteId);
             if (result.ok) {
-              void loadHubsData();
-              void refreshConversations();
+              await finalizeHubInviteAccept({
+                inviteId,
+                invite: inviteSnapshot,
+                acceptResult: result.data,
+              });
               toast.success('Hub invite accepted.');
             } else if (handleUnauthorized(result.status)) {
               return;
@@ -6431,11 +6884,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             setJoiningChannelId(null);
 
             if (result.ok) {
-              void loadHubsData();
-              void refreshConversations();
+              await finalizeHubInviteAccept({
+                acceptResult: result.data,
+                channelIdFallback: channelId,
+              });
               toast.success('Joined hub successfully.');
-              handleSelectConversation(channelId);
-              setMainView('chat');
               return;
             }
 
@@ -6544,6 +6997,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           typingLabel={typingLabel}
           isSending={isSending}
           onDraftChange={handleDraftChange}
+          onComposerBlur={handleComposerBlur}
+          onDraftReplyToIdChange={(replyToId) => {
+            if (composerReplyToIdRef.current !== replyToId) {
+              composerReplyToIdRef.current = replyToId;
+              draftDirtyRef.current = true;
+            }
+          }}
           onSend={(replyToMessageId) => {
             void handleSendMessage(replyToMessageId);
           }}

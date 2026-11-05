@@ -13,29 +13,12 @@ type DesktopLegalGateProps = {
   children: React.ReactNode;
 };
 
-function isNotificationOverlayRoute(): boolean {
-  const params = new URLSearchParams(window.location.search);
-  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-  return (
-    params.get('route') === 'notification' ||
-    hashParams.get('route') === 'notification' ||
-    hashParams.has('route=notification')
-  );
-}
-
 export function DesktopLegalGate({ children }: DesktopLegalGateProps) {
-  const skipGate = isNotificationOverlayRoute();
   const [checking, setChecking] = useState(true);
   const [mustAccept, setMustAccept] = useState(false);
   const [checkedTerms, setCheckedTerms] = useState(false);
 
   useEffect(() => {
-    if (skipGate) {
-      setChecking(false);
-      setMustAccept(false);
-      return;
-    }
-
     if (!window.electronAPI?.getDesktopLegalContext) {
       setChecking(false);
       setMustAccept(false);
@@ -62,11 +45,7 @@ export function DesktopLegalGate({ children }: DesktopLegalGateProps) {
         setChecking(false);
       }
     })();
-  }, [skipGate]);
-
-  if (skipGate) {
-    return <>{children}</>;
-  }
+  }, []);
 
   const handleAccept = () => {
     storeAcceptedDesktopLegalVersion(DESKTOP_LEGAL_VERSION);

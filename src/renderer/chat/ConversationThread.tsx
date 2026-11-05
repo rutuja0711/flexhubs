@@ -53,7 +53,7 @@ import { useToast } from '../ui/Toast';
 import { PinIcon, SearchIcon, SparkleIcon } from './ChatIcons';
 import { ForwardMessageModal } from './ForwardMessageModal';
 import { InConversationSearchBar } from './InConversationSearchBar';
-import { MessageInput } from './MessageInput';
+import { MessageInput, type MessageInputHandle } from './MessageInput';
 import { MessageList } from './MessageList';
 import { PinnedMessageBanner } from './PinnedMessageBanner';
 import { ContactInfoPanel } from './ContactInfoPanel';
@@ -74,6 +74,8 @@ type ConversationThreadProps = {
   typingLabel: string;
   isSending: boolean;
   onDraftChange: (value: string) => void;
+  onComposerBlur?: () => void;
+  onDraftReplyToIdChange?: (replyToId: string | null) => void;
   onSend: (replyToId?: string) => void;
   onRetryMessage?: (messageId: string) => void;
   onSendMedia?: (item: GifPickerItem, kind: 'gif' | 'sticker', replyToId?: string, threadRootId?: string) => void;
@@ -137,6 +139,8 @@ export function ConversationThread({
   typingLabel,
   isSending,
   onDraftChange,
+  onComposerBlur,
+  onDraftReplyToIdChange,
   onSend,
   onRetryMessage,
   onSendMedia,
@@ -188,6 +192,7 @@ export function ConversationThread({
 }: ConversationThreadProps) {
   const toast = useToast();
   const confirm = useConfirm();
+  const composerRef = useRef<MessageInputHandle>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchError, setSearchError] = useState('');
@@ -307,11 +312,30 @@ export function ConversationThread({
   }, [conversation.id]);
 
   useEffect(() => {
+    const composerBlocked =
+      (loading && messages.length === 0) || peerBlockedByCurrentUser || peerBlockedViewer;
+
+    if (composerBlocked) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      composerRef.current?.focusComposer();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [conversation.id, loading, peerBlockedByCurrentUser, peerBlockedViewer]);
+
+  useEffect(() => {
     return () => {
       highlightTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
       highlightTimeoutsRef.current = [];
     };
   }, []);
+
+  useEffect(() => {
+    onDraftReplyToIdChange?.(replyingToMessage?.id ?? null);
+  }, [onDraftReplyToIdChange, replyingToMessage?.id]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1091,6 +1115,7 @@ export function ConversationThread({
       ) : null}
 
       <MessageInput
+        ref={composerRef}
         value={draft}
         disabled={
           (loading && messages.length === 0) || peerBlockedByCurrentUser || peerBlockedViewer
@@ -1106,6 +1131,7 @@ export function ConversationThread({
           setAiReplyLoadingMessageId(null);
         }}
         onChange={onDraftChange}
+        onComposerBlur={onComposerBlur}
         onSend={() => {
           onSend(replyingToMessage?.id);
           setReplyingToMessage(null);

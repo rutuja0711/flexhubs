@@ -19,7 +19,6 @@ import {
   InviteRegisterPage,
   RegisterPage,
 } from './AuthFlowPages';
-import NotificationOverlay from './NotificationOverlay';
 import { ErrorBoundary } from './ErrorBoundary';
 import { ensureMainWindowVisible } from './callWindowApi';
 
@@ -110,11 +109,6 @@ function App() {
       return;
     }
 
-    if (params.get('route') === 'notification' || hashParams.get('route') === 'notification' || hashParams.has('route=notification')) {
-      setScreen('notification' as any);
-      return;
-    }
-
     if (invite) {
       setInviteToken(invite);
       setScreen('invite');
@@ -129,10 +123,6 @@ function App() {
       ensureMainWindowVisible();
     }
   }, [screen]);
-
-  if (screen === ('notification' as any)) {
-    return <NotificationOverlay />;
-  }
 
   if (screen === 'checking') {
     return (
@@ -259,13 +249,15 @@ function App() {
   }
 
   return (
-    <ChatPage
-      onSessionExpired={() => {
-        void performLogout().finally(() => {
-          setScreen('login');
-        });
-      }}
-    />
+    <ErrorBoundary>
+      <ChatPage
+        onSessionExpired={() => {
+          void performLogout().finally(() => {
+            setScreen('login');
+          });
+        }}
+      />
+    </ErrorBoundary>
   );
 }
 

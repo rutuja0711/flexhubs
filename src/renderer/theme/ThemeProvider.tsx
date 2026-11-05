@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useState, type ReactNode } from 'react';
 import {
   ACCENT_STORAGE_KEY,
   applyAccentColor,
@@ -30,13 +30,31 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>(() => resolveInitialTheme());
   const [accentColor, setAccentColorState] = useState(() => resolveInitialAccentColor());
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     applyTheme(theme);
-    storeTheme(theme);
     applyAccentColor(accentColor, theme);
+  }, [accentColor, theme]);
+
+  useEffect(() => {
+    storeTheme(theme);
     storeAccentColor(accentColor);
     void window.electronAPI?.setNativeTheme?.(theme);
   }, [accentColor, theme]);
+
+  const setTheme = useCallback((mode: ThemeMode) => {
+    applyTheme(mode);
+    applyAccentColor(accentColor, mode);
+    setThemeState(mode);
+  }, [accentColor]);
+
+  const toggleTheme = useCallback(() => {
+    setThemeState((current) => {
+      const next = current === 'dark' ? 'light' : 'dark';
+      applyTheme(next);
+      applyAccentColor(accentColor, next);
+      return next;
+    });
+  }, [accentColor]);
 
   useEffect(() => {
     const onStorage = (event: StorageEvent) => {
@@ -71,11 +89,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     () => ({
       theme,
       accentColor,
-      setTheme: (mode: ThemeMode) => setThemeState(mode),
+      setTheme,
       setAccentColor,
-      toggleTheme: () => setThemeState((current) => (current === 'dark' ? 'light' : 'dark')),
+      toggleTheme,
     }),
-    [accentColor, setAccentColor, theme],
+    [accentColor, setAccentColor, setTheme, theme, toggleTheme],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

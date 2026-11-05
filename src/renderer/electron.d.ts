@@ -14,7 +14,7 @@ import type {
   SavedMessageItem,
 } from '../shared/features';
 import type { GlobalSearchResult, MessageSearchResult, SearchPerson } from '../shared/search';
-import type { ConversationBootstrap, MessageDraft, MessageItem } from '../shared/messages';
+import type { ConversationBootstrap, ConversationDraftSummary, MessageItem } from '../shared/messages';
 import type { RealtimeConnectionStatus } from '../shared/realtime';
 import type { OrganizationMemberItem, ProfileSettings } from '../shared/profile';
 
@@ -162,12 +162,13 @@ declare global {
       getMessageDraft: (
         token: string,
         conversationId: string,
-      ) => Promise<ApiResult<MessageDraft>>;
+      ) => Promise<ApiResult<ConversationDraftSummary | null>>;
       saveMessageDraft: (
         token: string,
         conversationId: string,
         content: string,
-      ) => Promise<ApiResult<MessageDraft>>;
+        replyToId?: string | null,
+      ) => Promise<ApiResult<ConversationDraftSummary | null>>;
       clearMessageDraft: (
         token: string,
         conversationId: string,
@@ -433,8 +434,8 @@ declare global {
       getChannels: (token: string) => Promise<ApiResult<ChannelItem[]>>;
       getHubInvites: (token: string) => Promise<ApiResult<HubInviteItem[]>>;
       getFriends: (token: string) => Promise<ApiResult<FriendItem[]>>;
-      acceptHubInvite: (token: string, channelId: string) => Promise<ApiResult<{ ok: true }>>;
-      acceptHubInviteById: (token: string, inviteId: string) => Promise<ApiResult<{ ok: true }>>;
+      acceptHubInvite: (token: string, channelId: string) => Promise<ApiResult<import('../shared/features').AcceptHubInviteResult>>;
+      acceptHubInviteById: (token: string, inviteId: string) => Promise<ApiResult<import('../shared/features').AcceptHubInviteResult>>;
       declineHubInvite: (token: string, inviteId: string) => Promise<ApiResult<{ ok: true }>>;
       getBlockedUsers: (token: string) => Promise<ApiResult<BlockedUserItem[]>>;
       blockUser: (token: string, userId: string) => Promise<ApiResult<{ success: true }>>;
@@ -608,6 +609,7 @@ declare global {
         callId: string,
       ) => Promise<ApiResult<unknown>>;
       setNativeTheme: (mode: 'light' | 'dark') => Promise<{ ok: boolean }>;
+      setAppBadge: (payload: { count: number; mentionUnread?: number }) => Promise<{ ok: boolean }>;
       showDesktopNotification: (
         payload: any
       ) => Promise<{ ok: boolean; error?: string }>;

@@ -71,7 +71,13 @@ export function TeammatesSection({
                 isOpening ? 'border-app-border/50 bg-app-chat-hover' : 'hover:bg-app-chat-hover/70 hover:border-app-border/40'
               }`}
             >
-              <div className="relative shrink-0">
+              <button
+                type="button"
+                disabled={isOpening}
+                aria-label={`Message ${teammate.name}`}
+                className="relative shrink-0 rounded-full transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
+                onClick={() => onSelect(teammate.id)}
+              >
                 <Avatar
                   imageUrl={redactIdentity ? null : teammate.avatarUrl}
                   initials={teammate.initials}
@@ -83,13 +89,18 @@ export function TeammatesSection({
                     size="sm"
                   />
                 ) : null}
-              </div>
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-xs font-semibold text-app-text">{teammate.name}</p>
+              </button>
+              <button
+                type="button"
+                disabled={isOpening}
+                className="min-w-0 flex-1 text-left disabled:cursor-wait disabled:opacity-60"
+                onClick={() => onSelect(teammate.id)}
+              >
+                <p className="truncate text-xs font-semibold text-app-text hover:text-accent">{teammate.name}</p>
                 {!redactIdentity && teammate.statusMessage ? (
                   <p className="mt-0.5 truncate text-[11px] text-app-muted">{teammate.statusMessage}</p>
                 ) : null}
-              </div>
+              </button>
               <div className="flex shrink-0 items-center gap-0.5">
                 <button
                   type="button"

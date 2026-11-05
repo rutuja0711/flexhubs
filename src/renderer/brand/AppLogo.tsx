@@ -109,19 +109,11 @@ export function AppLogoMark({ className = 'h-9 w-9' }: LogoProps) {
 }
 
 export function AppIcon({ className = 'h-9 w-9' }: LogoProps) {
-  return (
-    <div className={`relative inline-flex items-center justify-center rounded-xl overflow-hidden shadow-md bg-gradient-to-br from-[#2a131b] to-[#12080d] p-1.5 ${className}`}>
-      <FlexhubsSymbolSvg className="h-full w-full" />
-    </div>
-  );
+  return <AppLogoMark className={className} />;
 }
 
 export function AppNotificationIcon({ className = 'h-9 w-9' }: LogoProps) {
-  return (
-    <div className={`relative inline-flex items-center justify-center rounded-xl bg-gradient-to-br from-[#943853] to-[#661E33] p-1.5 shadow-md ${className}`}>
-      <FlexhubsSymbolSvg className="h-full w-full" />
-    </div>
-  );
+  return <AppLogoMark className={className} />;
 }
 
 /** Fallback exports for backward compatibility */

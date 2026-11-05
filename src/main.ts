@@ -113,6 +113,7 @@ import {
   writePersistedDesktopLegalVersion,
 } from './main/desktopLegalStorage';
 import { deliverDesktopNotification } from './main/notifications/deliverDesktopNotification';
+import { updateApplicationBadge } from './main/appBadge';
 import {
   closeNotificationWindow,
   setNotificationHostWindowProvider,
@@ -244,18 +245,8 @@ function resolveAssetsDir(): string {
 
 function resolveAppIconPngPath(): string {
   const assetsDir = resolveAssetsDir();
-  const candidates = [
-    path.join(assetsDir, 'logo-symbol.png'),
-    path.join(assetsDir, 'icon.png'),
-  ];
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) {
-      return candidate;
-    }
-  }
-
-  return candidates[0];
+  const candidate = path.join(assetsDir, 'logo-symbol.png');
+  return fs.existsSync(candidate) ? candidate : path.join(assetsDir, 'logo-symbol.png');
 }
 
 function resolveAppIconImage(): Electron.NativeImage | undefined {
@@ -263,8 +254,6 @@ function resolveAppIconImage(): Electron.NativeImage | undefined {
   const candidates = [
     path.join(assetsDir, 'logo-symbol.png'),
     path.join(assetsDir, 'logo-symbol.icns'),
-    path.join(assetsDir, 'icon.png'),
-    path.join(assetsDir, 'icon.icns'),
   ];
 
   for (const iconPath of candidates) {
@@ -682,8 +671,13 @@ ipcMain.handle('chat:message-draft', (_event, token: string, conversationId: str
 );
 ipcMain.handle(
   'chat:save-draft',
-  (_event, token: string, conversationId: string, content: string) =>
-    saveMessageDraft(token, conversationId, content),
+  (
+    _event,
+    token: string,
+    conversationId: string,
+    content: string,
+    replyToId?: string | null,
+  ) => saveMessageDraft(token, conversationId, content, replyToId),
 );
 ipcMain.handle('chat:clear-draft', (_event, token: string, conversationId: string) =>
   clearMessageDraft(token, conversationId),
@@ -1534,6 +1528,18 @@ setRealtimeHandlers({
 });
 
 const createWindow = (): void => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    if (!mainWindow.isVisible()) {
+      mainWindow.show();
+    }
+    mainWindow.focus();
+    applyApplicationIcon();
+    return;
+  }
+
   const appIcon = resolveAppIconImage();
 
   mainWindow = new BrowserWindow({
@@ -1608,6 +1614,23 @@ const createWindow = (): void => {
     applyApplicationIcon();
     updateDisplaySleepBlocker();
   });
+
+  mainWindow.webContents.once('did-finish-load', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+      mainWindow.show();
+      applyApplicationIcon();
+    }
+  });
+
+  if (app.isPackaged) {
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+        console.warn('[FlexHubs] Main window still hidden after load — showing fallback.');
+        mainWindow.show();
+        applyApplicationIcon();
+      }
+    }, 8000);
+  }
 
   mainWindow.on('show', () => {
     updateDisplaySleepBlocker();
@@ -1922,6 +1945,7 @@ function ensureMainWindowVisible(): void {
   }
 
   mainWindow.focus();
+  applyApplicationIcon();
 }
 
 function notifyCallWindowPresentation(mode: string): void {
@@ -2041,24 +2065,47 @@ app.whenReady().then(() => {
     conversationId?: string | null;
     messageId?: string | null;
   }) => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore();
+    focusPrimaryWindow();
+
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return;
+    }
+
+    const notifyPayload = {
+      tag: payload.tag ?? '',
+      conversationId: payload.conversationId ?? null,
+      messageId: payload.messageId ?? null,
+    };
+
+    const deliverClick = () => {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        return;
       }
-      mainWindow.show();
-      mainWindow.focus();
-      applyApplicationIcon();
-      mainWindow.webContents.send('desktop:notify-click', {
-        tag: payload.tag ?? '',
-        conversationId: payload.conversationId ?? null,
-        messageId: payload.messageId ?? null,
-      });
+
+      mainWindow.webContents.send('desktop:notify-click', notifyPayload);
+    };
+
+    if (mainWindow.webContents.isLoading()) {
+      mainWindow.webContents.once('did-finish-load', deliverClick);
+    } else {
+      deliverClick();
     }
   };
 
   ipcMain.on('desktop:toast-click', (_event, payload: { tag?: string; conversationId?: string | null; messageId?: string | null }) => {
     focusMainWindowFromNotification(payload ?? {});
   });
+
+  ipcMain.handle(
+    'desktop:set-app-badge',
+    (_event, payload: { count?: number; mentionUnread?: number }) => {
+      updateApplicationBadge(mainWindow, {
+        count: Math.max(0, Math.floor(payload?.count ?? 0)),
+        mentionUnread: Math.max(0, Math.floor(payload?.mentionUnread ?? 0)),
+      });
+      return { ok: true as const };
+    },
+  );
 
   ipcMain.handle(
     'desktop:notify',
@@ -2074,7 +2121,7 @@ app.whenReady().then(() => {
           };
 
           const result = deliverDesktopNotification(mainWindow, payload ?? {}, onClick);
-          resolve({ ok: result.ok });
+          resolve({ ok: result.ok, error: result.ok ? undefined : 'Notification was blocked by the system.' });
         } catch (error) {
           console.warn('[FlexHubs] Desktop notification failed:', error);
           resolve({ ok: false, error: 'Failed to show notification' });

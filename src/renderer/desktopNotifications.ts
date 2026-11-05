@@ -340,16 +340,21 @@ async function openDesktopNotification(
       data.messageId = navigation.messageId;
     }
 
-    void window.electronAPI.showDesktopNotification(data).then((result) => {
-      if (result.ok) {
-        return;
+    try {
+      const result = await window.electronAPI.showDesktopNotification(data);
+
+      if (!result.ok) {
+        pendingClicks.delete(tag);
+        logNotificationFailure(result.error ?? 'Native notification IPC returned ok:false.');
+        return false;
       }
 
+      return true;
+    } catch (error) {
       pendingClicks.delete(tag);
-      logNotificationFailure(result.error ?? 'Native notification IPC returned ok:false.');
-    });
-
-    return true;
+      logNotificationFailure(error instanceof Error ? error.message : 'Native notification IPC failed.');
+      return false;
+    }
   }
 
   const allowed = await ensureNotificationPermission();
@@ -659,6 +664,11 @@ export async function showIncomingMessageDesktopNotification(
   payload.body = body;
   payload.id = message.id;
   payload.timestamp = message.createdAt;
+  if (conversation?.kind === 'hub') {
+    payload.type = 'group_chat';
+    payload.subtitle = conversation.title;
+    payload.title = message.senderName;
+  }
   const delivered = await openDesktopNotification(
     title,
     body,
@@ -691,7 +701,20 @@ export async function showIncomingCallDesktopNotification(
   const title = video ? 'Incoming video call' : 'Incoming voice call';
   const body = `${callerName} is calling you`;
 
-  await openDesktopNotification(title, body, `call-${callId}`, onClick);
+  await openDesktopNotification(
+    title,
+    body,
+    `call-${callId}`,
+    onClick,
+    {
+      type: 'meeting_invite',
+      title: callerName,
+      body,
+      id: callId,
+      timestamp: new Date().toISOString(),
+      avatarInitials: callerName.slice(0, 2).toUpperCase(),
+    },
+  );
 }
 
 export async function showGroupMeetingDesktopNotification(
@@ -747,6 +770,69 @@ export function seedPendingFriendsSnapshot(items: PendingFriendItem[]): void {
     }
   }
   pendingFriendsSnapshotReady = true;
+}
+
+const knownPendingHubInviteIds = new Set<string>();
+let pendingHubInvitesSnapshotReady = false;
+
+export function seedPendingHubInvitesSnapshot(
+  items: ReadonlyArray<{ id: string }>,
+): void {
+  knownPendingHubInviteIds.clear();
+  for (const item of items) {
+    if (item.id) {
+      knownPendingHubInviteIds.add(item.id);
+    }
+  }
+  pendingHubInvitesSnapshotReady = true;
+}
+
+export async function alertNewPendingHubInvites(
+  items: ReadonlyArray<{
+    id: string;
+    channelName: string;
+    inviterName: string;
+  }>,
+  onClick: () => void,
+): Promise<void> {
+  if (!shouldDeliverDesktopNotifications()) {
+    if (!pendingHubInvitesSnapshotReady) {
+      seedPendingHubInvitesSnapshot(items);
+    }
+    return;
+  }
+
+  if (!pendingHubInvitesSnapshotReady) {
+    seedPendingHubInvitesSnapshot(items);
+    return;
+  }
+
+  for (const item of items) {
+    if (!item.id || knownPendingHubInviteIds.has(item.id)) {
+      continue;
+    }
+
+    knownPendingHubInviteIds.add(item.id);
+    const hubName = item.channelName.trim() || 'Hub';
+    const inviter = item.inviterName.trim() || 'Someone';
+    const title = hubName;
+    const body = `${inviter} invited you to join`;
+
+    void openDesktopNotification(
+      title,
+      body,
+      `hub-invite-${item.id}`,
+      onClick,
+      {
+        type: 'hub_invite',
+        title,
+        body,
+        tag: `hub-invite-${item.id}`,
+        id: item.id,
+        timestamp: new Date().toISOString(),
+      },
+    );
+  }
 }
 
 export async function alertNewPendingFriendRequests(

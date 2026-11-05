@@ -15,7 +15,7 @@ import type {
 } from './shared/features';
 import type { GlobalSearchResult, MessageSearchResult } from './shared/search';
 import type { SearchPerson } from './shared/search';
-import type { ConversationBootstrap, MessageDraft, MessageItem } from './shared/messages';
+import type { ConversationBootstrap, ConversationDraftSummary, MessageItem } from './shared/messages';
 import type { LoginCredentials, LoginResult } from './shared/auth';
 import type { RealtimeConnectionStatus } from './shared/realtime';
 
@@ -201,14 +201,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getMessageDraft: (
     token: string,
     conversationId: string,
-  ): Promise<ApiResult<MessageDraft>> =>
+  ): Promise<ApiResult<ConversationDraftSummary | null>> =>
     ipcRenderer.invoke('chat:message-draft', token, conversationId),
   saveMessageDraft: (
     token: string,
     conversationId: string,
     content: string,
-  ): Promise<ApiResult<MessageDraft>> =>
-    ipcRenderer.invoke('chat:save-draft', token, conversationId, content),
+    replyToId?: string | null,
+  ): Promise<ApiResult<ConversationDraftSummary | null>> =>
+    ipcRenderer.invoke('chat:save-draft', token, conversationId, content, replyToId ?? null),
   clearMessageDraft: (
     token: string,
     conversationId: string,
@@ -553,9 +554,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('features:hub-invites', token),
   getFriends: (token: string): Promise<ApiResult<FriendItem[]>> =>
     ipcRenderer.invoke('features:friends', token),
-  acceptHubInvite: (token: string, channelId: string): Promise<ApiResult<{ ok: true }>> =>
+  acceptHubInvite: (token: string, channelId: string): Promise<ApiResult<import('./shared/features').AcceptHubInviteResult>> =>
     ipcRenderer.invoke('features:accept-hub-invite', token, channelId),
-  acceptHubInviteById: (token: string, inviteId: string): Promise<ApiResult<{ ok: true }>> =>
+  acceptHubInviteById: (token: string, inviteId: string): Promise<ApiResult<import('./shared/features').AcceptHubInviteResult>> =>
     ipcRenderer.invoke('features:accept-hub-invite-by-id', token, inviteId),
   declineHubInvite: (token: string, inviteId: string): Promise<ApiResult<{ ok: true }>> =>
     ipcRenderer.invoke('features:decline-hub-invite', token, inviteId),
@@ -829,6 +830,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('calls:declined-invites', token, conversationId, callId),
   setNativeTheme: (mode: 'light' | 'dark'): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('app:set-theme', mode),
+  setAppBadge: (payload: { count: number; mentionUnread?: number }): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('desktop:set-app-badge', payload),
   showDesktopNotification: (
     payload: any
   ): Promise<{ ok: boolean }> => ipcRenderer.invoke('desktop:notify', payload),

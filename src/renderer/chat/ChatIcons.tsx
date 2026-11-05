@@ -333,7 +333,7 @@ export function PresenceDot({
 
   return (
     <span
-      className={`pointer-events-none absolute bottom-0 right-0 z-30 box-border ${dotSize} rounded-full border-2 ${SURROUND_BORDER_CLASS[surround]} ${STATUS_COLORS[status]}`}
+      className={`pointer-events-none absolute bottom-0 right-0 z-50 box-border ${dotSize} rounded-full border-2 ${SURROUND_BORDER_CLASS[surround]} ${STATUS_COLORS[status]}`}
       aria-hidden="true"
     />
   );
@@ -368,9 +368,9 @@ export function Avatar({
 
   if (imageUrl && !failed) {
     return (
-      <div className={`relative ${sizeClass}`}>
+      <div className={`relative overflow-visible ${sizeClass}`}>
         <div
-          className={`absolute inset-0 flex items-center justify-center rounded-full bg-app-avatar-fallback text-app-text ring-1 ring-white/10 shadow-sm ${sizeClass}`}
+          className={`absolute inset-0 z-0 flex items-center justify-center rounded-full bg-app-avatar-fallback text-app-text ring-1 ring-white/10 shadow-sm ${sizeClass}`}
           aria-hidden
         >
           {initials}
@@ -379,7 +379,7 @@ export function Avatar({
           src={imageUrl}
           alt=""
           loading={loading}
-          className={`relative z-10 ${sizeClass} rounded-full object-cover ring-1 ring-white/10 shadow-sm`}
+          className={`relative z-[1] ${sizeClass} rounded-full object-cover ring-1 ring-white/10 shadow-sm`}
           onError={() => setFailed(true)}
         />
       </div>

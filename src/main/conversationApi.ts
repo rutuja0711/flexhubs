@@ -2,11 +2,11 @@ import type { ConversationItem } from '../shared/chat';
 import { normalizeConversation, patchDirectConversationMetadata } from '../shared/chat';
 import { API_BASE_URL } from '../shared/api';
 import type { ApiResult } from '../shared/api';
-import type { ConversationBootstrap, MessageDraft, MessageItem } from '../shared/messages';
+import type { ConversationBootstrap, ConversationDraftSummary, MessageItem } from '../shared/messages';
 import {
   extractMessageFromPayload,
   normalizeBootstrap,
-  normalizeDraft,
+  normalizeDraftSummary,
   normalizeMessage,
   normalizeMessageHistoryPage,
   normalizeMessageReadReceipts,
@@ -88,7 +88,7 @@ export async function fetchMessageThread(
 export async function fetchMessageDraft(
   token: string,
   conversationId: string,
-): Promise<ApiResult<MessageDraft>> {
+): Promise<ApiResult<ConversationDraftSummary | null>> {
   const result = await apiGet<unknown>(
     `${API_BASE_URL}/conversations/${conversationId}/messages/draft`,
     token,
@@ -99,26 +99,27 @@ export async function fetchMessageDraft(
     return result;
   }
 
-  return { ok: true, data: normalizeDraft(result.data) };
+  return { ok: true, data: normalizeDraftSummary(result.data) };
 }
 
 export async function saveMessageDraft(
   token: string,
   conversationId: string,
   content: string,
-): Promise<ApiResult<MessageDraft>> {
+  replyToId?: string | null,
+): Promise<ApiResult<ConversationDraftSummary | null>> {
   const result = await apiPut<unknown>(
     `${API_BASE_URL}/conversations/${conversationId}/messages/draft`,
     token,
     'Save Draft API',
-    { content },
+    { content, replyToId: replyToId ?? null },
   );
 
   if (!result.ok) {
     return result;
   }
 
-  return { ok: true, data: normalizeDraft(result.data) };
+  return { ok: true, data: normalizeDraftSummary(result.data) };
 }
 
 export async function clearMessageDraft(

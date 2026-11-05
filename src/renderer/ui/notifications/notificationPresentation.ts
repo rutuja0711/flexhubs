@@ -271,8 +271,8 @@ function resolveAvatar(
       resolveNotificationPresentationType(notification) === 'thread_reply'
     ) {
       title = senderName;
-    } else if (notification.title.toLowerCase() === 'new message') {
-      title = conversation.title;
+    } else if (notification.title.trim().toLowerCase() === 'new message') {
+      title = senderName;
     }
   }
 
@@ -348,6 +348,31 @@ export function mapNotificationItemToFlexHubsData(
 
   if (type === 'mention') {
     data.priority = 'high';
+    const conversation = notification.conversationId
+      ? options.conversations.find((item) => item.id === notification.conversationId)
+      : null;
+    if (conversation && conversation.kind !== 'direct') {
+      data.subtitle = conversation.title;
+    }
+  }
+
+  if (
+    !data.subtitle &&
+    notification.conversationId &&
+    (type === 'group_chat' ||
+      type === 'hub_message' ||
+      type === 'text_message' ||
+      type === 'large_media' ||
+      type === 'image_attachment' ||
+      type === 'video_attachment' ||
+      type === 'document_attachment' ||
+      type === 'voice_note' ||
+      type === 'text_link')
+  ) {
+    const conversation = options.conversations.find((item) => item.id === notification.conversationId);
+    if (conversation && conversation.kind !== 'direct') {
+      data.subtitle = conversation.title;
+    }
   }
 
   if (type === 'thread_reply') {
@@ -421,6 +446,23 @@ export function mapNotificationItemToFlexHubsData(
 
   if (type === 'video_attachment') {
     data.body = contentBody || 'Shared a video';
+  }
+
+  const mediaTypes = new Set([
+    'image_attachment',
+    'large_media',
+    'video_attachment',
+    'multiple_files',
+    'mixed_content',
+  ]);
+
+  if (mediaTypes.has(type)) {
+    const link = notification.link?.trim();
+    if (link && /^https?:\/\//i.test(link)) {
+      data.mediaPreviewUrl = link;
+      data.mediaPreviewCount = 1;
+      data.mediaIsVideo = type === 'video_attachment';
+    }
   }
 
   return data;
@@ -610,6 +652,19 @@ export function mapMessageToNotificationData(
     body = message.content.trim();
   }
 
+  let mediaPreviewUrl: string | null = null;
+  let mediaPreviewCount = 0;
+  let mediaIsVideo = false;
+
+  if (videoMedia.length > 0) {
+    mediaPreviewUrl = videoMedia[0].previewUrl ?? videoMedia[0].url ?? null;
+    mediaPreviewCount = videoMedia.length;
+    mediaIsVideo = true;
+  } else if (imageMedia.length > 0) {
+    mediaPreviewUrl = imageMedia[0].previewUrl ?? imageMedia[0].url ?? null;
+    mediaPreviewCount = imageMedia.length;
+  }
+
   return {
     id: message.id,
     type,
@@ -619,6 +674,9 @@ export function mapMessageToNotificationData(
     body,
     timestamp: message.createdAt,
     avatarInitials: message.senderInitials,
+    mediaPreviewUrl,
+    mediaPreviewCount: mediaPreviewCount > 0 ? mediaPreviewCount : undefined,
+    mediaIsVideo: mediaIsVideo || undefined,
   };
 }
 

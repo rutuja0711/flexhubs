@@ -40,9 +40,12 @@ import { formatTimezoneLabel, getTimezoneOptions } from '../../shared/timezones'
 import { getUserAvatarUrl, getUserInitials } from '../../shared/user';
 import { getCurrentUser } from '../authApi';
 import {
+  getEffectivePresenceStatus,
   setManualPresenceStatus,
   setPresenceStatusMessage,
+  subscribePresenceManager,
 } from '../presenceManager';
+import { presenceDotClassForUiLabel } from './presenceStatusUi';
 import {
   loadAvatarStyles,
   loadBlockedUsers,
@@ -102,17 +105,6 @@ type ProfileSettingsViewProps = {
 
 type AvatarTab = 'avatar' | 'upload' | 'initials';
 
-const STATUS_OPTIONS = [
-  { label: 'Available', dot: 'bg-green-500', activeBorder: 'border-green-500/50 bg-green-500/10' },
-  { label: 'Away', dot: 'bg-yellow-500', activeBorder: 'border-yellow-500/50 bg-yellow-500/10' },
-  { label: 'Busy', dot: 'bg-orange-500', activeBorder: 'border-orange-500/50 bg-orange-500/10' },
-  {
-    label: 'Do not disturb',
-    dot: 'bg-red-500',
-    activeBorder: 'border-red-500/50 bg-red-500/10',
-  },
-] as const;
-
 const SNOOZE_OPTIONS = [
   { label: 'Notifications on', value: 'off' },
   { label: '30 minutes', value: '30m' },
@@ -167,7 +159,7 @@ function dndLabel(settings: ProfileSettings): string {
 }
 
 function statusDotClass(statusUi: string): string {
-  return STATUS_OPTIONS.find((option) => option.label === statusUi)?.dot ?? 'bg-green-500';
+  return presenceDotClassForUiLabel(statusUi);
 }
 
 function resolveAvatarPreviewSrc(imageUrl: string | null): string | null {
@@ -423,6 +415,15 @@ export function ProfileSettingsView({
     };
   }, []);
 
+  useEffect(() => {
+    const syncStatusUi = () => {
+      setStatusUi(apiStatusToUi(getEffectivePresenceStatus()));
+    };
+
+    syncStatusUi();
+    return subscribePresenceManager(syncStatusUi);
+  }, []);
+
   const clearLocalAvatarPreview = useCallback(() => {
     if (localPreviewRef.current) {
       URL.revokeObjectURL(localPreviewRef.current);
@@ -642,29 +643,6 @@ export function ProfileSettingsView({
     markUserUnblocked(userId);
     void refreshBlockedUsersFromApi();
     toast.success(`${username} unblocked.`);
-  };
-
-  const handleStatusChange = async (nextStatus: string) => {
-    const previousStatus = statusUi;
-    setStatusUi(nextStatus);
-    setManualPresenceStatus(uiStatusToApi(nextStatus), statusMessage);
-    setActionError('');
-    const result = await saveUserStatus(uiStatusToApi(nextStatus));
-
-    if (!result.ok) {
-      setStatusUi(previousStatus);
-      setManualPresenceStatus(uiStatusToApi(previousStatus), statusMessage);
-      if (!onUnauthorized(result.status)) {
-        setActionError(result.error);
-        toast.error(result.error);
-      }
-      return;
-    }
-
-    const apiStatus = uiStatusToApi(nextStatus);
-    persistLocalStatus(apiStatus, statusMessage);
-    toast.success(`Status set to ${nextStatus}.`);
-    onUserUpdated?.();
   };
 
   const handleStatusMessageChange = (message: string) => {
@@ -1236,14 +1214,12 @@ export function ProfileSettingsView({
                         uploadSucceeded={avatarUploadSucceeded}
                       />
                       <span
-                        className={`absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-app-surface ${statusDotClass(statusUi)}`}
+                        className={`absolute bottom-0 right-0 z-50 h-3.5 w-3.5 rounded-full border-2 border-app-surface ${statusDotClass(statusUi)}`}
                         aria-hidden="true"
                       />
                     </div>
                     <span
-                      className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-semibold ${STATUS_OPTIONS.find((option) => option.label === statusUi)?.activeBorder ??
-                        'border-app-border bg-app-chat-hover'
-                        }`}
+                      className="inline-flex items-center gap-1.5 rounded-full border border-app-border bg-app-chat-hover px-3 py-1 text-[11px] font-semibold text-app-text"
                     >
                       <span className={`h-2 w-2 rounded-full ${statusDotClass(statusUi)}`} />
                       {statusUi}
@@ -1414,47 +1390,16 @@ export function ProfileSettingsView({
                   </SectionCard>
                 </section>
 
-                {/* Status & Presence */}
+                {/* Status message */}
                 <section>
                   <SectionCard className="p-5">
-                    <h4 className="text-sm font-semibold text-app-text">Status &amp; presence</h4>
+                    <h4 className="text-sm font-semibold text-app-text">Status message</h4>
                     <p className="mt-1 mb-4 text-xs leading-relaxed text-app-muted">
-                      Set Available, Away, Busy, or Do not disturb. Your status message appears under
-                      your name in the chat list.
+                      Shown under your name in chat. Change availability from your profile picture menu in
+                      the sidebar.
                     </p>
-                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
-                      {STATUS_OPTIONS.map((option) => {
-                        const isActive = statusUi === option.label;
-
-                        return (
-                          <button
-                            key={option.label}
-                            type="button"
-                            onClick={() => {
-                              if (!isActive) {
-                                void handleStatusChange(option.label);
-                              }
-                            }}
-                            className={`flex items-center justify-between rounded-xl border px-4 py-3 text-left text-sm font-medium transition-colors ${isActive
-                                ? option.activeBorder
-                                : 'border-app-border bg-app-chat-bg/40 text-app-text hover:border-app-border-strong hover:bg-app-chat-hover/50'
-                              }`}
-                          >
-                            <span className="flex min-w-0 items-center gap-2.5">
-                              <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${option.dot}`} />
-                              <span className="truncate">{option.label}</span>
-                            </span>
-                            {isActive ? (
-                              <span className="ml-2 shrink-0 text-[10px] font-bold uppercase tracking-wide text-accent">
-                                Active
-                              </span>
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <label className="mb-1.5 mt-5 block text-sm font-semibold text-app-text">
-                      Status message
+                    <label className="mb-1.5 block text-sm font-semibold text-app-text">
+                      Message
                     </label>
                     <div className="relative">
                       <input
@@ -1533,7 +1478,7 @@ export function ProfileSettingsView({
                   <div className="grid grid-cols-2 gap-4">
                     <button
                       type="button"
-                      onClick={() => { setTheme('light'); toast.success('Light theme applied.'); }}
+                      onClick={() => setTheme('light')}
                       className={`flex items-center gap-3 rounded-xl border p-4 text-left transition-colors ${theme === 'light' ? 'border-accent bg-accent/5' : 'border-app-border bg-app-surface hover:border-app-muted'
                         }`}
                     >
@@ -1546,7 +1491,7 @@ export function ProfileSettingsView({
                     </button>
                     <button
                       type="button"
-                      onClick={() => { setTheme('dark'); toast.success('Dark theme applied.'); }}
+                      onClick={() => setTheme('dark')}
                       className={`flex items-center gap-3 rounded-xl border p-4 text-left transition-colors ${theme === 'dark' ? 'border-accent bg-accent/5' : 'border-app-border bg-app-surface hover:border-app-muted'
                         }`}
                     >

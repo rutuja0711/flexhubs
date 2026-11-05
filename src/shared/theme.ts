@@ -31,7 +31,12 @@ export function resolveInitialTheme(): ThemeMode {
 }
 
 export function applyTheme(mode: ThemeMode): void {
-  document.documentElement.classList.remove('dark', 'light');
-  document.documentElement.classList.add(mode);
-  document.documentElement.style.colorScheme = mode;
+  const root = document.documentElement;
+  root.classList.add('theme-switching');
+  root.classList.remove('dark', 'light');
+  root.classList.add(mode);
+  root.style.colorScheme = mode;
+  requestAnimationFrame(() => {
+    root.classList.remove('theme-switching');
+  });
 }

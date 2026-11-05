@@ -31,6 +31,9 @@ export type ConversationItem = {
   notificationsSnoozed?: boolean;
   memberAvatars?: { url: string | null; initials: string }[];
   totalMemberCount?: number;
+  /** False when the viewer has a pending hub invite (not joined yet). */
+  isHubMember?: boolean;
+  pendingHubInviteId?: string | null;
 };
 
 export type ConversationsPayload = {
@@ -316,6 +319,161 @@ function readMemberCount(record: Record<string, unknown>): number | null {
   }
 
   return largest > 0 ? largest : null;
+}
+
+export function isHubChannelConversation(conversation: ConversationItem): boolean {
+  return (
+    conversation.kind === 'hub' ||
+    conversation.isChannel === true ||
+    conversation.isGroupConversation === true
+  );
+}
+
+function readConversationHubMembership(record: Record<string, unknown>): {
+  isHubMember?: boolean;
+  pendingHubInviteId?: string | null;
+} {
+  const pendingInviteId =
+    readString(record.pendingInviteId) ??
+    readString(record.pendingHubInviteId) ??
+    readString(asRecord(record.membership)?.pendingInviteId);
+
+  const isMemberFlag = readBoolean(record.isMember);
+
+  const membership =
+    asRecord(record.membership) ?? asRecord(record.member) ?? asRecord(record.currentMember);
+  const membershipStatus = String(membership?.status ?? membership?.state ?? '').toUpperCase();
+  const membershipPending =
+    membershipStatus.includes('PENDING') ||
+    membershipStatus.includes('INVIT') ||
+    membership?.isMember === false;
+
+  if (pendingInviteId) {
+    return { isHubMember: false, pendingHubInviteId: pendingInviteId };
+  }
+
+  if (isMemberFlag === false || membershipPending) {
+    return {
+      isHubMember: false,
+      pendingHubInviteId:
+        pendingInviteId ?? readString(membership?.inviteId) ?? readString(membership?.pendingInviteId),
+    };
+  }
+
+  if (isMemberFlag === true || readString(membership?.role)) {
+    return { isHubMember: true, pendingHubInviteId: null };
+  }
+
+  return {};
+}
+
+export function applyPendingHubInvitesToConversations(
+  conversations: ConversationItem[],
+  invites: ReadonlyArray<{ id: string; conversationId: string; channelId: string }>,
+): ConversationItem[] {
+  if (!invites.length) {
+    return conversations;
+  }
+
+  const inviteByConversationId = new Map<string, string>();
+  const inviteByChannelId = new Map<string, string>();
+
+  for (const invite of invites) {
+    if (invite.conversationId) {
+      inviteByConversationId.set(invite.conversationId, invite.id);
+    }
+
+    if (invite.channelId) {
+      inviteByChannelId.set(invite.channelId, invite.id);
+    }
+  }
+
+  return conversations.map((conversation) => {
+    if (!isHubChannelConversation(conversation)) {
+      return conversation;
+    }
+
+    const pendingId =
+      inviteByConversationId.get(conversation.id) ??
+      (conversation.channelId ? inviteByChannelId.get(conversation.channelId) : undefined);
+
+    if (!pendingId) {
+      return conversation;
+    }
+
+    if (conversation.isHubMember === true) {
+      return {
+        ...conversation,
+        pendingHubInviteId: null,
+      };
+    }
+
+    return {
+      ...conversation,
+      isHubMember: false,
+      pendingHubInviteId: pendingId,
+    };
+  });
+}
+
+export function isJoinedHubConversation(conversation: ConversationItem): boolean {
+  if (!isHubChannelConversation(conversation)) {
+    return true;
+  }
+
+  if (conversation.isHubMember === true) {
+    return true;
+  }
+
+  if (conversation.pendingHubInviteId) {
+    return false;
+  }
+
+  return true;
+}
+
+export function hubConversationMatchesTarget(
+  conversation: ConversationItem,
+  target: { conversationId?: string | null; channelId?: string | null },
+): boolean {
+  const conversationId = target.conversationId?.trim() || null;
+  const channelId = target.channelId?.trim() || null;
+
+  if (!conversationId && !channelId) {
+    return false;
+  }
+
+  return (
+    (conversationId !== null && conversation.id === conversationId) ||
+    (channelId !== null && conversation.channelId === channelId) ||
+    (channelId !== null && conversation.id === channelId) ||
+    (conversationId !== null && conversation.channelId === conversationId)
+  );
+}
+
+export function markHubConversationsJoined(
+  conversations: ConversationItem[],
+  target: { conversationId?: string | null; channelId?: string | null },
+): ConversationItem[] {
+  if (!target.conversationId?.trim() && !target.channelId?.trim()) {
+    return conversations;
+  }
+
+  return conversations.map((conversation) => {
+    if (!isHubChannelConversation(conversation)) {
+      return conversation;
+    }
+
+    if (!hubConversationMatchesTarget(conversation, target)) {
+      return conversation;
+    }
+
+    return {
+      ...conversation,
+      isHubMember: true,
+      pendingHubInviteId: null,
+    };
+  });
 }
 
 function readConversationChannelFlags(record: Record<string, unknown>): {
@@ -878,13 +1036,12 @@ export function mergeConversationDraftPreviews(
       return applyDraftPreviewToConversation(conversation, activeDraft?.trim() || null);
     }
 
-    const cached = draftPreviews[conversation.id];
-
-    if (cached !== undefined) {
-      return applyDraftPreviewToConversation(conversation, cached?.trim() || null);
+    if (!Object.prototype.hasOwnProperty.call(draftPreviews, conversation.id)) {
+      return conversation;
     }
 
-    return conversation;
+    const cached = draftPreviews[conversation.id];
+    return applyDraftPreviewToConversation(conversation, cached?.trim() || null);
   });
 }
 
@@ -1307,6 +1464,7 @@ export function normalizeConversation(
       : { status: readDirectPeerPresence(source, viewerId), sharePresence: true };
 
   const channelFlags = readConversationChannelFlags(source);
+  const hubMembership = readConversationHubMembership(source);
 
   return {
     id: readConversationId(source, index),
@@ -1330,6 +1488,7 @@ export function normalizeConversation(
     isGroupConversation: channelFlags.isGroupConversation,
     notificationsSnoozed: readConversationSnoozed(source),
     ...readConversationMembers(source),
+    ...hubMembership,
   };
 }
 
@@ -1803,12 +1962,8 @@ export function isConversationStarted(conversation: ConversationItem): boolean {
     return true;
   }
 
-  if (
-    conversation.kind === 'hub' ||
-    conversation.isChannel === true ||
-    conversation.isGroupConversation === true
-  ) {
-    return true;
+  if (isHubChannelConversation(conversation)) {
+    return isJoinedHubConversation(conversation);
   }
 
   if (conversation.unreadCount > 0) {
@@ -1897,6 +2052,10 @@ export function filterStartedConversationsForSidebar(
 
   return conversations.filter((conversation) => {
     if (keepId && conversation.id === keepId) {
+      if (isHubChannelConversation(conversation) && !isJoinedHubConversation(conversation)) {
+        return false;
+      }
+
       return true;
     }
 
@@ -2018,6 +2177,29 @@ export function sortSidebarTeammates<T extends { id: string; name: string }>(
 
     return left.name.localeCompare(right.name);
   });
+}
+
+/** Hub / group member lists: signed-in user first, stable order for everyone else. */
+export function sortMemberListWithViewerFirst<T extends { id: string }>(
+  members: T[],
+  viewerUserId: string | null | undefined,
+): T[] {
+  if (!viewerUserId) {
+    return members;
+  }
+
+  const self: T[] = [];
+  const others: T[] = [];
+
+  for (const member of members) {
+    if (member.id === viewerUserId) {
+      self.push(member);
+    } else {
+      others.push(member);
+    }
+  }
+
+  return [...self, ...others];
 }
 
 export function collectSidebarPresenceUserIds(

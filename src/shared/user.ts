@@ -53,6 +53,11 @@ export function getUserUsername(user: unknown): string | null {
   return readString(record.username) ?? readString(record.handle);
 }
 
+export function getUserEmail(user: unknown): string {
+  const record = asRecord(user);
+  return readString(record?.email) ?? '';
+}
+
 export function getUserDisplayName(user: unknown): string {
   const record = asRecord(user);
 

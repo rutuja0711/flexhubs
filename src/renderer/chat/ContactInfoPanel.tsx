@@ -218,8 +218,6 @@ export function ContactInfoPanel({
     }
 
     refreshPresence();
-    const intervalId = window.setInterval(refreshPresence, 30_000);
-    return () => window.clearInterval(intervalId);
   }, [canViewPeerPresence, peerBlockedViewer, refreshPresence]);
 
   const displayName = profile?.name ?? conversation.title;

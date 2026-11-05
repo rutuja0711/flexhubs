@@ -13,8 +13,6 @@ import {
 } from '../organizationInvitesRefresh';
 import { useToast } from '../ui/Toast';
 
-const ORG_INVITE_POLL_MS = 30_000;
-
 type OrganizationInviteModalProps = {
   user: unknown;
   onUnauthorized: (status?: number) => boolean;
@@ -96,13 +94,9 @@ export function OrganizationInviteModal({ user, onUnauthorized, onInviteResolved
     };
 
     window.addEventListener(ORGANIZATION_INVITES_REFRESH_EVENT, onRefresh);
-    const timer = window.setInterval(() => {
-      void refreshInvites();
-    }, ORG_INVITE_POLL_MS);
 
     return () => {
       window.removeEventListener(ORGANIZATION_INVITES_REFRESH_EVENT, onRefresh);
-      window.clearInterval(timer);
     };
   }, [refreshInvites, user]);
 

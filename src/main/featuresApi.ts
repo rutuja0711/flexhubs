@@ -25,6 +25,7 @@ import {
   normalizeFriends,
   normalizeHubInvites,
   normalizeSavedMessages,
+  parseAcceptHubInviteResult,
   slugifyChannelName,
 } from '../shared/features';
 import { apiDelete, apiGet, apiPatch, apiPost } from './apiRequest';
@@ -136,7 +137,7 @@ export async function fetchFriends(token: string): Promise<ApiResult<FriendItem[
 export async function acceptHubInvite(
   token: string,
   channelId: string,
-): Promise<ApiResult<{ ok: true }>> {
+): Promise<ApiResult<import('../shared/features').AcceptHubInviteResult>> {
   const result = await apiPost<unknown>(
     `${API_BASE_URL}/channels/${channelId}/accept-invite`,
     token,
@@ -148,13 +149,20 @@ export async function acceptHubInvite(
     return result;
   }
 
-  return { ok: true, data: { ok: true } };
+  const parsed = parseAcceptHubInviteResult(result.data);
+  return {
+    ok: true,
+    data: {
+      conversationId: parsed.conversationId ?? channelId,
+      channelId: parsed.channelId ?? channelId,
+    },
+  };
 }
 
 export async function acceptHubInviteById(
   token: string,
   inviteId: string,
-): Promise<ApiResult<{ ok: true }>> {
+): Promise<ApiResult<import('../shared/features').AcceptHubInviteResult>> {
   const result = await apiPost<unknown>(
     `${API_BASE_URL}/hub-invites/${inviteId}/accept`,
     token,
@@ -166,7 +174,8 @@ export async function acceptHubInviteById(
     return result;
   }
 
-  return { ok: true, data: { ok: true } };
+  const parsed = parseAcceptHubInviteResult(result.data);
+  return { ok: true, data: parsed };
 }
 
 export async function declineHubInvite(

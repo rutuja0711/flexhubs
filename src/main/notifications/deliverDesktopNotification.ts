@@ -1,6 +1,5 @@
 import type { BrowserWindow } from 'electron';
 import { showNativeDesktopNotification } from './nativeNotification';
-import { showCustomDesktopNotification } from './notificationWindow';
 
 export type DesktopNotificationPayload = {
   title?: string;
@@ -26,44 +25,17 @@ function payloadBody(payload: DesktopNotificationPayload): string {
   return subtitle || 'New activity';
 }
 
-function mainWindowCanShowInAppToast(mainWindow: BrowserWindow | null): boolean {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return false;
-  }
-
-  if (!mainWindow.isVisible() || mainWindow.isMinimized()) {
-    return false;
-  }
-
-  if (!mainWindow.isFocused()) {
-    return false;
-  }
-
-  return !mainWindow.webContents.isLoading();
-}
-
 export function deliverDesktopNotification(
-  mainWindow: BrowserWindow | null,
+  _mainWindow: BrowserWindow | null,
   payload: DesktopNotificationPayload,
   onClick: () => void,
-): { ok: boolean; channel: 'toast' | 'native' | 'overlay' } {
+): { ok: boolean; channel: 'toast' | 'native' | 'overlay' | 'both' } {
   const title = payloadTitle(payload);
   const body = payloadBody(payload);
-
-  if (mainWindowCanShowInAppToast(mainWindow)) {
-    mainWindow!.webContents.send('notification:toast', payload);
-    return { ok: true, channel: 'toast' };
-  }
 
   if (showNativeDesktopNotification(title, body, onClick)) {
     return { ok: true, channel: 'native' };
   }
 
-  // Transparent overlay windows can destabilize external displays on macOS.
-  if (process.platform === 'darwin') {
-    return { ok: false, channel: 'native' };
-  }
-
-  showCustomDesktopNotification(payload, onClick);
-  return { ok: true, channel: 'overlay' };
+  return { ok: false, channel: 'native' };
 }

@@ -97,20 +97,30 @@ export function NotificationCard({
   priority,
   variant = 'toast',
   className = '',
-}: { children: ReactNode; variant?: 'toast' | 'activity' } & NotificationBaseProps) {
+}: { children: ReactNode; variant?: 'toast' | 'activity' | 'desktop' } & NotificationBaseProps) {
   const layoutClass =
     variant === 'activity'
-      ? 'w-full max-w-none cursor-pointer border-transparent bg-transparent p-2 shadow-none hover:bg-app-card/50'
-      : 'pointer-events-auto w-[380px] max-w-[90vw] cursor-pointer border-app-border bg-app-surface/95 p-3.5 shadow-2xl backdrop-blur-xl hover:border-accent/35 hover:bg-app-elevated/95';
+      ? 'w-full max-w-none cursor-pointer items-start gap-3 rounded-xl border border-transparent bg-transparent px-2 py-2.5 text-left shadow-none hover:bg-app-card/50'
+      : variant === 'desktop'
+        ? 'pointer-events-auto w-full cursor-pointer overflow-hidden rounded-[20px] border border-[#2a3344] bg-[#0c101a] p-0 text-[#f0f3f9] shadow-[0_16px_40px_rgba(0,0,0,0.55)]'
+        : 'pointer-events-auto w-[380px] max-w-[calc(100vw-2.5rem)] cursor-pointer overflow-hidden rounded-[20px] border border-app-border/70 bg-app-surface/90 p-0 shadow-[0_20px_50px_-12px_rgba(0,0,0,0.45)] backdrop-blur-2xl dark:border-accent/20 dark:bg-[#0b0d14]/88 dark:shadow-[0_24px_60px_-16px_rgba(0,0,0,0.75),0_0_0_1px_rgba(128,45,69,0.12)]';
+
+  const flexLayout = variant === 'activity' ? 'flex flex-row' : 'flex flex-col';
 
   return (
     <div
-      className={`relative flex items-start gap-3.5 rounded-2xl border transition-all ${layoutClass} ${className}`}
+      className={`relative ${flexLayout} transition-all ${layoutClass} ${className}`}
       onClick={(e) => {
-        if (onClick) {
-          e.stopPropagation();
-          onClick();
+        if (!onClick) {
+          return;
         }
+
+        if ((e.target as HTMLElement).closest('button')) {
+          return;
+        }
+
+        e.stopPropagation();
+        onClick();
       }}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}
@@ -129,10 +139,12 @@ export function NotificationActionBtn({
   children,
   onClick,
   primary,
+  solidSurface,
 }: {
   children: ReactNode;
   onClick: (e: React.MouseEvent) => void;
   primary?: boolean;
+  solidSurface?: boolean;
 }) {
   return (
     <button
@@ -140,7 +152,9 @@ export function NotificationActionBtn({
       className={`flex-1 rounded-xl px-3 py-1.5 text-[13px] font-semibold transition-colors ${
         primary
           ? 'bg-accent text-white hover:bg-accent-hover shadow-sm'
-          : 'bg-app-chat-hover text-app-text hover:bg-app-border/80'
+          : solidSurface
+            ? 'border border-[#3a4558] bg-[#151c28] text-[#e8ecf4] hover:bg-[#1c2533]'
+            : 'bg-app-chat-hover text-app-text hover:bg-app-border/80'
       }`}
       onClick={(e) => {
         e.stopPropagation();
@@ -235,7 +249,7 @@ export function NotificationContainer({
   onDismissAll?: () => void;
 }) {
   return (
-    <div className="flex flex-col gap-2 w-[380px] max-w-[90vw]">
+    <div className="flex flex-col gap-3 w-[380px] max-w-[calc(100vw-2.5rem)]">
       {stackedCount && stackedCount > 1 && (
         <div className="flex items-center justify-between px-1 mb-1">
           <span className="text-[11px] font-bold uppercase tracking-wider text-app-muted">{stackedCount} new notifications</span>

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FiBell, FiChevronDown, FiClock, FiMessageSquare, FiPhone, FiPlus, FiUserMinus, FiUserPlus, FiVideo, FiX } from 'react-icons/fi';
-import { mapApiPresenceToStatus, normalizePresenceUserId, type PresenceStatus } from '../../shared/chat';
+import { mapApiPresenceToStatus, normalizePresenceUserId, sortMemberListWithViewerFirst, type PresenceStatus } from '../../shared/chat';
 import {
   formatContactPresenceLabel,
   mapContactPresenceStatus,
@@ -261,8 +261,12 @@ export function GroupSidebar({
   );
 
   const hubRegularMembers = useMemo(
-    () => hubMembers.filter((member) => !hubAdmins.some((admin) => admin.id === member.id)),
-    [hubAdmins, hubMembers],
+    () =>
+      sortMemberListWithViewerFirst(
+        hubMembers.filter((member) => !hubAdmins.some((admin) => admin.id === member.id)),
+        currentUserId,
+      ),
+    [currentUserId, hubAdmins, hubMembers],
   );
 
   const hubChannelId = useMemo(
@@ -275,7 +279,7 @@ export function GroupSidebar({
 
   const displayHubAdmins = useMemo((): HubMemberDisplay[] => {
     if (hubAdmins.length > 0) {
-      return hubAdmins;
+      return sortMemberListWithViewerFirst(hubAdmins, currentUserId);
     }
 
     if (!isAdmin || !currentUserId) {
@@ -929,8 +933,6 @@ export function GroupSidebar({
               {adminCount === 1 ? '' : 's'}
             </p>
 
-            {slug ? <p className="mb-3 text-xs text-app-muted">Channel slug: {slug}</p> : null}
-
             <label className="mb-1 block text-xs font-medium text-app-muted">Description</label>
             <textarea
               value={description}
@@ -1158,8 +1160,14 @@ export function GroupSidebar({
                         />
                       ) : null}
                     </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-app-text">{member.name}</p>
+                      {!redactIdentity && presenceLabel ? (
+                        <p className="text-xs text-app-muted">{presenceLabel}</p>
+                      ) : null}
+                    </div>
                     {!redactIdentity && member.id !== currentUserId ? (
-                      <div className="flex shrink-0 items-center gap-0.5">
+                      <div className="ml-auto flex shrink-0 items-center gap-0.5">
                         {onMessageMember ? (
                           <button
                             type="button"
@@ -1194,12 +1202,6 @@ export function GroupSidebar({
                         ) : null}
                       </div>
                     ) : null}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-app-text">{member.name}</p>
-                      {!redactIdentity && presenceLabel ? (
-                        <p className="text-xs text-app-muted">{presenceLabel}</p>
-                      ) : null}
-                    </div>
                   </div>
                 );
               })}

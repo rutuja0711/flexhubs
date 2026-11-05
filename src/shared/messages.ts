@@ -328,9 +328,16 @@ export function mergeMessageListsChronologically(
   return [...byId.values()].sort(compareMessagesChronologically);
 }
 
-export type MessageDraft = {
+export type ConversationDraftSummary = {
+  id: string;
+  conversationId: string;
   content: string;
+  replyToId: string | null;
+  updatedAt: string;
 };
+
+/** @deprecated Use ConversationDraftSummary; kept for gradual migration. */
+export type MessageDraft = ConversationDraftSummary;
 
 export type NotificationItem = {
   id: string;
@@ -2372,22 +2379,56 @@ export function normalizeMessageThread(payload: unknown, rootMessageId?: string)
   );
 }
 
-export function normalizeDraft(payload: unknown): MessageDraft {
+export function normalizeDraftSummary(payload: unknown): ConversationDraftSummary | null {
   const record = asRecord(payload);
 
   if (!record) {
-    return { content: '' };
+    return null;
   }
 
-  const draft = asRecord(record.draft);
+  if (record.draft === null) {
+    return null;
+  }
+
+  const draft = asRecord(record.draft) ?? record;
+  const content =
+    readString(draft.content) ??
+    readString(draft.text) ??
+    readString(record.content) ??
+    readString(record.text) ??
+    '';
+
+  const id = readString(draft.id) ?? readString(record.id);
+  const conversationId = readString(draft.conversationId) ?? readString(record.conversationId);
+
+  if (!id && !content.trim()) {
+    return null;
+  }
+
+  const replyRaw = draft.replyToId ?? record.replyToId;
+  const replyToId =
+    typeof replyRaw === 'string' && replyRaw.trim() ? replyRaw.trim() : null;
 
   return {
-    content:
-      readString(record.content) ??
-      readString(record.text) ??
-      (draft ? readString(draft.content) ?? readString(draft.text) : null) ??
-      '',
+    id: id ?? '',
+    conversationId: conversationId ?? '',
+    content,
+    replyToId,
+    updatedAt: readString(draft.updatedAt) ?? readString(record.updatedAt) ?? '',
   };
+}
+
+/** Legacy normalizer — prefer normalizeDraftSummary for API responses. */
+export function normalizeDraft(payload: unknown): ConversationDraftSummary {
+  return (
+    normalizeDraftSummary(payload) ?? {
+      id: '',
+      conversationId: '',
+      content: '',
+      replyToId: null,
+      updatedAt: '',
+    }
+  );
 }
 
 export function normalizeNotifications(payload: unknown): NotificationItem[] {
@@ -2708,6 +2749,48 @@ export function findHubInviteForNotification(
   return hubInvites.find(
     (invite) => invite.conversationId === conversationId || invite.channelId === conversationId,
   );
+}
+
+export function notificationMatchesHubInviteTarget(
+  notification: NotificationItem,
+  target: {
+    inviteId?: string | null;
+    conversationId?: string | null;
+    channelId?: string | null;
+  },
+  hubInvites: ReadonlyArray<{ id: string; conversationId: string; channelId: string }> = [],
+): boolean {
+  const inviteId = target.inviteId?.trim() || null;
+  const conversationId = target.conversationId?.trim() || null;
+  const channelId = target.channelId?.trim() || null;
+
+  if (inviteId && notification.inviteId === inviteId) {
+    return true;
+  }
+
+  if (
+    hubInvites.length > 0 &&
+    (isPendingHubInviteNotification(notification) ||
+      isGroupInviteNotification(notification) ||
+      isGroupMembershipAddedNotification(notification))
+  ) {
+    const matched = findHubInviteForNotification(notification, hubInvites);
+    if (inviteId && matched?.id === inviteId) {
+      return true;
+    }
+  }
+
+  for (const ref of [conversationId, channelId]) {
+    if (!ref) {
+      continue;
+    }
+
+    if (notification.conversationId === ref || notification.channelId === ref) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 export function isCalendarInviteNotification(notification: NotificationItem): boolean {

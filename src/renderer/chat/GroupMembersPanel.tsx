@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FiUserMinus, FiUserPlus, FiX } from 'react-icons/fi';
 import type { ConversationItem } from '../../shared/chat';
+import { sortMemberListWithViewerFirst } from '../../shared/chat';
 import {
   addConversationMembers,
   removeConversationMember,
@@ -108,7 +109,12 @@ export function GroupMembersPanel({
     setMembers(extractMembers(conversationDetails));
   }, [conversationDetails]);
 
-  const memberIds = useMemo(() => new Set(members.map((member) => member.id)), [members]);
+  const sortedMembers = useMemo(
+    () => sortMemberListWithViewerFirst(members, currentUserId),
+    [currentUserId, members],
+  );
+
+  const memberIds = useMemo(() => new Set(sortedMembers.map((member) => member.id)), [sortedMembers]);
 
   const runSearch = useCallback(async (value: string) => {
     const trimmed = value.trim();
@@ -195,7 +201,7 @@ export function GroupMembersPanel({
         <div className="min-w-0 flex-1">
           <span className="block text-[10px] font-bold tracking-wider text-app-muted uppercase">Group Info</span>
           <h2 className="truncate text-base font-semibold text-app-text tracking-tight">{conversation.title}</h2>
-          <p className="mt-0.5 text-xs text-app-muted">{members.length} members</p>
+          <p className="mt-0.5 text-xs text-app-muted">{sortedMembers.length} members</p>
         </div>
         <button
           type="button"
@@ -247,11 +253,11 @@ export function GroupMembersPanel({
 
         <section>
           <span className="mb-3 block text-[10px] font-bold tracking-wider text-app-muted uppercase">Members</span>
-          {members.length === 0 ? (
+          {sortedMembers.length === 0 ? (
             <p className="text-xs text-app-muted">No members loaded yet.</p>
           ) : (
             <div className="space-y-2">
-              {members.map((member) => {
+              {sortedMembers.map((member) => {
                 const isSelf = member.id === currentUserId;
                 const isBusy = busyUserId === member.id;
 

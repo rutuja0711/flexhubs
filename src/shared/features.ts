@@ -510,6 +510,30 @@ export function normalizeHubInvites(payload: unknown): HubInviteItem[] {
     });
 }
 
+export type AcceptHubInviteResult = {
+  conversationId: string | null;
+  channelId: string | null;
+};
+
+export function parseAcceptHubInviteResult(payload: unknown): AcceptHubInviteResult {
+  const record = asRecord(payload) ?? {};
+  const conversation = asRecord(record.conversation);
+  const channel = asRecord(record.channel) ?? conversation;
+
+  return {
+    conversationId:
+      readString(record.conversationId) ??
+      readString(conversation?.id) ??
+      readString(asRecord(record.data)?.conversationId) ??
+      null,
+    channelId:
+      readString(record.channelId) ??
+      readString(channel?.id) ??
+      readString(conversation?.channelId) ??
+      null,
+  };
+}
+
 export function normalizeFriends(payload: unknown): FriendItem[] {
   return extractArray(payload, ['friends', 'items', 'data'])
     .map(asRecord)

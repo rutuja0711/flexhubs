@@ -119,7 +119,6 @@ type UseCallManagerOptions = {
 
 const CALL_SIGNALING_REFRESH_MS = 50 * 60 * 1000;
 const CALL_SIGNALING_HEALTH_MS = 30 * 1000;
-const MEETING_JOIN_POLL_MS = 4 * 1000;
 const OUTGOING_RING_MS = 90_000;
 const INCOMING_RING_MS = 90_000;
 const SIGNAL_REPEAT_MS = 1_000;
@@ -1647,13 +1646,6 @@ export function useCallManager({
     }
 
     void refreshMeetingJoinRequests();
-    const timer = window.setInterval(() => {
-      void refreshMeetingJoinRequests();
-    }, MEETING_JOIN_POLL_MS);
-
-    return () => {
-      window.clearInterval(timer);
-    };
   }, [
     refreshMeetingJoinRequests,
     session.canModerateMeeting,
@@ -1672,13 +1664,6 @@ export function useCallManager({
     }
 
     void refreshMeetingParticipantSidebar();
-    const timer = window.setInterval(() => {
-      void refreshMeetingParticipantSidebar();
-    }, MEETING_JOIN_POLL_MS);
-
-    return () => {
-      window.clearInterval(timer);
-    };
   }, [refreshMeetingParticipantSidebar, session.callId, session.conversationId, session.isGroup, session.phase]);
 
   const ensureCallSignalingReady = useCallback(async (): Promise<boolean> => {

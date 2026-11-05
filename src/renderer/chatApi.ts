@@ -4,7 +4,7 @@ import { buildFileMessagePayload, buildMediaMessagePayload, buildVoiceMessagePay
 import type { ScheduledMessageItem } from '../shared/extras';
 import { buildCreatePollPayload } from '../shared/messages';
 import type { ConversationsPayload, ConversationItem, UnreadCountPayload } from '../shared/chat';
-import type { ConversationBootstrap, MessageDraft } from '../shared/messages';
+import type { ConversationBootstrap, ConversationDraftSummary } from '../shared/messages';
 import { buildProfileUpdatePayload } from '../shared/profile';
 import { clearAuth, getStoredToken, getStoredUser } from './authApi';
 import { getUserId } from '../shared/user';
@@ -161,7 +161,7 @@ export async function loadMessageThread(
 
 export async function loadMessageDraft(
   conversationId: string,
-): Promise<ApiResult<MessageDraft>> {
+): Promise<ApiResult<ConversationDraftSummary | null>> {
   if (!window.electronAPI?.getMessageDraft) {
     return unavailable();
   }
@@ -172,12 +172,15 @@ export async function loadMessageDraft(
 export async function saveChatDraft(
   conversationId: string,
   content: string,
-): Promise<ApiResult<MessageDraft>> {
+  replyToId?: string | null,
+): Promise<ApiResult<ConversationDraftSummary | null>> {
   if (!window.electronAPI?.saveMessageDraft) {
     return unavailable();
   }
 
-  return withToken((token) => window.electronAPI.saveMessageDraft(token, conversationId, content));
+  return withToken((token) =>
+    window.electronAPI.saveMessageDraft(token, conversationId, content, replyToId ?? null),
+  );
 }
 
 export async function clearChatDraft(
@@ -640,7 +643,7 @@ export async function loadFriends(): Promise<
 
 export async function acceptHubInvite(
   channelId: string,
-): Promise<ApiResult<{ ok: true }>> {
+): Promise<ApiResult<import('../shared/features').AcceptHubInviteResult>> {
   if (!window.electronAPI?.acceptHubInvite) {
     return unavailable();
   }
@@ -650,7 +653,7 @@ export async function acceptHubInvite(
 
 export async function acceptHubInviteById(
   inviteId: string,
-): Promise<ApiResult<{ ok: true }>> {
+): Promise<ApiResult<import('../shared/features').AcceptHubInviteResult>> {
   if (!window.electronAPI?.acceptHubInviteById) {
     return unavailable();
   }

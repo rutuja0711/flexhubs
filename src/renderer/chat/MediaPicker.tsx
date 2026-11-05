@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
 import { FiSearch, FiUpload, FiX } from 'react-icons/fi';
 import type { GifPickerItem } from '../../shared/gifs';
 import { createUploadedStickerItem } from '../../shared/gifs';
@@ -22,6 +22,9 @@ type MediaPickerProps = {
   onSelectMedia: (item: GifPickerItem, kind: 'gif' | 'sticker') => void;
   onSelectEmoji: (emoji: string) => void;
   initialTab?: MediaPickerTab;
+  /** When set (e.g. fixed portal), skips default absolute placement above the composer. */
+  panelClassName?: string;
+  panelStyle?: CSSProperties;
 };
 
 const STICKER_ACCEPT = 'image/png,image/webp,image/gif,image/jpeg';
@@ -54,6 +57,8 @@ export function MediaPicker({
   onSelectMedia,
   onSelectEmoji,
   initialTab = 'emoji',
+  panelClassName,
+  panelStyle,
 }: MediaPickerProps) {
   const [tab, setTab] = useState<MediaPickerTab>(initialTab);
   const [emojiCategoryIndex, setEmojiCategoryIndex] = useState(0);
@@ -240,7 +245,11 @@ export function MediaPicker({
   return (
     <div
       ref={panelRef}
-      className="absolute bottom-full left-0 z-50 mb-2 w-[min(100vw-2rem,420px)] overflow-hidden rounded-2xl border border-app-border bg-app-elevated shadow-2xl"
+      style={panelStyle}
+      className={
+        panelClassName ??
+        'absolute bottom-full left-0 z-50 mb-2 w-[min(100vw-2rem,420px)] overflow-hidden rounded-2xl border border-app-border bg-app-elevated shadow-2xl'
+      }
       role="dialog"
       aria-label="Insert GIF, emoji, or sticker"
     >

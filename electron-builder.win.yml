@@ -13,7 +13,7 @@ win:
     - target: nsis
       arch:
         - x64
-  icon: assets/icon.ico
+  icon: assets/logo-symbol.ico
   legalTrademarks: FlexHubs
   executableName: FlexHubs Desktop
   signAndEditExecutable: false
@@ -26,9 +26,9 @@ nsis:
   perMachine: true
   allowToChangeInstallationDirectory: true
   allowElevation: true
-  installerIcon: assets/icon.ico
-  uninstallerIcon: assets/icon.ico
-  installerHeaderIcon: assets/icon.ico
+  installerIcon: assets/logo-symbol.ico
+  uninstallerIcon: assets/logo-symbol.ico
+  installerHeaderIcon: assets/logo-symbol.ico
   license: assets/desktop-eula.txt
   # Shortcuts are created on the Finish page when the user checks the boxes
   # (see scripts/windows/installer.nsh). Defaults are checked.
