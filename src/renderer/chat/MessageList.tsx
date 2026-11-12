@@ -1,4 +1,23 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import {
+  Virtuoso,
+  type Components,
+  type FollowOutputScalarType,
+  type ItemProps,
+  type ListProps,
+  type ListRange,
+  type ScrollerProps,
+  type VirtuosoHandle,
+} from 'react-virtuoso';
 import { FiCheck, FiCornerUpLeft, FiMessageSquare, FiChevronUp, FiRefreshCw } from 'react-icons/fi';
 import type { MessageItem, MessageReadReceipt } from '../../shared/messages';
 import {
@@ -18,7 +37,9 @@ import {
 } from '../../shared/messages';
 import { loadMessageById } from '../chatApi';
 import { prefetchAuthenticatedMediaUrls } from '../authenticatedMedia';
-import { perfRecordRender } from '../dev/perfInstrumentation';
+import { isPerfEnabled, perfRecordRender, perfSetGauge } from '../dev/perfInstrumentation';
+import { isMessageListVirtualizationEnabled } from '../dev/messageListVirtualization';
+import { registerMessageListVirtuosoLayoutSync } from './messageListVirtuosoSync';
 import { fetchMediaBlob } from '../mediaBlob';
 import { formatConversationTimestamp, formatMessageDayDivider, messageDayKey } from './format';
 import { Avatar, EnhanceSparkleIcon } from './ChatIcons';
@@ -36,7 +57,7 @@ function MessageListSurface({
   className?: string;
 }) {
   return (
-    <div className={`flex min-h-0 flex-1 flex-col relative ${className}`.trim()}>
+    <div className={`relative flex min-h-0 min-w-0 w-full flex-1 flex-col ${className}`.trim()}>
       {children}
     </div>
   );
@@ -78,10 +99,86 @@ function BlockedByYouDivider() {
   );
 }
 
-type MessageListEntry =
+export type MessageListEntry =
   | { kind: 'date'; key: string; label: string }
   | { kind: 'unread'; key: 'unread-divider' }
   | { kind: 'message'; key: string; message: MessageItem };
+
+const VIRTUOSO_BASE_FIRST_ITEM_INDEX = 10_000;
+const STICK_TO_BOTTOM_THRESHOLD_PX = 150;
+const LOAD_OLDER_TOP_THRESHOLD_PX = 120;
+const VIRTUOSO_AUTOSCROLL_MIN_INTERVAL_MS = 80;
+
+function countMessageRowsInScroller(container: HTMLElement | null): number {
+  if (!container) {
+    return 0;
+  }
+
+  return container.querySelectorAll('[data-message-id]').length;
+}
+
+function findMessageEntryIndex(entries: MessageListEntry[], messageId: string): number {
+  return entries.findIndex(
+    (entry) => entry.kind === 'message' && entry.message.id === messageId,
+  );
+}
+
+const messageListVirtuosoScroller = forwardRef<HTMLDivElement, ScrollerProps>(
+  function MessageListVirtuosoScroller({ style, children, ...rest }, ref) {
+    return (
+      <div
+        {...rest}
+        ref={ref}
+        style={style}
+        className={`message-list-scroll flex h-full min-h-0 w-full min-w-0 max-w-full flex-col overflow-y-auto overscroll-contain py-4 ${rest.className ?? ''}`.trim()}
+      >
+        {children}
+      </div>
+    );
+  },
+);
+
+const messageListVirtuosoList = forwardRef<HTMLDivElement, ListProps>(function MessageListVirtuosoList(
+  { children, style, ...rest },
+  ref,
+) {
+  return (
+    <div
+      {...rest}
+      ref={ref}
+      style={{
+        ...style,
+        width: '100%',
+        maxWidth: '100%',
+        boxSizing: 'border-box',
+      }}
+      className="min-w-0 max-w-full"
+    >
+      {children}
+    </div>
+  );
+});
+
+function MessageListVirtuosoItem({
+  children,
+  style,
+  ...rest
+}: ItemProps<MessageListEntry>) {
+  return (
+    <div
+      {...rest}
+      style={{
+        ...style,
+        width: '100%',
+        maxWidth: '100%',
+        boxSizing: 'border-box',
+      }}
+      className="min-w-0 max-w-full"
+    >
+      {children}
+    </div>
+  );
+}
 
 function buildMessageListEntries(
   messages: MessageItem[],
@@ -883,6 +980,7 @@ export function MessageList({
   peerBlockedByCurrentUser = false,
 }: MessageListProps) {
   perfRecordRender('MessageList');
+  const virtualListEnabled = isMessageListVirtualizationEnabled();
 
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
@@ -901,6 +999,14 @@ export function MessageList({
   const restoredScrollForConversationRef = useRef<string | null>(null);
   const completedScrollTargetRef = useRef<string | null>(null);
   const completedScrollRequestKeyRef = useRef(0);
+  const virtuosoRef = useRef<VirtuosoHandle | null>(null);
+  const loadOlderStartReachedRef = useRef(false);
+  const virtuosoAutoscrollLastAtRef = useRef(0);
+  const listEntriesFirstKeyRef = useRef<string | null>(null);
+  const listEntriesLengthRef = useRef(0);
+  const [virtuosoFirstItemIndex, setVirtuosoFirstItemIndex] = useState(
+    VIRTUOSO_BASE_FIRST_ITEM_INDEX,
+  );
   const showInitialLoading = loading && messages.length === 0;
 
   useEffect(() => {
@@ -908,9 +1014,13 @@ export function MessageList({
     completedScrollRequestKeyRef.current = 0;
     lastMessageIdRef.current = null;
     loadOlderScrollSnapshotRef.current = null;
+    loadOlderStartReachedRef.current = false;
+    listEntriesFirstKeyRef.current = null;
+    listEntriesLengthRef.current = 0;
     restoredScrollForConversationRef.current = null;
     stickToBottomRef.current = true;
     suppressAutoScrollRef.current = false;
+    setVirtuosoFirstItemIndex(VIRTUOSO_BASE_FIRST_ITEM_INDEX);
   }, [conversationId]);
 
   useEffect(() => {
@@ -958,6 +1068,99 @@ export function MessageList({
     [messages, unreadAnchorMessageId],
   );
 
+  const virtuosoMountScrollTop = useMemo(() => {
+    if (!virtualListEnabled) {
+      return undefined;
+    }
+
+    if (scrollToMessageId || pendingScrollToMessageId) {
+      return undefined;
+    }
+
+    if (initialScrollSnapshot && !initialScrollSnapshot.stickToBottom) {
+      return initialScrollSnapshot.scrollTop;
+    }
+
+    return undefined;
+  }, [
+    initialScrollSnapshot,
+    pendingScrollToMessageId,
+    scrollToMessageId,
+    virtualListEnabled,
+  ]);
+
+  const virtuosoAlignToBottom = virtuosoMountScrollTop === undefined;
+
+  const requestStickToBottomIfNeeded = useCallback(() => {
+    if (suppressAutoScrollRef.current || pendingScrollToMessageId || scrollToMessageId) {
+      return;
+    }
+
+    if (!stickToBottomRef.current) {
+      return;
+    }
+
+    const now = performance.now();
+    if (now - virtuosoAutoscrollLastAtRef.current < VIRTUOSO_AUTOSCROLL_MIN_INTERVAL_MS) {
+      return;
+    }
+
+    virtuosoAutoscrollLastAtRef.current = now;
+    virtuosoRef.current?.autoscrollToBottom();
+  }, [pendingScrollToMessageId, scrollToMessageId]);
+
+  useEffect(() => {
+    if (!virtualListEnabled) {
+      registerMessageListVirtuosoLayoutSync(null);
+      return;
+    }
+
+    registerMessageListVirtuosoLayoutSync(requestStickToBottomIfNeeded);
+    return () => registerMessageListVirtuosoLayoutSync(null);
+  }, [requestStickToBottomIfNeeded, virtualListEnabled]);
+
+  useEffect(() => {
+    if (!virtualListEnabled || !editingId) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      requestStickToBottomIfNeeded();
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [editingId, requestStickToBottomIfNeeded, virtualListEnabled]);
+
+  useEffect(() => {
+    if (!virtualListEnabled) {
+      return;
+    }
+
+    const nextFirstKey = listEntries[0]?.key ?? null;
+    const previousFirstKey = listEntriesFirstKeyRef.current;
+    const previousLength = listEntriesLengthRef.current;
+    const nextLength = listEntries.length;
+
+    if (
+      nextLength > previousLength &&
+      previousFirstKey &&
+      nextFirstKey &&
+      previousFirstKey !== nextFirstKey
+    ) {
+      const prependedCount = nextLength - previousLength;
+      setVirtuosoFirstItemIndex((current) => current - prependedCount);
+    }
+
+    listEntriesFirstKeyRef.current = nextFirstKey;
+    listEntriesLengthRef.current = nextLength;
+  }, [listEntries, virtualListEnabled]);
+
+  useEffect(() => {
+    if (!loadingOlder) {
+      loadOlderStartReachedRef.current = false;
+    }
+  }, [loadingOlder]);
+
   const replyTargetByMessageId = useMemo(() => {
     const map = new Map<string, MessageItem | null>();
 
@@ -972,6 +1175,15 @@ export function MessageList({
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     if (suppressAutoScrollRef.current || pendingScrollToMessageId || scrollToMessageId) {
+      return;
+    }
+
+    if (virtualListEnabled && virtuosoRef.current) {
+      virtuosoRef.current.scrollToIndex({
+        index: 'LAST',
+        align: 'end',
+        behavior,
+      });
       return;
     }
 
@@ -990,7 +1202,7 @@ export function MessageList({
     }
 
     bottomAnchorRef.current?.scrollIntoView({ block: 'end', behavior });
-  }, [pendingScrollToMessageId, scrollToMessageId]);
+  }, [pendingScrollToMessageId, scrollToMessageId, virtualListEnabled]);
 
   useEffect(() => {
     const scrollTargetId = scrollToMessageId ?? pendingScrollToMessageId;
@@ -1010,17 +1222,42 @@ export function MessageList({
     let frame = 0;
     const maxAttempts = 96;
 
+    const completeJumpScroll = () => {
+      stickToBottomRef.current = false;
+      suppressAutoScrollRef.current = true;
+      completedScrollTargetRef.current = scrollTargetId;
+      completedScrollRequestKeyRef.current = scrollRequestKey;
+      lastMessageIdRef.current = messages[messages.length - 1]?.id ?? null;
+      onScrollToMessageComplete?.(scrollTargetId);
+    };
+
     const tryScroll = () => {
+      if (virtualListEnabled) {
+        const entryIndex = findMessageEntryIndex(listEntries, scrollTargetId);
+        const handle = virtuosoRef.current;
+
+        if (entryIndex >= 0 && handle) {
+          handle.scrollToIndex({
+            index: entryIndex,
+            align: 'center',
+            behavior: 'auto',
+          });
+          completeJumpScroll();
+          return;
+        }
+
+        attempts += 1;
+        if (attempts < maxAttempts) {
+          frame = window.requestAnimationFrame(tryScroll);
+        }
+
+        return;
+      }
+
       const container = scrollContainerRef.current;
       const element = container?.querySelector(`[data-message-id="${scrollTargetId}"]`);
 
       if (container && element instanceof HTMLElement) {
-        stickToBottomRef.current = false;
-        suppressAutoScrollRef.current = true;
-        completedScrollTargetRef.current = scrollTargetId;
-        completedScrollRequestKeyRef.current = scrollRequestKey;
-        lastMessageIdRef.current = messages[messages.length - 1]?.id ?? null;
-
         const elementTop =
           element.getBoundingClientRect().top -
           container.getBoundingClientRect().top +
@@ -1028,8 +1265,11 @@ export function MessageList({
         const targetTop =
           elementTop - container.clientHeight / 2 + element.getBoundingClientRect().height / 2;
 
-        container.scrollTop = Math.max(0, Math.min(targetTop, container.scrollHeight - container.clientHeight));
-        onScrollToMessageComplete?.(scrollTargetId);
+        container.scrollTop = Math.max(
+          0,
+          Math.min(targetTop, container.scrollHeight - container.clientHeight),
+        );
+        completeJumpScroll();
         return;
       }
 
@@ -1043,12 +1283,14 @@ export function MessageList({
 
     return () => window.cancelAnimationFrame(frame);
   }, [
+    listEntries,
     messages,
     onScrollToMessageComplete,
     pendingScrollToMessageId,
     scrollRequestKey,
     scrollToMessageId,
     showInitialLoading,
+    virtualListEnabled,
   ]);
 
   useEffect(() => {
@@ -1113,6 +1355,13 @@ export function MessageList({
     }
 
     const onScroll = () => {
+      if (virtualListEnabled) {
+        if (!pendingScrollToMessageId && !suppressAutoScrollRef.current) {
+          persistScrollPosition();
+        }
+        return;
+      }
+
       if (suppressAutoScrollRef.current || pendingScrollToMessageId) {
         return;
       }
@@ -1124,14 +1373,14 @@ export function MessageList({
 
       const distanceFromBottom =
         container.scrollHeight - container.scrollTop - container.clientHeight;
-      stickToBottomRef.current = distanceFromBottom < 150;
+      stickToBottomRef.current = distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD_PX;
       persistScrollPosition();
 
       if (
         onLoadOlder &&
         hasMoreOlder &&
         !loadingOlder &&
-        container.scrollTop < 120 &&
+        container.scrollTop < LOAD_OLDER_TOP_THRESHOLD_PX &&
         !loadOlderScrollSnapshotRef.current
       ) {
         loadOlderScrollSnapshotRef.current = {
@@ -1144,7 +1393,14 @@ export function MessageList({
 
     container.addEventListener('scroll', onScroll, { passive: true });
     return () => container.removeEventListener('scroll', onScroll);
-  }, [hasMoreOlder, loadingOlder, onLoadOlder, pendingScrollToMessageId, persistScrollPosition]);
+  }, [
+    hasMoreOlder,
+    loadingOlder,
+    onLoadOlder,
+    pendingScrollToMessageId,
+    persistScrollPosition,
+    virtualListEnabled,
+  ]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -1155,10 +1411,26 @@ export function MessageList({
       !hasMoreOlder ||
       loadingOlder ||
       showInitialLoading ||
-      loadOlderScrollSnapshotRef.current ||
       pendingScrollToMessageId ||
       suppressAutoScrollRef.current
     ) {
+      return;
+    }
+
+    if (virtualListEnabled) {
+      if (loadOlderStartReachedRef.current) {
+        return;
+      }
+
+      if (container.scrollHeight <= container.clientHeight + 8) {
+        loadOlderStartReachedRef.current = true;
+        onLoadOlder();
+      }
+
+      return;
+    }
+
+    if (loadOlderScrollSnapshotRef.current) {
       return;
     }
 
@@ -1176,9 +1448,14 @@ export function MessageList({
     onLoadOlder,
     pendingScrollToMessageId,
     showInitialLoading,
+    virtualListEnabled,
   ]);
 
   useEffect(() => {
+    if (virtualListEnabled) {
+      return;
+    }
+
     if (loadingOlder || !loadOlderScrollSnapshotRef.current) {
       return;
     }
@@ -1203,7 +1480,7 @@ export function MessageList({
       window.cancelAnimationFrame(outerFrame);
       window.cancelAnimationFrame(innerFrame);
     };
-  }, [loadingOlder, messages]);
+  }, [loadingOlder, messages, virtualListEnabled]);
 
   useEffect(() => {
     if (showInitialLoading || messages.length === 0) {
@@ -1233,14 +1510,25 @@ export function MessageList({
       stickToBottomRef.current = false;
       suppressAutoScrollRef.current = true;
 
+      if (virtualListEnabled && virtuosoMountScrollTop !== undefined) {
+        window.setTimeout(() => {
+          suppressAutoScrollRef.current = false;
+        }, 250);
+        return;
+      }
+
       const targetTop = initialScrollSnapshot.scrollTop;
       let innerFrame = 0;
       const outerFrame = window.requestAnimationFrame(() => {
         innerFrame = window.requestAnimationFrame(() => {
-          const container = scrollContainerRef.current;
-          if (container) {
-            const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
-            container.scrollTop = Math.min(targetTop, maxTop);
+          if (virtualListEnabled && virtuosoRef.current) {
+            virtuosoRef.current.scrollTo({ top: targetTop });
+          } else {
+            const container = scrollContainerRef.current;
+            if (container) {
+              const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+              container.scrollTop = Math.min(targetTop, maxTop);
+            }
           }
           window.setTimeout(() => {
             suppressAutoScrollRef.current = false;
@@ -1252,6 +1540,11 @@ export function MessageList({
         window.cancelAnimationFrame(outerFrame);
         window.cancelAnimationFrame(innerFrame);
       };
+    }
+
+    if (virtualListEnabled) {
+      lastMessageIdRef.current = lastId;
+      return;
     }
 
     const isOwnNewMessage =
@@ -1309,7 +1602,116 @@ export function MessageList({
     scrollToBottom,
     scrollToMessageId,
     showInitialLoading,
+    virtualListEnabled,
+    virtuosoMountScrollTop,
   ]);
+
+  const handleAtBottomStateChange = useCallback(
+    (atBottom: boolean) => {
+      if (suppressAutoScrollRef.current || pendingScrollToMessageId) {
+        return;
+      }
+
+      stickToBottomRef.current = atBottom;
+      persistScrollPosition();
+    },
+    [pendingScrollToMessageId, persistScrollPosition],
+  );
+
+  const handleFollowOutput = useCallback(
+    (isAtBottom: boolean): FollowOutputScalarType => {
+      if (suppressAutoScrollRef.current || pendingScrollToMessageId || scrollToMessageId) {
+        return false;
+      }
+
+      const lastMessage = messages[messages.length - 1];
+      const isOwnNewMessage =
+        lastMessage?.isOwn === true ||
+        lastMessage?.id.startsWith('local-') ||
+        (lastMessage ? isAppearingMessage(lastMessage) && lastMessage.isOwn : false);
+
+      if (isOwnNewMessage) {
+        stickToBottomRef.current = true;
+        return 'smooth';
+      }
+
+      if (isAtBottom || stickToBottomRef.current) {
+        return 'auto';
+      }
+
+      return false;
+    },
+    [messages, pendingScrollToMessageId, scrollToMessageId],
+  );
+
+  const handleStartReached = useCallback(() => {
+    if (
+      !onLoadOlder ||
+      !hasMoreOlder ||
+      loadingOlder ||
+      loadOlderStartReachedRef.current ||
+      pendingScrollToMessageId ||
+      suppressAutoScrollRef.current
+    ) {
+      return;
+    }
+
+    loadOlderStartReachedRef.current = true;
+    onLoadOlder();
+  }, [hasMoreOlder, loadingOlder, onLoadOlder, pendingScrollToMessageId]);
+
+  const handleTotalListHeightChanged = useCallback(() => {
+    requestStickToBottomIfNeeded();
+  }, [requestStickToBottomIfNeeded]);
+
+  const publishMessageListEntryGauges = useCallback(() => {
+    if (!isPerfEnabled()) {
+      return;
+    }
+
+    perfSetGauge('messageList:totalEntries', listEntries.length);
+    perfSetGauge('messageList:mountedMessageRows', countMessageRowsInScroller(scrollContainerRef.current));
+  }, [listEntries.length]);
+
+  useEffect(() => {
+    if (!isPerfEnabled() || showInitialLoading || messages.length === 0) {
+      return;
+    }
+
+    let innerFrame = 0;
+    const outerFrame = window.requestAnimationFrame(() => {
+      innerFrame = window.requestAnimationFrame(() => {
+        publishMessageListEntryGauges();
+      });
+    });
+
+    return () => {
+      window.cancelAnimationFrame(outerFrame);
+      window.cancelAnimationFrame(innerFrame);
+    };
+  }, [
+    conversationId,
+    editingId,
+    listEntries,
+    loadingOlder,
+    messages.length,
+    publishMessageListEntryGauges,
+    showInitialLoading,
+    virtualListEnabled,
+  ]);
+
+  const handleRangeChanged = useCallback(
+    (range: ListRange) => {
+      if (!isPerfEnabled() || !virtualListEnabled) {
+        return;
+      }
+
+      const visible = Math.max(0, range.endIndex - range.startIndex + 1);
+      perfSetGauge('messageList:virtuosoVisibleRows', visible);
+      publishMessageListEntryGauges();
+    },
+    [publishMessageListEntryGauges, virtualListEnabled],
+  );
 
   const startEdit = useCallback((message: MessageItem) => {
     setEditingId(message.id);
@@ -1357,6 +1759,142 @@ export function MessageList({
     }
   }, [editDraft, editSaving, editingId, onEditMessage]);
 
+  const renderListEntry = useCallback(
+    (entry: MessageListEntry) => {
+      if (entry.kind === 'date') {
+        return <DateDivider label={entry.label} />;
+      }
+
+      if (entry.kind === 'unread') {
+        return <UnreadDivider />;
+      }
+
+      const message = entry.message;
+
+      return (
+        <MessageRow
+          message={message}
+          replyTarget={replyTargetByMessageId.get(message.id) ?? null}
+          isHighlighted={highlightedMessageIds.includes(message.id)}
+          currentUserId={currentUserId}
+          highlightTerm={highlightTerm}
+          conversationId={conversationId}
+          expandedThreadMessageId={expandedThreadMessageId}
+          editingId={editingId}
+          editDraft={editDraft}
+          editSaving={editSaving}
+          onEditDraftChange={setEditDraft}
+          onStartEdit={startEdit}
+          onCancelEdit={cancelEdit}
+          onSaveEdit={saveEdit}
+          onAddReaction={onAddReaction}
+          onReplyMessage={onReplyMessage}
+          onAiReplyMessage={onAiReplyMessage}
+          aiReplyLoadingMessageId={aiReplyLoadingMessageId}
+          onReplyInThread={onReplyInThread}
+          onJumpToMessage={onJumpToMessage}
+          onEditMessage={onEditMessage}
+          onDeleteMessage={onDeleteMessage}
+          onForwardMessage={onForwardMessage}
+          onPinMessage={onPinMessage}
+          onSaveMessage={onSaveMessage}
+          onUnsaveMessage={onUnsaveMessage}
+          savedMessageIds={savedMessageIds}
+          onRetryMessage={onRetryMessage}
+          onSendThreadMessage={onSendThreadMessage}
+          onVotePoll={onVotePoll}
+          threadsEnabled={threadsEnabled}
+          showReactionAuthors={showReactionAuthors}
+          allowMessageAppear={allowMessageAppear}
+          conversationDetails={conversationDetails}
+          conversationKind={conversationKind}
+          hideIncomingSenderMeta={hideIncomingSenderMeta}
+          sendProgressByMessageId={sendProgressByMessageId}
+        />
+      );
+    },
+    [
+      aiReplyLoadingMessageId,
+      allowMessageAppear,
+      conversationDetails,
+      conversationId,
+      conversationKind,
+      currentUserId,
+      editDraft,
+      editSaving,
+      editingId,
+      expandedThreadMessageId,
+      hideIncomingSenderMeta,
+      highlightTerm,
+      highlightedMessageIds,
+      onAddReaction,
+      onAiReplyMessage,
+      onDeleteMessage,
+      onEditMessage,
+      onForwardMessage,
+      onJumpToMessage,
+      onPinMessage,
+      onReplyInThread,
+      onReplyMessage,
+      onRetryMessage,
+      onSaveMessage,
+      onSendThreadMessage,
+      onUnsaveMessage,
+      onVotePoll,
+      replyTargetByMessageId,
+      savedMessageIds,
+      saveEdit,
+      setEditDraft,
+      sendProgressByMessageId,
+      showReactionAuthors,
+      startEdit,
+      cancelEdit,
+      threadsEnabled,
+    ],
+  );
+
+  const virtuosoComponents = useMemo((): Components<MessageListEntry> => {
+    return {
+      Scroller: messageListVirtuosoScroller,
+      List: messageListVirtuosoList,
+      Item: MessageListVirtuosoItem,
+      Header: () =>
+        loadingOlder ? (
+          <div
+            className="box-border flex w-full max-w-full justify-center px-6 py-2 text-xs text-app-muted"
+            role="status"
+          >
+            Loading earlier messages…
+          </div>
+        ) : null,
+      Footer: () => (
+        <div className="box-border w-full max-w-full px-6">
+          {peerBlockedByCurrentUser ? <BlockedByYouDivider key="blocked-by-you" /> : null}
+          <div ref={bottomAnchorRef} aria-hidden="true" className="h-px shrink-0" />
+        </div>
+      ),
+    };
+  }, [loadingOlder, peerBlockedByCurrentUser]);
+
+  const attachScrollContainerRef = useCallback((ref: HTMLElement | null) => {
+    scrollContainerRef.current = ref instanceof HTMLDivElement ? ref : null;
+  }, []);
+
+  const virtuosoItemContent = useCallback(
+    (_index: number, entry: MessageListEntry) => (
+      <div className="box-border w-full min-w-0 max-w-full px-6 pb-2.5">{renderListEntry(entry)}</div>
+    ),
+    [renderListEntry],
+  );
+
+  const virtuosoInitialTopIndex = useMemo(() => {
+    if (virtuosoMountScrollTop !== undefined) {
+      return 0;
+    }
+
+    return Math.max(0, listEntries.length - 1);
+  }, [listEntries.length, virtuosoMountScrollTop]);
+
   if (showInitialLoading) {
     return <MessageListSkeleton />;
   }
@@ -1392,74 +1930,49 @@ export function MessageList({
         </div>
       ) : null}
 
-      <div
-        ref={scrollContainerRef}
-        className="message-list-scroll flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 py-4"
-      >
-        <div ref={contentRef} className="flex flex-col gap-2.5">
-        {loadingOlder ? (
-          <div className="flex justify-center py-2 text-xs text-app-muted" role="status">
-            Loading earlier messages…
+      {virtualListEnabled ? (
+        <Virtuoso
+          key={conversationId ?? 'message-list'}
+          ref={virtuosoRef}
+          className="flex min-h-0 min-w-0 w-full flex-1 flex-col"
+          style={{ minHeight: 0, height: '100%', width: '100%', maxWidth: '100%' }}
+          data={listEntries}
+          firstItemIndex={virtuosoFirstItemIndex}
+          computeItemKey={(_index, entry) => entry.key}
+          components={virtuosoComponents}
+          scrollerRef={attachScrollContainerRef}
+          initialTopMostItemIndex={virtuosoInitialTopIndex}
+          initialScrollTop={virtuosoMountScrollTop}
+          alignToBottom={virtuosoAlignToBottom}
+          atBottomThreshold={STICK_TO_BOTTOM_THRESHOLD_PX}
+          atBottomStateChange={handleAtBottomStateChange}
+          followOutput={handleFollowOutput}
+          startReached={handleStartReached}
+          totalListHeightChanged={handleTotalListHeightChanged}
+          rangeChanged={handleRangeChanged}
+          defaultItemHeight={80}
+          increaseViewportBy={{ top: 320, bottom: 480 }}
+          itemContent={virtuosoItemContent}
+        />
+      ) : (
+        <div
+          ref={scrollContainerRef}
+          className="message-list-scroll flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 py-4"
+        >
+          <div ref={contentRef} className="flex flex-col gap-2.5">
+            {loadingOlder ? (
+              <div className="flex justify-center py-2 text-xs text-app-muted" role="status">
+                Loading earlier messages…
+              </div>
+            ) : null}
+            {listEntries.map((entry) => (
+              <div key={entry.key}>{renderListEntry(entry)}</div>
+            ))}
+            {peerBlockedByCurrentUser ? <BlockedByYouDivider key="blocked-by-you" /> : null}
+            <div ref={bottomAnchorRef} aria-hidden="true" className="h-px shrink-0" />
           </div>
-        ) : null}
-        {listEntries.map((entry) => {
-          if (entry.kind === 'date') {
-            return <DateDivider key={entry.key} label={entry.label} />;
-          }
-
-          if (entry.kind === 'unread') {
-            return <UnreadDivider key={entry.key} />;
-          }
-
-          const message = entry.message;
-
-          return (
-            <MessageRow
-              key={entry.key}
-              message={message}
-              replyTarget={replyTargetByMessageId.get(message.id) ?? null}
-              isHighlighted={highlightedMessageIds.includes(message.id)}
-              currentUserId={currentUserId}
-              highlightTerm={highlightTerm}
-              conversationId={conversationId}
-              expandedThreadMessageId={expandedThreadMessageId}
-              editingId={editingId}
-              editDraft={editDraft}
-              editSaving={editSaving}
-              onEditDraftChange={setEditDraft}
-              onStartEdit={startEdit}
-              onCancelEdit={cancelEdit}
-              onSaveEdit={saveEdit}
-              onAddReaction={onAddReaction}
-              onReplyMessage={onReplyMessage}
-              onAiReplyMessage={onAiReplyMessage}
-              aiReplyLoadingMessageId={aiReplyLoadingMessageId}
-              onReplyInThread={onReplyInThread}
-              onJumpToMessage={onJumpToMessage}
-              onEditMessage={onEditMessage}
-              onDeleteMessage={onDeleteMessage}
-              onForwardMessage={onForwardMessage}
-              onPinMessage={onPinMessage}
-              onSaveMessage={onSaveMessage}
-              onUnsaveMessage={onUnsaveMessage}
-              savedMessageIds={savedMessageIds}
-              onRetryMessage={onRetryMessage}
-              onSendThreadMessage={onSendThreadMessage}
-              onVotePoll={onVotePoll}
-              threadsEnabled={threadsEnabled}
-              showReactionAuthors={showReactionAuthors}
-              allowMessageAppear={allowMessageAppear}
-              conversationDetails={conversationDetails}
-              conversationKind={conversationKind}
-              hideIncomingSenderMeta={hideIncomingSenderMeta}
-              sendProgressByMessageId={sendProgressByMessageId}
-            />
-          );
-        })}
-        {peerBlockedByCurrentUser ? <BlockedByYouDivider key="blocked-by-you" /> : null}
-        <div ref={bottomAnchorRef} aria-hidden="true" className="h-px shrink-0" />
         </div>
-      </div>
+      )}
     </MessageListSurface>
   );
 }

@@ -224,6 +224,10 @@ export function perfIncrement(label: string): void {
   increment(label);
 }
 
+export function perfSetGauge(label: string, value: number): void {
+  setGauge(label, value);
+}
+
 /** Dev-only: call when a presence refresh begins (after validating user id list). */
 export function perfPresenceRefreshEnter(): void {
   if (!isPerfEnabled()) {

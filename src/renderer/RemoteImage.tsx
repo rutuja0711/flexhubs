@@ -5,6 +5,7 @@ import {
   peekAuthenticatedMediaUrl,
   resolveAuthenticatedMediaUrl,
 } from './authenticatedMedia';
+import { notifyMessageListVirtuosoLayoutSync } from './chat/messageListVirtuosoSync';
 
 type RemoteImageProps = {
   src: string | null | undefined;
@@ -41,9 +42,30 @@ export function RemoteImage({
 }: RemoteImageProps) {
   const hostRef = useRef<HTMLSpanElement>(null);
   const logicalSrcRef = useRef<string | null>(null);
+  const onErrorRef = useRef(onError);
   const [shouldLoad, setShouldLoad] = useState(loading === 'eager');
   const [displaySrc, setDisplaySrc] = useState<string | null>(() => resolveImmediateSrc(src));
   const [hasError, setHasError] = useState(false);
+  const displaySrcRef = useRef(displaySrc);
+  const hasErrorRef = useRef(hasError);
+
+  onErrorRef.current = onError;
+  displaySrcRef.current = displaySrc;
+  hasErrorRef.current = hasError;
+
+  const commitDisplaySrc = (next: string | null) => {
+    if (displaySrcRef.current !== next) {
+      displaySrcRef.current = next;
+      setDisplaySrc(next);
+    }
+  };
+
+  const commitHasError = (next: boolean) => {
+    if (hasErrorRef.current !== next) {
+      hasErrorRef.current = next;
+      setHasError(next);
+    }
+  };
 
   useEffect(() => {
     if (loading === 'eager') {
@@ -87,8 +109,8 @@ export function RemoteImage({
     if (!shouldLoad || !src?.trim()) {
       if (!src?.trim()) {
         logicalSrcRef.current = null;
-        setDisplaySrc(null);
-        setHasError(false);
+        commitDisplaySrc(null);
+        commitHasError(false);
       }
       return;
     }
@@ -99,45 +121,45 @@ export function RemoteImage({
 
     if (canUseDirectly(normalized) || !isFlexHubsHostedAssetUrl(normalized)) {
       logicalSrcRef.current = logicalKey;
-      setHasError(false);
-      setDisplaySrc(normalized);
+      commitHasError(false);
+      commitDisplaySrc(normalized);
       return;
     }
 
     const cached = peekAuthenticatedMediaUrl(normalized);
     if (cached) {
       logicalSrcRef.current = logicalKey;
-      setHasError(false);
-      setDisplaySrc(cached);
+      commitHasError(false);
+      commitDisplaySrc(cached);
       return;
     }
 
     if (logicalSrcRef.current !== logicalKey) {
-      setDisplaySrc(null);
+      commitDisplaySrc(null);
     }
     logicalSrcRef.current = logicalKey;
-    setHasError(false);
+    commitHasError(false);
 
     void resolveAuthenticatedMediaUrl(src)
       .then((nextSrc) => {
         if (!cancelled && nextSrc !== normalized) {
-          setDisplaySrc(nextSrc);
+          commitDisplaySrc(nextSrc);
         } else if (!cancelled) {
-          setHasError(true);
-          onError?.();
+          commitHasError(true);
+          onErrorRef.current?.();
         }
       })
       .catch(() => {
         if (!cancelled) {
-          setHasError(true);
-          onError?.();
+          commitHasError(true);
+          onErrorRef.current?.();
         }
       });
 
     return () => {
       cancelled = true;
     };
-  }, [shouldLoad, src, onError]);
+  }, [shouldLoad, src]);
 
   if (hasError) {
     return null;
@@ -152,9 +174,12 @@ export function RemoteImage({
           loading={loading}
           decoding="async"
           className={className}
+          onLoad={() => {
+            notifyMessageListVirtuosoLayoutSync();
+          }}
           onError={() => {
-            setHasError(true);
-            onError?.();
+            commitHasError(true);
+            onErrorRef.current?.();
           }}
         />
       ) : (
