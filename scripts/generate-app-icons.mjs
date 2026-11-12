@@ -3,7 +3,7 @@
  * Build platform icons from the single source asset: assets/logo-symbol.png
  * (transparent FlexHubs mark). Run after updating the PNG: npm run generate:icons
  */
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -50,18 +50,8 @@ function generateIcnsDarwin() {
 }
 
 function generateIcoWithPython() {
-  const script = `
-from PIL import Image
-src = r"${sourcePng.replace(/\\/g, '\\\\')}"
-out = r"${icoOut.replace(/\\/g, '\\\\')}"
-im = Image.open(src).convert("RGBA")
-sizes = [16, 24, 32, 48, 64, 128, 256]
-size_pairs = [(s, s) for s in sizes]
-master = im.resize((256, 256), Image.Resampling.LANCZOS)
-master.save(out, format="ICO", sizes=size_pairs)
-print("Wrote", out, "with sizes", sizes)
-`;
-  execSync(`python3 -c ${JSON.stringify(script)}`, { stdio: 'inherit', cwd: projectRoot });
+  const scriptPath = path.join(projectRoot, 'scripts', 'generate-ico.py');
+  execFileSync('python3', [scriptPath], { stdio: 'inherit', cwd: projectRoot });
 }
 
 function syncRendererPublicAssets() {
