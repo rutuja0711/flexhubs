@@ -1,5 +1,8 @@
+import { app } from 'electron';
 import type { LoginResult, MeSuccess } from '../shared/auth';
 import { ME_URL } from '../shared/auth';
+
+const logMeApi = !app.isPackaged && process.env.FLEXHUBS_LOG_API === '1';
 
 function readErrorMessage(data: unknown, status: number): string {
   if (data && typeof data === 'object' && 'error' in data && typeof data.error === 'string') {
@@ -30,10 +33,10 @@ export async function performGetMe(token: string): Promise<LoginResult> {
       data = {} as MeSuccess & { error?: string };
     }
 
-    console.log('[Me API] status:', response.status);
-    console.log('[Me API] response:', data);
-
     if (!response.ok) {
+      if (logMeApi) {
+        console.warn('[Me API] status:', response.status, data.error ?? data);
+      }
       return {
         ok: false,
         error: readErrorMessage(data, response.status),
@@ -43,7 +46,9 @@ export async function performGetMe(token: string): Promise<LoginResult> {
 
     return { ok: true, data };
   } catch (error) {
-    console.error('[Me API] request failed:', error);
+    if (logMeApi) {
+      console.error('[Me API] request failed:', error);
+    }
     return {
       ok: false,
       error: 'Unable to reach the server. Check your connection and try again.',

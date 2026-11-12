@@ -323,11 +323,12 @@ export function ContactInfoPanel({
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="flex flex-col items-center pt-8 pb-6 px-4">
-          <div className="relative mb-3 flex items-center justify-center h-[88px] w-[88px]">
+          <div className="relative isolate mb-3 shrink-0">
             <Avatar
               imageUrl={visibleProfile?.avatarUrl ?? conversation.avatarUrl ?? null}
               initials={profile?.avatarInitials ?? initialsFromName(displayName)}
               size="xl"
+              loading="eager"
             />
           </div>
           <div className="flex items-center gap-1 mb-1">

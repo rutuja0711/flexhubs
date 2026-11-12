@@ -148,17 +148,18 @@ type MessageRowProps = {
   expandedThreadMessageId?: string | null;
   editingId: string | null;
   editDraft: string;
+  editSaving?: boolean;
   onEditDraftChange: (value: string) => void;
   onStartEdit: (message: MessageItem) => void;
   onCancelEdit: () => void;
-  onSaveEdit: () => void;
+  onSaveEdit: () => void | Promise<void>;
   onAddReaction: (messageId: string, emoji: string) => void;
   onReplyMessage: (messageId: string) => void;
   onAiReplyMessage?: (messageId: string) => void;
   aiReplyLoadingMessageId?: string | null;
   onReplyInThread: (messageId: string) => void;
   onJumpToMessage?: (messageId: string) => void;
-  onEditMessage: (messageId: string, content: string) => void;
+  onEditMessage: (messageId: string, content: string) => void | Promise<boolean>;
   onDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
   onForwardMessage: (messageId: string) => void;
   onPinMessage: (messageId: string, isPinned: boolean) => void;
@@ -354,9 +355,6 @@ function MessageTimeInline({
     >
       {message.editedAt ? <span className="lowercase">edited</span> : null}
       {message.createdAt ? formatConversationTimestamp(message.createdAt) : null}
-      {message.isOwn && message.status === 'sending' ? (
-        <span className="text-[10px] italic opacity-75">Sending…</span>
-      ) : null}
       {message.isOwn && message.status === 'seen' ? <DoubleCheckIcon /> : null}
       {message.isOwn && message.status === 'delivered' ? (
         <FiCheck className="text-[11px]" strokeWidth={2.5} aria-hidden="true" />
@@ -432,6 +430,7 @@ const MessageRow = memo(function MessageRow({
   expandedThreadMessageId,
   editingId,
   editDraft,
+  editSaving = false,
   onEditDraftChange,
   onStartEdit,
   onCancelEdit,
@@ -587,7 +586,7 @@ const MessageRow = memo(function MessageRow({
           })()
         ) : null}
         {isEditing ? (
-          <div className="flex flex-col gap-1 items-end">
+          <div className={`flex flex-col gap-1 ${message.isOwn ? 'items-end' : 'items-start'}`}>
             <div className={bubbleClassName + " p-0 overflow-hidden grid"}>
               {/* Invisible div to perfectly size the parent bubble */}
               <div className="invisible col-start-1 row-start-1 min-w-[200px] whitespace-pre-wrap break-words px-3.5 py-2 text-sm leading-relaxed">
@@ -596,6 +595,18 @@ const MessageRow = memo(function MessageRow({
               <textarea
                 value={editDraft}
                 onChange={(event) => onEditDraftChange(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    onCancelEdit();
+                    return;
+                  }
+
+                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                    event.preventDefault();
+                    void onSaveEdit();
+                  }
+                }}
                 className="col-start-1 row-start-1 h-full w-full resize-none bg-transparent px-3.5 py-2 text-sm leading-relaxed text-inherit outline-none overflow-hidden"
                 autoFocus
               />
@@ -605,15 +616,19 @@ const MessageRow = memo(function MessageRow({
                 type="button"
                 className="rounded-lg px-3 py-1.5 text-xs text-app-muted hover:bg-app-chat-hover transition-colors"
                 onClick={onCancelEdit}
+                disabled={editSaving}
               >
                 Cancel
               </button>
               <button
                 type="button"
-                className="rounded-lg bg-accent/80 hover:bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors"
-                onClick={onSaveEdit}
+                className="rounded-lg bg-accent/80 hover:bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-60"
+                onClick={() => {
+                  void onSaveEdit();
+                }}
+                disabled={editSaving || !editDraft.trim()}
               >
-                Save
+                {editSaving ? 'Saving…' : 'Save'}
               </button>
             </div>
           </div>
@@ -776,7 +791,7 @@ type MessageListProps = {
   aiReplyLoadingMessageId?: string | null;
   onReplyInThread: (messageId: string) => void;
   onJumpToMessage?: (messageId: string) => void;
-  onEditMessage: (messageId: string, content: string) => void;
+  onEditMessage: (messageId: string, content: string) => void | Promise<boolean>;
   onDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
   onForwardMessage: (messageId: string) => void;
   onPinMessage: (messageId: string, isPinned: boolean) => void;
@@ -848,6 +863,8 @@ export function MessageList({
 }: MessageListProps) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
+  const [editSaving, setEditSaving] = useState(false);
+  const editingOriginalRef = useRef('');
   const [allowMessageAppear, setAllowMessageAppear] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -1262,22 +1279,48 @@ export function MessageList({
   const startEdit = useCallback((message: MessageItem) => {
     setEditingId(message.id);
     setEditDraft(message.content);
+    editingOriginalRef.current = message.content;
   }, []);
 
   const cancelEdit = useCallback(() => {
     setEditingId(null);
     setEditDraft('');
+    editingOriginalRef.current = '';
   }, []);
 
-  const saveEdit = useCallback(() => {
-    if (!editingId || !editDraft.trim()) {
+  const saveEdit = useCallback(async () => {
+    if (!editingId || editSaving) {
       return;
     }
 
-    onEditMessage(editingId, editDraft.trim());
-    setEditingId(null);
-    setEditDraft('');
-  }, [editDraft, editingId, onEditMessage]);
+    const nextContent = editDraft.trim();
+
+    if (!nextContent) {
+      return;
+    }
+
+    if (nextContent === editingOriginalRef.current.trim()) {
+      setEditingId(null);
+      setEditDraft('');
+      editingOriginalRef.current = '';
+      return;
+    }
+
+    setEditSaving(true);
+
+    try {
+      const result = await onEditMessage(editingId, nextContent);
+      if (result === false) {
+        return;
+      }
+
+      setEditingId(null);
+      setEditDraft('');
+      editingOriginalRef.current = '';
+    } finally {
+      setEditSaving(false);
+    }
+  }, [editDraft, editSaving, editingId, onEditMessage]);
 
   if (showInitialLoading) {
     return <MessageListSkeleton />;
@@ -1347,6 +1390,7 @@ export function MessageList({
               expandedThreadMessageId={expandedThreadMessageId}
               editingId={editingId}
               editDraft={editDraft}
+              editSaving={editSaving}
               onEditDraftChange={setEditDraft}
               onStartEdit={startEdit}
               onCancelEdit={cancelEdit}

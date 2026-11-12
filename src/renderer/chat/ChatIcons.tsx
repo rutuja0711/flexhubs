@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react';
 import { AppLogoMark } from '../brand/AppLogo';
+import { normalizeUploadUrl } from '../../shared/profile';
 import { RemoteImage } from '../RemoteImage';
 
 export function FlexLogo({ className = 'h-10 w-10' }: { className?: string }) {
@@ -351,6 +352,7 @@ export function Avatar({
   loading?: 'eager' | 'lazy';
 }) {
   const [failed, setFailed] = useState(false);
+  const imageKey = imageUrl ? normalizeUploadUrl(imageUrl) : '';
   const sizeClass =
     size === 'xs'
       ? 'h-5 w-5 text-[9px] font-bold'
@@ -364,22 +366,18 @@ export function Avatar({
 
   useEffect(() => {
     setFailed(false);
-  }, [imageUrl]);
+  }, [imageKey]);
 
   if (imageUrl && !failed) {
     return (
-      <div className={`relative overflow-visible ${sizeClass}`}>
-        <div
-          className={`absolute inset-0 z-0 flex items-center justify-center rounded-full bg-app-avatar-fallback text-app-text ring-1 ring-white/10 shadow-sm ${sizeClass}`}
-          aria-hidden
-        >
-          {initials}
-        </div>
+      <div
+        className={`relative shrink-0 overflow-hidden rounded-full bg-app-chat-bg ${sizeClass}`}
+      >
         <RemoteImage
           src={imageUrl}
           alt=""
           loading={loading}
-          className={`relative z-[1] ${sizeClass} rounded-full object-cover ring-1 ring-white/10 shadow-sm`}
+          className={`block h-full w-full object-cover object-center`}
           onError={() => setFailed(true)}
         />
       </div>

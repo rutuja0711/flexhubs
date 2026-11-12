@@ -1,4 +1,4 @@
-import { resolveAvatarUrl } from './profile';
+import { normalizeUploadUrl, resolveAvatarUrl } from './profile';
 import { decoratePreviewText, formatMessagePreview, normalizeMessage } from './messages';
 
 export type ConversationKind = 'direct' | 'hub';
@@ -1014,13 +1014,23 @@ export function areConversationSidebarListsEqual(
 
 export function seedDraftPreviewCache(
   conversations: ConversationItem[],
-  cache: Record<string, string>,
+  cache: Record<string, string | null | undefined>,
 ): void {
   for (const conversation of conversations) {
+    const conversationId = conversation.id;
+
+    if (
+      Object.prototype.hasOwnProperty.call(cache, conversationId) &&
+      cache[conversationId] === null
+    ) {
+      // Client cleared this draft (e.g. after send); don't resurrect from stale API data.
+      continue;
+    }
+
     const preview = conversation.draftPreview?.trim();
 
     if (preview) {
-      cache[conversation.id] = preview;
+      cache[conversationId] = preview;
     }
   }
 }
@@ -2085,6 +2095,33 @@ export function isGeneratedAvatarUrl(url: string | null | undefined): boolean {
   return /dicebear\.com/i.test(url);
 }
 
+/** Prefer a stable upload URL over a generated avatar when sources disagree. */
+export function pickPreferredAvatarUrl(
+  incoming: string | null | undefined,
+  current: string | null | undefined,
+): string | null {
+  const next = incoming?.trim() ? normalizeUploadUrl(incoming.trim()) : null;
+  const existing = current?.trim() ? normalizeUploadUrl(current.trim()) : null;
+
+  if (!next) {
+    return existing;
+  }
+
+  if (!existing || next === existing) {
+    return next;
+  }
+
+  if (!isGeneratedAvatarUrl(next)) {
+    return next;
+  }
+
+  if (isGeneratedAvatarUrl(existing)) {
+    return next;
+  }
+
+  return existing;
+}
+
 export function enrichSidebarConversationAvatars(
   conversations: ConversationItem[],
   options: {
@@ -2143,15 +2180,12 @@ export function enrichSidebarConversationAvatars(
       preferredUrl = currentUrl;
     }
 
-    if (!preferredUrl || preferredUrl === currentUrl) {
+    const mergedUrl = pickPreferredAvatarUrl(preferredUrl, currentUrl);
+    if (!mergedUrl || mergedUrl === currentUrl) {
       return conversation;
     }
 
-    if (currentUrl && !isGeneratedAvatarUrl(currentUrl) && !rosterUrl && !cachedPeerUrl) {
-      return conversation;
-    }
-
-    return { ...conversation, avatarUrl: preferredUrl };
+    return { ...conversation, avatarUrl: mergedUrl };
   });
 }
 
@@ -2225,7 +2259,7 @@ export function patchDirectConversationMetadata(
     kind: 'direct',
     peerUserId,
     title: resolvedTitle,
-    avatarUrl: avatarUrl ?? conversation.avatarUrl,
+    avatarUrl: pickPreferredAvatarUrl(avatarUrl, conversation.avatarUrl),
     avatarInitials: initialsFromName(resolvedTitle),
   };
 }

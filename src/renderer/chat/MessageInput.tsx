@@ -25,6 +25,7 @@ import {
 } from '../chatApi';
 import { useToast } from '../ui/Toast';
 import { MessageReplyPreview } from './MessageContent';
+import { openMediaPreview } from './MediaPreviewHost';
 import { MediaPicker, type MediaPickerTab } from './MediaPicker';
 import { ScheduleMessageModal } from './ScheduleMessageModal';
 import type { ScheduledMessageItem } from '../../shared/extras';
@@ -1172,13 +1173,42 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           {pendingAttachments.map((attachment, index) => (
             <div key={index} className="flex items-start gap-3 rounded-2xl border border-app-border bg-app-surface/90 backdrop-blur-md p-2.5 shadow-sm w-full sm:w-auto min-w-[200px]">
               {attachment.isImage ? (
-                <img
-                  src={attachment.previewUrl}
-                  alt={attachment.file.name}
-                  className="h-16 w-16 shrink-0 rounded-xl object-cover"
-                />
+                <button
+                  type="button"
+                  className="shrink-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                  aria-label={`Preview ${attachment.file.name}`}
+                  onClick={() => {
+                    openMediaPreview({
+                      url: attachment.previewUrl,
+                      name: attachment.file.name,
+                      kind: 'image',
+                    });
+                  }}
+                >
+                  <img
+                    src={attachment.previewUrl}
+                    alt={attachment.file.name}
+                    className="h-16 w-16 rounded-xl object-cover"
+                  />
+                </button>
               ) : attachment.isVideo ? (
-                <video src={attachment.previewUrl} className="h-16 w-16 shrink-0 rounded-xl object-cover bg-app-chat-hover" />
+                <button
+                  type="button"
+                  className="relative shrink-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
+                  aria-label={`Preview ${attachment.file.name}`}
+                  onClick={() => {
+                    openMediaPreview({
+                      url: attachment.previewUrl,
+                      name: attachment.file.name,
+                      kind: 'video',
+                    });
+                  }}
+                >
+                  <video
+                    src={attachment.previewUrl}
+                    className="h-16 w-16 rounded-xl object-cover bg-app-chat-hover"
+                  />
+                </button>
               ) : (
                 <div className="flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-xl bg-app-chat-hover px-1 text-center">
                   <span className="text-[10px] font-bold text-app-text">{fileTypeLabel(attachment.file)}</span>

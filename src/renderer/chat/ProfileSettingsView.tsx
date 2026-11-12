@@ -5,6 +5,7 @@ import {
   FiCheck,
   FiChevronDown,
   FiClock,
+  FiEdit2,
   FiEye,
   FiLogOut,
   FiMail,
@@ -25,6 +26,7 @@ import {
   applyNotificationPreferenceUpdate,
   buildGeneratedAvatarUrl,
   mergeProfileSettingsFromUser,
+  normalizeNotificationSettings,
   normalizeUserProfile,
   resolveDndSelectValue,
   formatNotificationQuietUntil,
@@ -90,10 +92,12 @@ import {
   peekAuthenticatedMediaUrl,
   resolveAuthenticatedMediaUrl,
 } from '../authenticatedMedia';
+import { pickPreferredAvatarUrl } from '../../shared/chat';
 import { normalizeUploadUrl } from '../../shared/profile';
 
 type ProfileSettingsViewProps = {
   user: unknown;
+  sessionNotificationSettings?: ProfileSettings | null;
   onLogout: () => void;
   onUnauthorized: (status?: number) => boolean;
   onUserUpdated?: () => void;
@@ -176,7 +180,7 @@ function resolveAvatarPreviewSrc(imageUrl: string | null): string | null {
     return normalized;
   }
 
-  return peekAuthenticatedMediaUrl(normalized) ?? normalized;
+  return peekAuthenticatedMediaUrl(normalized);
 }
 
 function AvatarPreviewCircle({
@@ -192,36 +196,53 @@ function AvatarPreviewCircle({
   uploadSucceeded?: boolean;
   sizeClass?: string;
 }) {
+  const logicalSrcRef = useRef<string | null>(null);
   const [displaySrc, setDisplaySrc] = useState<string | null>(() => resolveAvatarPreviewSrc(imageUrl));
   const [remoteFailed, setRemoteFailed] = useState(false);
 
   useEffect(() => {
-    setRemoteFailed(false);
-    const immediate = resolveAvatarPreviewSrc(imageUrl);
-    setDisplaySrc(immediate);
-
     if (!imageUrl?.trim()) {
+      logicalSrcRef.current = null;
+      setRemoteFailed(false);
+      setDisplaySrc(null);
       return;
     }
 
     const normalized = normalizeUploadUrl(imageUrl.trim());
+    const logicalKey = normalized;
+
     if (
-      !isFlexHubsHostedAssetUrl(normalized) ||
       normalized.startsWith('blob:') ||
-      normalized.startsWith('data:')
+      normalized.startsWith('data:') ||
+      !isFlexHubsHostedAssetUrl(normalized)
     ) {
+      logicalSrcRef.current = logicalKey;
+      setRemoteFailed(false);
+      setDisplaySrc(normalized);
       return;
     }
 
-    if (peekAuthenticatedMediaUrl(normalized)) {
+    const cached = peekAuthenticatedMediaUrl(normalized);
+    if (cached) {
+      logicalSrcRef.current = logicalKey;
+      setRemoteFailed(false);
+      setDisplaySrc(cached);
       return;
     }
+
+    if (logicalSrcRef.current !== logicalKey) {
+      setDisplaySrc(null);
+    }
+    logicalSrcRef.current = logicalKey;
+    setRemoteFailed(false);
 
     let cancelled = false;
     void resolveAuthenticatedMediaUrl(imageUrl)
       .then((nextSrc) => {
-        if (!cancelled) {
+        if (!cancelled && nextSrc !== normalized) {
           setDisplaySrc(nextSrc);
+        } else if (!cancelled) {
+          setRemoteFailed(true);
         }
       })
       .catch(() => {
@@ -301,6 +322,7 @@ function NavButton({ icon, label, active, onClick, danger }: { icon: ReactNode, 
 
 export function ProfileSettingsView({
   user,
+  sessionNotificationSettings = null,
   onLogout,
   onUnauthorized,
   onUserUpdated,
@@ -335,6 +357,7 @@ export function ProfileSettingsView({
   const [selectedStyle, setSelectedStyle] = useState('notionists');
   const [avatarSeed, setAvatarSeed] = useState('');
   const [usernameDraft, setUsernameDraft] = useState('');
+  const [usernameEditing, setUsernameEditing] = useState(false);
   const [savedUsername, setSavedUsername] = useState('');
   const [snoozeValue, setSnoozeValue] = useState('off');
   const [dndValue, setDndValue] = useState('off');
@@ -472,7 +495,9 @@ export function ProfileSettingsView({
       setSavedStatusMessage(nextProfile.statusMessage);
       setManualPresenceStatus(nextProfile.status, nextProfile.statusMessage);
       setTimezone(nextProfile.timezone);
-      setAvatarUrl(nextProfile.avatarUrl ?? sessionAvatarUrl);
+      setAvatarUrl((current) =>
+        pickPreferredAvatarUrl(nextProfile.avatarUrl ?? sessionAvatarUrl, current),
+      );
       setAvatarTab(nextProfile.avatarMode ?? 'avatar');
       setSelectedStyle(nextProfile.avatarStyle ?? 'notionists');
       setAvatarSeed(nextProfile.avatarSeed ?? nextProfile.username ?? nextProfile.id ?? 'flexhubs');
@@ -507,11 +532,32 @@ export function ProfileSettingsView({
     [avatarStyles],
   );
 
+  const buildSessionSnapshot = useCallback(
+    (
+      userPayload: unknown,
+      settingsSeed?: ProfileSettings | null,
+      styles: AvatarStyleItem[] = [],
+    ) => {
+      const baseSettings = settingsSeed ?? normalizeNotificationSettings({});
+      let mergedSettings = mergeProfileSettingsFromUser(userPayload, baseSettings);
+      const storedPrivacy = readStoredPrivacySettings(
+        normalizeUserProfile(userPayload, mergedSettings).id,
+      );
+      if (storedPrivacy) {
+        mergedSettings = mergePrivacySettings(mergedSettings, storedPrivacy);
+      }
+      const nextProfile = normalizeUserProfile(userPayload, mergedSettings);
+      return { nextProfile, mergedSettings, nextStyles: styles };
+    },
+    [],
+  );
+
   const refreshProfile = useCallback(async (options?: { silent?: boolean }) => {
     const cachedBeforeFetch = readProfileCache();
     const hasCachedProfile = Boolean(cachedBeforeFetch?.profile);
+    const hasSessionUser = Boolean(user);
 
-    if (!options?.silent && !hasCachedProfile) {
+    if (!options?.silent && !hasCachedProfile && !hasSessionUser) {
       setLoading(true);
     }
 
@@ -523,34 +569,53 @@ export function ProfileSettingsView({
       loadAvatarStyles(),
     ]);
 
-    if (!userResult.ok) {
+    const userPayload = userResult.ok
+      ? (userResult.data.user ?? userResult.data)
+      : user;
+
+    if (!userPayload) {
       if (onUnauthorized(userResult.status)) {
-        if (!options?.silent && !hasCachedProfile) setLoading(false);
+        setLoading(false);
         return;
       }
       if (!hasCachedProfile) {
-        setError(userResult.error);
+        setError(userResult.error || 'Unable to load profile.');
       }
-      if (!options?.silent && !hasCachedProfile) setLoading(false);
+      setLoading(false);
       return;
     }
 
-    if (!settingsResult.ok) {
-      if (onUnauthorized(settingsResult.status)) {
-        if (!options?.silent && !hasCachedProfile) setLoading(false);
-        return;
-      }
-      if (!hasCachedProfile) {
-        setError(settingsResult.error);
-      }
-      if (!options?.silent && !hasCachedProfile) setLoading(false);
-      return;
+    if (
+      !userResult.ok &&
+      !onUnauthorized(userResult.status) &&
+      !options?.silent &&
+      userResult.error
+    ) {
+      setActionError(userResult.error);
     }
 
-    const userPayload = userResult.data.user ?? userResult.data;
-    let mergedSettings = mergeProfileSettingsFromUser(userPayload, settingsResult.data);
+    let mergedSettings: ProfileSettings;
+    if (settingsResult.ok) {
+      mergedSettings = mergeProfileSettingsFromUser(userPayload, settingsResult.data);
+    } else if (onUnauthorized(settingsResult.status)) {
+      setLoading(false);
+      return;
+    } else {
+      const fallbackSettings =
+        sessionNotificationSettings ??
+        cachedBeforeFetch?.settings ??
+        settings ??
+        normalizeNotificationSettings({});
+      mergedSettings = mergeProfileSettingsFromUser(userPayload, fallbackSettings);
+      if (!options?.silent && settingsResult.error) {
+        setActionError(settingsResult.error);
+      }
+    }
+
     const nextProfile = normalizeUserProfile(userPayload, mergedSettings);
-    const nextStyles = stylesResult.ok ? stylesResult.data : cachedBeforeFetch?.avatarStyles ?? [];
+    const nextStyles = stylesResult.ok
+      ? stylesResult.data
+      : cachedBeforeFetch?.avatarStyles ?? avatarStyles;
 
     if (cachedBeforeFetch?.settings) {
       mergedSettings = mergePrivacySettings(mergedSettings, cachedBeforeFetch.settings);
@@ -562,7 +627,6 @@ export function ProfileSettingsView({
     }
 
     applyProfileSnapshot(nextProfile, mergedSettings, nextStyles);
-    setAvatarUrl(nextProfile.avatarUrl ?? getUserAvatarUrl(userPayload));
 
     writeProfileCache({
       profile: nextProfile,
@@ -570,10 +634,15 @@ export function ProfileSettingsView({
       avatarStyles: nextStyles,
     });
 
-    if (!options?.silent && !hasCachedProfile) {
-      setLoading(false);
-    }
-  }, [applyProfileSnapshot, onUnauthorized]);
+    setLoading(false);
+  }, [
+    applyProfileSnapshot,
+    avatarStyles,
+    onUnauthorized,
+    sessionNotificationSettings,
+    settings,
+    user,
+  ]);
 
   useEffect(() => {
     const cached = readProfileCache();
@@ -586,12 +655,29 @@ export function ProfileSettingsView({
       }
 
       applyProfileSnapshot(cached.profile, settingsFromCache, cached.avatarStyles);
-      setAvatarUrl(cached.profile.avatarUrl ?? sessionAvatarUrl);
+      setLoading(false);
+      void refreshProfile({ silent: true });
+      return;
+    }
+
+    if (user) {
+      const { nextProfile, mergedSettings, nextStyles } = buildSessionSnapshot(
+        user,
+        sessionNotificationSettings,
+      );
+      applyProfileSnapshot(nextProfile, mergedSettings, nextStyles);
       setLoading(false);
     }
 
-    void refreshProfile({ silent: Boolean(cached) });
-  }, [applyProfileSnapshot, refreshProfile, sessionAvatarUrl]);
+    void refreshProfile({ silent: Boolean(user) });
+  }, [
+    applyProfileSnapshot,
+    buildSessionSnapshot,
+    refreshProfile,
+    sessionAvatarUrl,
+    sessionNotificationSettings,
+    user,
+  ]);
 
   useEffect(() => {
     if (activeTab !== 'privacy') {
@@ -1084,7 +1170,10 @@ export function ProfileSettingsView({
     }
 
     const ok = await handleAvatarSave({ username: usernameDraft.trim() }, 'Username saved.');
-    if (ok) setSavedUsername(usernameDraft.trim());
+    if (ok) {
+      setSavedUsername(usernameDraft.trim());
+    }
+    return ok;
   };
 
   if (loading && !profile) {
@@ -1101,13 +1190,27 @@ export function ProfileSettingsView({
     );
   }
 
-  if (error || !profile || !settings) {
+  if (error && !profile) {
     return (
       <div className="flex h-full flex-col items-center justify-center bg-app-chat-bg px-8 text-center">
         <p className="mb-4 text-sm text-accent-soft">{error || 'Unable to load profile.'}</p>
         <button type="button" className="rounded-[10px] border border-app-border px-4 py-2 text-sm" onClick={() => void refreshProfile()}>
           Try again
         </button>
+      </div>
+    );
+  }
+
+  if (!profile || !settings) {
+    return (
+      <div className="flex h-full flex-col gap-4 bg-app-chat-bg p-6" aria-busy="true">
+        <div className="mx-auto h-24 w-24 animate-pulse rounded-full bg-app-chat-hover" />
+        <div className="mx-auto h-4 w-40 animate-pulse rounded bg-app-chat-hover" />
+        <div className="mt-4 space-y-3">
+          {[1, 2, 3].map((item) => (
+            <div key={item} className="h-28 animate-pulse rounded-xl bg-app-surface" />
+          ))}
+        </div>
       </div>
     );
   }
@@ -1230,7 +1333,58 @@ export function ProfileSettingsView({
                     </p>
                   </div>
                   <div className="min-w-0 flex-1 text-center sm:text-left">
-                    <h3 className="text-xl font-bold tracking-tight text-app-text">{displayName}</h3>
+                    <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+                      {usernameEditing ? (
+                        <input
+                          type="text"
+                          value={usernameDraft}
+                          autoFocus
+                          onChange={(event) => setUsernameDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.preventDefault();
+                              void handleSaveUsername().then((ok) => {
+                                if (ok !== false) setUsernameEditing(false);
+                              });
+                            }
+                            if (event.key === 'Escape') {
+                              setUsernameDraft(savedUsername);
+                              setUsernameEditing(false);
+                            }
+                          }}
+                          className="max-w-full rounded-lg border border-app-border bg-app-chat-bg px-2.5 py-1 text-lg font-bold text-app-text focus:border-accent focus:outline-none"
+                        />
+                      ) : (
+                        <h3 className="text-xl font-bold tracking-tight text-app-text">{displayName}</h3>
+                      )}
+                      <button
+                        type="button"
+                        aria-label="Edit username"
+                        className="rounded-lg p-1.5 text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+                        onClick={() => {
+                          if (usernameEditing) {
+                            setUsernameDraft(savedUsername);
+                            setUsernameEditing(false);
+                            return;
+                          }
+                          setUsernameEditing(true);
+                        }}
+                      >
+                        <FiEdit2 className="h-4 w-4" aria-hidden />
+                      </button>
+                      {usernameEditing ? (
+                        <button
+                          type="button"
+                          disabled={!usernameChanged || saving || !usernameDraft.trim()}
+                          onClick={() =>
+                            void handleSaveUsername().then(() => setUsernameEditing(false))
+                          }
+                          className="rounded-lg bg-accent px-3 py-1 text-xs font-semibold text-white disabled:opacity-50"
+                        >
+                          Save
+                        </button>
+                      ) : null}
+                    </div>
                     {profile.email ? (
                       <p className="mt-1.5 flex items-center justify-center gap-2 text-sm text-app-muted sm:justify-start">
                         <FiMail className="shrink-0 opacity-80" size={14} aria-hidden="true" />
@@ -1254,31 +1408,6 @@ export function ProfileSettingsView({
                     ) : null}
                   </div>
                 </SectionCard>
-
-                {/* Basic Information */}
-                <section>
-                  <h4 className="mb-3 text-sm font-semibold text-app-text">Basic information</h4>
-                  <SectionCard className="p-5">
-                    <label className="mb-1 block text-xs font-semibold text-app-text">Username</label>
-                    <input
-                      type="text"
-                      value={usernameDraft}
-                      onChange={(event) => setUsernameDraft(event.target.value)}
-                      className="w-full rounded-lg border border-app-border bg-app-chat-bg px-3 py-2 text-sm text-app-text focus:border-accent focus:outline-none"
-                    />
-
-                    <div className="mt-4 flex justify-end">
-                      <button
-                        type="button"
-                        disabled={!usernameChanged || saving || !usernameDraft.trim()}
-                        onClick={() => void handleSaveUsername()}
-                        className="rounded-lg bg-accent px-4 py-2 text-xs font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
-                      >
-                        Save changes
-                      </button>
-                    </div>
-                  </SectionCard>
-                </section>
 
                 {/* Profile Photo */}
                 <section>

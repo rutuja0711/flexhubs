@@ -1523,6 +1523,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       const timestamp = message.createdAt || new Date().toISOString();
       const isOwn = message.isOwn || (viewerUserId ? message.senderId === viewerUserId : false);
 
+      if (isOwn) {
+        draftPreviewsRef.current[conversationId] = null;
+      }
+
       setConversations((current) =>
         applyDraftPreviews(
           sortConversations(
@@ -1537,22 +1541,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
                 message.senderName,
               );
 
-              if (conversation.isDraftPreview) {
-                return {
-                  ...conversation,
-                  messagePreview: listPreview,
-                  timestamp,
-                  unreadCount:
-                    incrementUnread && !isOwn
-                      ? Math.max(conversation.unreadCount, 0) + 1
-                      : conversation.unreadCount,
-                };
-              }
-
               return {
                 ...conversation,
                 messagePreview: listPreview,
                 subtitle: listPreview,
+                draftPreview: null,
                 isDraftPreview: false,
                 timestamp,
                 unreadCount:
@@ -2485,7 +2478,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   }, [syncNotifications]);
 
   const refreshPresence = useCallback(
-    async (userIds: string[]) => {
+    async (
+      userIds: string[],
+      options?: { snapshotMissingAsOffline?: boolean },
+    ) => {
       const unique = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
 
       if (unique.length === 0) {
@@ -2501,7 +2497,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
       const livePollHadRows = result.data.length > 0;
       const redisMode = redisPresencePollingRef.current;
-      const treatMissingAsOffline = redisMode;
+      const treatMissingAsOffline =
+        options?.snapshotMissingAsOffline ??
+        (redisMode && unique.length > 1);
 
       const { statusByUserId: liveByUserId, statusMessageByUserId } = mergePresenceItemsForRequestedUsers(
         result.data,
@@ -2513,7 +2511,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         bootstrapPresenceRef.current,
         liveByUserId,
         unique,
-        { livePollHadRows: redisMode || livePollHadRows },
+        {
+          livePollHadRows: treatMissingAsOffline && (redisMode || livePollHadRows),
+        },
       );
 
       setPresenceByUserId((current) => {
@@ -2771,10 +2771,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       const cached = getThreadCacheEntry(threadCacheRef.current, conversationId);
       const hasCache = Boolean(cached);
 
+      setThreadError('');
+      setDraftError('');
+
       if (!hasCache) {
         setThreadLoading(true);
-        setThreadError('');
-        setDraftError('');
         setActiveHubDetails(null);
         setPinnedMessageIds([]);
       }
@@ -2916,7 +2917,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             setDraftPreviewForConversation(conversationId, null);
           }
         } else if (!draftResult.ok && draftResult.status !== 404) {
-          setDraftError(draftResult.error);
+          // Keep local/cached draft; draft sync failures should not block the composer.
         } else {
           nextDraft = '';
           setDraft('');
@@ -5072,17 +5073,21 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     setDraftPreviewForConversation(conversationId, null);
     setConversations((current) => applyDraftPreviews(current));
     stopTyping(conversationId);
-    void clearChatDraft(conversationId);
     setMessages((current) => appendMessage(current, optimistic, userId));
     touchConversationWithMessage(conversationId, optimistic, false);
 
-    const result = await sendChatMessage(conversationId, content, replyToId);
+    const [result] = await Promise.all([
+      sendChatMessage(conversationId, content, replyToId),
+      clearChatDraft(conversationId),
+    ]);
 
     if (handleUnauthorized(result.status)) {
       setMessages((current) => current.filter((message) => message.id !== localId));
       draftRef.current = content;
       draftDirtyRef.current = true;
       setDraft(content);
+      setDraftPreviewForConversation(conversationId, content.trim() || null);
+      setConversations((current) => applyDraftPreviews(current));
       return;
     }
 
@@ -5091,6 +5096,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       draftRef.current = content;
       draftDirtyRef.current = true;
       setDraft(content);
+      setDraftPreviewForConversation(conversationId, content.trim() || null);
+      setConversations((current) => applyDraftPreviews(current));
       setMessages((current) => markMessageStatus(current, localId, 'failed'));
       return;
     }
@@ -5935,6 +5942,20 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         (reaction) => reaction.userId === currentUserId && reaction.emoji === emoji,
       ),
     );
+    const priorReactions = targetMessage?.reactions ?? [];
+
+    const revertOptimisticReactions = () => {
+      setMessages((current) =>
+        current.map((message) =>
+          message.id === messageId ? { ...message, reactions: priorReactions } : message,
+        ),
+      );
+      patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
+        current.map((message) =>
+          message.id === messageId ? { ...message, reactions: priorReactions } : message,
+        ),
+      );
+    };
 
     setMessages((current) => applyOptimisticReactions(current));
     patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
@@ -5948,7 +5969,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           if (handleUnauthorized(removeResult.status)) {
             return;
           }
-          setThreadError(removeResult.error);
+          toast.error(removeResult.error);
+          revertOptimisticReactions();
+          void refreshMessageReactions(selectedId, messageId);
           return;
         }
 
@@ -5987,7 +6010,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         if (handleUnauthorized(addResult.status)) {
           return;
         }
-        setThreadError(addResult.error);
+        toast.error(addResult.error);
+        revertOptimisticReactions();
+        void refreshMessageReactions(selectedId, messageId);
         return;
       }
 
@@ -6295,20 +6320,20 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     ],
   );
 
-  const handleEditMessage = async (messageId: string, content: string) => {
+  const handleEditMessage = async (messageId: string, content: string): Promise<boolean> => {
     if (!selectedId) {
-      return;
+      return false;
     }
 
     const result = await editChatMessage(selectedId, messageId, content);
 
     if (!result.ok) {
       if (handleUnauthorized(result.status)) {
-        return;
+        return false;
       }
 
-      setThreadError(result.error);
-      return;
+      toast.error(result.error || 'Could not update message.');
+      return false;
     }
 
     setMessages((current) =>
@@ -6319,6 +6344,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       ),
     );
     showActionMessage('Message updated.');
+    return true;
   };
 
   const handleDeleteMessage = async (messageId: string, scope: 'me' | 'everyone') => {
@@ -6423,7 +6449,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
       setMessages(originalMessages);
       setSavedItems(originalSaved);
-      setThreadError(result.error);
       toast.error(result.error);
       return;
     }
@@ -6498,7 +6523,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
 
-      setThreadError(result.error);
+      toast.error(result.error);
       return;
     }
 
@@ -6544,7 +6569,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
 
-      setThreadError(result.error);
+      toast.error(result.error);
       return;
     }
 
@@ -6565,7 +6590,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
 
-      setThreadError(result.error);
+      toast.error(result.error);
       return;
     }
 
@@ -6911,6 +6936,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return (
         <ProfileSettingsView
           user={user}
+          sessionNotificationSettings={notificationSettings}
           onLogout={() => void handleSignOut()}
           onUnauthorized={handleUnauthorized}
           onUserUpdated={() => {
@@ -6977,7 +7003,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           presenceByUserId={presenceByUserId}
           viewerSharePresence={normalizeUserProfile(user).shareOnlineStatus ?? true}
           onRefreshPeerPresence={(peerUserId) => {
-            void refreshPresence([peerUserId]);
+            void refreshPresence([peerUserId], { snapshotMissingAsOffline: false });
           }}
           hubDetails={selectedConversation.kind === 'hub' ? activeHubDetails : null}
           conversationDetails={activeHubDetails}

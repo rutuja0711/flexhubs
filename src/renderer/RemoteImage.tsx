@@ -40,6 +40,7 @@ export function RemoteImage({
   onError,
 }: RemoteImageProps) {
   const hostRef = useRef<HTMLSpanElement>(null);
+  const logicalSrcRef = useRef<string | null>(null);
   const [shouldLoad, setShouldLoad] = useState(loading === 'eager');
   const [displaySrc, setDisplaySrc] = useState<string | null>(() => resolveImmediateSrc(src));
   const [hasError, setHasError] = useState(false);
@@ -83,33 +84,47 @@ export function RemoteImage({
   }, [loading, src]);
 
   useEffect(() => {
-    setHasError(false);
-
     if (!shouldLoad || !src?.trim()) {
       if (!src?.trim()) {
+        logicalSrcRef.current = null;
         setDisplaySrc(null);
+        setHasError(false);
       }
       return;
     }
 
     const normalized = normalizeUploadUrl(src.trim());
+    const logicalKey = normalized;
     let cancelled = false;
 
     if (canUseDirectly(normalized) || !isFlexHubsHostedAssetUrl(normalized)) {
+      logicalSrcRef.current = logicalKey;
+      setHasError(false);
       setDisplaySrc(normalized);
       return;
     }
 
     const cached = peekAuthenticatedMediaUrl(normalized);
     if (cached) {
+      logicalSrcRef.current = logicalKey;
+      setHasError(false);
       setDisplaySrc(cached);
       return;
     }
 
+    if (logicalSrcRef.current !== logicalKey) {
+      setDisplaySrc(null);
+    }
+    logicalSrcRef.current = logicalKey;
+    setHasError(false);
+
     void resolveAuthenticatedMediaUrl(src)
       .then((nextSrc) => {
-        if (!cancelled) {
+        if (!cancelled && nextSrc !== normalized) {
           setDisplaySrc(nextSrc);
+        } else if (!cancelled) {
+          setHasError(true);
+          onError?.();
         }
       })
       .catch(() => {

@@ -9,6 +9,7 @@ import {
   readFileExtension,
 } from './attachmentFileMeta';
 import { beginChatFileDrag } from './startChatFileDrag';
+import { openMediaPreview } from './MediaPreviewHost';
 import { useAttachmentTransfer } from './useAttachmentTransfer';
 
 export function formatFileSize(bytes: number): string {
@@ -135,6 +136,31 @@ export function FileAttachmentCard({
     Boolean(url) &&
     !url.startsWith('blob:');
 
+  const canOpenPreview =
+    !isSending &&
+    Boolean(url) &&
+    (category === 'image' || category === 'video' || category === 'pdf' || url.startsWith('http'));
+
+  const openAttachmentPreview = () => {
+    if (!canOpenPreview || !url) {
+      return;
+    }
+
+    if (category === 'image') {
+      openMediaPreview({ url, name, kind: 'image' });
+      return;
+    }
+
+    if (category === 'video') {
+      openMediaPreview({ url, name, kind: 'video' });
+      return;
+    }
+
+    if (window.electronAPI?.openExternalUrl && /^https?:\/\//i.test(url)) {
+      void window.electronAPI.openExternalUrl(url);
+    }
+  };
+
   const cardSurface = isOwn
     ? 'border-white/15 bg-gradient-to-br from-white/[0.14] via-white/[0.08] to-white/[0.04] shadow-sm shadow-black/10'
     : 'border-app-border/80 bg-app-surface/95 shadow-sm shadow-black/[0.04] dark:border-accent/15 dark:bg-gradient-to-br dark:from-app-elevated dark:via-app-surface dark:to-app-elevated/80';
@@ -150,10 +176,32 @@ export function FileAttachmentCard({
   return (
     <div
       draggable={canDrag}
-      title={canDrag ? 'Drag to Desktop, Finder, or another app' : undefined}
+      role={canOpenPreview ? 'button' : undefined}
+      tabIndex={canOpenPreview ? 0 : undefined}
+      title={
+        canDrag
+          ? 'Drag to Desktop, Finder, or another app'
+          : canOpenPreview
+            ? 'Open preview'
+            : undefined
+      }
       className={`group/card relative min-w-[min(100%,300px)] max-w-sm overflow-hidden rounded-2xl border px-3 py-3 transition-shadow duration-200 hover:shadow-md ${cardSurface} ${
-        canDrag ? 'cursor-grab active:cursor-grabbing' : ''
+        canDrag ? 'cursor-grab active:cursor-grabbing' : canOpenPreview ? 'cursor-pointer' : ''
       }`}
+      onClick={() => {
+        if (canOpenPreview) {
+          openAttachmentPreview();
+        }
+      }}
+      onKeyDown={(event) => {
+        if (!canOpenPreview) {
+          return;
+        }
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          openAttachmentPreview();
+        }
+      }}
       onDragStart={(event) => beginChatFileDrag(event, url, name, { disabled: isSending })}
     >
       <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-accent/25 to-transparent opacity-80" />
@@ -205,7 +253,8 @@ export function FileAttachmentCard({
           className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-full border transition-all duration-150 active:scale-95 ${actionButton} ${
             isSending && !showSendProgress ? 'cursor-default opacity-50' : ''
           }`}
-          onClick={() => {
+          onClick={(event) => {
+            event.stopPropagation();
             void handleDownload();
           }}
         >

@@ -19,6 +19,8 @@ import {
   isViewerBlockedByPeer,
 } from '../../shared/blocking';
 import type { ConversationItem, PresenceStatus } from '../../shared/chat';
+import { canViewPresence } from '../../shared/presencePrivacy';
+import { sidebarPresenceStatusForPeer } from '../../shared/presence';
 import {
   buildConversationSnoozePayload,
   CONVERSATION_SNOOZE_OPTIONS,
@@ -84,7 +86,7 @@ type ConversationThreadProps = {
   onUnauthorized: (status?: number) => boolean;
   currentUserId: string | null;
   onAddReaction: (messageId: string, emoji: string) => void;
-  onEditMessage: (messageId: string, content: string) => void;
+  onEditMessage: (messageId: string, content: string) => void | Promise<boolean>;
   onDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
   onForwardMessage: (messageId: string, targetConversationIds: string[]) => Promise<string | null>;
   onPinMessage: (messageId: string, isPinned: boolean) => void;
@@ -260,6 +262,42 @@ export function ConversationThread({
     conversation.peerUserId != null &&
     isViewerBlockedByPeer(conversation.peerUserId, blockedByPeerIds ?? new Set());
 
+  const canViewPeerPresence =
+    isDirectContact &&
+    Boolean(conversation.peerUserId) &&
+    canViewPresence(
+      { id: currentUserId ?? '', sharePresence: viewerSharePresence ?? true },
+      {
+        id: conversation.peerUserId ?? '',
+        sharePresence: conversation.peerSharePresence ?? true,
+      },
+    );
+
+  const directPeerPresence = useMemo(() => {
+    if (!canViewPeerPresence || !conversation.peerUserId) {
+      return null;
+    }
+
+    return sidebarPresenceStatusForPeer(
+      presenceByUserId ?? new Map(),
+      conversation.peerUserId,
+      conversation.status,
+    );
+  }, [
+    canViewPeerPresence,
+    conversation.peerUserId,
+    conversation.status,
+    presenceByUserId,
+  ]);
+
+  useEffect(() => {
+    if (!isDirectContact || !conversation.peerUserId || peerBlockedViewer) {
+      return;
+    }
+
+    onRefreshPeerPresence?.(conversation.peerUserId);
+  }, [conversation.id, conversation.peerUserId, isDirectContact, onRefreshPeerPresence, peerBlockedViewer]);
+
   const subtitle = (() => {
     if (conversation.isSelf) {
       return 'Message yourself';
@@ -282,6 +320,10 @@ export function ConversationThread({
 
     if (customStatus) {
       return customStatus;
+    }
+
+    if (canViewPeerPresence && directPeerPresence) {
+      return presenceLabel(directPeerPresence) ?? 'Available';
     }
 
     return presenceLabel(conversation.status) ?? 'Available';

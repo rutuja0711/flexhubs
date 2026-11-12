@@ -15,6 +15,7 @@ import {
 import { RemoteImage } from '../RemoteImage';
 import { FileAttachmentCard } from './FileAttachmentCard';
 import { MediaMessagePreview } from './MediaMessagePreview';
+import { categorizeAttachmentFile } from './attachmentFileMeta';
 import { VoiceNoteBubble } from './VoiceNoteBubble';
 import { SendingProgressRing } from '../ui/SendingProgressRing';
 import { PollMessage } from './PollMessage';
@@ -209,6 +210,43 @@ export function MessageContent({
         }
 
         if (isDownloadableFileMedia(item) && !isVideoMediaItem(item)) {
+          const fileCategory = categorizeAttachmentFile(item.name ?? '');
+          const fileUrl = item.url ?? '';
+
+          if (fileCategory === 'image' && fileUrl) {
+            return (
+              <div key={fileUrl} className={mediaFrameClass}>
+                <MediaMessagePreview
+                  url={fileUrl}
+                  previewUrl={item.previewUrl ?? fileUrl}
+                  name={item.name ?? 'Image'}
+                  kind="image"
+                  isSending={isSending}
+                  sendProgress={sendProgress}
+                  isOwn={isOwn}
+                  canDrag={canDragChatMedia(fileUrl, isSending)}
+                />
+              </div>
+            );
+          }
+
+          if (fileCategory === 'video' && fileUrl) {
+            return (
+              <div key={fileUrl} className={mediaFrameClass}>
+                <MediaMessagePreview
+                  url={fileUrl}
+                  previewUrl={item.previewUrl ?? fileUrl}
+                  name={item.name ?? 'Video'}
+                  kind="video"
+                  isSending={isSending}
+                  sendProgress={sendProgress}
+                  isOwn={isOwn}
+                  canDrag={canDragChatMedia(fileUrl, isSending)}
+                />
+              </div>
+            );
+          }
+
           return (
             <div key={item.url}>
               <FileAttachmentCard

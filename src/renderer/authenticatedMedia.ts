@@ -103,12 +103,12 @@ function bytesToBlob(bytes: Uint8Array, mimeType: string): Blob {
 async function fetchHostedObjectUrl(normalized: string): Promise<string> {
   const token = getStoredToken();
   if (!token || !window.electronAPI?.fetchAuthenticatedMedia) {
-    return normalized;
+    throw new Error('Authenticated media is unavailable.');
   }
 
   const result = await window.electronAPI.fetchAuthenticatedMedia(token, normalized);
   if (!result.ok) {
-    return normalized;
+    throw new Error(result.error || 'Unable to load media.');
   }
 
   const payload = result.data as { bytes?: unknown; base64?: string; mimeType: string };
@@ -116,7 +116,7 @@ async function fetchHostedObjectUrl(normalized: string): Promise<string> {
     coerceMediaBytes(payload.bytes) ??
     (typeof payload.base64 === 'string' ? coerceMediaBytes({ base64: payload.base64 }) : null);
   if (!bytes) {
-    return normalized;
+    throw new Error('Media response was empty.');
   }
 
   const blob = bytesToBlob(bytes, result.data.mimeType);

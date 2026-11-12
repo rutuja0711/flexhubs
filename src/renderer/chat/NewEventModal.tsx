@@ -14,6 +14,7 @@ import {
   resolveMyEventResponse,
 } from '../../shared/extras';
 import { CalendarEventInviteActions } from './CalendarEventInviteActions';
+import { formatDateTimeLocalValue } from './scheduleDateTime';
 import {
   buildCalendarInviteesFromMentionUsers,
   mergeCalendarEventTagFields,
@@ -116,6 +117,25 @@ export function NewEventModal({
     ? resolveMyEventResponse(editEvent, viewerUserId, viewerUsername, viewerDisplayName)
     : null;
   const notesRef = useRef<HTMLTextAreaElement>(null);
+  const startsAtInputRef = useRef<HTMLInputElement>(null);
+  const minStartsAtLocal = useMemo(
+    () => formatDateTimeLocalValue(new Date(Date.now() + 60_000)),
+    [open],
+  );
+
+  const openWhenPicker = () => {
+    const input = startsAtInputRef.current;
+    if (!input || isViewOnly) {
+      return;
+    }
+
+    input.focus();
+    try {
+      input.showPicker();
+    } catch {
+      input.click();
+    }
+  };
   const [title, setTitle] = useState('');
   const [startsAtLocal, setStartsAtLocal] = useState(defaultEventDateTimeLocal());
   const [description, setDescription] = useState('');
@@ -752,28 +772,33 @@ export function NewEventModal({
               </div>
 
               <div>
-                <label className="mb-1.5 block text-xs font-medium text-app-muted">
+                <label className="mb-1.5 block text-xs font-medium text-app-muted" htmlFor="new-event-starts-at">
                   When
                 </label>
-                <div className="relative overflow-hidden rounded-xl border border-app-border bg-app-surface-input focus-within:border-accent focus-within:ring-2 focus-within:ring-accent/20">
-                  <div className="pointer-events-none flex w-full items-stretch" aria-hidden>
-                    <span className="min-w-0 flex-1 px-3.5 py-2.5 text-sm text-app-text">
-                      {formatWhenLabel(startsAtLocal)}
-                    </span>
-                    <span className="flex shrink-0 items-center border-l border-app-border px-3.5 text-app-muted">
-                      <CalendarNavIcon className="h-4 w-4" />
-                    </span>
-                  </div>
+                <div className="flex gap-2">
                   <input
+                    ref={startsAtInputRef}
+                    id="new-event-starts-at"
                     type="datetime-local"
                     value={startsAtLocal}
+                    min={minStartsAtLocal}
+                    disabled={saving}
                     onChange={(event) => setStartsAtLocal(event.target.value)}
                     aria-label="Event date and time"
-                    className="datetime-input absolute inset-0 z-10 h-full w-full cursor-pointer opacity-0"
+                    className="datetime-input datetime-input--picker min-w-0 flex-1 rounded-xl border border-app-border bg-app-surface-input px-3.5 py-2.5 text-sm text-app-text outline-none focus:border-accent focus:ring-2 focus:ring-accent/20 transition-all"
                   />
+                  <button
+                    type="button"
+                    disabled={saving}
+                    aria-label="Open date and time picker"
+                    className="flex shrink-0 items-center justify-center rounded-xl border border-app-border bg-app-surface-input px-3.5 text-app-muted outline-none transition-all hover:bg-app-chat-hover focus:border-accent focus:ring-2 focus:ring-accent/20 disabled:opacity-50"
+                    onClick={openWhenPicker}
+                  >
+                    <CalendarNavIcon className="h-4 w-4" />
+                  </button>
                 </div>
                 <p className="mt-1.5 text-xs text-app-muted">
-                  Events must be at least 1 minute from now.
+                  {formatWhenLabel(startsAtLocal)} · Events must be at least 1 minute from now.
                 </p>
               </div>
 
