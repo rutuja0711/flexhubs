@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import { memo, useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import {
   FiBell,
   FiBellOff,
@@ -62,8 +62,10 @@ import { ContactInfoPanel } from './ContactInfoPanel';
 import { GroupSidebar } from './GroupSidebar';
 import { GroupMembersPanel } from './GroupMembersPanel';
 import { ThreadSidebar } from './ThreadSidebar';
+import { areConversationThreadPropsEqual } from './conversationThreadCompare';
+import { perfRecordRender } from '../dev/perfInstrumentation';
 
-type ConversationThreadProps = {
+export type ConversationThreadProps = {
   conversation: ConversationItem;
   hubDetails?: Record<string, unknown> | null;
   conversationDetails?: Record<string, unknown> | null;
@@ -128,7 +130,7 @@ type ConversationThreadProps = {
   onVideoCallHubMember?: (userId: string, displayName: string) => void;
 };
 
-export function ConversationThread({
+function ConversationThreadComponent({
   conversation,
   hubDetails = null,
   conversationDetails = null,
@@ -192,6 +194,8 @@ export function ConversationThread({
   onVoiceCallHubMember,
   onVideoCallHubMember,
 }: ConversationThreadProps) {
+  perfRecordRender('ConversationThread');
+
   const toast = useToast();
   const confirm = useConfirm();
   const composerRef = useRef<MessageInputHandle>(null);
@@ -1412,3 +1416,5 @@ export function ConversationThread({
     </div>
   );
 }
+
+export const ConversationThread = memo(ConversationThreadComponent, areConversationThreadPropsEqual);

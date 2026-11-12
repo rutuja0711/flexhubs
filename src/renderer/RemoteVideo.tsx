@@ -7,6 +7,7 @@ import {
   resolveAuthenticatedMediaUrl,
   resolveStreamingMediaDisplayUrl,
 } from './authenticatedMedia';
+import { notifyMessageListVirtuosoLayoutSync } from './chat/messageListVirtuosoSync';
 
 type RemoteVideoProps = {
   src: string | null | undefined;
@@ -183,7 +184,10 @@ export function RemoteVideo({
           playsInline={playsInline}
           muted={muted}
           preload={preload}
-          onLoadedData={() => setReady(true)}
+          onLoadedData={() => {
+            setReady(true);
+            notifyMessageListVirtuosoLayoutSync();
+          }}
           onCanPlay={() => setReady(true)}
           onError={() => setFailed(true)}
         />
@@ -201,7 +205,10 @@ export function RemoteVideo({
         playsInline={playsInline}
         muted={muted}
         preload={preload}
-        onLoadedData={() => setReady(true)}
+        onLoadedData={() => {
+          setReady(true);
+          notifyMessageListVirtuosoLayoutSync();
+        }}
         onCanPlay={() => setReady(true)}
         onError={() => setFailed(true)}
       />
