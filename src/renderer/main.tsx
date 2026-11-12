@@ -9,6 +9,9 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { ThemeProvider } from './theme/ThemeProvider';
 import { ConfirmProvider } from './ui/ConfirmDialog';
 import { ToastProvider } from './ui/Toast';
+import { installPerfInstrumentation } from './dev/perfInstrumentation';
+
+installPerfInstrumentation();
 
 const initialTheme = resolveInitialTheme();
 applyTheme(initialTheme);

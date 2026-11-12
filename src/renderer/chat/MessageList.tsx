@@ -18,6 +18,7 @@ import {
 } from '../../shared/messages';
 import { loadMessageById } from '../chatApi';
 import { prefetchAuthenticatedMediaUrls } from '../authenticatedMedia';
+import { perfRecordRender } from '../dev/perfInstrumentation';
 import { fetchMediaBlob } from '../mediaBlob';
 import { formatConversationTimestamp, formatMessageDayDivider, messageDayKey } from './format';
 import { Avatar, EnhanceSparkleIcon } from './ChatIcons';
@@ -140,7 +141,7 @@ function MessageListSkeleton() {
 
 type MessageRowProps = {
   message: MessageItem;
-  messages: MessageItem[];
+  replyTarget?: MessageItem | null;
   isHighlighted: boolean;
   currentUserId: string | null;
   highlightTerm: string;
@@ -322,7 +323,6 @@ function isLocalMessageId(id: string): boolean {
 
 function MessageTimeInline({
   message,
-  messages,
   conversationId,
   conversationDetails,
   currentUserId,
@@ -331,7 +331,6 @@ function MessageTimeInline({
   className = '',
 }: {
   message: MessageItem;
-  messages: MessageItem[];
   conversationId?: string;
   conversationDetails?: Record<string, unknown> | null;
   currentUserId: string | null;
@@ -376,7 +375,7 @@ function MessageTimeInline({
       {!isDirect ? (
         <MessageSeenBy
           message={message}
-          messages={messages}
+          messages={[]}
           conversationId={conversationId}
           conversationDetails={conversationDetails}
           currentUserId={currentUserId}
@@ -389,7 +388,6 @@ function MessageTimeInline({
 
 function MessageTimeFooter({
   message,
-  messages,
   conversationId,
   conversationDetails,
   currentUserId,
@@ -397,7 +395,6 @@ function MessageTimeFooter({
   onRetryMessage,
 }: {
   message: MessageItem;
-  messages: MessageItem[];
   conversationId?: string;
   conversationDetails?: Record<string, unknown> | null;
   currentUserId: string | null;
@@ -408,7 +405,6 @@ function MessageTimeFooter({
     <div className="mt-0.5 flex w-full justify-end pr-0.5 opacity-90">
       <MessageTimeInline
         message={message}
-        messages={messages}
         conversationId={conversationId}
         conversationDetails={conversationDetails}
         currentUserId={currentUserId}
@@ -420,9 +416,37 @@ function MessageTimeFooter({
   );
 }
 
+function areMessageRowPropsEqual(prev: MessageRowProps, next: MessageRowProps): boolean {
+  if (prev.message !== next.message) {
+    return false;
+  }
+
+  return (
+    prev.replyTarget === next.replyTarget &&
+    prev.isHighlighted === next.isHighlighted &&
+    prev.currentUserId === next.currentUserId &&
+    prev.highlightTerm === next.highlightTerm &&
+    prev.conversationId === next.conversationId &&
+    prev.expandedThreadMessageId === next.expandedThreadMessageId &&
+    prev.editingId === next.editingId &&
+    prev.editDraft === next.editDraft &&
+    prev.editSaving === next.editSaving &&
+    prev.aiReplyLoadingMessageId === next.aiReplyLoadingMessageId &&
+    prev.threadsEnabled === next.threadsEnabled &&
+    prev.showReactionAuthors === next.showReactionAuthors &&
+    prev.allowMessageAppear === next.allowMessageAppear &&
+    prev.conversationDetails === next.conversationDetails &&
+    prev.conversationKind === next.conversationKind &&
+    prev.hideIncomingSenderMeta === next.hideIncomingSenderMeta &&
+    prev.savedMessageIds === next.savedMessageIds &&
+    prev.sendProgressByMessageId === next.sendProgressByMessageId &&
+    prev.sendProgressByMessageId?.[prev.message.id] === next.sendProgressByMessageId?.[next.message.id]
+  );
+}
+
 const MessageRow = memo(function MessageRow({
   message,
-  messages,
+  replyTarget = null,
   isHighlighted,
   currentUserId,
   highlightTerm,
@@ -472,7 +496,6 @@ const MessageRow = memo(function MessageRow({
   };
   const timeInlineProps = {
     message,
-    messages,
     conversationId,
     conversationDetails,
     currentUserId,
@@ -563,8 +586,6 @@ const MessageRow = memo(function MessageRow({
         ) : null}
         {message.replyToMessage || message.replyToMessageId ? (
           (() => {
-            const replyTarget = resolveReplyTarget(message, messages);
-
             if (!replyTarget) {
               return null;
             }
@@ -764,7 +785,7 @@ const MessageRow = memo(function MessageRow({
       </div>
     </div>
   );
-});
+}, areMessageRowPropsEqual);
 
 type MessageListProps = {
   messages: MessageItem[];
@@ -861,6 +882,8 @@ export function MessageList({
   sendProgressByMessageId = {},
   peerBlockedByCurrentUser = false,
 }: MessageListProps) {
+  perfRecordRender('MessageList');
+
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const [editSaving, setEditSaving] = useState(false);
@@ -934,6 +957,18 @@ export function MessageList({
     () => buildMessageListEntries(messages, unreadAnchorMessageId),
     [messages, unreadAnchorMessageId],
   );
+
+  const replyTargetByMessageId = useMemo(() => {
+    const map = new Map<string, MessageItem | null>();
+
+    for (const message of messages) {
+      if (message.replyToMessage || message.replyToMessageId) {
+        map.set(message.id, resolveReplyTarget(message, messages));
+      }
+    }
+
+    return map;
+  }, [messages]);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     if (suppressAutoScrollRef.current || pendingScrollToMessageId || scrollToMessageId) {
@@ -1382,7 +1417,7 @@ export function MessageList({
             <MessageRow
               key={entry.key}
               message={message}
-              messages={messages}
+              replyTarget={replyTargetByMessageId.get(message.id) ?? null}
               isHighlighted={highlightedMessageIds.includes(message.id)}
               currentUserId={currentUserId}
               highlightTerm={highlightTerm}
