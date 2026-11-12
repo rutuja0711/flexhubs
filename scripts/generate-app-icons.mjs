@@ -13,6 +13,56 @@ const sourcePng = path.join(projectRoot, 'assets', 'logo-symbol.png');
 const icnsOut = path.join(projectRoot, 'assets', 'logo-symbol.icns');
 const icoOut = path.join(projectRoot, 'assets', 'logo-symbol.ico');
 const publicDir = path.join(projectRoot, 'src', 'renderer', 'public');
+const iconVenvDir = path.join(projectRoot, '.venv-icons');
+
+function venvPythonPath(venvDir) {
+  return process.platform === 'win32'
+    ? path.join(venvDir, 'Scripts', 'python.exe')
+    : path.join(venvDir, 'bin', 'python3');
+}
+
+function venvPipPath(venvDir) {
+  return process.platform === 'win32'
+    ? path.join(venvDir, 'Scripts', 'pip.exe')
+    : path.join(venvDir, 'bin', 'pip');
+}
+
+function pythonCanImportPillow(pythonBin) {
+  try {
+    execFileSync(pythonBin, ['-c', 'import PIL'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Prefer project venv to avoid PEP 668 (externally-managed) system Python on macOS CI/Homebrew. */
+function resolveIcoPython() {
+  const fromEnv = process.env.FLEXHUBS_ICON_PYTHON?.trim();
+  if (fromEnv && pythonCanImportPillow(fromEnv)) {
+    return fromEnv;
+  }
+
+  const venvPython = venvPythonPath(iconVenvDir);
+  if (fs.existsSync(venvPython) && pythonCanImportPillow(venvPython)) {
+    return venvPython;
+  }
+
+  if (pythonCanImportPillow('python3')) {
+    return 'python3';
+  }
+
+  console.log('[FlexHubs] Pillow not found — creating local .venv-icons for ICO generation.');
+  execFileSync('python3', ['-m', 'venv', iconVenvDir], { stdio: 'inherit', cwd: projectRoot });
+  const pip = venvPipPath(iconVenvDir);
+  execFileSync(pip, ['install', 'pillow'], { stdio: 'inherit', cwd: projectRoot });
+
+  if (!pythonCanImportPillow(venvPython)) {
+    throw new Error('Failed to install Pillow in .venv-icons');
+  }
+
+  return venvPython;
+}
 
 function assertSource() {
   if (!fs.existsSync(sourcePng)) {
@@ -51,7 +101,8 @@ function generateIcnsDarwin() {
 
 function generateIcoWithPython() {
   const scriptPath = path.join(projectRoot, 'scripts', 'generate-ico.py');
-  execFileSync('python3', [scriptPath], { stdio: 'inherit', cwd: projectRoot });
+  const pythonBin = resolveIcoPython();
+  execFileSync(pythonBin, [scriptPath], { stdio: 'inherit', cwd: projectRoot });
 }
 
 function syncRendererPublicAssets() {
