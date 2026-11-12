@@ -162,6 +162,36 @@ function dndLabel(settings: ProfileSettings): string {
   return 'On';
 }
 
+function areProfileSettingsEqual(a: ProfileSettings, b: ProfileSettings): boolean {
+  return (
+    a.shareOnlineStatus === b.shareOnlineStatus &&
+    a.showLastActive === b.showLastActive &&
+    a.readReceipts === b.readReceipts &&
+    a.profileVisibility === b.profileVisibility &&
+    a.emailVisibility === b.emailVisibility &&
+    a.statusVisibility === b.statusVisibility &&
+    a.allowDirectMessagesFrom === b.allowDirectMessagesFrom &&
+    a.callPrivacy === b.callPrivacy &&
+    a.messageSoundEnabled === b.messageSoundEnabled &&
+    a.dndEnabled === b.dndEnabled &&
+    a.dndUntil === b.dndUntil &&
+    a.dndDuration === b.dndDuration &&
+    a.pushEnabled === b.pushEnabled &&
+    a.snoozeUntil === b.snoozeUntil &&
+    a.snoozeDuration === b.snoozeDuration &&
+    a.snoozedForever === b.snoozedForever
+  );
+}
+
+function resolveSessionUserId(user: unknown): string | null {
+  if (!user || typeof user !== 'object') {
+    return null;
+  }
+
+  const id = (user as { id?: unknown }).id;
+  return typeof id === 'string' && id.trim() ? id : null;
+}
+
 function statusDotClass(statusUi: string): string {
   return presenceDotClassForUiLabel(statusUi);
 }
@@ -426,6 +456,28 @@ export function ProfileSettingsView({
   const localPreviewRef = useRef<string | null>(null);
   const timezoneOptions = useMemo(() => getTimezoneOptions(), []);
   const sessionAvatarUrl = useMemo(() => getUserAvatarUrl(user), [user]);
+  const sessionUserId = useMemo(() => resolveSessionUserId(user), [user]);
+
+  const settingsRef = useRef(settings);
+  const avatarStylesRef = useRef(avatarStyles);
+  const sessionNotificationSettingsRef = useRef(sessionNotificationSettings);
+  const onNotificationSettingsChangeRef = useRef(onNotificationSettingsChange);
+  const applyProfileSnapshotRef = useRef<
+    (
+      nextProfile: UserProfileState,
+      nextSettings: ProfileSettings,
+      nextStyles: AvatarStyleItem[],
+      options?: { syncParentNotificationSettings?: boolean },
+    ) => void
+  >(() => {});
+  const refreshProfileRef = useRef<(options?: { silent?: boolean }) => Promise<void>>(
+    async () => {},
+  );
+
+  settingsRef.current = settings;
+  avatarStylesRef.current = avatarStyles;
+  sessionNotificationSettingsRef.current = sessionNotificationSettings;
+  onNotificationSettingsChangeRef.current = onNotificationSettingsChange;
 
   useEffect(() => {
     return () => {
@@ -487,6 +539,7 @@ export function ProfileSettingsView({
       nextProfile: UserProfileState,
       nextSettings: ProfileSettings,
       nextStyles: AvatarStyleItem[],
+      options?: { syncParentNotificationSettings?: boolean },
     ) => {
       setProfile(nextProfile);
       setSettings(nextSettings);
@@ -509,9 +562,19 @@ export function ProfileSettingsView({
         setAvatarStyles(nextStyles);
       }
 
-      onNotificationSettingsChange?.(nextSettings);
+      const shouldSyncParent = options?.syncParentNotificationSettings !== false;
+      if (shouldSyncParent) {
+        const parentBaseline =
+          sessionNotificationSettingsRef.current ?? settingsRef.current;
+        if (
+          !parentBaseline ||
+          !areProfileSettingsEqual(parentBaseline, nextSettings)
+        ) {
+          onNotificationSettingsChangeRef.current?.(nextSettings);
+        }
+      }
     },
-    [onNotificationSettingsChange, sessionAvatarUrl],
+    [sessionAvatarUrl],
   );
 
   const persistSettings = useCallback(
@@ -602,9 +665,9 @@ export function ProfileSettingsView({
       return;
     } else {
       const fallbackSettings =
-        sessionNotificationSettings ??
+        sessionNotificationSettingsRef.current ??
         cachedBeforeFetch?.settings ??
-        settings ??
+        settingsRef.current ??
         normalizeNotificationSettings({});
       mergedSettings = mergeProfileSettingsFromUser(userPayload, fallbackSettings);
       if (!options?.silent && settingsResult.error) {
@@ -615,7 +678,7 @@ export function ProfileSettingsView({
     const nextProfile = normalizeUserProfile(userPayload, mergedSettings);
     const nextStyles = stylesResult.ok
       ? stylesResult.data
-      : cachedBeforeFetch?.avatarStyles ?? avatarStyles;
+      : cachedBeforeFetch?.avatarStyles ?? avatarStylesRef.current;
 
     if (cachedBeforeFetch?.settings) {
       mergedSettings = mergePrivacySettings(mergedSettings, cachedBeforeFetch.settings);
@@ -635,16 +698,15 @@ export function ProfileSettingsView({
     });
 
     setLoading(false);
-  }, [
-    applyProfileSnapshot,
-    avatarStyles,
-    onUnauthorized,
-    sessionNotificationSettings,
-    settings,
-    user,
-  ]);
+  }, [applyProfileSnapshot, onUnauthorized, user]);
+
+  applyProfileSnapshotRef.current = applyProfileSnapshot;
+  refreshProfileRef.current = refreshProfile;
 
   useEffect(() => {
+    const applySnapshot = applyProfileSnapshotRef.current;
+    const runRefreshProfile = refreshProfileRef.current;
+
     const cached = readProfileCache();
 
     if (cached) {
@@ -654,30 +716,23 @@ export function ProfileSettingsView({
         settingsFromCache = mergePrivacySettings(settingsFromCache, storedPrivacy);
       }
 
-      applyProfileSnapshot(cached.profile, settingsFromCache, cached.avatarStyles);
+      applySnapshot(cached.profile, settingsFromCache, cached.avatarStyles);
       setLoading(false);
-      void refreshProfile({ silent: true });
+      void runRefreshProfile({ silent: true });
       return;
     }
 
     if (user) {
       const { nextProfile, mergedSettings, nextStyles } = buildSessionSnapshot(
         user,
-        sessionNotificationSettings,
+        sessionNotificationSettingsRef.current,
       );
-      applyProfileSnapshot(nextProfile, mergedSettings, nextStyles);
+      applySnapshot(nextProfile, mergedSettings, nextStyles);
       setLoading(false);
     }
 
-    void refreshProfile({ silent: Boolean(user) });
-  }, [
-    applyProfileSnapshot,
-    buildSessionSnapshot,
-    refreshProfile,
-    sessionAvatarUrl,
-    sessionNotificationSettings,
-    user,
-  ]);
+    void runRefreshProfile({ silent: Boolean(user) });
+  }, [buildSessionSnapshot, sessionUserId]);
 
   useEffect(() => {
     if (activeTab !== 'privacy') {
