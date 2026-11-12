@@ -1613,6 +1613,9 @@ const createWindow = (): void => {
     mainWindow?.show();
     applyApplicationIcon();
     updateDisplaySleepBlocker();
+    if (!app.isPackaged && mainWindow && !mainWindow.isDestroyed()) {
+      void mainWindow.webContents.openDevTools({ mode: 'detach' });
+    }
   });
 
   mainWindow.webContents.once('did-finish-load', () => {

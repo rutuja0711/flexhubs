@@ -10,13 +10,23 @@ export type PerfCounters = Record<
   }
 >;
 
+export type PerfSummaryRow = {
+  label: string;
+  count: number;
+  avgMs: number;
+  lastMs: number;
+  maxMs: number;
+};
+
 type PerfGlobal = {
   getCounters: () => PerfCounters;
+  getSummary: () => PerfSummaryRow[];
   reset: () => void;
   summary: () => void;
   markStart: (label: string) => void;
   markEnd: (label: string) => void;
   increment: (label: string) => void;
+  getGauges: () => Record<string, number>;
   recordRender: (component: string) => void;
   captureBaseline: (note?: string) => void;
   readBaseline: () => unknown;
@@ -29,7 +39,10 @@ declare global {
 }
 
 const counters: PerfCounters = {};
+const gauges: Record<string, number> = {};
 const openMarks = new Map<string, number>();
+
+let presenceRefreshInFlight = 0;
 
 function ensureBucket(label: string) {
   if (!counters[label]) {
@@ -80,6 +93,22 @@ function increment(label: string): void {
   bucket.count += 1;
 }
 
+function setGauge(label: string, value: number): void {
+  if (!isPerfEnabled()) {
+    return;
+  }
+
+  gauges[label] = value;
+}
+
+function bumpGaugeMax(label: string, value: number): void {
+  if (!isPerfEnabled()) {
+    return;
+  }
+
+  gauges[label] = Math.max(gauges[label] ?? 0, value);
+}
+
 function recordRender(component: string): void {
   increment(`render:${component}`);
 }
@@ -88,24 +117,50 @@ function reset(): void {
   for (const key of Object.keys(counters)) {
     delete counters[key];
   }
+  for (const key of Object.keys(gauges)) {
+    delete gauges[key];
+  }
   openMarks.clear();
+  presenceRefreshInFlight = 0;
 }
 
 function getCounters(): PerfCounters {
   return JSON.parse(JSON.stringify(counters)) as PerfCounters;
 }
 
-function summary(): void {
-  const rows = Object.entries(counters).map(([label, stats]) => ({
+function getGauges(): Record<string, number> {
+  return { ...gauges };
+}
+
+function getSummary(): PerfSummaryRow[] {
+  if (!isPerfEnabled()) {
+    return [];
+  }
+
+  return Object.entries(counters).map(([label, stats]) => ({
     label,
     count: stats.count,
     avgMs: stats.count > 0 ? Math.round((stats.totalMs / stats.count) * 10) / 10 : 0,
     lastMs: Math.round(stats.lastMs * 10) / 10,
     maxMs: Math.round(stats.maxMs * 10) / 10,
   }));
+}
+
+function summary(): void {
+  const rows = getSummary();
 
   // eslint-disable-next-line no-console
   console.table(rows);
+
+  if (Object.keys(gauges).length > 0) {
+    // eslint-disable-next-line no-console
+    console.table(
+      Object.entries(gauges).map(([label, value]) => ({
+        label,
+        value,
+      })),
+    );
+  }
 }
 
 export function installPerfInstrumentation(): void {
@@ -116,11 +171,13 @@ export function installPerfInstrumentation(): void {
   void import('./perfBaseline').then(({ capturePerfBaselineSnapshot, readPerfBaselineSnapshot }) => {
     window.__FLEXHUBS_PERF__ = {
       getCounters,
+      getSummary,
       reset,
       summary,
       markStart,
       markEnd,
       increment,
+      getGauges,
       recordRender,
       captureBaseline: capturePerfBaselineSnapshot,
       readBaseline: readPerfBaselineSnapshot,
@@ -161,4 +218,31 @@ export async function perfMeasureAsync<T>(label: string, fn: () => Promise<T>): 
 
 export function perfRecordRender(component: string): void {
   recordRender(component);
+}
+
+export function perfIncrement(label: string): void {
+  increment(label);
+}
+
+/** Dev-only: call when a presence refresh begins (after validating user id list). */
+export function perfPresenceRefreshEnter(): void {
+  if (!isPerfEnabled()) {
+    return;
+  }
+
+  increment('chat:refreshPresence:started');
+  presenceRefreshInFlight += 1;
+  setGauge('chat:refreshPresence:inFlight', presenceRefreshInFlight);
+  bumpGaugeMax('chat:refreshPresence:maxConcurrent', presenceRefreshInFlight);
+}
+
+/** Dev-only: call when a presence refresh finishes (success, error, or early return after start). */
+export function perfPresenceRefreshExit(): void {
+  if (!isPerfEnabled()) {
+    return;
+  }
+
+  increment('chat:refreshPresence:completed');
+  presenceRefreshInFlight = Math.max(0, presenceRefreshInFlight - 1);
+  setGauge('chat:refreshPresence:inFlight', presenceRefreshInFlight);
 }

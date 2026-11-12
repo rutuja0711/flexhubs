@@ -247,7 +247,13 @@ import {
 import { syncDesktopAppBadge } from './desktopAppBadge';
 import { clearDraftContentCache, setDraftContentCache } from './draftCache';
 import { appendThreadReply, clearThreadRepliesStore } from './threadRepliesStore';
-import { perfMeasure, perfMeasureAsync } from './dev/perfInstrumentation';
+import {
+  perfMeasure,
+  perfMeasureAsync,
+  perfIncrement,
+  perfPresenceRefreshEnter,
+  perfPresenceRefreshExit,
+} from './dev/perfInstrumentation';
 import {
   useConversationThreadCallbacks,
   type ConversationThreadActions,
@@ -321,6 +327,23 @@ function resolveConversationUnreadCountOverride(
   }
 
   return conversation.unreadCount;
+}
+
+function buildPresenceRefreshInflightKey(
+  uniqueUserIds: string[],
+  options?: { snapshotMissingAsOffline?: boolean },
+): string {
+  const ids = uniqueUserIds
+    .map((id) => normalizePresenceUserId(id))
+    .sort()
+    .join('\u001f');
+  const snapshot = options?.snapshotMissingAsOffline;
+
+  if (snapshot === undefined) {
+    return `default\u001e${ids}`;
+  }
+
+  return `${snapshot ? 'snapshot:1' : 'snapshot:0'}\u001e${ids}`;
 }
 
 function resolveTyperDisplayName(
@@ -601,6 +624,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     () => new Map(),
   );
   const bootstrapPresenceRef = useRef<Map<string, PresenceStatus>>(new Map());
+  const presenceRefreshInflightRef = useRef(new Map<string, Promise<void>>());
   const redisPresencePollingRef = useRef(false);
   const [conversationPlaceholders, setConversationPlaceholders] = useState<Record<string, ConversationItem>>({});
   const [teammates, setTeammates] = useState<TeammateItem[]>([]);
@@ -2491,64 +2515,121 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     async (
       userIds: string[],
       options?: { snapshotMissingAsOffline?: boolean },
-    ) =>
-      perfMeasureAsync('chat:refreshPresence', async () => {
+    ) => {
       const unique = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
 
       if (unique.length === 0) {
         return;
       }
 
-      const result = await loadUserPresence(unique);
+      const inflightKey = buildPresenceRefreshInflightKey(unique, options);
+      const inflight = presenceRefreshInflightRef.current;
+      const existing = inflight.get(inflightKey);
 
-      if (!result.ok) {
-        handleUnauthorized(result.status);
-        return;
+      if (existing) {
+        perfIncrement('chat:refreshPresence:dedupedJoin');
+        return existing;
       }
 
-      const livePollHadRows = result.data.length > 0;
-      const redisMode = redisPresencePollingRef.current;
-      const treatMissingAsOffline =
-        options?.snapshotMissingAsOffline ??
-        (redisMode && unique.length > 1);
+      const run = perfMeasureAsync('chat:refreshPresence', async () => {
+        perfPresenceRefreshEnter();
+        try {
+          const result = await perfMeasureAsync('chat:refreshPresence:api', () =>
+            loadUserPresence(unique),
+          );
 
-      const { statusByUserId: liveByUserId, statusMessageByUserId } = mergePresenceItemsForRequestedUsers(
-        result.data,
-        unique,
-        { treatMissingAsOffline },
-      );
-
-      const merged = mergeResolvedPresenceMaps(
-        bootstrapPresenceRef.current,
-        liveByUserId,
-        unique,
-        {
-          livePollHadRows: treatMissingAsOffline && (redisMode || livePollHadRows),
-        },
-      );
-
-      setPresenceByUserId((current) => {
-        const next = new Map(current);
-
-        for (const [userId, status] of merged) {
-          next.set(userId, status);
-        }
-
-        return next;
-      });
-
-      setTeammates((current) =>
-        current.map((teammate) => {
-          const statusMessage = statusMessageByUserId.get(normalizePresenceUserId(teammate.id));
-
-          if (statusMessage === undefined) {
-            return teammate;
+          if (!result.ok) {
+            handleUnauthorized(result.status);
+            return;
           }
 
-          return { ...teammate, statusMessage };
-        }),
-      );
-      }),
+          perfMeasure('chat:refreshPresence:process', () => {
+            const livePollHadRows = result.data.length > 0;
+            const redisMode = redisPresencePollingRef.current;
+            const treatMissingAsOffline =
+              options?.snapshotMissingAsOffline ??
+              (redisMode && unique.length > 1);
+
+            const { statusByUserId: liveByUserId, statusMessageByUserId } =
+              mergePresenceItemsForRequestedUsers(result.data, unique, { treatMissingAsOffline });
+
+            const merged = mergeResolvedPresenceMaps(
+              bootstrapPresenceRef.current,
+              liveByUserId,
+              unique,
+              {
+                livePollHadRows: treatMissingAsOffline && (redisMode || livePollHadRows),
+              },
+            );
+
+            setPresenceByUserId((current) => {
+              let changed = false;
+
+              for (const [userId, status] of merged) {
+                if (current.get(userId) !== status) {
+                  changed = true;
+                  break;
+                }
+              }
+
+              if (!changed) {
+                perfIncrement('chat:refreshPresence:stateSkipped:presenceMap');
+                return current;
+              }
+
+              perfIncrement('chat:refreshPresence:stateChanged:presenceMap');
+              const next = new Map(current);
+
+              for (const [userId, status] of merged) {
+                next.set(userId, status);
+              }
+
+              return next;
+            });
+
+            setTeammates((current) => {
+              let changed = false;
+
+              const next = current.map((teammate) => {
+                const statusMessage = statusMessageByUserId.get(
+                  normalizePresenceUserId(teammate.id),
+                );
+
+                if (statusMessage === undefined) {
+                  return teammate;
+                }
+
+                if (teammate.statusMessage !== statusMessage) {
+                  changed = true;
+                  return { ...teammate, statusMessage };
+                }
+
+                return teammate;
+              });
+
+              if (!changed) {
+                perfIncrement('chat:refreshPresence:stateSkipped:teammates');
+                return current;
+              }
+
+              perfIncrement('chat:refreshPresence:stateChanged:teammates');
+              return next;
+            });
+          });
+        } finally {
+          perfPresenceRefreshExit();
+        }
+      });
+
+      const promise = run.finally(() => {
+        if (inflight.get(inflightKey) === promise) {
+          inflight.delete(inflightKey);
+        }
+      });
+
+      inflight.set(inflightKey, promise);
+      return promise;
+    },
     [handleUnauthorized],
   );
 
