@@ -469,7 +469,7 @@ export function sanitizeUpdaterError(raw: string): string {
   }
 
   if (lower.includes('sha512') || lower.includes('checksum') || lower.includes('hash')) {
-    return `The update failed verification. Tap Retry. ${manualInstallHint()}`;
+    return 'The downloaded update no longer matches the release feed. Tap Retry to clear the cached download and fetch the latest build.';
   }
 
   if (
@@ -716,7 +716,15 @@ async function downloadInAppUpdate(): Promise<UpdaterDownloadResult> {
         return;
       }
 
-      finish({ ok: false, error: sanitizeUpdaterError(message) });
+      const safe = sanitizeUpdaterError(message);
+      if (
+        message.toLowerCase().includes('sha512') ||
+        message.toLowerCase().includes('checksum') ||
+        message.toLowerCase().includes('hash')
+      ) {
+        clearUpdaterDownloadCache();
+      }
+      finish({ ok: false, error: safe });
     };
 
     const timeoutId = setTimeout(() => {
@@ -771,30 +779,60 @@ function downloadStatus(): UpdaterDownloadStatus {
   };
 }
 
-function clearUpdaterDownloadCache(): void {
-  const cacheRoots = [
-    app.getPath('localCache'),
-    app.getPath('userData'),
-    path.join(app.getPath('temp'), app.getName()),
-  ];
+function electronUpdaterBaseCachePath(): string {
+  if (process.platform === 'darwin') {
+    return path.join(app.getPath('home'), 'Library', 'Caches');
+  }
+
+  if (process.platform === 'win32') {
+    const localAppData = process.env.LOCALAPPDATA?.trim();
+    if (localAppData) {
+      return localAppData;
+    }
+    return path.join(app.getPath('home'), 'AppData', 'Local');
+  }
+
+  const xdgCache = process.env.XDG_CACHE_HOME?.trim();
+  if (xdgCache) {
+    return xdgCache;
+  }
+
+  return path.join(app.getPath('home'), '.cache');
+}
+
+function updaterCacheDirectoryCandidates(): string[] {
   const dirNames = [
     'flexhubs-desktop-updater',
     `${app.getName()}-updater`,
     'flexhubs-desktop-updater-updater',
   ];
 
-  for (const root of cacheRoots) {
-    for (const dirName of dirNames) {
-      const target = path.join(root, dirName);
+  const roots = new Set<string>([
+    electronUpdaterBaseCachePath(),
+    app.getPath('userData'),
+    path.join(app.getPath('temp'), app.getName()),
+  ]);
 
-      try {
-        if (fs.existsSync(target)) {
-          fs.rmSync(target, { recursive: true, force: true });
-          console.info('[FlexHubs] Cleared updater cache:', target);
-        }
-      } catch (error) {
-        console.warn('[FlexHubs] Could not clear updater cache:', target, error);
+  const targets: string[] = [];
+
+  for (const root of roots) {
+    for (const dirName of dirNames) {
+      targets.push(path.join(root, dirName));
+    }
+  }
+
+  return targets;
+}
+
+function clearUpdaterDownloadCache(): void {
+  for (const target of updaterCacheDirectoryCandidates()) {
+    try {
+      if (fs.existsSync(target)) {
+        fs.rmSync(target, { recursive: true, force: true });
+        console.info('[FlexHubs] Cleared updater cache:', target);
       }
+    } catch (error) {
+      console.warn('[FlexHubs] Could not clear updater cache:', target, error);
     }
   }
 }

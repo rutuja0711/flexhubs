@@ -1,4 +1,5 @@
 import { FiUserPlus } from 'react-icons/fi';
+import { Avatar } from '../chat/ChatIcons';
 import type { HubMemberSummary } from './hubMemberUtils';
 
 export type MeetingParticipantRow = {
@@ -30,20 +31,14 @@ function AvatarBubble({
   size?: 'md' | 'sm';
 }) {
   const initial = label.trim().slice(0, 1).toUpperCase() || '?';
-  const sizeClass = size === 'sm' ? 'h-8 w-8 text-xs' : 'h-9 w-9 text-sm';
-
-  if (avatarUrl) {
-    return (
-      <img src={avatarUrl} alt="" className={`${sizeClass} shrink-0 rounded-full object-cover`} />
-    );
-  }
 
   return (
-    <div
-      className={`${sizeClass} flex shrink-0 items-center justify-center rounded-full bg-accent/15 font-semibold text-accent-soft`}
-    >
-      {initial}
-    </div>
+    <Avatar
+      imageUrl={avatarUrl}
+      initials={initial}
+      size={size === 'sm' ? 'sm' : 'md'}
+      loading="eager"
+    />
   );
 }
 

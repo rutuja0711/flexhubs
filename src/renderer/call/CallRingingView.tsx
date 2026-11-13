@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { FiChevronDown, FiMic, FiPhone, FiPhoneOff, FiVolume2, FiX } from 'react-icons/fi';
 import type { CallSession } from '../callManager';
+import { Avatar } from '../chat/ChatIcons';
 import { useCallRingingDevices } from './useCallRingingDevices';
 
 type CallRingingViewProps = {
@@ -100,17 +101,14 @@ export function CallRingingView({
                 aria-hidden="true"
               />
             ) : null}
-            {session.peerAvatar ? (
-              <img
-                src={session.peerAvatar}
-                alt=""
-                className="relative h-11 w-11 rounded-full border border-app-border object-cover"
+            <div className="relative">
+              <Avatar
+                imageUrl={session.peerAvatar}
+                initials={initial}
+                size="md"
+                loading="eager"
               />
-            ) : (
-              <div className="relative flex h-11 w-11 items-center justify-center rounded-full bg-accent/15 text-sm font-semibold text-accent-soft">
-                {initial}
-              </div>
-            )}
+            </div>
           </div>
 
           <div className="min-w-0 flex-1 pt-0.5">

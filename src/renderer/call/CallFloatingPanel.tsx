@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { FiChevronDown, FiMaximize2, FiMinimize2, FiMove } from 'react-icons/fi';
 import type { CallSession } from '../callManager';
+import { Avatar } from '../chat/ChatIcons';
 import { CallControls } from './CallControls';
 import { useViewportDraggable } from './useViewportDraggable';
 
@@ -128,13 +129,12 @@ export function CallFloatingPanel({
             className="flex min-w-0 flex-1 items-center gap-2 text-left"
             onClick={() => onLayoutChange('floating')}
           >
-            {session.peerAvatar ? (
-              <img src={session.peerAvatar} alt="" className="h-8 w-8 shrink-0 rounded-full object-cover" />
-            ) : (
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/15 text-sm font-semibold text-accent-soft">
-                {initial}
-              </div>
-            )}
+            <Avatar
+              imageUrl={session.peerAvatar}
+              initials={initial}
+              size="sm"
+              loading="eager"
+            />
             <div className="min-w-0">
               <p className="truncate text-sm font-semibold text-white">{title}</p>
               <p className="truncate text-xs text-white/55">

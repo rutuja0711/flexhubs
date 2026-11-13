@@ -2,6 +2,7 @@ import { useMemo, useRef } from 'react';
 import type { LocalParticipant, RemoteParticipant, Room } from 'livekit-client';
 import { Track } from 'livekit-client';
 import type { CallSession } from '../callManager';
+import { Avatar } from '../chat/ChatIcons';
 import { ParticipantTile } from './ParticipantTile';
 
 type VideoCallViewProps = {
@@ -76,17 +77,12 @@ export function VideoCallView({
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center gap-4 rounded-2xl bg-gradient-to-b from-[#17181d] to-[#101114]">
-            {session.peerAvatar ? (
-              <img
-                src={session.peerAvatar}
-                alt=""
-                className="h-24 w-24 rounded-full border-2 border-white/10 object-cover"
-              />
-            ) : (
-              <div className="flex h-24 w-24 items-center justify-center rounded-full bg-accent/20 text-3xl font-semibold text-white">
-                {initial}
-              </div>
-            )}
+            <Avatar
+              imageUrl={session.peerAvatar}
+              initials={initial}
+              size="xl"
+              loading="eager"
+            />
             <p className="text-sm text-white/60">Waiting for video...</p>
           </div>
         )}

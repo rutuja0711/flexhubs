@@ -1,4 +1,5 @@
 import type { CallSession } from '../callManager';
+import { Avatar } from '../chat/ChatIcons';
 
 type VoiceCallViewProps = {
   session: CallSession;
@@ -35,17 +36,14 @@ export function VoiceCallView({ session, durationLabel, micEnabled, statusLabel 
           </>
         ) : null}
 
-        {session.peerAvatar ? (
-          <img
-            src={session.peerAvatar}
-            alt=""
-            className="relative h-28 w-28 rounded-full border-4 border-white/10 object-cover shadow-[0_20px_60px_rgba(0,0,0,0.45)]"
+        <div className="relative rounded-full border-4 border-white/10 shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
+          <Avatar
+            imageUrl={session.peerAvatar}
+            initials={initial}
+            size="xl"
+            loading="eager"
           />
-        ) : (
-          <div className="relative flex h-28 w-28 items-center justify-center rounded-full border-4 border-white/10 bg-accent/20 text-4xl font-semibold text-white shadow-[0_20px_60px_rgba(0,0,0,0.45)]">
-            {initial}
-          </div>
-        )}
+        </div>
       </div>
 
       <p className="relative truncate text-xl font-semibold text-white">{title}</p>
