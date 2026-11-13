@@ -28,6 +28,60 @@ let deferredInstallTimer: ReturnType<typeof setTimeout> | null = null;
 
 const DEFERRED_INSTALL_MS = 15 * 60 * 1000;
 
+const UPDATE_DOWNLOAD_TIMEOUT_MS = 25 * 60_000;
+/** GitHub release assets can be slow; macOS feed checks often need longer than Windows. */
+const UPDATE_CHECK_TIMEOUT_MS = process.platform === 'darwin' ? 120_000 : 45_000;
+const FEED_METADATA_TIMEOUT_MS = 90_000;
+const AUTO_INSTALL_WAIT_MS = 30_000;
+
+let rendererInstallBlocked = false;
+let autoDownloadInFlight = false;
+let autoInstallWaitTimer: ReturnType<typeof setTimeout> | null = null;
+
+type UpdatePreferences = {
+  autoInstallUpdates: boolean;
+};
+
+function updatePreferencesFilePath(): string {
+  return path.join(app.getPath('userData'), 'update-preferences.json');
+}
+
+function readUpdatePreferences(): UpdatePreferences {
+  try {
+    const raw = fs.readFileSync(updatePreferencesFilePath(), 'utf8');
+    const parsed = JSON.parse(raw) as UpdatePreferences;
+    return { autoInstallUpdates: parsed?.autoInstallUpdates === true };
+  } catch {
+    return { autoInstallUpdates: false };
+  }
+}
+
+function writeUpdatePreferences(preferences: UpdatePreferences): void {
+  try {
+    fs.writeFileSync(
+      updatePreferencesFilePath(),
+      JSON.stringify(
+        {
+          autoInstallUpdates: preferences.autoInstallUpdates === true,
+          savedAt: new Date().toISOString(),
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    );
+  } catch (error) {
+    console.warn('[FlexHubs] Could not persist update preferences:', error);
+  }
+}
+
+function clearAutoInstallWaitTimer(): void {
+  if (autoInstallWaitTimer != null) {
+    clearTimeout(autoInstallWaitTimer);
+    autoInstallWaitTimer = null;
+  }
+}
+
 /** Apply a downloaded in-app update and exit. Windows uses silent NSIS (/S); macOS replaces the app in place (no DMG). */
 function applyDownloadedUpdateAndQuit(context: string): void {
   autoUpdater.autoInstallOnAppQuit = true;
@@ -44,11 +98,130 @@ function applyDownloadedUpdateAndQuit(context: string): void {
     console.warn('[FlexHubs] quitAndInstall failed:', error);
   }
 
-  // Let electron-updater relaunch the updated app — never app.relaunch() here (races installer on Windows, double-launch on Mac).
-  setTimeout(() => {
-    console.info('[FlexHubs] Exiting to apply in-app update');
-    app.exit(0);
-  }, process.platform === 'win32' ? 1200 : 1800);
+  // Windows: force exit if the installer hook does not quit in time. macOS: ShipIt needs a normal quit only.
+  if (process.platform === 'win32') {
+    setTimeout(() => {
+      console.info('[FlexHubs] Exiting to apply in-app update (Windows fallback)');
+      app.exit(0);
+    }, 1200);
+  }
+}
+
+function scheduleAutoInstallWhenSafe(): void {
+  clearAutoInstallWaitTimer();
+
+  if (!readUpdatePreferences().autoInstallUpdates) {
+    return;
+  }
+
+  if (!pendingInstallState().ready) {
+    return;
+  }
+
+  if (deferredInstallTimer != null) {
+    return;
+  }
+
+  if (rendererInstallBlocked) {
+    autoInstallWaitTimer = setTimeout(() => {
+      scheduleAutoInstallWhenSafe();
+    }, AUTO_INSTALL_WAIT_MS);
+    return;
+  }
+
+  setImmediate(() => {
+    applyDownloadedUpdateAndQuit('Automatic restart to apply update');
+  });
+}
+
+async function queueAutoDownload(): Promise<void> {
+  if (!app.isPackaged || !readUpdatePreferences().autoInstallUpdates) {
+    return;
+  }
+
+  if (autoDownloadInFlight) {
+    return;
+  }
+
+  if (pendingInstallState().ready) {
+    scheduleAutoInstallWhenSafe();
+    return;
+  }
+
+  if (updaterPhase === 'downloading' && activeDownloadCancellation && !downloadPausedIntentionally) {
+    return;
+  }
+
+  autoDownloadInFlight = true;
+
+  try {
+    attachAutoUpdaterListeners();
+    updaterPhase = 'downloading';
+    downloadPausedIntentionally = false;
+    writePersistedDownloadPause(null);
+    console.info('[FlexHubs] Auto-downloading update (user preference enabled)...');
+    const result = await downloadInAppUpdate();
+    if (result.ok) {
+      scheduleAutoInstallWhenSafe();
+    }
+  } finally {
+    autoDownloadInFlight = false;
+    if (updaterPhase === 'downloading') {
+      updaterPhase = readPersistedDownloadPause() ? 'paused' : 'idle';
+    }
+  }
+}
+
+function feedChannelFileName(): string {
+  return process.platform === 'darwin' ? 'latest-mac.yml' : 'latest.yml';
+}
+
+function parseFeedVersionFromYaml(yaml: string): string | undefined {
+  const match = yaml.match(/^version:\s*['"]?([^\s'"]+)['"]?\s*$/m);
+  const version = match?.[1]?.trim();
+  return version || undefined;
+}
+
+async function fetchLatestFeedVersion(): Promise<string | undefined> {
+  const url = `${DESKTOP_RELEASE_FEED_URL}/${feedChannelFileName()}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), FEED_METADATA_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal,
+      redirect: 'follow',
+      headers: { 'User-Agent': 'FlexHubs-Desktop-Updater' },
+    });
+
+    if (!response.ok) {
+      console.warn('[FlexHubs] Update feed metadata HTTP', response.status, url);
+      return undefined;
+    }
+
+    const body = await response.text();
+    return parseFeedVersionFromYaml(body);
+  } catch (error) {
+    console.warn('[FlexHubs] Could not fetch update feed metadata:', error);
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function ensureAutoUpdaterHasUpdateInfo(): Promise<void> {
+  try {
+    await Promise.race([
+      autoUpdater.checkForUpdates(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => {
+          reject(new Error('Update check timed out.'));
+        }, UPDATE_CHECK_TIMEOUT_MS);
+      }),
+    ]);
+  } catch (error) {
+    console.warn('[FlexHubs] Could not sync electron-updater with feed before download:', error);
+  }
 }
 
 type PersistedDownloadPause = {
@@ -370,6 +543,8 @@ function attachAutoUpdaterListeners(): void {
       version,
       releaseNotes: info.releaseNotes,
     });
+
+    void queueAutoDownload();
   });
 
   autoUpdater.on('update-not-available', (info) => {
@@ -420,6 +595,8 @@ function attachAutoUpdaterListeners(): void {
       version: info.version,
       method: 'in-app',
     });
+
+    scheduleAutoInstallWhenSafe();
   });
 }
 
@@ -446,6 +623,19 @@ type FeedCheckOutcome =
 
 async function checkFeedForUpdate(): Promise<FeedCheckOutcome> {
   attachAutoUpdaterListeners();
+  const currentVersion = app.getVersion();
+
+  const feedVersion = await fetchLatestFeedVersion();
+  if (!feedVersion) {
+    return { kind: 'error', message: 'Could not reach the update server. Check your internet connection and try again.' };
+  }
+
+  if (!isVersionNewer(feedVersion, currentVersion)) {
+    lastKnownAvailableVersion = undefined;
+    return { kind: 'up-to-date', version: currentVersion };
+  }
+
+  lastKnownAvailableVersion = feedVersion;
 
   try {
     const result = await Promise.race([
@@ -456,38 +646,28 @@ async function checkFeedForUpdate(): Promise<FeedCheckOutcome> {
         }, UPDATE_CHECK_TIMEOUT_MS);
       }),
     ]);
-    if (!result) {
-      return { kind: 'up-to-date', version: app.getVersion() };
+
+    const version = String(result?.updateInfo?.version || feedVersion).trim() || feedVersion;
+
+    if (!isVersionNewer(version, currentVersion)) {
+      lastKnownAvailableVersion = undefined;
+      return { kind: 'up-to-date', version: currentVersion };
     }
 
-    const version = String(result.updateInfo.version || '').trim();
-    if (!version) {
-      return { kind: 'error', message: 'Update feed returned an invalid version.' };
-    }
-
-    lastKnownAvailableVersion = version;
-
-    if (isVersionNewer(version, app.getVersion())) {
-      return {
-        kind: 'available',
-        version,
-        releaseNotes: result.updateInfo.releaseNotes,
-      };
-    }
-
-    lastKnownAvailableVersion = undefined;
-    return { kind: 'up-to-date', version: app.getVersion() };
-  } catch (error: unknown) {
-    const raw = error instanceof Error ? error.message : 'Update check failed.';
-    return { kind: 'error', message: sanitizeUpdaterError(raw) };
+    return {
+      kind: 'available',
+      version,
+      releaseNotes: result?.updateInfo?.releaseNotes,
+    };
+  } catch (error) {
+    console.warn('[FlexHubs] Feed reports newer version', feedVersion, 'but electron-updater check failed:', error);
+    return { kind: 'available', version: feedVersion };
   }
 }
 
-const UPDATE_DOWNLOAD_TIMEOUT_MS = 25 * 60_000;
-const UPDATE_CHECK_TIMEOUT_MS = 45_000;
-
 async function downloadInAppUpdate(): Promise<UpdaterDownloadResult> {
   downloadPausedIntentionally = false;
+  await ensureAutoUpdaterHasUpdateInfo();
   const cancellationToken = new CancellationToken();
   activeDownloadCancellation = cancellationToken;
 
@@ -634,6 +814,7 @@ async function resetDownloadState(): Promise<{ ok: true }> {
   writePersistedDownloadPause(null);
   clearUpdaterDownloadCache();
   clearDeferredInstallTimer();
+  clearAutoInstallWaitTimer();
 
   return { ok: true };
 }
@@ -766,6 +947,10 @@ async function runUpdateCheckInternal(): Promise<UpdaterCheckResult> {
     }
 
     if (outcome.kind === 'available') {
+      setImmediate(() => {
+        void queueAutoDownload();
+      });
+
       return {
         ok: true,
         status: 'available',
@@ -926,6 +1111,37 @@ function registerUpdaterIpcHandlers(): void {
   }));
 
   register('updater:get-version', () => app.getVersion());
+
+  register('updater:get-auto-install-preference', (): { enabled: boolean } => ({
+    enabled: readUpdatePreferences().autoInstallUpdates,
+  }));
+
+  register('updater:set-auto-install-preference', (_event, enabled: unknown): { ok: true } => {
+    const on = enabled === true;
+    writeUpdatePreferences({ autoInstallUpdates: on });
+    if (on) {
+      setImmediate(() => {
+        void queueAutoDownload();
+        scheduleAutoInstallWhenSafe();
+      });
+    } else {
+      clearAutoInstallWaitTimer();
+    }
+    return { ok: true };
+  });
+
+  register('updater:set-install-blocked', (_event, blocked: unknown): { ok: true } => {
+    const next = blocked === true;
+    if (rendererInstallBlocked === next) {
+      return { ok: true };
+    }
+
+    rendererInstallBlocked = next;
+    if (!next) {
+      scheduleAutoInstallWhenSafe();
+    }
+    return { ok: true };
+  });
 }
 
 /** Call once during app startup (safe to call again after dev HMR). */
@@ -939,6 +1155,10 @@ export function initUpdater(): void {
     updaterPhase = 'paused';
     lastKnownAvailableVersion = persisted.version;
     lastDownloadProgressPercent = persisted.progress;
+  }
+
+  if (pendingInstallState().ready) {
+    scheduleAutoInstallWhenSafe();
   }
 }
 

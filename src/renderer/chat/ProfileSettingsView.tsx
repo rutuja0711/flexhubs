@@ -26,6 +26,7 @@ import {
   applyNotificationPreferenceUpdate,
   buildGeneratedAvatarUrl,
   mergeProfileSettingsFromUser,
+  mergeRemoteUserStatus,
   normalizeNotificationSettings,
   normalizeUserProfile,
   resolveDndSelectValue,
@@ -43,14 +44,17 @@ import { getUserAvatarUrl, getUserInitials } from '../../shared/user';
 import { getCurrentUser } from '../authApi';
 import {
   getEffectivePresenceStatus,
+  getPresenceStatusMessage,
   setManualPresenceStatus,
-  setPresenceStatusMessage,
+  setPresenceSharingEnabled,
   subscribePresenceManager,
+  syncPresenceToServer,
 } from '../presenceManager';
 import { presenceDotClassForUiLabel } from './presenceStatusUi';
 import {
   loadAvatarStyles,
   loadBlockedUsers,
+  loadResolvedUserStatus,
   loadNotificationSettings,
   saveNotificationSettings,
   saveUserProfile,
@@ -82,6 +86,7 @@ import {
 } from '../blockedUsersSync';
 import {
   mergePrivacySettings,
+  mergeStoredPrivacySettings,
   pickPrivacySettings,
   readStoredPrivacySettings,
   writeStoredPrivacySettings,
@@ -607,7 +612,7 @@ export function ProfileSettingsView({
         normalizeUserProfile(userPayload, mergedSettings).id,
       );
       if (storedPrivacy) {
-        mergedSettings = mergePrivacySettings(mergedSettings, storedPrivacy);
+        mergedSettings = mergeStoredPrivacySettings(mergedSettings, storedPrivacy);
       }
       const nextProfile = normalizeUserProfile(userPayload, mergedSettings);
       return { nextProfile, mergedSettings, nextStyles: styles };
@@ -626,10 +631,14 @@ export function ProfileSettingsView({
 
     setError('');
 
-    const [userResult, settingsResult, stylesResult] = await Promise.all([
+    const statusSeedUserId =
+      normalizeUserProfile(user ?? {}).id || readProfileCache()?.profile.id || '';
+
+    const [userResult, settingsResult, stylesResult, statusResult] = await Promise.all([
       getCurrentUser(),
       loadNotificationSettings(),
       loadAvatarStyles(),
+      loadResolvedUserStatus(statusSeedUserId),
     ]);
 
     const userPayload = userResult.ok
@@ -675,7 +684,26 @@ export function ProfileSettingsView({
       }
     }
 
-    const nextProfile = normalizeUserProfile(userPayload, mergedSettings);
+    let statusPayload = statusResult.ok ? statusResult.data : null;
+
+    if (!statusResult.ok && userPayload) {
+      const resolved = await loadResolvedUserStatus(normalizeUserProfile(userPayload).id);
+
+      if (resolved.ok) {
+        statusPayload = resolved.data;
+      }
+    }
+
+    const remoteStatus = mergeRemoteUserStatus(userPayload, statusPayload);
+    const normalizedProfile = normalizeUserProfile(userPayload, mergedSettings);
+    const nextProfile = {
+      ...normalizedProfile,
+      status: remoteStatus.status,
+      statusMessage: statusPayload
+        ? remoteStatus.statusMessage
+        : remoteStatus.statusMessage.trim() || getPresenceStatusMessage(),
+    };
+    setManualPresenceStatus(nextProfile.status, nextProfile.statusMessage);
     const nextStyles = stylesResult.ok
       ? stylesResult.data
       : cachedBeforeFetch?.avatarStyles ?? avatarStylesRef.current;
@@ -686,7 +714,7 @@ export function ProfileSettingsView({
 
     const storedPrivacy = readStoredPrivacySettings(nextProfile.id);
     if (storedPrivacy) {
-      mergedSettings = mergePrivacySettings(mergedSettings, storedPrivacy);
+      mergedSettings = mergeStoredPrivacySettings(mergedSettings, storedPrivacy);
     }
 
     applyProfileSnapshot(nextProfile, mergedSettings, nextStyles);
@@ -713,7 +741,7 @@ export function ProfileSettingsView({
       let settingsFromCache = cached.settings;
       const storedPrivacy = readStoredPrivacySettings(cached.profile.id);
       if (storedPrivacy) {
-        settingsFromCache = mergePrivacySettings(settingsFromCache, storedPrivacy);
+        settingsFromCache = mergeStoredPrivacySettings(settingsFromCache, storedPrivacy);
       }
 
       applySnapshot(cached.profile, settingsFromCache, cached.avatarStyles);
@@ -733,6 +761,14 @@ export function ProfileSettingsView({
 
     void runRefreshProfile({ silent: Boolean(user) });
   }, [buildSessionSnapshot, sessionUserId]);
+
+  useEffect(() => {
+    if (activeTab !== 'profile') {
+      return;
+    }
+
+    void refreshProfileRef.current?.({ silent: true });
+  }, [activeTab]);
 
   useEffect(() => {
     if (activeTab !== 'privacy') {
@@ -794,7 +830,8 @@ export function ProfileSettingsView({
     if (statusMessage === savedStatusMessage) return;
     setSaving(true);
     setActionError('');
-    const result = await saveUserProfile({ statusMessage, bio: statusMessage });
+    const apiStatus = getEffectivePresenceStatus();
+    const result = await saveUserStatus(apiStatus, statusMessage);
     setSaving(false);
     if (!result.ok) {
       if (!onUnauthorized(result.status)) {
@@ -804,8 +841,8 @@ export function ProfileSettingsView({
       return;
     }
 
-    persistLocalStatus(uiStatusToApi(statusUi), statusMessage);
-    setPresenceStatusMessage(statusMessage);
+    persistLocalStatus(apiStatus, statusMessage);
+    setManualPresenceStatus(apiStatus, statusMessage);
     setSavedStatusMessage(statusMessage);
     toast.success('Status message saved.');
     onUserUpdated?.();
@@ -890,6 +927,8 @@ export function ProfileSettingsView({
       }
     }
 
+    setPresenceSharingEnabled(next);
+    void syncPresenceToServer();
     toast.success(next ? 'Online status sharing turned on.' : 'Online status sharing turned off.');
     onUserUpdated?.();
   };
@@ -1466,10 +1505,7 @@ export function ProfileSettingsView({
 
                 {/* Profile Photo */}
                 <section>
-                  <h4 className="text-base font-semibold text-app-text">Profile photo</h4>
-                  <p className="mt-1 mb-4 text-sm text-app-muted">
-                    Pick a generated avatar, upload a photo, or use your initials.
-                  </p>
+                  <h4 className="mb-3 text-base font-semibold text-app-text">Profile photo</h4>
                   <SectionCard className="p-5">
                     <div className="mb-5 flex gap-1 rounded-xl border border-app-border bg-app-inset/60 p-1">
                       {(['avatar', 'upload', 'initials'] as const).map((tab) => (
@@ -1551,11 +1587,7 @@ export function ProfileSettingsView({
                           </button>
                           {avatarUploadSucceeded ? (
                             <p className="text-xs font-medium text-green-500">Photo updated successfully.</p>
-                          ) : (
-                            <p className="text-xs text-app-muted">
-                              JPG or PNG. You will see a preview here while it uploads.
-                            </p>
-                          )}
+                          ) : null}
                         </div>
                       </div>
                     ) : null}
@@ -1574,19 +1606,18 @@ export function ProfileSettingsView({
                   </SectionCard>
                 </section>
 
-                {/* Status message */}
                 <section>
+                  <h4 className="mb-3 text-sm font-semibold text-app-text">Status message</h4>
                   <SectionCard className="p-5">
-                    <h4 className="text-sm font-semibold text-app-text">Status message</h4>
-                    <p className="mt-1 mb-4 text-xs leading-relaxed text-app-muted">
-                      Shown under your name in chat. Change availability from your profile picture menu in
-                      the sidebar.
-                    </p>
-                    <label className="mb-1.5 block text-sm font-semibold text-app-text">
+                    <label
+                      className="mb-1.5 block text-sm font-semibold text-app-text"
+                      htmlFor="profile-status-message"
+                    >
                       Message
                     </label>
                     <div className="relative">
                       <input
+                        id="profile-status-message"
                         type="text"
                         placeholder="What's on your mind?"
                         value={statusMessage}

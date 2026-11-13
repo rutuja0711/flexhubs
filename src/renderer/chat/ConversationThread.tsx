@@ -19,7 +19,7 @@ import {
   isViewerBlockedByPeer,
 } from '../../shared/blocking';
 import type { ConversationItem, PresenceStatus } from '../../shared/chat';
-import { canViewPresence } from '../../shared/presencePrivacy';
+import { canViewPeerPresence } from '../../shared/presencePrivacy';
 import { sidebarPresenceStatusForPeer } from '../../shared/presence';
 import {
   buildConversationSnoozePayload,
@@ -87,7 +87,7 @@ export type ConversationThreadProps = {
   onSendVoice?: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
   onUnauthorized: (status?: number) => boolean;
   currentUserId: string | null;
-  onAddReaction: (messageId: string, emoji: string) => void;
+  onAddReaction: (messageId: string, emoji: string, options?: { remove?: boolean }) => void;
   onEditMessage: (messageId: string, content: string) => void | Promise<boolean>;
   onDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
   onForwardMessage: (messageId: string, targetConversationIds: string[]) => Promise<string | null>;
@@ -97,6 +97,7 @@ export type ConversationThreadProps = {
   savedMessageIds?: ReadonlySet<string>;
   onVotePoll?: (messageId: string, optionId: string) => void;
   onConversationUpdated?: () => void;
+  onHistoryCleared?: (conversationId: string) => void;
   onNotificationsSnoozedChange?: (snoozed: boolean) => void;
   onTogglePin?: (conversationId: string, isPinned: boolean) => void;
   onHubDeleted?: () => void;
@@ -164,6 +165,7 @@ function ConversationThreadComponent({
   savedMessageIds = new Set<string>(),
   onVotePoll,
   onConversationUpdated,
+  onHistoryCleared,
   onNotificationsSnoozedChange,
   onTogglePin,
   onHubDeleted,
@@ -199,6 +201,7 @@ function ConversationThreadComponent({
   const toast = useToast();
   const confirm = useConfirm();
   const composerRef = useRef<MessageInputHandle>(null);
+  const attachmentOverlayRootRef = useRef<HTMLDivElement>(null);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchError, setSearchError] = useState('');
@@ -257,6 +260,7 @@ function ConversationThreadComponent({
 
   const isDirectContact =
     conversation.kind === 'direct' && !conversation.isSelf && Boolean(conversation.peerUserId);
+  const isGroupConversation = conversation.kind === 'group' || conversation.kind === 'hub';
   const peerBlockedByCurrentUser =
     isDirectContact &&
     conversation.peerUserId != null &&
@@ -266,11 +270,11 @@ function ConversationThreadComponent({
     conversation.peerUserId != null &&
     isViewerBlockedByPeer(conversation.peerUserId, blockedByPeerIds ?? new Set());
 
-  const canViewPeerPresence =
+  const peerPresenceVisible =
     isDirectContact &&
     Boolean(conversation.peerUserId) &&
-    canViewPresence(
-      { id: currentUserId ?? '', sharePresence: viewerSharePresence ?? true },
+    canViewPeerPresence(
+      { id: currentUserId ?? '', sharePresence: true },
       {
         id: conversation.peerUserId ?? '',
         sharePresence: conversation.peerSharePresence ?? true,
@@ -278,7 +282,7 @@ function ConversationThreadComponent({
     );
 
   const directPeerPresence = useMemo(() => {
-    if (!canViewPeerPresence || !conversation.peerUserId) {
+    if (!peerPresenceVisible || !conversation.peerUserId) {
       return null;
     }
 
@@ -288,7 +292,7 @@ function ConversationThreadComponent({
       conversation.status,
     );
   }, [
-    canViewPeerPresence,
+    peerPresenceVisible,
     conversation.peerUserId,
     conversation.status,
     presenceByUserId,
@@ -326,7 +330,7 @@ function ConversationThreadComponent({
       return customStatus;
     }
 
-    if (canViewPeerPresence && directPeerPresence) {
+    if (peerPresenceVisible && directPeerPresence) {
       return presenceLabel(directPeerPresence) ?? 'Available';
     }
 
@@ -543,12 +547,16 @@ function ConversationThreadComponent({
   }, [focusMessageId, messages]);
 
   useEffect(() => {
-    if (!focusThreadScrollSignature || loading) {
+    if (!focusThreadScrollSignature) {
+      return;
+    }
+
+    if (loading && messages.length === 0) {
       return;
     }
 
     jumpToMessage(focusMessageId!);
-  }, [focusMessageId, focusThreadScrollSignature, jumpToMessage, loading]);
+  }, [focusMessageId, focusThreadScrollSignature, jumpToMessage, loading, messages.length]);
 
   const handlePinnedBannerJump = () => {
     if (!featuredPinnedMessage) {
@@ -666,7 +674,7 @@ function ConversationThreadComponent({
     }
 
     toast.success('Chat history cleared.');
-    onConversationUpdated?.();
+    onHistoryCleared?.(conversation.id);
   };
 
   const handleDeleteConversation = async () => {
@@ -791,7 +799,7 @@ function ConversationThreadComponent({
 
   return (
     <div className="flex h-full w-full flex-row overflow-hidden">
-      <div className="flex h-full flex-1 min-h-0 min-w-0 flex-col bg-app-chat-bg relative">
+      <div ref={attachmentOverlayRootRef} className="flex h-full flex-1 min-h-0 min-w-0 flex-col bg-app-chat-bg relative">
         <header className="flex items-center justify-between border-b border-app-border/80 bg-app-chat-bg/95 backdrop-blur-md px-6 py-3 z-20">
         <div
           className="group min-w-0 cursor-pointer text-left transition-opacity hover:opacity-90"
@@ -966,20 +974,22 @@ function ConversationThreadComponent({
                       : null}
                   </>
                 )}
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMenuOpen(false);
-                    openInfoPanel();
-                  }}
-                  className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors"
-                >
-                  <span className="flex items-center gap-2">
-                    <FiUsers className="shrink-0 text-sm text-app-muted" strokeWidth={1.75} aria-hidden="true" />
-                    Members
-                  </span>
-                  <span className="text-app-muted">›</span>
-                </button>
+                {isGroupConversation ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      openInfoPanel();
+                    }}
+                    className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors"
+                  >
+                    <span className="flex items-center gap-2">
+                      <FiUsers className="shrink-0 text-sm text-app-muted" strokeWidth={1.75} aria-hidden="true" />
+                      Members
+                    </span>
+                    <span className="text-app-muted">›</span>
+                  </button>
+                ) : null}
                 <div className="my-1 h-px bg-app-border/70" role="separator" />
                 <button
                   type="button"
@@ -1007,17 +1017,19 @@ function ConversationThreadComponent({
                     Clear history
                   </span>
                 </button>
-                <button
-                  type="button"
-                  disabled={menuBusy}
-                  onClick={handleScheduleEvent}
-                  className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
-                >
-                  <span className="flex items-center gap-2">
-                    <FiCalendar className="shrink-0 text-sm text-app-muted" strokeWidth={1.75} aria-hidden="true" />
-                    Schedule event
-                  </span>
-                </button>
+                {isGroupConversation ? (
+                  <button
+                    type="button"
+                    disabled={menuBusy}
+                    onClick={handleScheduleEvent}
+                    className="flex w-full items-center justify-between rounded-xl px-3.5 py-2 text-left text-xs font-medium text-app-text hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-accent dark:hover:text-accent-soft transition-colors disabled:opacity-50"
+                  >
+                    <span className="flex items-center gap-2">
+                      <FiCalendar className="shrink-0 text-sm text-app-muted" strokeWidth={1.75} aria-hidden="true" />
+                      Schedule event
+                    </span>
+                  </button>
+                ) : null}
                 {conversation.kind !== 'hub' ? (
                   <button
                     type="button"
@@ -1072,8 +1084,8 @@ function ConversationThreadComponent({
         error={error}
         highlightTerm={searchOpen && searchQuery.trim() ? searchQuery : ''}
         highlightedMessageIds={highlightedMessageIds}
-        scrollToMessageId={bannerScrollTargetId ?? focusMessageId}
-        pendingScrollToMessageId={focusMessageId}
+        scrollToMessageId={bannerScrollTargetId}
+        pendingScrollToMessageId={bannerScrollTargetId}
         scrollRequestKey={scrollRequestKey}
         scrollRestoreKey={scrollRestoreKey}
         initialScrollSnapshot={initialScrollSnapshot}
@@ -1086,6 +1098,9 @@ function ConversationThreadComponent({
         onScrollToMessageComplete={(messageId) => {
           setBannerScrollTargetId(null);
           if (messageId) {
+            if (messageId === focusMessageId) {
+              onFocusMessageHandled?.();
+            }
             const timeoutId = window.setTimeout(() => {
               setHighlightedMessageIds((current) => current.filter((id) => id !== messageId));
               highlightTimeoutsRef.current = highlightTimeoutsRef.current.filter((id) => id !== timeoutId);
@@ -1162,6 +1177,7 @@ function ConversationThreadComponent({
 
       <MessageInput
         ref={composerRef}
+        attachmentOverlayRootRef={attachmentOverlayRootRef}
         value={draft}
         disabled={
           (loading && messages.length === 0) || peerBlockedByCurrentUser || peerBlockedViewer

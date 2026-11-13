@@ -104,6 +104,32 @@ export function AttachmentFileIcon({ category, className = 'h-5 w-5' }: Attachme
           <circle cx="15" cy="16" r="2" stroke="currentColor" strokeWidth="1.5" />
         </IconShell>
       );
+    case 'text':
+      return (
+        <IconShell className={className}>
+          <path
+            d="M7 3h7l5 5v13a1 1 0 01-1 1H7a1 1 0 01-1-1V4a1 1 0 011-1z"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinejoin="round"
+          />
+          <path d="M14 3v5h5" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+          <path d="M9 12.5h6M9 15.5h5M9 18h3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </IconShell>
+      );
+    case 'code':
+      return (
+        <IconShell className={className}>
+          <path
+            d="M8 8L5 12l3 4M16 8l3 4-3 4"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          <path d="M13 6l-2 12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </IconShell>
+      );
     default:
       return (
         <IconShell className={className}>

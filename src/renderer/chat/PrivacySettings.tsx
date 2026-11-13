@@ -22,6 +22,7 @@ import type { NotificationPreferenceUpdate, ProfileSettings } from '../../shared
 import { applyNotificationPreferenceUpdate } from '../../shared/profile';
 import { mergePrivacySettings } from '../privacySettingsStorage';
 import { saveUserProfile, saveNotificationSettings } from '../chatApi';
+import { setPresenceSharingEnabled, syncPresenceToServer } from '../presenceManager';
 
 function SectionCard({ children, className = '' }: { children: React.ReactNode; className?: string }) {
   return (
@@ -93,11 +94,20 @@ export function PrivacySettings({
 
     if (!saved) {
       persistSettings({ ...settings, [field]: previousValue } as ProfileSettings);
+      if (field === 'shareOnlineStatus') {
+        setPresenceSharingEnabled(previousValue === true);
+        void syncPresenceToServer();
+      }
       const status = notifResult.ok ? profileResult.status : notifResult.status;
       if (!onUnauthorized(status || 401)) {
         toast.error('Failed to update privacy settings. Please try again.');
       }
-    } else {
+    } else if (field === 'shareOnlineStatus') {
+      setPresenceSharingEnabled(nextValue === true);
+      void syncPresenceToServer();
+    }
+
+    if (saved) {
       persistSettings(merged);
       toast.success('Privacy settings updated');
       onUserUpdated?.();

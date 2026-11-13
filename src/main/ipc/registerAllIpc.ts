@@ -140,6 +140,7 @@ import {
   fetchNotificationSettings,
   fetchOrganizationMembersDetailed,
   fetchUserById,
+  fetchUserStatus,
   updateNotificationSettings,
   updateUserProfile,
   updateUserStatus,
@@ -890,6 +891,7 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
   
     return updateUserProfile(token, updates);
   });
+  ipcMain.handle('user:status', (_event, token: string) => fetchUserStatus(token));
   ipcMain.handle(
     'user:update-status',
     async (_event, token: string, status: string, message?: string) => {
@@ -1020,6 +1022,11 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
   
     return { ok: true as const, data: snapshot };
   });
+  ipcMain.handle('realtime:set-heartbeat-status', (_event, status: string) => {
+    setRealtimeHeartbeatStatus(status);
+    return { ok: true as const };
+  });
+
   ipcMain.handle('realtime:stop', () => {
     stopRealtimeStream();
     return { ok: true as const };

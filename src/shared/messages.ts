@@ -23,6 +23,33 @@ export type MessageReaction = {
   username: string;
 };
 
+function normalizeReactionUserId(userId: string | null | undefined): string {
+  return (userId ?? '').trim().toLowerCase();
+}
+
+export function messageReactionMatchesUser(
+  reaction: MessageReaction,
+  currentUserId: string | null | undefined,
+): boolean {
+  const me = normalizeReactionUserId(currentUserId);
+
+  if (!me) {
+    return false;
+  }
+
+  return normalizeReactionUserId(reaction.userId) === me;
+}
+
+export function userHasMessageReaction(
+  reactions: MessageReaction[],
+  currentUserId: string | null | undefined,
+  emoji: string,
+): boolean {
+  return reactions.some(
+    (reaction) => reaction.emoji === emoji && messageReactionMatchesUser(reaction, currentUserId),
+  );
+}
+
 export type MessageMediaKind = 'gif' | 'sticker' | 'image' | 'file' | 'video';
 
 export type MessageMedia = {
@@ -605,7 +632,7 @@ export function applyReactionPatch(
     const withoutDuplicate = message.reactions.filter(
       (reaction) =>
         !(
-          reaction.userId === patch.addedReaction!.userId &&
+          messageReactionMatchesUser(reaction, patch.addedReaction!.userId) &&
           reaction.emoji === patch.addedReaction!.emoji
         ),
     );
@@ -619,7 +646,7 @@ export function applyReactionPatch(
       reactions: message.reactions.filter(
         (reaction) =>
           !(
-            reaction.userId === patch.removedReaction!.userId &&
+            messageReactionMatchesUser(reaction, patch.removedReaction!.userId) &&
             reaction.emoji === patch.removedReaction!.emoji
           ),
       ),
@@ -674,11 +701,10 @@ export function mergeMessageUpdates(
     });
   }
 
-  const mergedReactions =
-    incoming.reactions.length > 0
-      ? options?.replaceReactions
-        ? incoming.reactions
-        : mergeMessageReactions(previous.reactions, incoming.reactions)
+  const mergedReactions = options?.replaceReactions
+    ? incoming.reactions
+    : incoming.reactions.length > 0
+      ? mergeMessageReactions(previous.reactions, incoming.reactions)
       : previous.reactions;
 
   return {
@@ -700,7 +726,7 @@ export function parseMessageReactions(value: unknown): MessageReaction[] {
 }
 
 function reactionDisplayName(reaction: MessageReaction, currentUserId: string | null): string {
-  if (currentUserId && reaction.userId === currentUserId) {
+  if (messageReactionMatchesUser(reaction, currentUserId)) {
     return 'You';
   }
 
@@ -760,16 +786,17 @@ export function groupMessageReactions(
 
   for (const reaction of reactions) {
     const reactors = seenByEmoji.get(reaction.emoji) ?? new Set<string>();
-    if (reactors.has(reaction.userId)) {
+    const reactorKey = normalizeReactionUserId(reaction.userId);
+    if (reactors.has(reactorKey)) {
       continue;
     }
-    reactors.add(reaction.userId);
+    reactors.add(reactorKey);
     seenByEmoji.set(reaction.emoji, reactors);
 
     const existing = groups.get(reaction.emoji) ?? { count: 0, reactedByMe: false };
     groups.set(reaction.emoji, {
       count: existing.count + 1,
-      reactedByMe: existing.reactedByMe || reaction.userId === currentUserId,
+      reactedByMe: existing.reactedByMe || messageReactionMatchesUser(reaction, currentUserId),
     });
   }
 

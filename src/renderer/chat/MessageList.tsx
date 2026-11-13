@@ -48,6 +48,8 @@ import { ReactionChip } from './ReactionChip';
 import { ReactionPicker } from './ReactionPicker';
 import { MessageContent, MessageReplyPreview } from './MessageContent';
 import type { ConversationScrollSnapshot } from '../conversationScrollCache';
+import { JumpToLatestButton } from './JumpToLatestButton';
+import { countMessagesBelowAnchor } from './messageListNewBelow';
 
 function MessageListSurface({
   children,
@@ -807,7 +809,7 @@ const MessageRow = memo(function MessageRow({
             </div>
 
             <div
-              className={`glass-panel mb-1 flex shrink-0 items-center gap-0.5 rounded-xl border border-app-border/60 px-1 py-0.5 shadow-lg opacity-0 transition-all duration-200 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 ${
+              className={`mb-1 flex shrink-0 items-center gap-0.5 rounded-xl border border-app-border/70 bg-app-elevated px-1 py-0.5 shadow-lg opacity-0 transition-all duration-200 translate-y-1 group-hover:opacity-100 group-hover:translate-y-0 ${
                 message.isOwn ? 'flex-row-reverse' : 'flex-row'
               }`}
             >
@@ -1001,6 +1003,9 @@ export function MessageList({
   const completedScrollRequestKeyRef = useRef(0);
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const loadOlderStartReachedRef = useRef(false);
+  const jumpAnchorMessageIdRef = useRef<string | null>(null);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [newMessagesBelow, setNewMessagesBelow] = useState(0);
   const virtuosoAutoscrollLastAtRef = useRef(0);
   const listEntriesFirstKeyRef = useRef<string | null>(null);
   const listEntriesLengthRef = useRef(0);
@@ -1015,6 +1020,9 @@ export function MessageList({
     lastMessageIdRef.current = null;
     loadOlderScrollSnapshotRef.current = null;
     loadOlderStartReachedRef.current = false;
+    jumpAnchorMessageIdRef.current = null;
+    setShowJumpToLatest(false);
+    setNewMessagesBelow(0);
     listEntriesFirstKeyRef.current = null;
     listEntriesLengthRef.current = 0;
     restoredScrollForConversationRef.current = null;
@@ -1204,6 +1212,57 @@ export function MessageList({
     bottomAnchorRef.current?.scrollIntoView({ block: 'end', behavior });
   }, [pendingScrollToMessageId, scrollToMessageId, virtualListEnabled]);
 
+  const syncJumpToLatestUi = useCallback(
+    (atBottom: boolean) => {
+      setShowJumpToLatest(!atBottom);
+
+      if (atBottom) {
+        jumpAnchorMessageIdRef.current = null;
+        setNewMessagesBelow(0);
+        return;
+      }
+
+      if (!jumpAnchorMessageIdRef.current) {
+        jumpAnchorMessageIdRef.current = messages[messages.length - 1]?.id ?? null;
+      }
+
+      if (jumpAnchorMessageIdRef.current) {
+        setNewMessagesBelow(countMessagesBelowAnchor(messages, jumpAnchorMessageIdRef.current));
+      }
+    },
+    [messages],
+  );
+
+  useEffect(() => {
+    if (!showJumpToLatest || !jumpAnchorMessageIdRef.current) {
+      return;
+    }
+
+    setNewMessagesBelow(countMessagesBelowAnchor(messages, jumpAnchorMessageIdRef.current));
+  }, [messages, showJumpToLatest]);
+
+  const handleJumpToLatest = useCallback(() => {
+    jumpAnchorMessageIdRef.current = null;
+    setNewMessagesBelow(0);
+    setShowJumpToLatest(false);
+    stickToBottomRef.current = true;
+    suppressAutoScrollRef.current = false;
+    scrollToBottom('smooth');
+  }, [scrollToBottom]);
+
+  const handleAtBottomStateChange = useCallback(
+    (atBottom: boolean) => {
+      if (suppressAutoScrollRef.current || pendingScrollToMessageId) {
+        return;
+      }
+
+      stickToBottomRef.current = atBottom;
+      syncJumpToLatestUi(atBottom);
+      persistScrollPosition();
+    },
+    [pendingScrollToMessageId, persistScrollPosition, syncJumpToLatestUi],
+  );
+
   useEffect(() => {
     const scrollTargetId = scrollToMessageId ?? pendingScrollToMessageId;
 
@@ -1320,7 +1379,7 @@ export function MessageList({
 
     if (completedScrollTargetRef.current) {
       stickToBottomRef.current = false;
-      suppressAutoScrollRef.current = true;
+      suppressAutoScrollRef.current = false;
       return;
     }
 
@@ -1373,7 +1432,11 @@ export function MessageList({
 
       const distanceFromBottom =
         container.scrollHeight - container.scrollTop - container.clientHeight;
-      stickToBottomRef.current = distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD_PX;
+      const atBottom = distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD_PX;
+      stickToBottomRef.current = atBottom;
+      if (!pendingScrollToMessageId && !suppressAutoScrollRef.current) {
+        syncJumpToLatestUi(atBottom);
+      }
       persistScrollPosition();
 
       if (
@@ -1399,6 +1462,7 @@ export function MessageList({
     onLoadOlder,
     pendingScrollToMessageId,
     persistScrollPosition,
+    syncJumpToLatestUi,
     virtualListEnabled,
   ]);
 
@@ -1411,8 +1475,7 @@ export function MessageList({
       !hasMoreOlder ||
       loadingOlder ||
       showInitialLoading ||
-      pendingScrollToMessageId ||
-      suppressAutoScrollRef.current
+      pendingScrollToMessageId
     ) {
       return;
     }
@@ -1606,18 +1669,6 @@ export function MessageList({
     virtuosoMountScrollTop,
   ]);
 
-  const handleAtBottomStateChange = useCallback(
-    (atBottom: boolean) => {
-      if (suppressAutoScrollRef.current || pendingScrollToMessageId) {
-        return;
-      }
-
-      stickToBottomRef.current = atBottom;
-      persistScrollPosition();
-    },
-    [pendingScrollToMessageId, persistScrollPosition],
-  );
-
   const handleFollowOutput = useCallback(
     (isAtBottom: boolean): FollowOutputScalarType => {
       if (suppressAutoScrollRef.current || pendingScrollToMessageId || scrollToMessageId) {
@@ -1650,8 +1701,7 @@ export function MessageList({
       !hasMoreOlder ||
       loadingOlder ||
       loadOlderStartReachedRef.current ||
-      pendingScrollToMessageId ||
-      suppressAutoScrollRef.current
+      pendingScrollToMessageId
     ) {
       return;
     }
@@ -1659,6 +1709,17 @@ export function MessageList({
     loadOlderStartReachedRef.current = true;
     onLoadOlder();
   }, [hasMoreOlder, loadingOlder, onLoadOlder, pendingScrollToMessageId]);
+
+  const handleAtTopStateChange = useCallback(
+    (atTop: boolean) => {
+      if (!atTop) {
+        return;
+      }
+
+      handleStartReached();
+    },
+    [handleStartReached],
+  );
 
   const handleTotalListHeightChanged = useCallback(() => {
     requestStickToBottomIfNeeded();
@@ -1858,15 +1919,34 @@ export function MessageList({
       Scroller: messageListVirtuosoScroller,
       List: messageListVirtuosoList,
       Item: MessageListVirtuosoItem,
-      Header: () =>
-        loadingOlder ? (
-          <div
-            className="box-border flex w-full max-w-full justify-center px-6 py-2 text-xs text-app-muted"
-            role="status"
-          >
-            Loading earlier messages…
+      Header: () => {
+        if (loadingOlder) {
+          return (
+            <div
+              className="box-border flex w-full max-w-full justify-center px-6 py-2 text-xs text-app-muted"
+              role="status"
+            >
+              Loading earlier messages…
+            </div>
+          );
+        }
+
+        if (!hasMoreOlder || !onLoadOlder) {
+          return null;
+        }
+
+        return (
+          <div className="box-border flex w-full max-w-full justify-center px-6 py-2">
+            <button
+              type="button"
+              className="rounded-full border border-app-border/70 bg-app-elevated px-3 py-1.5 text-xs font-medium text-app-text shadow-sm transition hover:bg-app-chat-hover"
+              onClick={() => onLoadOlder()}
+            >
+              Load earlier messages
+            </button>
           </div>
-        ) : null,
+        );
+      },
       Footer: () => (
         <div className="box-border w-full max-w-full px-6">
           {peerBlockedByCurrentUser ? <BlockedByYouDivider key="blocked-by-you" /> : null}
@@ -1874,7 +1954,7 @@ export function MessageList({
         </div>
       ),
     };
-  }, [loadingOlder, peerBlockedByCurrentUser]);
+  }, [hasMoreOlder, loadingOlder, onLoadOlder, peerBlockedByCurrentUser]);
 
   const attachScrollContainerRef = useCallback((ref: HTMLElement | null) => {
     scrollContainerRef.current = ref instanceof HTMLDivElement ? ref : null;
@@ -1930,6 +2010,10 @@ export function MessageList({
         </div>
       ) : null}
 
+      {showJumpToLatest ? (
+        <JumpToLatestButton newMessageCount={newMessagesBelow} onClick={handleJumpToLatest} />
+      ) : null}
+
       {virtualListEnabled ? (
         <Virtuoso
           key={conversationId ?? 'message-list'}
@@ -1948,10 +2032,11 @@ export function MessageList({
           atBottomStateChange={handleAtBottomStateChange}
           followOutput={handleFollowOutput}
           startReached={handleStartReached}
+          atTopStateChange={handleAtTopStateChange}
           totalListHeightChanged={handleTotalListHeightChanged}
           rangeChanged={handleRangeChanged}
           defaultItemHeight={80}
-          increaseViewportBy={{ top: 320, bottom: 480 }}
+          increaseViewportBy={{ top: 600, bottom: 480 }}
           itemContent={virtuosoItemContent}
         />
       ) : (

@@ -918,6 +918,35 @@ export async function saveUserProfile(
   return withToken((token) => window.electronAPI.updateUserProfile(token, JSON.stringify(payload)));
 }
 
+export async function loadCurrentUserStatus(): Promise<ApiResult<unknown>> {
+  if (!window.electronAPI?.getUserStatus) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getUserStatus(token));
+}
+
+/** Status text lives on `/users/status`; fall back to public profile when GET is unavailable. */
+export async function loadResolvedUserStatus(userId: string): Promise<ApiResult<unknown>> {
+  const statusResult = await loadCurrentUserStatus();
+
+  if (statusResult.ok) {
+    return statusResult;
+  }
+
+  if (!userId) {
+    return statusResult;
+  }
+
+  const profileResult = await loadUserProfile(userId);
+
+  if (profileResult.ok) {
+    return profileResult;
+  }
+
+  return statusResult;
+}
+
 export async function saveUserStatus(
   status: import('../shared/profile').UserPresenceStatus,
   message?: string,

@@ -1035,6 +1035,23 @@ function setupApplicationMenu(): void {
     });
   }
 
+  const viewSubmenu: MenuItemConstructorOptions[] = [
+    { role: 'reload', accelerator: 'CmdOrCtrl+R' },
+    { role: 'forceReload', accelerator: 'CmdOrCtrl+Shift+R' },
+  ];
+
+  if (!app.isPackaged) {
+    viewSubmenu.push(
+      { type: 'separator' },
+      { role: 'toggleDevTools', accelerator: isMac ? 'Alt+Command+I' : 'Ctrl+Shift+I' },
+    );
+  }
+
+  template.push({
+    label: 'View',
+    submenu: viewSubmenu,
+  });
+
   if (isMac) {
     template.push({ role: 'editMenu' }, { role: 'windowMenu' });
   } else {

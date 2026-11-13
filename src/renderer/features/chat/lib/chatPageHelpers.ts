@@ -161,15 +161,20 @@ export function markOwnMessages(messages: MessageItem[], userId: string | null):
 export const MESSAGE_HISTORY_PAGE_SIZE = 50;
 
 export function resolveHasMoreMessagesFromBootstrap(bootstrap: ConversationBootstrap): boolean {
-  if (bootstrap.hasMoreMessages === true) {
-    return true;
+  if (bootstrap.messages.length === 0) {
+    return false;
   }
 
   if (bootstrap.hasMoreMessages === false) {
     return false;
   }
 
-  return bootstrap.messages.length >= MESSAGE_HISTORY_PAGE_SIZE;
+  if (bootstrap.hasMoreMessages === true) {
+    return true;
+  }
+
+  // API often omits hasMore on partial pages — allow scroll-to-top fetch until we get an empty page.
+  return true;
 }
 
 export function applyMainChatFilterIfChanged(messages: MessageItem[]): MessageItem[] {

@@ -1,4 +1,12 @@
-import { forwardRef, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react';
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from 'react';
 import { createPortal } from 'react-dom';
 import { FiBarChart2, FiClock, FiImage, FiLink, FiMic, FiPaperclip, FiPlus, FiSend, FiSmile } from 'react-icons/fi';
 import { EnhanceSparkleIcon } from './ChatIcons';
@@ -25,8 +33,14 @@ import {
 } from '../chatApi';
 import { useToast } from '../ui/Toast';
 import { MessageReplyPreview } from './MessageContent';
-import { openMediaPreview } from './MediaPreviewHost';
+import { AttachmentComposerOverlay } from './AttachmentComposerOverlay';
 import { MediaPicker, type MediaPickerTab } from './MediaPicker';
+import {
+  buildPendingAttachment,
+  revokePendingAttachment,
+  revokePendingAttachments,
+  type PendingAttachment,
+} from './pendingAttachments';
 import { ScheduleMessageModal } from './ScheduleMessageModal';
 import type { ScheduledMessageItem } from '../../shared/extras';
 import { VoiceInlineRecording } from './VoiceInlineRecording';
@@ -53,40 +67,12 @@ type MessageInputProps = {
   onOpenFlexAi?: () => void;
   compact?: boolean;
   currentUserId?: string | null;
+  attachmentOverlayRootRef?: RefObject<HTMLElement | null>;
 };
 
 export type MessageInputHandle = {
   focusComposer: () => void;
 };
-
-function formatFileSize(bytes: number): string {
-  if (bytes < 1024) {
-    return `${bytes} B`;
-  }
-
-  if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(bytes >= 10240 ? 0 : 1)} KB`;
-  }
-
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function fileTypeLabel(file: File): string {
-  const extension = file.name.includes('.') ? file.name.split('.').pop()?.toUpperCase() : '';
-  if (extension) {
-    return extension;
-  }
-
-  if (file.type.startsWith('image/')) {
-    return 'IMAGE';
-  }
-
-  if (file.type.startsWith('video/')) {
-    return 'VIDEO';
-  }
-
-  return file.type.split('/')[1]?.toUpperCase() || 'FILE';
-}
 
 type MentionSuggestion = {
   id: string;
@@ -205,6 +191,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   onOpenFlexAi,
   compact = false,
   currentUserId = null,
+  attachmentOverlayRootRef,
 },
   ref,
 ) {
@@ -287,42 +274,52 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     null,
   );
   const [pickerPanelStyle, setPickerPanelStyle] = useState<React.CSSProperties | null>(null);
-  const [pendingAttachments, setPendingAttachments] = useState<{
-    file: File;
-    previewUrl: string;
-    isImage: boolean;
-    isVideo: boolean;
-  }[]>([]);
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([]);
+  const [selectedAttachmentIndex, setSelectedAttachmentIndex] = useState(0);
+  const pendingAttachmentsRef = useRef(pendingAttachments);
+  pendingAttachmentsRef.current = pendingAttachments;
+  const localOverlayRootRef = useRef<HTMLDivElement>(null);
+  const attachmentOverlayAnchorRef = attachmentOverlayRootRef ?? localOverlayRootRef;
+  const attachmentComposerActive = pendingAttachments.length > 0;
+  const hideInlineComposerForAttachments =
+    attachmentComposerActive && Boolean(attachmentOverlayRootRef);
 
   const removeAttachment = (indexToRemove: number) => {
     setPendingAttachments((current) => {
       const next = [...current];
       const removed = next.splice(indexToRemove, 1)[0];
-      if (removed?.previewUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(removed.previewUrl);
+      if (removed) {
+        revokePendingAttachment(removed);
       }
+
+      setSelectedAttachmentIndex((selected) => {
+        if (next.length === 0) {
+          return 0;
+        }
+        if (selected > indexToRemove) {
+          return selected - 1;
+        }
+        if (selected >= next.length) {
+          return next.length - 1;
+        }
+        return selected;
+      });
+
       return next;
     });
   };
 
   const clearPendingAttachments = () => {
     setPendingAttachments((current) => {
-      current.forEach(att => {
-        if (att.previewUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(att.previewUrl);
-        }
-      });
+      revokePendingAttachments(current);
       return [];
     });
+    setSelectedAttachmentIndex(0);
   };
 
   useEffect(() => {
     return () => {
-      pendingAttachments.forEach(att => {
-        if (att.previewUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(att.previewUrl);
-        }
-      });
+      revokePendingAttachments(pendingAttachmentsRef.current);
     };
   }, []);
 
@@ -501,13 +498,30 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   }, [actionsMenuOpen]);
 
   useLayoutEffect(() => {
-    if (!pickerOpen || !pickerButtonRef.current) {
+    if (!pickerOpen) {
+      setPickerPanelStyle(null);
+      return;
+    }
+
+    const width = Math.min(window.innerWidth - 32, 420);
+
+    if (attachmentComposerActive) {
+      setPickerPanelStyle({
+        position: 'fixed',
+        left: Math.max(16, (window.innerWidth - width) / 2),
+        bottom: 132,
+        width,
+        zIndex: 10_001,
+      });
+      return;
+    }
+
+    if (!pickerButtonRef.current) {
       setPickerPanelStyle(null);
       return;
     }
 
     const rect = pickerButtonRef.current.getBoundingClientRect();
-    const width = Math.min(window.innerWidth - 32, 420);
 
     setPickerPanelStyle({
       position: 'fixed',
@@ -516,7 +530,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       width,
       zIndex: 10_000,
     });
-  }, [pickerOpen]);
+  }, [attachmentComposerActive, pickerOpen]);
 
   const insertAtCursor = (text: string) => {
     const textarea = textareaRef.current;
@@ -680,16 +694,13 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       return;
     }
 
-    const newAttachments = files.map((file) => {
-      const mimeType = file.type || 'application/octet-stream';
-      const isImage = mimeType.startsWith('image/');
-      const isVideo = mimeType.startsWith('video/');
-      const previewUrl = isImage || isVideo ? URL.createObjectURL(file) : '';
-      return { file, previewUrl, isImage, isVideo };
-    });
+    const newAttachments = files.map(buildPendingAttachment);
 
-    setPendingAttachments((current) => [...current, ...newAttachments]);
-    requestAnimationFrame(() => textareaRef.current?.focus());
+    setPendingAttachments((current) => {
+      const next = [...current, ...newAttachments];
+      setSelectedAttachmentIndex(next.length - 1);
+      return next;
+    });
   };
 
   const handlePaste = (event: React.ClipboardEvent) => {
@@ -733,6 +744,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   };
 
   const handleEmojiSelect = (emoji: string) => {
+    if (attachmentComposerActive) {
+      handleChange(`${value}${emoji}`, true);
+      return;
+    }
+
     insertAtCursor(emoji);
     requestAnimationFrame(() => textareaRef.current?.focus());
   };
@@ -1155,7 +1171,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   };
 
   return (
-    <div 
+    <div
+      ref={localOverlayRootRef}
       className={`${compact ? '' : 'px-6 pb-4 pt-1.5'} ${dragClasses} relative`}
       onDragOver={handleDragOver}
       onDragEnter={handleDragOver}
@@ -1168,79 +1185,28 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         </p>
       ) : null}
 
-      {pendingAttachments.length > 0 ? (
-        <div className="mb-2 flex flex-wrap items-start gap-3">
-          {pendingAttachments.map((attachment, index) => (
-            <div key={index} className="flex items-start gap-3 rounded-2xl border border-app-border bg-app-surface/90 backdrop-blur-md p-2.5 shadow-sm w-full sm:w-auto min-w-[200px]">
-              {attachment.isImage ? (
-                <button
-                  type="button"
-                  className="shrink-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-                  aria-label={`Preview ${attachment.file.name}`}
-                  onClick={() => {
-                    openMediaPreview({
-                      url: attachment.previewUrl,
-                      name: attachment.file.name,
-                      kind: 'image',
-                    });
-                  }}
-                >
-                  <img
-                    src={attachment.previewUrl}
-                    alt={attachment.file.name}
-                    className="h-16 w-16 rounded-xl object-cover"
-                  />
-                </button>
-              ) : attachment.isVideo ? (
-                <button
-                  type="button"
-                  className="relative shrink-0 rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40"
-                  aria-label={`Preview ${attachment.file.name}`}
-                  onClick={() => {
-                    openMediaPreview({
-                      url: attachment.previewUrl,
-                      name: attachment.file.name,
-                      kind: 'video',
-                    });
-                  }}
-                >
-                  <video
-                    src={attachment.previewUrl}
-                    className="h-16 w-16 rounded-xl object-cover bg-app-chat-hover"
-                  />
-                </button>
-              ) : (
-                <div className="flex h-16 w-16 shrink-0 flex-col items-center justify-center rounded-xl bg-app-chat-hover px-1 text-center">
-                  <span className="text-[10px] font-bold text-app-text">{fileTypeLabel(attachment.file)}</span>
-                  <span className="mt-0.5 text-[9px] text-app-muted">{formatFileSize(attachment.file.size)}</span>
-                </div>
-              )}
-              <div className="min-w-0 flex-1 pt-0.5">
-                <p className="truncate text-xs font-semibold text-app-text">{attachment.file.name}</p>
-                {!attachment.isImage && !attachment.isVideo ? (
-                  <p className="mt-0.5 text-[11px] text-app-muted">
-                    {fileTypeLabel(attachment.file)} · {formatFileSize(attachment.file.size)}
-                  </p>
-                ) : null}
-                {index === 0 && (
-                  <p className="mt-0.5 text-[11px] text-app-muted">
-                    {attachment.isImage || attachment.isVideo
-                      ? 'Add an optional caption, then press Send.'
-                      : 'Add an optional message, then press Send.'}
-                  </p>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => removeAttachment(index)}
-                className="shrink-0 rounded-lg p-1 text-app-muted hover:bg-app-chat-hover hover:text-app-text"
-                aria-label="Remove attachment"
-              >
-                ✕
-              </button>
-            </div>
-          ))}
-        </div>
+      {attachmentComposerActive ? (
+        <AttachmentComposerOverlay
+          open={attachmentComposerActive}
+          anchorRef={attachmentOverlayAnchorRef}
+          attachments={pendingAttachments}
+          selectedIndex={Math.min(selectedAttachmentIndex, pendingAttachments.length - 1)}
+          onSelectIndex={setSelectedAttachmentIndex}
+          onRemove={removeAttachment}
+          onClose={clearPendingAttachments}
+          onAddMore={() => fileInputRef.current?.click()}
+          caption={value}
+          onCaptionChange={onChange}
+          onSend={handleSendAction}
+          onOpenEmoji={() => openPicker('emoji')}
+          sendDisabled={disabled || isSending || aiBusy || fileDisabled}
+          isSending={isSending}
+          replyBanner={
+            replyingToMessage
+              ? `Replying to ${replyingToMessage.senderName || replyingToMessage.senderId}`
+              : null
+          }
+        />
       ) : null}
 
       {pendingVoiceNote ? (
@@ -1318,6 +1284,29 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         </div>
       ) : null}
 
+      <input
+        ref={fileInputRef}
+        type="file"
+        className="hidden"
+        multiple
+        onChange={handleFileSelected}
+      />
+      <input
+        ref={imageInputRef}
+        type="file"
+        accept="image/*,video/*"
+        className="hidden"
+        multiple
+        onChange={handleFileSelected}
+      />
+      <input
+        ref={voiceNoteInputRef}
+        type="file"
+        accept="audio/*"
+        className="hidden"
+        onChange={handleVoiceNoteFileSelected}
+      />
+
       <div
         ref={composerSurfaceRef}
         onFocusOut={handleComposerFocusOut}
@@ -1325,30 +1314,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           replyingToMessage ? 'rounded-t-none border-t-0' : ''
         } ${
           displayError ? 'border-accent ring-2 ring-accent/30' : 'border-app-border/80'
-        }`}
+        } ${hideInlineComposerForAttachments ? 'hidden' : ''}`}
       >
-        <input
-          ref={fileInputRef}
-          type="file"
-          className="hidden"
-          multiple
-          onChange={handleFileSelected}
-        />
-        <input
-          ref={imageInputRef}
-          type="file"
-          accept="image/*,video/*"
-          className="hidden"
-          multiple
-          onChange={handleFileSelected}
-        />
-        <input
-          ref={voiceNoteInputRef}
-          type="file"
-          accept="audio/*"
-          className="hidden"
-          onChange={handleVoiceNoteFileSelected}
-        />
         <div className={`flex items-end gap-1 ${compact ? 'px-1 py-1' : 'px-2 py-2'}`}>
           {voiceCaptureMode ? (
             <VoiceInlineRecording

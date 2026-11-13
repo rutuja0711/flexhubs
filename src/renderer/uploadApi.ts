@@ -1,7 +1,8 @@
 import type { ApiResult } from '../shared/api';
 import { extractUploadUrl, normalizeUploadUrl } from '../shared/profile';
 import { clearAuth, getStoredToken } from './authApi';
-import { estimateUploadDurationMs, runSimulatedProgress } from './uploadProgress';
+const UPLOAD_READ_PERCENT_CAP = 40;
+const UPLOAD_IN_FLIGHT_PERCENT = 41;
 
 function readFileAsBase64(
   file: File,
@@ -15,7 +16,9 @@ function readFileAsBase64(
       }
 
       const readRatio = event.loaded / file.size;
-      onProgress(Math.round(readRatio * 38));
+      onProgress(
+        Math.min(UPLOAD_READ_PERCENT_CAP, Math.round(readRatio * UPLOAD_READ_PERCENT_CAP)),
+      );
     };
     reader.onload = () => {
       const result = reader.result;
@@ -25,11 +28,11 @@ function readFileAsBase64(
         return;
       }
 
-      onProgress?.(40);
+      onProgress?.(UPLOAD_READ_PERCENT_CAP);
       resolve(result.includes(',') ? result.split(',')[1] : result);
     };
     reader.onerror = () => reject(new Error('Unable to read file.'));
-    onProgress?.(1);
+    onProgress?.(0);
     reader.readAsDataURL(file);
   });
 }
@@ -57,27 +60,14 @@ export async function uploadFileToApi(
 
   try {
     const base64Data = await readFileAsBase64(file, onProgress);
-    const stopUploadSimulation = runSimulatedProgress(
-      42,
-      88,
-      estimateUploadDurationMs(file.size),
-      (value) => onProgress?.(value),
+    onProgress?.(UPLOAD_IN_FLIGHT_PERCENT);
+
+    const result = await window.electronAPI.uploadProfileImage(
+      token,
+      file.name,
+      file.type || 'application/octet-stream',
+      base64Data,
     );
-
-    let result: Awaited<ReturnType<NonNullable<typeof window.electronAPI>['uploadProfileImage']>>;
-
-    try {
-      result = await window.electronAPI.uploadProfileImage(
-        token,
-        file.name,
-        file.type || 'application/octet-stream',
-        base64Data,
-      );
-    } finally {
-      stopUploadSimulation();
-    }
-
-    onProgress?.(90);
 
     if (!result.ok) {
       if (result.status === 401) {
@@ -95,6 +85,8 @@ export async function uploadFileToApi(
         error: 'Upload succeeded but no file URL was returned.',
       };
     }
+
+    onProgress?.(100);
 
     return {
       ok: true,

@@ -334,7 +334,7 @@ export function PresenceDot({
 
   return (
     <span
-      className={`pointer-events-none absolute bottom-0 right-0 z-50 box-border ${dotSize} rounded-full border-2 ${SURROUND_BORDER_CLASS[surround]} ${STATUS_COLORS[status]}`}
+      className={`pointer-events-none absolute -bottom-0.5 -right-0.5 z-50 box-border ${dotSize} rounded-full border-2 ${SURROUND_BORDER_CLASS[surround]} ${STATUS_COLORS[status]}`}
       aria-hidden="true"
     />
   );
@@ -368,16 +368,20 @@ export function Avatar({
     setFailed(false);
   }, [imageKey]);
 
+  const compactRingClass =
+    size === 'xs' || size === 'sm' ? '' : 'ring-1 ring-white/10 shadow-sm';
+
   if (imageUrl && !failed) {
     return (
       <div
-        className={`relative shrink-0 overflow-hidden rounded-full bg-app-chat-bg ${sizeClass}`}
+        className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-app-chat-bg ${sizeClass}`}
       >
         <RemoteImage
           src={imageUrl}
           alt=""
           loading={loading}
-          className={`block h-full w-full object-cover object-center`}
+          wrapperClassName="flex h-full w-full overflow-hidden rounded-full"
+          className="block h-full w-full rounded-full object-cover object-center"
           onError={() => setFailed(true)}
         />
       </div>
@@ -386,7 +390,7 @@ export function Avatar({
 
   return (
     <div
-      className={`${sizeClass} flex items-center justify-center rounded-full bg-app-avatar-fallback font-semibold text-app-text ring-1 ring-white/10 shadow-sm`}
+      className={`${sizeClass} flex shrink-0 items-center justify-center rounded-full bg-app-avatar-fallback font-semibold text-app-text ${compactRingClass}`}
     >
       {initials}
     </div>

@@ -1,20 +1,28 @@
+import type { ApiResult } from '../shared/api';
 import type { UserPresenceStatus } from '../shared/profile';
 import { saveUserStatus } from './chatApi';
 
 const BACKGROUND_AWAY_MS = 60_000;
 
 type Listener = () => void;
+type PublishedPresenceMode = 'visible' | 'hidden' | null;
 
 let manualStatus: UserPresenceStatus = 'ONLINE';
 let statusMessage = '';
 let autoAway = false;
+let sharePresenceWithOthers = true;
 let started = false;
 let backgroundTimer: number | undefined;
 let pendingStatusRequest: Promise<void> | null = null;
+let lastPublishedMode: PublishedPresenceMode = null;
 const listeners = new Set<Listener>();
 
 function notify(): void {
   listeners.forEach((listener) => listener());
+}
+
+function pushHeartbeatStatus(status: UserPresenceStatus): void {
+  window.electronAPI?.setRealtimeHeartbeatStatus?.(status);
 }
 
 export function subscribePresenceManager(listener: Listener): () => void {
@@ -22,12 +30,53 @@ export function subscribePresenceManager(listener: Listener): () => void {
   return () => listeners.delete(listener);
 }
 
+/** Local status for your own UI (nav dot, profile). */
 export function getEffectivePresenceStatus(): UserPresenceStatus {
   if (autoAway && manualStatus === 'ONLINE') {
     return 'AWAY';
   }
 
   return manualStatus;
+}
+
+/** What we publish to the API / Redis (OFFLINE when presence sharing is disabled). */
+export function getPublishedPresenceStatus(): UserPresenceStatus {
+  if (!sharePresenceWithOthers) {
+    return 'OFFLINE';
+  }
+
+  return getEffectivePresenceStatus();
+}
+
+export function isPresenceManagerStarted(): boolean {
+  return started;
+}
+
+/** When false, peers must see us as offline (mirrors web `sharePresence` / SocketProvider). */
+export function setPresenceSharingEnabled(enabled: boolean): void {
+  const wasEnabled = sharePresenceWithOthers;
+  sharePresenceWithOthers = enabled;
+
+  if (!enabled) {
+    autoAway = false;
+    clearBackgroundTimer();
+    if (wasEnabled) {
+      lastPublishedMode = null;
+    }
+  } else if (!wasEnabled) {
+    lastPublishedMode = null;
+  }
+
+  pushHeartbeatStatus(enabled ? getPublishedPresenceStatus() : 'OFFLINE');
+  notify();
+}
+
+export function isPresenceSharingEnabled(): boolean {
+  return sharePresenceWithOthers;
+}
+
+function resolvePublishedPresenceStatus(): UserPresenceStatus {
+  return getPublishedPresenceStatus();
 }
 
 export function setManualPresenceStatus(status: UserPresenceStatus, message?: string): void {
@@ -45,8 +94,27 @@ export function setManualPresenceStatus(status: UserPresenceStatus, message?: st
   notify();
 }
 
+export function applyRemotePresenceBootstrap(
+  initialStatus: UserPresenceStatus,
+  initialMessage = '',
+): void {
+  manualStatus = initialStatus;
+  statusMessage = initialMessage;
+  autoAway = false;
+  notify();
+
+  if (sharePresenceWithOthers) {
+    lastPublishedMode = null;
+    void syncPresenceToServer();
+  }
+}
+
 export function setPresenceStatusMessage(message: string): void {
   statusMessage = message;
+}
+
+export function getPresenceStatusMessage(): string {
+  return statusMessage;
 }
 
 function clearBackgroundTimer(): void {
@@ -63,7 +131,7 @@ function isAppInBackground(): boolean {
 function scheduleBackgroundAway(): void {
   clearBackgroundTimer();
 
-  if (!started || manualStatus !== 'ONLINE' || !isAppInBackground()) {
+  if (!sharePresenceWithOthers || !started || manualStatus !== 'ONLINE' || !isAppInBackground()) {
     return;
   }
 
@@ -74,24 +142,55 @@ function scheduleBackgroundAway(): void {
   }, BACKGROUND_AWAY_MS);
 }
 
-async function patchPresenceStatus(status: UserPresenceStatus): Promise<void> {
+async function publishHiddenPresenceToServer(): Promise<ApiResult<{ ok: true }>> {
+  pushHeartbeatStatus('OFFLINE');
+
+  if (lastPublishedMode === 'hidden') {
+    return { ok: true, data: { ok: true } };
+  }
+
+  const request = saveUserStatus('OFFLINE', statusMessage);
+  pendingStatusRequest = request.then(() => undefined);
+
+  try {
+    const result = await request;
+    if (result.ok) {
+      lastPublishedMode = 'hidden';
+    }
+    return result;
+  } finally {
+    pendingStatusRequest = null;
+  }
+}
+
+async function patchPresenceStatus(_status: UserPresenceStatus): Promise<ApiResult<{ ok: true }>> {
   if (pendingStatusRequest) {
     await pendingStatusRequest;
   }
 
-  pendingStatusRequest = (async () => {
-    await saveUserStatus(status, statusMessage);
-  })();
+  if (!sharePresenceWithOthers) {
+    return publishHiddenPresenceToServer();
+  }
+
+  const publishedStatus = resolvePublishedPresenceStatus();
+  pushHeartbeatStatus(publishedStatus);
+
+  const request = saveUserStatus(publishedStatus, statusMessage);
+  pendingStatusRequest = request.then(() => undefined);
 
   try {
-    await pendingStatusRequest;
+    const result = await request;
+    if (result.ok) {
+      lastPublishedMode = 'visible';
+    }
+    return result;
   } finally {
     pendingStatusRequest = null;
   }
 }
 
 async function applyAutoAway(): Promise<void> {
-  if (!started || manualStatus !== 'ONLINE' || autoAway) {
+  if (!sharePresenceWithOthers || !started || manualStatus !== 'ONLINE' || autoAway) {
     return;
   }
 
@@ -101,7 +200,7 @@ async function applyAutoAway(): Promise<void> {
 }
 
 async function restoreFromAutoAway(): Promise<void> {
-  if (!autoAway || manualStatus !== 'ONLINE') {
+  if (!sharePresenceWithOthers || !autoAway || manualStatus !== 'ONLINE') {
     return;
   }
 
@@ -111,6 +210,11 @@ async function restoreFromAutoAway(): Promise<void> {
 }
 
 function handleForeground(): void {
+  if (!sharePresenceWithOthers) {
+    clearBackgroundTimer();
+    return;
+  }
+
   clearBackgroundTimer();
 
   if (autoAway && manualStatus === 'ONLINE') {
@@ -119,12 +223,21 @@ function handleForeground(): void {
 }
 
 function handleBackground(): void {
+  if (!sharePresenceWithOthers) {
+    return;
+  }
+
   if (isAppInBackground()) {
     scheduleBackgroundAway();
   }
 }
 
 function handleVisibilityChange(): void {
+  if (!sharePresenceWithOthers) {
+    clearBackgroundTimer();
+    return;
+  }
+
   if (isAppInBackground()) {
     handleBackground();
     return;
@@ -133,12 +246,12 @@ function handleVisibilityChange(): void {
   handleForeground();
 }
 
-export async function syncPresenceToServer(): Promise<void> {
+export async function syncPresenceToServer(): Promise<ApiResult<{ ok: true }>> {
   if (!started) {
-    return;
+    return { ok: true, data: { ok: true } };
   }
 
-  await patchPresenceStatus(getEffectivePresenceStatus());
+  return patchPresenceStatus(resolvePublishedPresenceStatus());
 }
 
 export function startPresenceManager(initialStatus: UserPresenceStatus, initialMessage = ''): void {
@@ -147,10 +260,7 @@ export function startPresenceManager(initialStatus: UserPresenceStatus, initialM
   autoAway = false;
 
   if (started) {
-    manualStatus = initialStatus;
-    statusMessage = initialMessage;
-    notify();
-    void syncPresenceToServer();
+    applyRemotePresenceBootstrap(initialStatus, initialMessage);
     return;
   }
 
@@ -165,6 +275,7 @@ export function startPresenceManager(initialStatus: UserPresenceStatus, initialM
 export function stopPresenceManager(): void {
   started = false;
   autoAway = false;
+  lastPublishedMode = null;
   clearBackgroundTimer();
 
   window.removeEventListener('focus', handleForeground);

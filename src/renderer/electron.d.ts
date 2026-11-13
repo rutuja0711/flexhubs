@@ -477,6 +477,7 @@ declare global {
         updatesJson: string,
       ) => Promise<ApiResult<ProfileSettings>>;
       updateUserProfile: (token: string, updatesJson: string) => Promise<ApiResult<unknown>>;
+      getUserStatus: (token: string) => Promise<ApiResult<unknown>>;
       updateUserStatus: (
         token: string,
         status: string,
@@ -498,6 +499,7 @@ declare global {
         token: string,
       ) => Promise<ApiResult<OrganizationMemberItem[]>>;
       startRealtime: (token: string) => Promise<{ ok: true }>;
+      setRealtimeHeartbeatStatus: (status: string) => Promise<{ ok: true }>;
       getRealtimeServerStatus: (
         token: string,
       ) => Promise<
@@ -664,6 +666,9 @@ declare global {
       openDesktopReleasePage?: () => Promise<{ ok: boolean }>;
       getUpdaterCapabilities?: () => Promise<{ inAppPatchOnly?: boolean }>;
       getAppVersion: () => Promise<string>;
+      getAutoInstallUpdatesPreference?: () => Promise<{ enabled: boolean }>;
+      setAutoInstallUpdatesPreference?: (enabled: boolean) => Promise<{ ok: boolean }>;
+      setUpdateInstallBlocked?: (blocked: boolean) => Promise<{ ok: boolean }>;
       getDesktopLegalContext: () => Promise<{
         isPackaged: boolean;
         version: string;

@@ -37,6 +37,7 @@ export function RemoteImage({
   src,
   alt = '',
   className = '',
+  wrapperClassName = '',
   loading = 'lazy',
   onError,
 }: RemoteImageProps) {
@@ -166,7 +167,7 @@ export function RemoteImage({
   }
 
   return (
-    <span ref={hostRef} className="inline-flex shrink-0">
+    <span ref={hostRef} className={`inline-flex shrink-0 ${wrapperClassName}`.trim()}>
       {displaySrc ? (
         <img
           src={displaySrc}

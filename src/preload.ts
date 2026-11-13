@@ -626,6 +626,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('user:update-notification-settings', token, updatesJson),
   updateUserProfile: (token: string, updatesJson: string): Promise<ApiResult<unknown>> =>
     ipcRenderer.invoke('user:update-profile', token, updatesJson),
+  getUserStatus: (token: string): Promise<ApiResult<unknown>> =>
+    ipcRenderer.invoke('user:status', token),
   updateUserStatus: (
     token: string,
     status: string,
@@ -664,6 +666,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     }>
   > => ipcRenderer.invoke('realtime:server-status', token),
   stopRealtime: (): Promise<{ ok: true }> => ipcRenderer.invoke('realtime:stop'),
+  setRealtimeHeartbeatStatus: (status: string): Promise<{ ok: true }> =>
+    ipcRenderer.invoke('realtime:set-heartbeat-status', status),
   sendTyping: (
     token: string,
     conversationId: string,
@@ -908,6 +912,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getUpdaterCapabilities: (): Promise<{ inAppPatchOnly?: boolean }> =>
     ipcRenderer.invoke('updater:get-capabilities'),
   getAppVersion: (): Promise<string> => ipcRenderer.invoke('updater:get-version'),
+  getAutoInstallUpdatesPreference: (): Promise<{ enabled: boolean }> =>
+    ipcRenderer.invoke('updater:get-auto-install-preference'),
+  setAutoInstallUpdatesPreference: (enabled: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('updater:set-auto-install-preference', enabled),
+  setUpdateInstallBlocked: (blocked: boolean): Promise<{ ok: boolean }> =>
+    ipcRenderer.invoke('updater:set-install-blocked', blocked),
   getDesktopLegalContext: (): Promise<{
     isPackaged: boolean;
     version: string;

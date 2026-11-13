@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { fetchMediaBlobWithProgress } from '../mediaBlob';
+import { sanitizeProgressPercent } from './attachmentProgressUtil';
 import { warmChatFileDragPath } from './startChatFileDrag';
 
 function downloadedStorageKey(url: string): string {
@@ -40,6 +41,7 @@ export type AttachmentTransferState = {
   showSendProgress: boolean;
   showDownloadProgress: boolean;
   ringProgress: number | null;
+  ringIndeterminate: boolean;
   progressBarWidth: number | undefined;
   handleDownload: () => Promise<void>;
 };
@@ -49,17 +51,47 @@ export function useAttachmentTransfer(options: {
   name: string;
   isSending?: boolean;
   sendProgress?: number | null;
+  /** Optional size while sending (blob URL phase). */
+  sendingSizeBytes?: number | null;
 }): AttachmentTransferState {
-  const { url, name, isSending = false, sendProgress = null } = options;
+  const { url, name, isSending = false, sendProgress = null, sendingSizeBytes = null } = options;
   const [downloading, setDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
-  const [knownSizeBytes, setKnownSizeBytes] = useState<number | null>(null);
+  const [knownSizeBytes, setKnownSizeBytes] = useState<number | null>(sendingSizeBytes);
   const [downloadError, setDownloadError] = useState(false);
   const [downloaded, setDownloaded] = useState(() => readPersistedDownloaded(url));
 
   useEffect(() => {
     setDownloaded(readPersistedDownloaded(url));
   }, [url]);
+
+  useEffect(() => {
+    if (sendingSizeBytes != null && sendingSizeBytes > 0) {
+      setKnownSizeBytes(sendingSizeBytes);
+    }
+  }, [sendingSizeBytes]);
+
+  useEffect(() => {
+    if (!isSending || !url.startsWith('blob:') || knownSizeBytes) {
+      return;
+    }
+
+    let cancelled = false;
+    void fetch(url)
+      .then((response) => response.blob())
+      .then((blob) => {
+        if (!cancelled && blob.size > 0) {
+          setKnownSizeBytes(blob.size);
+        }
+      })
+      .catch(() => {
+        // Ignore — size remains unknown.
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isSending, knownSizeBytes, url]);
 
   useEffect(() => {
     if (isSending || !url || url.startsWith('blob:')) {
@@ -90,9 +122,9 @@ export function useAttachmentTransfer(options: {
         blob = await fetchMediaBlobWithProgress(url, (loaded, total) => {
           if (total && total > 0) {
             setKnownSizeBytes(total);
-            setDownloadProgress(Math.min(100, Math.round((loaded / total) * 100)));
+            setDownloadProgress(sanitizeProgressPercent((loaded / total) * 100));
           } else if (loaded > 0) {
-            setKnownSizeBytes(loaded);
+            setKnownSizeBytes((current) => current ?? loaded);
             setDownloadProgress(null);
           }
         });
@@ -115,25 +147,37 @@ export function useAttachmentTransfer(options: {
     }
   }, [downloading, isSending, name, url]);
 
+  const sanitizedSend = sanitizeProgressPercent(sendProgress);
+  const sanitizedDownload = sanitizeProgressPercent(downloadProgress);
   const showSendProgress = isSending;
   const showDownloadProgress = downloading && !isSending;
+  const ringIndeterminate =
+    showSendProgress &&
+    (sanitizedSend == null || (sanitizedSend > 40 && sanitizedSend < 100));
   const ringProgress = showSendProgress
-    ? sendProgress
+    ? ringIndeterminate
+      ? null
+      : sanitizedSend
     : showDownloadProgress
-      ? downloadProgress
+      ? sanitizedDownload
       : null;
   const progressBarWidth =
-    typeof ringProgress === 'number' ? ringProgress : showDownloadProgress ? undefined : 0;
+    typeof ringProgress === 'number'
+      ? ringProgress
+      : showSendProgress || showDownloadProgress
+        ? undefined
+        : undefined;
 
   return {
     downloading,
-    downloadProgress,
+    downloadProgress: sanitizedDownload,
     knownSizeBytes,
     downloadError,
     downloaded,
     showSendProgress,
     showDownloadProgress,
     ringProgress,
+    ringIndeterminate,
     progressBarWidth,
     handleDownload,
   };

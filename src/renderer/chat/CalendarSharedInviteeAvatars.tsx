@@ -35,10 +35,16 @@ export function CalendarSharedInviteeAvatars({
   }
 
   return (
-    <ul className="mt-1.5 flex flex-wrap gap-1.5">
+    <ul className="m-0 mt-1.5 flex list-none flex-wrap items-center gap-1.5 p-0">
       {invitees.map((invitee, index) => (
-        <li key={invitee.userId ?? invitee.username ?? `invite-${index}`}>
-          <span className="group/invitee relative inline-flex" onClick={onItemClick}>
+        <li
+          key={invitee.userId ?? invitee.username ?? `invite-${index}`}
+          className="flex h-5 w-5 shrink-0 items-center justify-center"
+        >
+          <span
+            className="group/invitee relative flex h-5 w-5 items-center justify-center"
+            onClick={onItemClick}
+          >
             <Avatar
               imageUrl={invitee.avatarUrl ?? null}
               initials={initialsFromInvitee(invitee)}

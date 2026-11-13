@@ -17,7 +17,13 @@ function isPresenceStatusValue(value: string): boolean {
 }
 
 function readStatusMessageFromRecord(record: Record<string, unknown>): string {
-  for (const key of ['statusMessage', 'customStatus', 'message'] as const) {
+  for (const key of [
+    'statusMessage',
+    'customStatus',
+    'message',
+    'status_message',
+    'custom_status',
+  ] as const) {
     const value = readString(record[key]);
 
     if (value && !isPresenceStatusValue(value)) {
@@ -38,6 +44,8 @@ export function readUserStatusMessage(source: unknown): string {
   const candidates = [
     record,
     asRecord(record.user),
+    asRecord(record.data),
+    asRecord(record.status),
     asRecord(record.presence),
     asRecord(record.profile),
   ].filter((entry): entry is Record<string, unknown> => entry !== null);
@@ -63,6 +71,8 @@ export function readUserStatusMessageUpdate(source: unknown): string | undefined
   const candidates = [
     record,
     asRecord(record.user),
+    asRecord(record.data),
+    asRecord(record.status),
     asRecord(record.presence),
     asRecord(record.profile),
   ].filter((entry): entry is Record<string, unknown> => entry !== null);
@@ -250,6 +260,56 @@ const API_STATUS_TO_UI: Record<UserPresenceStatus, string> = {
   DND: 'Do not disturb',
   OFFLINE: 'Away',
 };
+
+export function readUserPresenceStatus(source: unknown): UserPresenceStatus | null {
+  const record = asRecord(source);
+
+  if (!record) {
+    return null;
+  }
+
+  const candidates = [
+    record,
+    asRecord(record.user),
+    asRecord(record.data),
+    asRecord(record.status),
+    asRecord(record.presence),
+    asRecord(record.profile),
+  ].filter((entry): entry is Record<string, unknown> => entry !== null);
+
+  for (const entry of candidates) {
+    const raw = readString(entry.presenceStatus) ?? readString(entry.status);
+
+    if (!raw) {
+      continue;
+    }
+
+    const normalized = raw.toUpperCase() as UserPresenceStatus;
+
+    if (PRESENCE_STATUS_VALUES.has(normalized)) {
+      return normalized;
+    }
+  }
+
+  return null;
+}
+
+export function mergeRemoteUserStatus(
+  userPayload: unknown,
+  statusPayload: unknown | null,
+): { status: UserPresenceStatus; statusMessage: string } {
+  const base = normalizeUserProfile(userPayload);
+  const statusMessage =
+    (statusPayload ? readUserStatusMessage(statusPayload) : '') ||
+    readUserStatusMessage(userPayload) ||
+    base.statusMessage;
+  const status = (statusPayload ? readUserPresenceStatus(statusPayload) : null) ?? base.status;
+
+  return {
+    status,
+    statusMessage,
+  };
+}
 
 export function uiStatusToApi(status: string): UserPresenceStatus {
   return UI_STATUS_TO_API[status] ?? 'ONLINE';

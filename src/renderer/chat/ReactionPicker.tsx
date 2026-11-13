@@ -93,7 +93,7 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
   const panel = open ? (
     <div
       ref={panelRef}
-      className="glass-panel fixed z-[9999] flex flex-col overflow-hidden rounded-2xl shadow-2xl animate-pop-in"
+      className="fixed z-[9999] flex flex-col overflow-hidden rounded-2xl border border-app-border/70 bg-app-elevated shadow-2xl animate-pop-in"
       style={{
         top: pickerPosition.top,
         left: pickerPosition.left,
@@ -176,7 +176,7 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
 
       {hovered && !open ? (
         <div className={`absolute bottom-full pb-2 ${align === 'right' ? 'right-0' : 'left-0'} z-[9999]`}>
-          <div className="flex items-center gap-0.5 rounded-2xl border border-app-border/80 bg-app-elevated/95 backdrop-blur-xl px-1.5 py-1 shadow-2xl animate-pop-in">
+          <div className="flex items-center gap-0.5 rounded-2xl border border-app-border/80 bg-app-elevated px-1.5 py-1 shadow-2xl animate-pop-in">
             {QUICK_REACTIONS.map((emoji) => (
               <button
                 key={emoji}

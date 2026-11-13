@@ -397,17 +397,30 @@ export async function removeMessageReaction(
   messageId: string,
   emoji: string,
 ): Promise<ApiResult<MessageItem>> {
-  const result = await apiDelete<unknown>(
-    `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}/reactions/${encodeURIComponent(emoji)}`,
+  const baseUrl = `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}/reactions`;
+
+  // Backend toggles via POST (same as web) — DELETE /reactions/:emoji returns 404.
+  const toggleResult = await apiPost<unknown>(baseUrl, token, 'Remove Reaction API', { emoji });
+
+  if (toggleResult.ok) {
+    return { ok: true, data: normalizeMessageResult(toggleResult.data) };
+  }
+
+  if (toggleResult.status !== 404 && toggleResult.status !== 405) {
+    return toggleResult;
+  }
+
+  const pathDelete = await apiDelete<unknown>(
+    `${baseUrl}/${encodeURIComponent(emoji)}`,
     token,
     'Remove Reaction API',
   );
 
-  if (!result.ok) {
-    return result;
+  if (!pathDelete.ok) {
+    return pathDelete;
   }
 
-  return { ok: true, data: normalizeMessageResult(result.data) };
+  return { ok: true, data: normalizeMessageResult(pathDelete.data) };
 }
 
 function normalizeMessageResult(payload: unknown): MessageItem {

@@ -5,8 +5,7 @@ import {
   uiStatusToApi,
   type UserPresenceStatus,
 } from '../../shared/profile';
-import { saveUserStatus } from '../chatApi';
-import { getEffectivePresenceStatus, setManualPresenceStatus } from '../presenceManager';
+import { getEffectivePresenceStatus, setManualPresenceStatus, syncPresenceToServer } from '../presenceManager';
 
 export type PresenceStatusUiLabel = 'Available' | 'Busy' | 'Do not disturb' | 'Away';
 
@@ -79,7 +78,7 @@ export async function applyUserPresenceUiLabel(
   const previous = getEffectivePresenceStatus();
   const apiStatus = uiStatusToApi(label);
   setManualPresenceStatus(apiStatus, statusMessage);
-  const result = await saveUserStatus(apiStatus, statusMessage);
+  const result = await syncPresenceToServer();
 
   if (!result.ok) {
     setManualPresenceStatus(previous, statusMessage);

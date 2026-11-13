@@ -54,6 +54,7 @@ export function ThreadSidebar({
   const [draftError, setDraftError] = useState('');
   const [replyingToMessage, setReplyingToMessage] = useState<MessageItem | null>(null);
   const composerRef = useRef<MessageInputHandle>(null);
+  const attachmentOverlayRootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => {
@@ -156,7 +157,10 @@ export function ThreadSidebar({
   };
 
   return (
-    <div className="relative z-40 flex w-full max-w-[340px] sm:max-w-[420px] shrink-0 flex-col border-l border-app-border/70 bg-app-surface/95 backdrop-blur-xl shadow-2xl">
+    <div
+      ref={attachmentOverlayRootRef}
+      className="relative z-40 flex w-full max-w-[340px] sm:max-w-[420px] shrink-0 flex-col border-l border-app-border/70 bg-app-surface/95 backdrop-blur-xl shadow-2xl"
+    >
       <header className="flex h-16 shrink-0 items-center justify-between border-b border-app-border/50 px-5">
         <div>
           <h2 className="text-sm font-semibold text-app-text tracking-tight">Thread Replies</h2>
@@ -237,6 +241,7 @@ export function ThreadSidebar({
         </div>
         <MessageInput
           ref={composerRef}
+          attachmentOverlayRootRef={attachmentOverlayRootRef}
           compact
           value={draft}
           disabled={loading}

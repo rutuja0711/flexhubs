@@ -89,6 +89,10 @@ export async function updateUserProfile(
   );
 }
 
+export async function fetchUserStatus(token: string): Promise<ApiResult<unknown>> {
+  return apiGet<unknown>(`${API_BASE_URL}/users/status`, token, 'User Status API');
+}
+
 export async function updateUserStatus(
   token: string,
   updates: { status?: UserPresenceStatus; message?: string },

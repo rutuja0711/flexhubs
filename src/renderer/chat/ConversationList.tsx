@@ -2,7 +2,7 @@ import { memo, useCallback, useRef, useState } from 'react';
 import { FiMoreHorizontal } from 'react-icons/fi';
 import type { ConversationItem } from '../../shared/chat';
 import { type PresenceStatus } from '../../shared/chat';
-import { canViewPresence } from '../../shared/presencePrivacy';
+import { canViewPeerPresence } from '../../shared/presencePrivacy';
 import { sidebarPresenceStatusForPeer } from '../../shared/presence';
 import { formatConversationTimestamp } from './format';
 import { Avatar, HubChannelAvatar, PinIcon, PresenceDot } from './ChatIcons';
@@ -42,17 +42,17 @@ export const ConversationRow = memo(function ConversationRow({
 }: ConversationRowProps) {
   const displayTitle = conversation.isSelf ? `${conversation.title} (Yourself)` : conversation.title;
   const isDirectChat = conversation.kind !== 'hub' && !conversation.isSelf;
-  const canViewPeerPresence =
+  const peerPresenceVisible =
     isDirectChat &&
     Boolean(conversation.peerUserId) &&
-    canViewPresence(
-      { id: viewerUserId ?? '', sharePresence: viewerSharePresence },
+    canViewPeerPresence(
+      { id: viewerUserId ?? '', sharePresence: true },
       {
         id: conversation.peerUserId ?? '',
         sharePresence: conversation.peerSharePresence ?? true,
       },
     );
-  const peerPresence = canViewPeerPresence
+  const peerPresence = peerPresenceVisible
     ? sidebarPresenceStatusForPeer(
         presenceByUserId,
         conversation.peerUserId,
@@ -100,13 +100,13 @@ export const ConversationRow = memo(function ConversationRow({
         onClick={() => onSelect(conversation.id)}
         onFocus={() => onPrefetch?.(conversation.id)}
       >
-        <div className="relative isolate shrink-0">
+        <div className="relative isolate shrink-0 overflow-visible">
           {conversation.kind === 'hub' ? (
             <HubChannelAvatar />
           ) : (
             <Avatar imageUrl={conversation.avatarUrl} initials={conversation.avatarInitials} />
           )}
-          {canViewPeerPresence ? (
+          {peerPresenceVisible ? (
             <PresenceDot
               status={peerPresence}
               surround={selected ? 'elevated' : 'sidebar'}

@@ -28,7 +28,7 @@ import {
   presenceDotClass,
   type ContactUserProfile,
 } from '../../shared/contact';
-import { canViewPresence } from '../../shared/presencePrivacy';
+import { canViewPeerPresence } from '../../shared/presencePrivacy';
 import { sidebarPresenceStatusForPeer } from '../../shared/presence';
 import {
   markUserBlocked,
@@ -158,16 +158,16 @@ export function ContactInfoPanel({
 
   const isBlocked = peerIsBlocked || relationshipBlocked;
 
-  const canViewPeerPresence = useMemo(
+  const peerPresenceVisible = useMemo(
     () =>
-      canViewPresence(
-        { id: viewerUserId ?? '', sharePresence: viewerSharePresence },
+      canViewPeerPresence(
+        { id: viewerUserId ?? '', sharePresence: true },
         {
           id: peerUserId,
           sharePresence: conversation.peerSharePresence ?? profile?.sharePresence ?? true,
         },
       ),
-    [conversation.peerSharePresence, peerUserId, profile?.sharePresence, viewerSharePresence, viewerUserId],
+    [conversation.peerSharePresence, peerUserId, profile?.sharePresence, viewerUserId],
   );
 
   const loadProfile = useCallback(async () => {
@@ -213,12 +213,12 @@ export function ContactInfoPanel({
   }, [loadRelationship]);
 
   useEffect(() => {
-    if (peerBlockedViewer || !canViewPeerPresence) {
+    if (peerBlockedViewer || !peerPresenceVisible) {
       return;
     }
 
     refreshPresence();
-  }, [canViewPeerPresence, peerBlockedViewer, refreshPresence]);
+  }, [peerPresenceVisible, peerBlockedViewer, refreshPresence]);
 
   const displayName = profile?.name ?? conversation.title;
   const visibleProfile = profile
@@ -236,7 +236,7 @@ export function ContactInfoPanel({
     : null;
 
   const presenceStatus: PresenceStatus | null = useMemo(() => {
-    if (peerBlockedViewer || !canViewPeerPresence) {
+    if (peerBlockedViewer || !peerPresenceVisible) {
       return null;
     }
 
@@ -246,7 +246,7 @@ export function ContactInfoPanel({
       conversation.status ?? profileBootstrapPresence(visibleProfile?.status ?? null),
     );
   }, [
-    canViewPeerPresence,
+    peerPresenceVisible,
     conversation.status,
     peerBlockedViewer,
     peerUserId,
@@ -334,7 +334,7 @@ export function ContactInfoPanel({
           <div className="flex items-center gap-1 mb-1">
             <h3 className="text-[17px] font-bold text-app-text">{displayName}</h3>
           </div>
-          {!peerBlockedViewer && canViewPeerPresence ? (
+          {!peerBlockedViewer && peerPresenceVisible ? (
             <div className="flex items-center gap-1.5 text-[13px] mb-1">
               <span
                 className={`h-2 w-2 rounded-full ${presenceDotClass(presenceStatus)}`}

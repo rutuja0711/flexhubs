@@ -194,7 +194,7 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onGoHome, o
             type="button"
             aria-label="User menu"
             aria-expanded={menuOpen}
-            className="relative rounded-full p-1 transition-all duration-200 hover:ring-2 hover:ring-accent/40 hover:scale-105 active:scale-95 focus:outline-none"
+            className="group/user-menu relative flex size-10 shrink-0 items-center justify-center rounded-full p-0 focus:outline-none"
             onClick={() => {
               setMenuOpen((open) => {
                 if (open) {
@@ -204,16 +204,20 @@ export function NavRail({ unreadCount, user, activeView, onNavigate, onGoHome, o
               });
             }}
           >
-            <div className="relative isolate inline-flex shrink-0">
-              <Avatar
-                imageUrl={getUserAvatarUrl(user)}
-                initials={getUserInitials(user)}
-                size="sm"
-              />
-              <span
-                className={`pointer-events-none absolute bottom-0 right-0 z-50 box-border h-3 w-3 rounded-full border-2 border-app-chat-rail ${userPresenceDotClass(presenceStatus)}`}
-                aria-hidden="true"
-              />
+            <div className="rounded-full bg-transparent p-0 transition-[padding,background-color,transform] duration-200 ease-out group-hover/user-menu:bg-accent/60 group-hover/user-menu:p-0.5 group-hover/user-menu:scale-105 group-focus-visible/user-menu:bg-accent/60 group-focus-visible/user-menu:p-0.5 group-active/user-menu:scale-95">
+              <div className="relative isolate size-10 overflow-visible">
+                <div className="size-10 overflow-hidden rounded-full">
+                  <Avatar
+                    imageUrl={getUserAvatarUrl(user)}
+                    initials={getUserInitials(user)}
+                    size="md"
+                  />
+                </div>
+                <span
+                  className={`pointer-events-none absolute -bottom-0.5 -right-0.5 z-50 box-border h-3 w-3 rounded-full border-2 border-app-chat-rail ${userPresenceDotClass(presenceStatus)}`}
+                  aria-hidden="true"
+                />
+              </div>
             </div>
             {hasUpdateBadge && (
               <span className="absolute -top-1 -right-1 h-3 w-3 rounded-full bg-accent ring-2 ring-app-chat-rail animate-pulse" />

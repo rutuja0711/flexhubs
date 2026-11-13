@@ -195,7 +195,7 @@ export function MessageContent({
     visibleText = '';
   }
 
-  const mediaFrameClass = 'w-full max-w-sm';
+  const mediaFrameClass = 'w-fit max-w-full';
   const hasCaption = Boolean(visibleText);
 
   return (

@@ -1,15 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FiBell, FiChevronDown, FiClock, FiMessageSquare, FiPhone, FiPlus, FiUserMinus, FiUserPlus, FiVideo, FiX } from 'react-icons/fi';
 import { mapApiPresenceToStatus, normalizePresenceUserId, sortMemberListWithViewerFirst, type PresenceStatus } from '../../shared/chat';
-import {
-  formatContactPresenceLabel,
-  mapContactPresenceStatus,
-  presenceDotClass,
-} from '../../shared/contact';
+import { formatContactPresenceLabel, mapContactPresenceStatus } from '../../shared/contact';
 import { shouldRedactUserIdentity } from '../../shared/blocking';
 import { resolveAvatarUrl } from '../../shared/profile';
 import { loadUserPresence } from '../chatApi';
-import { Avatar } from './ChatIcons';
+import { Avatar, PresenceDot } from './ChatIcons';
 import { ConversationSharedFiles } from './ConversationSharedFiles';
 import type { ConversationItem } from '../../shared/chat';
 import {
@@ -892,13 +888,10 @@ export function GroupSidebar({
                         >
                           <FiPlus className="text-lg" />
                         </button>
-                        <div className="relative shrink-0">
+                        <div className="relative shrink-0 overflow-visible">
                           <Avatar imageUrl={member.avatarUrl} initials={member.initials} size="sm" />
                           {liveStatus ? (
-                            <span
-                              className={`absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full ring-2 ring-app-surface ${presenceDotClass(liveStatus)}`}
-                              aria-hidden="true"
-                            />
+                            <PresenceDot status={liveStatus} size="sm" surround="surface" />
                           ) : null}
                         </div>
                         <div className="min-w-0 flex-1">
@@ -1078,17 +1071,14 @@ export function GroupSidebar({
 
                 return (
                   <div key={admin.id} className="flex items-start gap-3 rounded-2xl border border-app-border/60 bg-app-card/60 p-3 shadow-xs">
-                    <div className="relative shrink-0">
+                    <div className="relative shrink-0 overflow-visible">
                       <Avatar
                         imageUrl={redactIdentity ? null : admin.avatarUrl}
                         initials={admin.avatarInitials}
                         size="md"
                       />
-                      {!redactIdentity ? (
-                        <span
-                          className={`absolute right-0 bottom-0 h-3 w-3 rounded-full ring-2 ring-app-surface ${presenceDotClass(liveStatus)}`}
-                          aria-hidden="true"
-                        />
+                      {!redactIdentity && liveStatus ? (
+                        <PresenceDot status={liveStatus} surround="surface" />
                       ) : null}
                     </div>
                     <div className="min-w-0 flex-1">
@@ -1147,17 +1137,14 @@ export function GroupSidebar({
 
                 return (
                   <div key={member.id} className="flex items-center gap-2 rounded-2xl border border-app-border/60 bg-app-card/50 px-3 py-2.5 transition-colors hover:bg-app-card">
-                    <div className="relative shrink-0">
+                    <div className="relative shrink-0 overflow-visible">
                       <Avatar
                         imageUrl={redactIdentity ? null : member.avatarUrl}
                         initials={member.avatarInitials}
                         size="sm"
                       />
-                      {!redactIdentity ? (
-                        <span
-                          className={`absolute right-0 bottom-0 h-2.5 w-2.5 rounded-full ring-2 ring-app-surface ${presenceDotClass(liveStatus)}`}
-                          aria-hidden="true"
-                        />
+                      {!redactIdentity && liveStatus ? (
+                        <PresenceDot status={liveStatus} size="sm" surround="surface" />
                       ) : null}
                     </div>
                     <div className="min-w-0 flex-1">

@@ -131,9 +131,11 @@ export function UpdatesSettings() {
   const [deferredRestartActive, setDeferredRestartActive] = useState(false);
   const [resumeBusy, setResumeBusy] = useState(false);
   const [retryBusy, setRetryBusy] = useState(false);
+  const [autoInstallUpdates, setAutoInstallUpdates] = useState(false);
   const isElectron = !!window.electronAPI;
   const currentVersionRef = useRef('');
   const updateStateRef = useRef<UpdateState>('up-to-date');
+  const autoInstallUpdatesRef = useRef(false);
   const checkInFlightRef = useRef(false);
   const checkRequestIdRef = useRef(0);
 
@@ -145,8 +147,25 @@ export function UpdatesSettings() {
     updateStateRef.current = updateState;
   }, [updateState]);
 
+  useEffect(() => {
+    autoInstallUpdatesRef.current = autoInstallUpdates;
+  }, [autoInstallUpdates]);
+
+  const persistAutoInstallPreference = useCallback(async (enabled: boolean) => {
+    try {
+      await window.electronAPI?.setAutoInstallUpdatesPreference?.(enabled);
+    } catch {
+      // Preference stays in UI; main process persistence is best-effort.
+    }
+  }, []);
+
   const openRestartModal = useCallback((targetVersion?: string) => {
     const version = targetVersion?.trim() || latestVersion.trim();
+
+    if (autoInstallUpdatesRef.current) {
+      setRestartModalOpen(false);
+      return;
+    }
 
     if (version && readDeferredRestartChoice(version)) {
       setDeferredRestartActive(true);
@@ -177,6 +196,18 @@ export function UpdatesSettings() {
     }
 
     if (!result.ok) {
+      const current = result.currentVersion
+        ? formatVersion(result.currentVersion)
+        : currentVersionRef.current;
+      const reported = result.data?.version ? formatVersion(String(result.data.version)) : '';
+
+      if (reported && current && !isVersionNewer(reported, current)) {
+        setUpdateState('up-to-date');
+        setErrorMessage('');
+        setLatestVersion(reported);
+        return;
+      }
+
       setUpdateState('error');
       setErrorMessage(result.error?.trim() || 'Unable to check for updates right now.');
       if (result.data?.version) {
@@ -407,6 +438,15 @@ export function UpdatesSettings() {
       }
 
       try {
+        const pref = await api.getAutoInstallUpdatesPreference?.();
+        if (pref?.enabled) {
+          setAutoInstallUpdates(true);
+        }
+      } catch {
+        setAutoInstallUpdates(false);
+      }
+
+      try {
         const pending = await api.getPendingUpdateInstall?.();
         if (pending?.ready && pending.version) {
           const pendingVersion = formatVersion(pending.version);
@@ -579,8 +619,14 @@ export function UpdatesSettings() {
     await downloadUpdate();
   };
 
+  const onAutoInstallCheckboxChange = (checked: boolean) => {
+    setAutoInstallUpdates(checked);
+    void persistAutoInstallPreference(checked);
+  };
+
   const restartNow = async () => {
     setErrorMessage('');
+    await persistAutoInstallPreference(autoInstallUpdates);
     writeDeferredRestartChoice(latestVersion, false);
     await window.electronAPI.cancelDeferredUpdateRestart?.();
     setDeferredRestartActive(false);
@@ -597,6 +643,7 @@ export function UpdatesSettings() {
 
   const restartLater = async () => {
     setErrorMessage('');
+    await persistAutoInstallPreference(autoInstallUpdates);
     writeDeferredRestartChoice(latestVersion, true);
     await window.electronAPI.scheduleDeferredUpdateRestart?.();
     setDeferredRestartActive(true);
@@ -842,6 +889,18 @@ export function UpdatesSettings() {
             <p className="mt-3 text-sm text-app-text">
               Choose <strong>Later</strong> to keep working — the app will restart automatically in{' '}
               {AUTO_RESTART_MINUTES} minutes.
+            </p>
+            <label className="mt-4 flex cursor-pointer items-start gap-2.5 text-sm text-app-text">
+              <input
+                type="checkbox"
+                className="mt-0.5 h-4 w-4 rounded border-app-border accent-accent"
+                checked={autoInstallUpdates}
+                onChange={(event) => onAutoInstallCheckboxChange(event.target.checked)}
+              />
+              <span>Automatically install future updates</span>
+            </label>
+            <p className="mt-1.5 pl-6 text-xs text-app-muted">
+              Downloads and restarts apply when you are not in a call or sending messages.
             </p>
             <div className="mt-6 flex flex-wrap justify-end gap-3">
               <button

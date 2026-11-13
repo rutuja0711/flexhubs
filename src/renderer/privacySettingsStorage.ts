@@ -42,6 +42,19 @@ export function mergePrivacySettings(
   };
 }
 
+/** Local storage overlay — server profile owns share/show-last-active flags. */
+export function mergeStoredPrivacySettings(
+  base: ProfileSettings,
+  stored: Partial<ProfileSettings> | null | undefined,
+): ProfileSettings {
+  if (!stored) {
+    return base;
+  }
+
+  const { shareOnlineStatus: _share, showLastActive: _last, ...localOnly } = stored;
+  return mergePrivacySettings(base, localOnly);
+}
+
 export function readStoredPrivacySettings(userId: string): Partial<ProfileSettings> | null {
   if (!userId.trim()) {
     return null;

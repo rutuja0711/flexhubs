@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { FiDownload, FiExternalLink, FiRotateCw, FiX, FiZoomIn, FiZoomOut, FiChevronLeft, FiChevronRight } from 'react-icons/fi';
 import { normalizeUploadUrl } from '../../shared/profile';
@@ -66,6 +66,7 @@ function MediaPreviewModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [resolvedVideoUrl, setResolvedVideoUrl] = useState<string | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
     setZoom(1);
@@ -289,11 +290,19 @@ function MediaPreviewModal({
           {item.kind === 'video' ? (
             resolvedVideoUrl ? (
               <video
-                key={item.url}
+                key={resolvedVideoUrl}
+                ref={videoRef}
                 src={resolvedVideoUrl}
                 controls
-                autoPlay
+                playsInline
+                preload="metadata"
                 className="max-h-full max-w-full rounded-xl bg-black shadow-2xl"
+                onPlay={() => {
+                  const el = videoRef.current;
+                  if (el) {
+                    el.preload = 'auto';
+                  }
+                }}
               />
             ) : (
               <p className="text-sm text-white/55">Loading video...</p>

@@ -31,3 +31,46 @@ export function canViewPresence(
 
   return true;
 }
+
+/** Whether this device should publish live presence (PATCH /users/status, heartbeat). */
+export function shouldSharePresenceWithOthers(options: {
+  profileShareOnlineStatus?: boolean | null;
+  settingsShareOnlineStatus?: boolean | null;
+}): boolean {
+  if (options.profileShareOnlineStatus === false) {
+    return false;
+  }
+
+  if (options.profileShareOnlineStatus === true) {
+    return true;
+  }
+
+  if (options.settingsShareOnlineStatus === false) {
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Whether the viewer may see a peer's presence dot / subtitle.
+ * Hiding *your* status must not hide everyone else's (web `sharePresence` is publish-only).
+ */
+export function canViewPeerPresence(
+  viewer: PresenceViewerContext,
+  target: PresenceTargetContext,
+): boolean {
+  if (!viewer.id || !target.id) {
+    return false;
+  }
+
+  if (viewer.id === target.id) {
+    return true;
+  }
+
+  if (target.sharePresence === false) {
+    return false;
+  }
+
+  return true;
+}

@@ -75,7 +75,7 @@ export function TeammatesSection({
                 type="button"
                 disabled={isOpening}
                 aria-label={`Message ${teammate.name}`}
-                className="relative shrink-0 rounded-full transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
+                className="relative shrink-0 overflow-visible rounded-full transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
                 onClick={() => onSelect(teammate.id)}
               >
                 <Avatar

@@ -13,7 +13,7 @@ export type ConversationThreadActions = {
   ) => void;
   handleSendFile: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
   handleSendVoice: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
-  handleAddReaction: (messageId: string, emoji: string) => void;
+  handleAddReaction: (messageId: string, emoji: string, options?: { remove?: boolean }) => void;
   handleEditMessage: (messageId: string, content: string) => void | Promise<boolean>;
   handleDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
   handleForwardMessage: (
@@ -59,6 +59,7 @@ export type ConversationThreadActions = {
   applyThreadReplySent: (threadRootId: string) => void;
   applyThreadMessagesRegistered: () => void;
   saveConversationScroll: (conversationId: string, snapshot: ConversationScrollSnapshot) => void;
+  applyAfterConversationHistoryCleared: (conversationId: string) => void;
 };
 
 export function useConversationThreadCallbacks(
@@ -105,8 +106,8 @@ export function useConversationThreadCallbacks(
   );
 
   const onAddReaction = useCallback(
-    (messageId: string, emoji: string) => {
-      void actionsRef.current.handleAddReaction(messageId, emoji);
+    (messageId: string, emoji: string, options?: { remove?: boolean }) => {
+      void actionsRef.current.handleAddReaction(messageId, emoji, options);
     },
     [actionsRef],
   );
@@ -185,6 +186,13 @@ export function useConversationThreadCallbacks(
       void actions.loadThread(selectedId);
     }
   }, [actionsRef]);
+
+  const onHistoryCleared = useCallback(
+    (conversationId: string) => {
+      actionsRef.current.applyAfterConversationHistoryCleared(conversationId);
+    },
+    [actionsRef],
+  );
 
   const onNotificationsSnoozedChange = useCallback(
     (snoozed: boolean) => {
@@ -344,6 +352,7 @@ export function useConversationThreadCallbacks(
     onComposerBlur,
     onDraftReplyToIdChange,
     onConversationUpdated,
+    onHistoryCleared,
     onNotificationsSnoozedChange,
     onTogglePin,
     onOpenCalendar,

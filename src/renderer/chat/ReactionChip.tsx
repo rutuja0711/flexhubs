@@ -58,7 +58,13 @@ export function ReactionChip({
       <button
         ref={buttonRef}
         type="button"
-        aria-label={authorLabel ? `${emoji} reacted by ${authorLabel}` : `React with ${emoji}`}
+        aria-label={
+          reactedByMe
+            ? `Remove ${emoji} reaction`
+            : authorLabel
+              ? `${emoji} reacted by ${authorLabel}`
+              : `React with ${emoji}`
+        }
         className={`rounded-full border px-2 py-0.5 text-[11px] font-medium transition-all duration-150 active:scale-[0.98] ${
           reactedByMe
             ? 'border-accent/50 bg-accent/15 text-accent shadow-sm shadow-accent/10'
