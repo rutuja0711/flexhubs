@@ -5,6 +5,29 @@ export type AppBadgeUpdate = {
   mentionUnread: number;
 };
 
+let badgeHostWindow: BrowserWindow | null = null;
+let lastBadgeUpdate: AppBadgeUpdate = { count: 0, mentionUnread: 0 };
+
+export function setBadgeHostWindow(window: BrowserWindow | null): void {
+  badgeHostWindow = window;
+
+  if (window && !window.isDestroyed()) {
+    applyBadgeToPlatform(resolveBadgeHostWindow(window), lastBadgeUpdate);
+  }
+}
+
+function resolveBadgeHostWindow(preferred: BrowserWindow | null): BrowserWindow | null {
+  if (preferred && !preferred.isDestroyed()) {
+    return preferred;
+  }
+
+  if (badgeHostWindow && !badgeHostWindow.isDestroyed()) {
+    return badgeHostWindow;
+  }
+
+  return BrowserWindow.getAllWindows().find((entry) => !entry.isDestroyed()) ?? null;
+}
+
 function formatBadgeLabel(count: number, mentionUnread: number): string {
   if (count <= 0) {
     return '';
@@ -37,14 +60,15 @@ function createWindowsOverlayImage(count: number, mentionUnread: number): Electr
   );
 }
 
-export function updateApplicationBadge(
-  mainWindow: BrowserWindow | null,
-  update: AppBadgeUpdate,
-): void {
+function applyBadgeToPlatform(mainWindow: BrowserWindow | null, update: AppBadgeUpdate): void {
   const count = Math.max(0, Math.floor(update.count));
   const mentionUnread = Math.max(0, Math.floor(update.mentionUnread));
 
-  if (process.platform === 'darwin' && app.dock) {
+  if (process.platform === 'darwin') {
+    if (!app.dock) {
+      return;
+    }
+
     if (count <= 0) {
       app.dock.setBadge('');
     } else {
@@ -57,17 +81,32 @@ export function updateApplicationBadge(
     return;
   }
 
-  if (!mainWindow || mainWindow.isDestroyed()) {
+  const windowForOverlay = resolveBadgeHostWindow(mainWindow);
+
+  if (!windowForOverlay) {
     return;
   }
 
   if (count <= 0) {
-    mainWindow.setOverlayIcon(null, '');
+    windowForOverlay.setOverlayIcon(null, '');
     return;
   }
 
   const overlay = createWindowsOverlayImage(count, mentionUnread);
-  mainWindow.setOverlayIcon(overlay, `${count} unread notification${count === 1 ? '' : 's'}`);
+  windowForOverlay.setOverlayIcon(
+    overlay,
+    `${count} unread notification${count === 1 ? '' : 's'}`,
+  );
+}
+
+export function updateApplicationBadge(
+  mainWindow: BrowserWindow | null,
+  update: AppBadgeUpdate,
+): void {
+  const count = Math.max(0, Math.floor(update.count));
+  const mentionUnread = Math.max(0, Math.floor(update.mentionUnread));
+  lastBadgeUpdate = { count, mentionUnread };
+  applyBadgeToPlatform(mainWindow, lastBadgeUpdate);
 }
 
 export function clearApplicationBadge(mainWindow: BrowserWindow | null): void {

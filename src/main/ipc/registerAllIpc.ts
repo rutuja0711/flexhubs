@@ -400,6 +400,16 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
   ipcMain.on('desktop:start-file-drag-path', (event, filePath: string) => {
     startPreparedFileDrag(event.sender, filePath);
   });
+  ipcMain.handle(
+    'desktop:set-app-badge',
+    (_event, payload: { count?: number; mentionUnread?: number }) => {
+      updateApplicationBadge(deps.getMainWindow(), {
+        count: Math.max(0, Math.floor(payload?.count ?? 0)),
+        mentionUnread: Math.max(0, Math.floor(payload?.mentionUnread ?? 0)),
+      });
+      return { ok: true as const };
+    },
+  );
   ipcMain.handle('chat:translate-unread', (_event, token: string, conversationId: string) =>
     translateUnreadMessages(token, conversationId),
   );

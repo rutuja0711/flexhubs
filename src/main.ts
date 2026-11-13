@@ -32,6 +32,7 @@ import {
   setAuthenticatedMediaRequestToken,
 } from './main/authenticatedMediaRequest';
 import { API_BASE_URL } from './shared/auth';
+import { DESKTOP_APP_BUNDLE_ID } from './shared/desktopAppId';
 import {
   fetchInviteRegistrationDetails,
   performForgotPassword,
@@ -113,7 +114,7 @@ import {
   writePersistedDesktopLegalVersion,
 } from './main/desktopLegalStorage';
 import { deliverDesktopNotification } from './main/notifications/deliverDesktopNotification';
-import { updateApplicationBadge } from './main/appBadge';
+import { setBadgeHostWindow } from './main/appBadge';
 import {
   closeNotificationWindow,
   setNotificationHostWindowProvider,
@@ -537,6 +538,7 @@ const createWindow = (): void => {
 
   setCallSignalingWindowProvider(() => mainWindow);
   setUpdaterMainWindow(mainWindow);
+  setBadgeHostWindow(mainWindow);
 
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
     console.error('[FlexHubs] Main window render process gone:', details);
@@ -584,10 +586,14 @@ const createWindow = (): void => {
     }
   });
 
-  mainWindow.webContents.once('did-finish-load', () => {
+  mainWindow.webContents.on('did-finish-load', () => {
     if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
       mainWindow.show();
       applyApplicationIcon();
+    }
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('desktop:request-badge-sync');
     }
   });
 
@@ -639,6 +645,7 @@ const createWindow = (): void => {
 
   mainWindow.on('closed', () => {
     setUpdaterMainWindow(null);
+    setBadgeHostWindow(null);
     mainWindow = null;
     stopRealtimeStream();
     closeNotificationWindow();
@@ -859,7 +866,7 @@ registerAllIpc({
 });
 
 if (process.platform === 'win32') {
-  app.setAppUserModelId(app.name);
+  app.setAppUserModelId(DESKTOP_APP_BUNDLE_ID);
 }
 
 ipcMain.handle('app:get-hardware-acceleration-disabled', () => isHardwareAccelerationDisabled());
@@ -942,17 +949,6 @@ app.whenReady().then(() => {
   ipcMain.on('desktop:toast-click', (_event, payload: { tag?: string; conversationId?: string | null; messageId?: string | null }) => {
     focusMainWindowFromNotification(payload ?? {});
   });
-
-  ipcMain.handle(
-    'desktop:set-app-badge',
-    (_event, payload: { count?: number; mentionUnread?: number }) => {
-      updateApplicationBadge(mainWindow, {
-        count: Math.max(0, Math.floor(payload?.count ?? 0)),
-        mentionUnread: Math.max(0, Math.floor(payload?.mentionUnread ?? 0)),
-      });
-      return { ok: true as const };
-    },
-  );
 
   ipcMain.handle(
     'desktop:notify',

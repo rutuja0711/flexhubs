@@ -1479,12 +1479,44 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     hubsInvitesRef.current = hubsInvites;
   }, [hubsInvites]);
 
-  useEffect(() => {
+  const pushDesktopAppBadge = useCallback(() => {
     syncDesktopAppBadge({
       activityUnread: unreadCount,
       notifications: activityNotifications,
+      conversations,
+      selectedConversationId: selectedId,
+      mainView,
+      pendingReadSync: pendingConversationReadSyncRef.current,
     });
-  }, [activityNotifications, unreadCount]);
+  }, [activityNotifications, conversations, mainView, selectedId, unreadCount]);
+
+  useEffect(() => {
+    pushDesktopAppBadge();
+  }, [pushDesktopAppBadge]);
+
+  useEffect(() => {
+    const unsubscribe = window.electronAPI?.onRequestBadgeSync?.(() => {
+      pushDesktopAppBadge();
+    });
+
+    return () => unsubscribe?.();
+  }, [pushDesktopAppBadge]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (!document.hidden) {
+        pushDesktopAppBadge();
+      }
+    };
+
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', onVisibility);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', onVisibility);
+    };
+  }, [pushDesktopAppBadge]);
 
   const refreshUnreadCount = useCallback(
     async (notificationItems?: NotificationItem[]) => {

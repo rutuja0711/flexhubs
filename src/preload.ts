@@ -844,6 +844,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('app:set-theme', mode),
   setAppBadge: (payload: { count: number; mentionUnread?: number }): Promise<{ ok: boolean }> =>
     ipcRenderer.invoke('desktop:set-app-badge', payload),
+  onRequestBadgeSync: (callback: () => void): (() => void) => {
+    const handler = () => callback();
+    ipcRenderer.on('desktop:request-badge-sync', handler);
+    return () => ipcRenderer.removeListener('desktop:request-badge-sync', handler);
+  },
   showDesktopNotification: (
     payload: any
   ): Promise<{ ok: boolean }> => ipcRenderer.invoke('desktop:notify', payload),

@@ -79,6 +79,25 @@ export function resolveConversationUnreadCountOverride(
   return conversation.unreadCount;
 }
 
+export function sumConversationUnreadForAppBadge(
+  conversations: ConversationItem[],
+  selectedConversationId: string | null,
+  mainView: MainView,
+  pendingReadSync: ReadonlySet<string>,
+): number {
+  return conversations.reduce(
+    (total, conversation) =>
+      total +
+      resolveConversationUnreadCountOverride(
+        conversation,
+        selectedConversationId,
+        mainView,
+        pendingReadSync,
+      ),
+    0,
+  );
+}
+
 export function buildPresenceRefreshInflightKey(
   uniqueUserIds: string[],
   options?: { snapshotMissingAsOffline?: boolean },

@@ -613,6 +613,7 @@ declare global {
       ) => Promise<ApiResult<unknown>>;
       setNativeTheme: (mode: 'light' | 'dark') => Promise<{ ok: boolean }>;
       setAppBadge: (payload: { count: number; mentionUnread?: number }) => Promise<{ ok: boolean }>;
+      onRequestBadgeSync: (callback: () => void) => () => void;
       showDesktopNotification: (
         payload: any
       ) => Promise<{ ok: boolean; error?: string }>;
