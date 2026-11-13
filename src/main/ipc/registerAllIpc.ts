@@ -41,6 +41,7 @@ import {
   editMessage,
   fetchConversationBootstrap,
   fetchConversationMessages,
+  fetchOlderConversationMessages,
   fetchMessageDraft,
   fetchMessageThread,
   clearMessageDraft,
@@ -412,8 +413,25 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
   );
   ipcMain.handle(
     'chat:conversation-messages',
-    (_event, token: string, conversationId: string, before?: string, limit?: number) =>
-      fetchConversationMessages(token, conversationId, { before, limit }),
+    (
+      _event,
+      token: string,
+      conversationId: string,
+      before?: string,
+      limit?: number,
+      beforeCreatedAt?: string,
+    ) => {
+      if (!before) {
+        return fetchConversationMessages(token, conversationId, { limit });
+      }
+
+      return fetchOlderConversationMessages(
+        token,
+        conversationId,
+        { id: before, createdAt: beforeCreatedAt },
+        limit,
+      );
+    },
   );
   ipcMain.handle('chat:message-draft', (_event, token: string, conversationId: string) =>
     fetchMessageDraft(token, conversationId),

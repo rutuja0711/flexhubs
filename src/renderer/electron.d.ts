@@ -153,6 +153,7 @@ declare global {
         conversationId: string,
         before?: string,
         limit?: number,
+        beforeCreatedAt?: string,
       ) => Promise<ApiResult<import('../shared/messages').MessageHistoryPage>>;
       getMessageThread: (
         token: string,

@@ -37,7 +37,7 @@ export type ConversationThreadActions = {
   setSelectedId: (id: string | null) => void;
   setMainView: (view: import('../../shared/nav').MainView) => void;
   setFlexAiOpen: (updater: (current: boolean) => boolean) => void;
-  loadOlderMessages: () => void;
+  loadOlderMessages: () => boolean;
   setFocusMessageId: (id: string | null) => void;
   bumpThreadReplyCount: (messages: import('../../shared/messages').MessageItem[], threadRootId: string) => import('../../shared/messages').MessageItem[];
   filterMainChatMessages: (
@@ -229,8 +229,8 @@ export function useConversationThreadCallbacks(
     void actionsRef.current.refreshConversations();
   }, [actionsRef]);
 
-  const onLoadOlder = useCallback(() => {
-    void actionsRef.current.loadOlderMessages();
+  const onLoadOlder = useCallback((): boolean => {
+    return actionsRef.current.loadOlderMessages();
   }, [actionsRef]);
 
   const onFocusMessageHandled = useCallback(() => {

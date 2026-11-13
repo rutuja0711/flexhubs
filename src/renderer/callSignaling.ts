@@ -62,6 +62,8 @@ const HUB_EVENTS = {
 
 let config: RealtimeClientConfig | null = null;
 let userCallChannelSubscribed = false;
+let ownUserCallChannelName: string | null = null;
+let ownUserCallDirectHandlers: DirectCallHandlers | null = null;
 const channels = new Map<string, ChannelEntry>();
 let ipcListenerAttached = false;
 
@@ -79,16 +81,6 @@ function asPayload<T>(value: unknown): T | null {
   return value as T;
 }
 
-function readDirectHandlers(channelName: string): DirectCallHandlers | null {
-  const entry = channels.get(channelName);
-
-  if (!entry || entry.mode !== 'direct') {
-    return null;
-  }
-
-  return entry.handlers as DirectCallHandlers;
-}
-
 function readHubHandlers(channelName: string): HubCallHandlers | null {
   const entry = channels.get(channelName);
 
@@ -99,14 +91,23 @@ function readHubHandlers(channelName: string): HubCallHandlers | null {
   return entry.handlers as HubCallHandlers;
 }
 
-function dispatchDirectEvent(channelName: string, event: string, payload: unknown): void {
+function dispatchDirectEvent(
+  handlers: DirectCallHandlers | null,
+  channelName: string,
+  event: string,
+  payload: unknown,
+): void {
+  if (!handlers) {
+    return;
+  }
+
   switch (event) {
     case CALL_EVENTS.invite: {
       const parsed = normalizeCallInvitePayload(payload);
 
       if (parsed) {
         logCallDebug('[Calls] Received invite from', parsed.caller.username);
-        readDirectHandlers(channelName)?.onInvite?.(parsed);
+        handlers.onInvite?.(parsed);
         return;
       }
 
@@ -118,7 +119,7 @@ function dispatchDirectEvent(channelName: string, event: string, payload: unknow
 
       if (parsed) {
         logCallDebug('[Calls] Received accept', parsed.callId);
-        readDirectHandlers(channelName)?.onAccept?.(parsed);
+        handlers.onAccept?.(parsed);
         return;
       }
 
@@ -131,7 +132,7 @@ function dispatchDirectEvent(channelName: string, event: string, payload: unknow
 
       if (parsed) {
         logCallDebug(`[Calls] Received ${event}`, parsed.callId);
-        readDirectHandlers(channelName)?.onReject?.(parsed);
+        handlers.onReject?.(parsed);
         return;
       }
 
@@ -143,7 +144,7 @@ function dispatchDirectEvent(channelName: string, event: string, payload: unknow
 
       if (parsed) {
         logCallDebug('[Calls] Received cancel', parsed.callId);
-        readDirectHandlers(channelName)?.onCancel?.(parsed);
+        handlers.onCancel?.(parsed);
         return;
       }
 
@@ -154,7 +155,7 @@ function dispatchDirectEvent(channelName: string, event: string, payload: unknow
       const parsed = asPayload<CallEndPayload>(payload);
 
       if (parsed) {
-        readDirectHandlers(channelName)?.onEnd?.(parsed);
+        handlers.onEnd?.(parsed);
       }
 
       return;
@@ -164,7 +165,7 @@ function dispatchDirectEvent(channelName: string, event: string, payload: unknow
 
       if (parsed) {
         logCallDebug('[Calls] Meeting join response (user channel)', parsed.approved ? 'approved' : 'denied');
-        readDirectHandlers(channelName)?.onMeetingJoinResponse?.(parsed);
+        handlers.onMeetingJoinResponse?.(parsed);
       }
 
       return;
@@ -224,6 +225,10 @@ function dispatchIncomingEvent(channelName: string, event: string, payload: unkn
   const entry = channels.get(channelName);
 
   if (!entry) {
+    if (ownUserCallChannelName === channelName && ownUserCallDirectHandlers) {
+      dispatchDirectEvent(ownUserCallDirectHandlers, channelName, event, payload);
+    }
+
     return;
   }
 
@@ -232,7 +237,7 @@ function dispatchIncomingEvent(channelName: string, event: string, payload: unkn
     return;
   }
 
-  dispatchDirectEvent(channelName, event, payload);
+  dispatchDirectEvent(entry.handlers as DirectCallHandlers, channelName, event, payload);
 }
 
 function ensureIpcListener(): void {
@@ -345,6 +350,27 @@ export function releaseDirectCallPeerChannel(ownUserId: string, peerUserId: stri
   void unsubscribeChannel(buildUserCallChannel(normalizedPeerUserId));
 }
 
+export async function reSubscribeUserCallChannel(
+  userId: string,
+  handlers: DirectCallHandlers,
+): Promise<void> {
+  const channelName = buildUserCallChannel(userId);
+
+  channels.delete(channelName);
+  userCallChannelSubscribed = false;
+
+  if (ownUserCallChannelName === channelName) {
+    ownUserCallChannelName = null;
+    ownUserCallDirectHandlers = null;
+  }
+
+  if (window.electronAPI?.unsubscribeCallSignalingChannel) {
+    await window.electronAPI.unsubscribeCallSignalingChannel(channelName);
+  }
+
+  await subscribeUserCallChannel(userId, handlers);
+}
+
 export async function subscribeUserCallChannel(
   userId: string,
   handlers: DirectCallHandlers,
@@ -353,9 +379,16 @@ export async function subscribeUserCallChannel(
     throw new Error('Call signaling is not initialized.');
   }
 
-  userCallChannelSubscribed = false;
-
   const channelName = buildUserCallChannel(userId);
+  ownUserCallChannelName = channelName;
+  ownUserCallDirectHandlers = handlers;
+
+  const existing = channels.get(channelName);
+
+  if (existing?.mode === 'direct' && userCallChannelSubscribed) {
+    existing.handlers = handlers;
+    return;
+  }
 
   await subscribeChannel(channelName, 'direct', handlers);
   userCallChannelSubscribed = true;
@@ -490,6 +523,8 @@ export async function broadcastCallEvent(
 export async function disconnectCallSignaling(): Promise<void> {
   channels.clear();
   userCallChannelSubscribed = false;
+  ownUserCallChannelName = null;
+  ownUserCallDirectHandlers = null;
   config = null;
 
   if (window.electronAPI?.disconnectCallSignaling) {
@@ -498,7 +533,14 @@ export async function disconnectCallSignaling(): Promise<void> {
 }
 
 export function disconnectUserCallChannel(userId: string): void {
-  void unsubscribeChannel(buildUserCallChannel(userId));
+  const channelName = buildUserCallChannel(userId);
+
+  if (ownUserCallChannelName === channelName) {
+    ownUserCallChannelName = null;
+    ownUserCallDirectHandlers = null;
+  }
+
+  void unsubscribeChannel(channelName);
   userCallChannelSubscribed = false;
 }
 

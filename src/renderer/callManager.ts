@@ -18,14 +18,17 @@ import type {
   MeetingJoinResponsePayload,
   MeetingStartedPayload,
 } from '../shared/calls';
+import { API_BASE_URL } from '../shared/api';
 import {
   buildDirectCallRoomName,
   buildLiveKitRtcConfig,
   isMeetingModerator,
   normalizeDeclinedMeetingInviteUserIds,
+  normalizeLiveKitUrlForDesktop,
   normalizeMeetingJoinRequestPayload,
   parseCallLogContent,
 } from '../shared/calls';
+import { readPersistedDirectChatMetadata } from './directChatMetadataStorage';
 import { applyPreferredCallInputToLiveKitRoom } from './call/applyCallInputDevice';
 import type { HubMemberSummary } from './call/hubMemberUtils';
 import { readHubMembersFromBootstrapPayload } from './call/hubMemberUtils';
@@ -65,6 +68,7 @@ import {
   isCallSignalingReady,
   isUserCallChannelSubscribed,
   refreshCallSignalingAuth,
+  reSubscribeUserCallChannel,
   releaseDirectCallPeerChannel,
   sendSignalWithRetries,
   syncHubCallChannels,
@@ -751,8 +755,10 @@ export function useCallManager({
       roomRef.current = room;
       setActiveRoom(room);
 
+      const liveKitUrl = normalizeLiveKitUrlForDesktop(tokenResult.url, API_BASE_URL);
+
       logCallDebug('[Calls] Connecting LiveKit', {
-        url: tokenResult.url,
+        url: liveKitUrl,
         roomName: tokenResult.roomName,
         video,
       });
@@ -761,7 +767,7 @@ export function useCallManager({
 
       try {
         await room.connect(
-          tokenResult.url,
+          liveKitUrl,
           tokenResult.token,
           rtcConfig ? { rtcConfig } : undefined,
         );
@@ -854,6 +860,16 @@ export function useCallManager({
       }
 
       if (seenCallIdsRef.current.has(payload.callId)) {
+        return;
+      }
+
+      const inviteSentMs = Date.parse(payload.sentAt);
+
+      if (
+        !Number.isNaN(inviteSentMs) &&
+        Date.now() - inviteSentMs > OUTGOING_RING_MS + 10_000
+      ) {
+        logCallDebug('[Calls] Ignored stale invite', payload.callId);
         return;
       }
 
@@ -1474,6 +1490,16 @@ export function useCallManager({
     },
   };
 
+  const getUserCallChannelHandlers = (): import('./callSignaling').DirectCallHandlers => ({
+    onInvite: (payload) => directHandlersRef.current?.onInvite?.(payload),
+    onAccept: (payload) => directHandlersRef.current?.onAccept?.(payload),
+    onReject: (payload) => directHandlersRef.current?.onReject?.(payload),
+    onCancel: (payload) => directHandlersRef.current?.onCancel?.(payload),
+    onEnd: (payload) => directHandlersRef.current?.onEnd?.(payload),
+    onMeetingJoinResponse: (payload) =>
+      directHandlersRef.current?.onMeetingJoinResponse?.(payload),
+  });
+
   hubHandlersRef.current = {
     onMeetingStarted: handleMeetingStarted,
     onMeetingEnded: (payload) => {
@@ -1493,15 +1519,7 @@ export function useCallManager({
     let cancelled = false;
 
     const subscribeDirectCallChannel = async () => {
-      await subscribeUserCallChannel(currentUserId, {
-        onInvite: (payload) => directHandlersRef.current?.onInvite(payload),
-        onAccept: (payload) => directHandlersRef.current?.onAccept(payload),
-        onReject: (payload) => directHandlersRef.current?.onReject(payload),
-        onCancel: (payload) => directHandlersRef.current?.onCancel(payload),
-        onEnd: (payload) => directHandlersRef.current?.onEnd(payload),
-        onMeetingJoinResponse: (payload) =>
-          directHandlersRef.current?.onMeetingJoinResponse?.(payload),
-      });
+      await subscribeUserCallChannel(currentUserId, getUserCallChannelHandlers());
     };
 
     const syncHubChannels = async () => {
@@ -1568,17 +1586,26 @@ export function useCallManager({
 
     void connectSignaling();
 
+    let healthPasses = 0;
+
     const healthTimer = window.setInterval(() => {
       void (async () => {
-        if (cancelled || !currentUserId || !isCallSignalingReady()) {
+        if (cancelled || !currentUserId) {
           return;
         }
 
         try {
-          if (!isUserCallChannelSubscribed()) {
-            logCallDebug('[Calls] Reconnecting user call channel');
-            await subscribeDirectCallChannel();
-            logCallDebug(`[Calls] Listening for direct calls on call:user:${currentUserId}`);
+          healthPasses += 1;
+
+          if (!isCallSignalingReady() || !isUserCallChannelSubscribed()) {
+            logCallDebug('[Calls] Reconnecting call signaling');
+            await connectSignaling();
+            return;
+          }
+
+          if (healthPasses % 4 === 0) {
+            logCallDebug('[Calls] Refreshing user call channel subscription');
+            await reSubscribeUserCallChannel(currentUserId, getUserCallChannelHandlers());
           }
 
           await syncHubChannels();
@@ -1678,13 +1705,7 @@ export function useCallManager({
       await initCallSignaling(configResult.data);
 
       if (currentUserId) {
-        await subscribeUserCallChannel(currentUserId, {
-          onInvite: (payload) => directHandlersRef.current?.onInvite?.(payload),
-          onAccept: (payload) => directHandlersRef.current?.onAccept?.(payload),
-          onReject: (payload) => directHandlersRef.current?.onReject?.(payload),
-          onCancel: (payload) => directHandlersRef.current?.onCancel?.(payload),
-          onEnd: (payload) => directHandlersRef.current?.onEnd?.(payload),
-        });
+        await subscribeUserCallChannel(currentUserId, getUserCallChannelHandlers());
       }
 
       return true;
@@ -1792,10 +1813,17 @@ export function useCallManager({
         return;
       }
 
-      if (!conversation.peerUserId) {
+      const peerUserId =
+        conversation.peerUserId?.trim() ||
+        readPersistedDirectChatMetadata()[conversation.id]?.peerUserId?.trim() ||
+        null;
+
+      if (!peerUserId) {
         reportError('Could not find who to call. Reopen this chat and try again.');
         return;
       }
+
+      const dialTarget: ConversationItem = { ...conversation, peerUserId, kind: 'direct' };
 
       if (sessionRef.current.phase !== 'idle') {
         reportError('You are already in a call.');
@@ -1815,7 +1843,7 @@ export function useCallManager({
       initiatorIdRef.current = currentUserId;
 
       const tokenResult = await loadCallToken({
-        conversationId: conversation.id,
+        conversationId: dialTarget.id,
         video,
       });
 
@@ -1828,20 +1856,20 @@ export function useCallManager({
       const liveToken = tokenResult.data;
 
       const roomName =
-        liveToken.roomName || buildDirectCallRoomName(conversation.id);
+        liveToken.roomName || buildDirectCallRoomName(dialTarget.id);
 
       setSession({
         phase: 'outgoing',
         callId,
-        conversationId: conversation.id,
+        conversationId: dialTarget.id,
         roomName,
         video,
         isGroup: false,
         isInitiator: true,
         canModerateMeeting: false,
-        peerUserId: conversation.peerUserId,
-        peerLabel: conversation.title,
-        peerAvatar: conversation.avatarUrl,
+        peerUserId,
+        peerLabel: dialTarget.title,
+        peerAvatar: dialTarget.avatarUrl,
         liveToken,
         connectedAt: null,
         meetingBanner: null,
@@ -1849,7 +1877,7 @@ export function useCallManager({
 
       const invitePayload = {
         callId,
-        conversationId: conversation.id,
+        conversationId: dialTarget.id,
         roomName,
         caller: {
           id: currentUserId,
@@ -1860,34 +1888,37 @@ export function useCallManager({
         sentAt: new Date().toISOString(),
       };
 
-      let inviteDeliveryFailed = false;
+      let inviteErrorReported = false;
 
       const sendInvite = () => {
         invitePayload.sentAt = new Date().toISOString();
         void sendSignalWithRetries(
-          getUserCallChannelName(conversation.peerUserId!),
+          getUserCallChannelName(peerUserId),
           'call:invite',
           invitePayload,
         )
           .then(() => {
-            inviteDeliveryFailed = false;
+            inviteErrorReported = false;
             logCallDebug(
-              `[Calls] Sent invite to call:user:${conversation.peerUserId}`,
-              { callId, conversationId: conversation.id, roomName },
+              `[Calls] Sent invite to call:user:${peerUserId}`,
+              { callId, conversationId: dialTarget.id, roomName },
             );
           })
           .catch((error) => {
-            inviteDeliveryFailed = true;
             const message = error instanceof Error ? error.message : 'Could not reach the other person.';
             logCallDebug(
-              `[Calls] Invite send failed for call:user:${conversation.peerUserId}`,
+              `[Calls] Invite send failed for call:user:${peerUserId}`,
               message,
             );
-            reportError(formatCallSignalingError());
+
+            if (!inviteErrorReported) {
+              inviteErrorReported = true;
+              reportError(formatCallSignalingError());
+            }
           });
       };
 
-      bindDirectCallPeerChannel(conversation.peerUserId!);
+      bindDirectCallPeerChannel(peerUserId);
       clearCallSignalTimers();
       sendInvite();
       setBusy(false);
@@ -1899,9 +1930,7 @@ export function useCallManager({
           return;
         }
 
-        if (!inviteDeliveryFailed) {
-          sendInvite();
-        }
+        sendInvite();
       }, SIGNAL_REPEAT_MS);
 
       ringTimeoutRef.current = window.setTimeout(() => {
@@ -1913,9 +1942,9 @@ export function useCallManager({
           }
 
           seenCallIdsRef.current.add(callId);
-          await sendSignalWithRetries(getUserCallChannelName(conversation.peerUserId!), 'call:cancel', {
+          await sendSignalWithRetries(getUserCallChannelName(peerUserId), 'call:cancel', {
             callId,
-            conversationId: conversation.id,
+            conversationId: dialTarget.id,
           }).catch(() => undefined);
 
           const context = snapshotCallContext();

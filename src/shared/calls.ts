@@ -600,28 +600,61 @@ export function normalizeCallTokenResult(payload: unknown, requestedVideo: boole
     return null;
   }
 
-  const url = readString(record.url);
-  const token = readString(record.token);
-  const roomName = readString(record.roomName);
+  const source = asRecord(record.data) ?? record;
+
+  const url = readString(source.url);
+  const token = readString(source.token);
+  const roomName = readString(source.roomName);
 
   if (!url || !token || !roomName) {
     return null;
   }
 
-  const engine = readString(record.engine) ?? 'livekit';
-  const rtpCapabilitiesRecord = asRecord(record.rtpCapabilities);
+  const engine = readString(source.engine) ?? 'livekit';
+  const rtpCapabilitiesRecord = asRecord(source.rtpCapabilities);
 
   return {
     engine,
     url,
     token,
     roomName,
-    video: typeof record.video === 'boolean' ? record.video : requestedVideo,
-    canModerateMeeting: record.canModerateMeeting === true,
-    iceServers: normalizeIceServers(record.iceServers),
-    turnRelayRequired: record.turnRelayRequired === true,
+    video: typeof source.video === 'boolean' ? source.video : requestedVideo,
+    canModerateMeeting: source.canModerateMeeting === true,
+    iceServers: normalizeIceServers(source.iceServers),
+    turnRelayRequired: source.turnRelayRequired === true,
     rtpCapabilities: rtpCapabilitiesRecord ?? undefined,
   };
+}
+
+/** Align token URL with production API host when the server returns localhost/ws (common for native clients). */
+export function normalizeLiveKitUrlForDesktop(url: string, apiBaseUrl: string): string {
+  const trimmed = url.trim();
+
+  if (!trimmed) {
+    return trimmed;
+  }
+
+  if (/^wss:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  const looksLocal = /^ws:\/\//i.test(trimmed) || /localhost|127\.0\.0\.1/i.test(trimmed);
+
+  if (!looksLocal) {
+    return /^ws:\/\//i.test(trimmed) ? trimmed.replace(/^ws:/i, 'wss:') : trimmed;
+  }
+
+  try {
+    const { host } = new URL(apiBaseUrl);
+
+    if (host) {
+      return `wss://${host}`;
+    }
+  } catch {
+    // ignore
+  }
+
+  return trimmed.replace(/^ws:/i, 'wss:');
 }
 
 export function buildLiveKitRtcConfig(

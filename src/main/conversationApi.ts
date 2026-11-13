@@ -35,17 +35,31 @@ export async function fetchConversationBootstrap(
 
 const DEFAULT_MESSAGE_HISTORY_LIMIT = 50;
 
-export async function fetchConversationMessages(
+type ConversationMessagesQuery = {
+  limit: number;
+  before?: string;
+  beforeMessageId?: string;
+  cursor?: string;
+};
+
+async function fetchConversationMessagesPage(
   token: string,
   conversationId: string,
-  options?: { before?: string; limit?: number },
+  query: ConversationMessagesQuery,
 ): Promise<ApiResult<MessageHistoryPage>> {
-  const limit = options?.limit ?? DEFAULT_MESSAGE_HISTORY_LIMIT;
   const params = new URLSearchParams();
-  params.set('limit', String(limit));
+  params.set('limit', String(query.limit));
 
-  if (options?.before) {
-    params.set('before', options.before);
+  if (query.before) {
+    params.set('before', query.before);
+  }
+
+  if (query.beforeMessageId) {
+    params.set('beforeMessageId', query.beforeMessageId);
+  }
+
+  if (query.cursor) {
+    params.set('cursor', query.cursor);
   }
 
   const result = await apiGet<unknown>(
@@ -60,7 +74,49 @@ export async function fetchConversationMessages(
 
   return {
     ok: true,
-    data: normalizeMessageHistoryPage(result.data, { limit }),
+    data: normalizeMessageHistoryPage(result.data, { limit: query.limit }),
+  };
+}
+
+export async function fetchConversationMessages(
+  token: string,
+  conversationId: string,
+  options?: { before?: string; limit?: number; cursor?: string },
+): Promise<ApiResult<MessageHistoryPage>> {
+  const limit = options?.limit ?? DEFAULT_MESSAGE_HISTORY_LIMIT;
+
+  return fetchConversationMessagesPage(token, conversationId, {
+    limit,
+    before: options?.before,
+    cursor: options?.cursor,
+  });
+}
+
+export async function fetchOlderConversationMessages(
+  token: string,
+  conversationId: string,
+  oldest: { id: string; createdAt?: string | null },
+  limit = DEFAULT_MESSAGE_HISTORY_LIMIT,
+): Promise<ApiResult<MessageHistoryPage>> {
+  // Web client: GET .../messages?cursor=<oldestVisibleId>&limit=N (see flexhub app/lib/api.ts).
+  const result = await fetchConversationMessagesPage(token, conversationId, {
+    limit,
+    cursor: oldest.id,
+  });
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const pageLength = result.data.messages.length;
+  const hasMore = pageLength >= limit || result.data.hasMore;
+
+  return {
+    ok: true,
+    data: {
+      ...result.data,
+      hasMore,
+    },
   };
 }
 

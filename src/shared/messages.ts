@@ -332,7 +332,68 @@ export type ConversationBootstrap = {
 export type MessageHistoryPage = {
   messages: MessageItem[];
   hasMore: boolean;
+  nextCursor?: string | null;
 };
+
+function resolveMessageHistoryRecord(payload: unknown): Record<string, unknown> | null {
+  const record = asRecord(payload);
+
+  if (!record) {
+    return null;
+  }
+
+  const nested = asRecord(record.data);
+
+  if (!nested) {
+    return record;
+  }
+
+  const nestedHasMessages =
+    extractArray(nested, ['messages', 'items']).length > 0 ||
+    Boolean(asRecord(nested.messages)) ||
+    Array.isArray(nested.messages);
+
+  if (!nestedHasMessages) {
+    return record;
+  }
+
+  const pagination =
+    asRecord(record.pagination) ?? asRecord(record.meta) ?? asRecord(record.pageInfo);
+  const nestedPagination =
+    asRecord(nested.pagination) ?? asRecord(nested.meta) ?? asRecord(nested.pageInfo);
+
+  return {
+    ...nested,
+    ...(pagination ?? {}),
+    ...(nestedPagination ?? {}),
+  };
+}
+
+function extractMessageHistoryItems(payload: unknown): unknown[] {
+  const direct = extractArray(payload, ['messages', 'items']);
+
+  if (direct.length > 0) {
+    return direct;
+  }
+
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+
+  const record = resolveMessageHistoryRecord(payload);
+
+  if (!record) {
+    return [];
+  }
+
+  const fromMessages = extractArray(record.messages, ['items', 'data']);
+
+  if (fromMessages.length > 0) {
+    return fromMessages;
+  }
+
+  return extractArray(record, ['messages', 'items', 'results']);
+}
 
 export function compareMessagesChronologically(left: MessageItem, right: MessageItem): number {
   const leftTime = Date.parse(left.createdAt);
@@ -2342,12 +2403,8 @@ export function normalizeMessageHistoryPage(
   payload: unknown,
   options?: { limit?: number },
 ): MessageHistoryPage {
-  const record = asRecord(payload);
-  const messagesRaw = extractArray(payload, ['messages', 'items']).length
-    ? extractArray(payload, ['messages', 'items'])
-    : Array.isArray(payload)
-      ? payload
-      : extractArray(record?.messages, ['items', 'data']);
+  const record = resolveMessageHistoryRecord(payload);
+  const messagesRaw = extractMessageHistoryItems(payload);
 
   const messages = enrichMessageReplies(
     messagesRaw
@@ -2361,21 +2418,33 @@ export function normalizeMessageHistoryPage(
     record?.hasMoreMessages === true ||
     record?.messagesHasMore === true ||
     record?.hasNextPage === true ||
-    record?.has_more === true;
+    record?.has_more === true ||
+    record?.hasPreviousPage === true ||
+    record?.hasPrevious === true;
 
   const explicitNoMore =
     record?.hasMore === false ||
     record?.hasMoreMessages === false ||
     record?.messagesHasMore === false ||
     record?.hasNextPage === false ||
-    record?.has_more === false;
+    record?.has_more === false ||
+    record?.hasPreviousPage === false ||
+    record?.hasPrevious === false;
 
   const limit = options?.limit;
   const hasMore =
     explicitHasMore ||
     (!explicitNoMore && typeof limit === 'number' && limit > 0 && messages.length >= limit);
 
-  return { messages, hasMore };
+  const nextCursor =
+    readString(record?.nextCursor) ??
+    readString(record?.cursor) ??
+    readString(record?.endCursor) ??
+    readString(asRecord(record?.pagination)?.nextCursor) ??
+    readString(asRecord(record?.meta)?.nextCursor) ??
+    null;
+
+  return { messages, hasMore, nextCursor };
 }
 
 function extractThreadMessageItems(payload: unknown): unknown[] {

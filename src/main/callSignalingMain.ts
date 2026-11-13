@@ -130,7 +130,6 @@ export async function subscribeMainCallChannel(
     config: {
       broadcast: {
         self: false,
-        ack: true,
       },
     },
   });

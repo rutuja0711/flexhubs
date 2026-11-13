@@ -111,7 +111,7 @@ export type ConversationThreadProps = {
   onSaveScrollPosition?: (snapshot: ConversationScrollSnapshot) => void;
   hasMoreOlder?: boolean;
   loadingOlder?: boolean;
-  onLoadOlder?: () => void;
+  onLoadOlder?: () => boolean | void;
   onFocusMessageHandled?: () => void;
   onStartVoiceCall?: () => void;
   onStartVideoCall?: () => void;

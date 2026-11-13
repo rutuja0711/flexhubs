@@ -924,7 +924,7 @@ type MessageListProps = {
   onSaveScrollPosition?: (snapshot: ConversationScrollSnapshot) => void;
   hasMoreOlder?: boolean;
   loadingOlder?: boolean;
-  onLoadOlder?: () => void;
+  onLoadOlder?: () => boolean | void;
   unreadAnchorMessageId?: string | null;
   onScrollToMessageComplete?: (messageId: string) => void;
   currentUserId: string | null;
@@ -1028,6 +1028,7 @@ export function MessageList({
   const completedScrollRequestKeyRef = useRef(0);
   const virtuosoRef = useRef<VirtuosoHandle | null>(null);
   const loadOlderStartReachedRef = useRef(false);
+  const loadOlderAnchorMessageIdRef = useRef<string | null>(null);
   const jumpAnchorMessageIdRef = useRef<string | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessagesBelow, setNewMessagesBelow] = useState(0);
@@ -1099,6 +1100,28 @@ export function MessageList({
   const listEntries = useMemo(
     () => buildMessageListEntries(messages, unreadAnchorMessageId),
     [messages, unreadAnchorMessageId],
+  );
+
+  const triggerLoadOlder = useCallback(
+    (options?: { fromScroll?: boolean }) => {
+      if (!onLoadOlder || !hasMoreOlder || loadingOlder) {
+        return;
+      }
+
+      if (options?.fromScroll && loadOlderStartReachedRef.current) {
+        return;
+      }
+
+      const anchorEntry = listEntries.find((entry) => entry.kind === 'message');
+      loadOlderAnchorMessageIdRef.current =
+        anchorEntry && anchorEntry.kind === 'message' ? anchorEntry.message.id : null;
+
+      const started = onLoadOlder();
+      if (options?.fromScroll) {
+        loadOlderStartReachedRef.current = started !== false;
+      }
+    },
+    [hasMoreOlder, listEntries, loadingOlder, onLoadOlder],
   );
 
   const virtuosoMountScrollTop = useMemo(() => {
@@ -1193,6 +1216,30 @@ export function MessageList({
       loadOlderStartReachedRef.current = false;
     }
   }, [loadingOlder]);
+
+  useEffect(() => {
+    if (!virtualListEnabled || loadingOlder || !loadOlderAnchorMessageIdRef.current) {
+      return;
+    }
+
+    const anchorId = loadOlderAnchorMessageIdRef.current;
+    loadOlderAnchorMessageIdRef.current = null;
+
+    const entryIndex = findMessageEntryIndex(listEntries, anchorId);
+    if (entryIndex < 0 || !virtuosoRef.current) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      virtuosoRef.current?.scrollToIndex({
+        index: entryIndex,
+        align: 'start',
+        behavior: 'auto',
+      });
+    });
+
+    return () => window.cancelAnimationFrame(frame);
+  }, [listEntries, loadingOlder, virtualListEnabled]);
 
   const replyTargetByMessageId = useMemo(() => {
     const map = new Map<string, MessageItem | null>();
@@ -1475,7 +1522,7 @@ export function MessageList({
           scrollHeight: container.scrollHeight,
           scrollTop: container.scrollTop,
         };
-        onLoadOlder();
+        triggerLoadOlder({ fromScroll: true });
       }
     };
 
@@ -1484,10 +1531,10 @@ export function MessageList({
   }, [
     hasMoreOlder,
     loadingOlder,
-    onLoadOlder,
     pendingScrollToMessageId,
     persistScrollPosition,
     syncJumpToLatestUi,
+    triggerLoadOlder,
     virtualListEnabled,
   ]);
 
@@ -1506,13 +1553,8 @@ export function MessageList({
     }
 
     if (virtualListEnabled) {
-      if (loadOlderStartReachedRef.current) {
-        return;
-      }
-
       if (container.scrollHeight <= container.clientHeight + 8) {
-        loadOlderStartReachedRef.current = true;
-        onLoadOlder();
+        triggerLoadOlder({ fromScroll: true });
       }
 
       return;
@@ -1527,7 +1569,7 @@ export function MessageList({
         scrollHeight: container.scrollHeight,
         scrollTop: container.scrollTop,
       };
-      onLoadOlder();
+      triggerLoadOlder();
     }
   }, [
     hasMoreOlder,
@@ -1536,6 +1578,7 @@ export function MessageList({
     onLoadOlder,
     pendingScrollToMessageId,
     showInitialLoading,
+    triggerLoadOlder,
     virtualListEnabled,
   ]);
 
@@ -1721,19 +1764,8 @@ export function MessageList({
   );
 
   const handleStartReached = useCallback(() => {
-    if (
-      !onLoadOlder ||
-      !hasMoreOlder ||
-      loadingOlder ||
-      loadOlderStartReachedRef.current ||
-      pendingScrollToMessageId
-    ) {
-      return;
-    }
-
-    loadOlderStartReachedRef.current = true;
-    onLoadOlder();
-  }, [hasMoreOlder, loadingOlder, onLoadOlder, pendingScrollToMessageId]);
+    triggerLoadOlder({ fromScroll: true });
+  }, [triggerLoadOlder]);
 
   const handleAtTopStateChange = useCallback(
     (atTop: boolean) => {
@@ -1966,8 +1998,12 @@ export function MessageList({
           <div className="box-border flex w-full max-w-full justify-center px-6 py-2">
             <button
               type="button"
-              className="rounded-full border border-app-border/70 bg-app-elevated px-3 py-1.5 text-xs font-medium text-app-text shadow-sm transition hover:bg-app-chat-hover"
-              onClick={() => onLoadOlder()}
+              className="relative z-20 rounded-full border border-app-border/70 bg-app-elevated px-3 py-1.5 text-xs font-medium text-app-text shadow-sm transition hover:bg-app-chat-hover"
+              onClick={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                triggerLoadOlder();
+              }}
             >
               Load earlier messages
             </button>
@@ -1981,7 +2017,7 @@ export function MessageList({
         </div>
       ),
     };
-  }, [hasMoreOlder, loadingOlder, onLoadOlder, peerBlockedByCurrentUser]);
+  }, [hasMoreOlder, loadingOlder, onLoadOlder, peerBlockedByCurrentUser, triggerLoadOlder]);
 
   const attachScrollContainerRef = useCallback((ref: HTMLElement | null) => {
     scrollContainerRef.current = ref instanceof HTMLDivElement ? ref : null;
@@ -2059,6 +2095,7 @@ export function MessageList({
           atBottomStateChange={handleAtBottomStateChange}
           followOutput={handleFollowOutput}
           startReached={handleStartReached}
+          startReachedThreshold={320}
           atTopStateChange={handleAtTopStateChange}
           totalListHeightChanged={handleTotalListHeightChanged}
           rangeChanged={handleRangeChanged}

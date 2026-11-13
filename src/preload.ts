@@ -190,8 +190,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     conversationId: string,
     before?: string,
     limit?: number,
+    beforeCreatedAt?: string,
   ): Promise<ApiResult<import('./shared/messages').MessageHistoryPage>> =>
-    ipcRenderer.invoke('chat:conversation-messages', token, conversationId, before, limit),
+    ipcRenderer.invoke(
+      'chat:conversation-messages',
+      token,
+      conversationId,
+      before,
+      limit,
+      beforeCreatedAt,
+    ),
   getMessageThread: (
     token: string,
     conversationId: string,

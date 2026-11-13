@@ -106,7 +106,7 @@ export async function loadConversationBootstrap(
 
 export async function loadConversationMessages(
   conversationId: string,
-  options?: { before?: string; limit?: number },
+  options?: { before?: string; beforeCreatedAt?: string; limit?: number },
 ): Promise<ApiResult<import('../shared/messages').MessageHistoryPage>> {
   if (!window.electronAPI?.getConversationMessages) {
     return unavailable();
@@ -118,6 +118,7 @@ export async function loadConversationMessages(
       conversationId,
       options?.before,
       options?.limit,
+      options?.beforeCreatedAt,
     ),
   );
 }

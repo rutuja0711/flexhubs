@@ -367,6 +367,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const [loadingOlderMessages, setLoadingOlderMessages] = useState(false);
   const loadingOlderInFlightRef = useRef(false);
   const hasMoreOlderMessagesRef = useRef(false);
+
+  const applyHasMoreOlderMessages = useCallback((value: boolean) => {
+    hasMoreOlderMessagesRef.current = value;
+    setHasMoreOlderMessages(value);
+  }, []);
   const [summaryPanelOpen, setSummaryPanelOpen] = useState(false);
   const [summaryLoading, setSummaryLoading] = useState(false);
   const [summaryContent, setSummaryContent] = useState<string | null>(null);
@@ -1132,7 +1137,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
 
     setMessages(filterMainChatMessages(cached.messages));
-    setHasMoreOlderMessages(
+    applyHasMoreOlderMessages(
       cached.hasMoreOlderMessages ?? cached.messages.length >= MESSAGE_HISTORY_PAGE_SIZE,
     );
     setActiveHubDetails(cached.activeHubDetails);
@@ -1157,7 +1162,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       ),
     );
     return true;
-  }, []);
+  }, [applyHasMoreOlderMessages]);
 
   const bumpDraftPersistToken = useCallback(() => {
     draftPersistTokenRef.current += 1;
@@ -2628,7 +2633,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         setPinnedMessageIds(bootstrapResult.data.pinnedMessageIds);
         setMessages(nextMessages);
         const resolvedHasMoreOlder = resolveHasMoreMessagesFromBootstrap(bootstrapResult.data);
-        setHasMoreOlderMessages(resolvedHasMoreOlder);
+        applyHasMoreOlderMessages(resolvedHasMoreOlder);
         void hydrateThreadReplyRegistry(conversationId, bootstrapResult.data.messages).then(() => {
           if (conversationId !== selectedIdRef.current) {
             return;
@@ -2750,7 +2755,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
       }
     },
-    [applyDraftPreviews, commitConversationList, handleUnauthorized, hydrateConversationSnooze, patchHubMemberPreview, prefetchDirectPeerProfile, rememberDirectChatMetadata, refreshPresence, setDraftPreviewForConversation, syncConversationReadState, syncThreadCache, user],
+    [applyDraftPreviews, applyHasMoreOlderMessages, commitConversationList, handleUnauthorized, hydrateConversationSnooze, patchHubMemberPreview, prefetchDirectPeerProfile, rememberDirectChatMetadata, refreshPresence, setDraftPreviewForConversation, syncConversationReadState, syncThreadCache, user],
   );
 
   const callManager = useCallManager({
@@ -2854,6 +2859,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         pinnedMessageIds: result.data.pinnedMessageIds,
         activeHubDetails: silentDetails,
         draft: draftRef.current,
+        hasMoreOlderMessages: hasMoreOlderMessagesRef.current,
       });
 
       void hydrateThreadReplyRegistry(conversationId, result.data.messages).then(() => {
@@ -2867,15 +2873,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     [syncThreadCache, user],
   );
 
-  const loadOlderMessages = useCallback(async () => {
+  const loadOlderMessages = useCallback((): boolean => {
     const conversationId = selectedIdRef.current;
 
-    if (
-      !conversationId ||
-      loadingOlderInFlightRef.current ||
-      !hasMoreOlderMessagesRef.current
-    ) {
-      return;
+    if (!conversationId || loadingOlderInFlightRef.current) {
+      return false;
     }
 
     const sortedCurrent = [...messagesRef.current].sort(compareMessagesChronologically);
@@ -2883,20 +2885,18 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       sortedCurrent.find((message) => !isLocalMessageId(message.id)) ?? sortedCurrent[0];
 
     if (!oldest || isLocalMessageId(oldest.id)) {
-      return;
+      return false;
     }
 
     loadingOlderInFlightRef.current = true;
     setLoadingOlderMessages(true);
 
-    try {
-      const result = await loadConversationMessages(conversationId, {
-        before: oldest.id,
-        limit: MESSAGE_HISTORY_PAGE_SIZE,
-      });
-
-      if (!result.ok || conversationId !== selectedIdRef.current) {
-        return;
+    const applyOlderPage = (
+      result: Awaited<ReturnType<typeof loadConversationMessages>>,
+      beforeFetchCount: number,
+    ): { addedCount: number; nextHasMore: boolean } => {
+      if (!result.ok) {
+        return { addedCount: 0, nextHasMore: hasMoreOlderMessagesRef.current };
       }
 
       const conversationRecord =
@@ -2910,30 +2910,96 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         conversationRecord,
       );
 
-      if (olderMessages.length === 0) {
-        setHasMoreOlderMessages(false);
-        return;
+      const rawCount = result.data.messages.length;
+      const addedFromRaw =
+        rawCount > 0
+          ? result.data.messages.filter(
+              (message) => !sortedCurrent.some((existing) => existing.id === message.id),
+            ).length
+          : 0;
+
+      if (olderMessages.length === 0 && rawCount === 0) {
+        applyHasMoreOlderMessages(false);
+        syncThreadCache(conversationId, {
+          messages: messagesRef.current,
+          pinnedMessageIds: pinnedMessageIdsRef.current ?? [],
+          activeHubDetails: activeHubDetailsRef.current,
+          draft: draftRef.current,
+          hasMoreOlderMessages: false,
+        });
+        return { addedCount: 0, nextHasMore: false };
       }
 
-      setMessages((current) =>
-        enrichMessageReplies(mergeMessageListsChronologically(olderMessages, current)),
-      );
-      setHasMoreOlderMessages(
-        result.data.hasMore ||
-          olderMessages.length >= MESSAGE_HISTORY_PAGE_SIZE,
-      );
-    } finally {
-      loadingOlderInFlightRef.current = false;
+      let mergedNext: MessageItem[] = [];
+      setMessages((current) => {
+        mergedNext = enrichMessageReplies(
+          mergeMessageListsChronologically(olderMessages, current),
+        );
+        return mergedNext;
+      });
 
-      if (conversationId === selectedIdRef.current) {
-        setLoadingOlderMessages(false);
+      const addedCount = Math.max(mergedNext.length - beforeFetchCount, addedFromRaw);
+      const resolvedHasMore =
+        rawCount >= MESSAGE_HISTORY_PAGE_SIZE || result.data.hasMore;
+
+      if (rawCount > 0 && addedCount === 0) {
+        applyHasMoreOlderMessages(false);
+        syncThreadCache(conversationId, {
+          messages: messagesRef.current,
+          pinnedMessageIds: pinnedMessageIdsRef.current ?? [],
+          activeHubDetails: activeHubDetailsRef.current,
+          draft: draftRef.current,
+          hasMoreOlderMessages: false,
+        });
+        return { addedCount: 0, nextHasMore: false };
       }
-    }
-  }, [user]);
 
-  useEffect(() => {
-    hasMoreOlderMessagesRef.current = hasMoreOlderMessages;
-  }, [hasMoreOlderMessages]);
+      applyHasMoreOlderMessages(resolvedHasMore);
+
+      syncThreadCache(conversationId, {
+        messages: mergedNext.length > 0 ? mergedNext : messagesRef.current,
+        pinnedMessageIds: pinnedMessageIdsRef.current ?? [],
+        activeHubDetails: activeHubDetailsRef.current,
+        draft: draftRef.current,
+        hasMoreOlderMessages: resolvedHasMore,
+      });
+
+      return { addedCount, nextHasMore: resolvedHasMore };
+    };
+
+    void (async () => {
+      try {
+        const baseCount = sortedCurrent.length;
+
+        const result = await loadConversationMessages(conversationId, {
+          before: oldest.id,
+          beforeCreatedAt: oldest.createdAt,
+          limit: MESSAGE_HISTORY_PAGE_SIZE,
+        });
+
+        if (!result.ok || conversationId !== selectedIdRef.current) {
+          if (!result.ok && conversationId === selectedIdRef.current) {
+            toast.error(result.error || 'Could not load earlier messages.');
+          }
+          return;
+        }
+
+        const { addedCount } = applyOlderPage(result, baseCount);
+
+        if (addedCount === 0 && result.data.messages.length === 0 && result.data.hasMore) {
+          toast.info('No earlier messages were returned. Try again in a moment.');
+        }
+      } finally {
+        loadingOlderInFlightRef.current = false;
+
+        if (conversationId === selectedIdRef.current) {
+          setLoadingOlderMessages(false);
+        }
+      }
+    })();
+
+    return true;
+  }, [applyHasMoreOlderMessages, syncThreadCache, toast, user]);
 
   const prefetchThread = useCallback(
     (conversationId: string) => {
@@ -4386,7 +4452,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   useEffect(() => {
     clearThreadReplyRegistry();
     clearThreadRepliesStore();
-    setHasMoreOlderMessages(false);
+    applyHasMoreOlderMessages(false);
     setLoadingOlderMessages(false);
     loadingOlderInFlightRef.current = false;
 
@@ -4402,7 +4468,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     return () => {
       flushDraftSave(selectedId);
     };
-  }, [flushDraftSave, loadThread, selectedId]);
+  }, [applyHasMoreOlderMessages, flushDraftSave, loadThread, selectedId]);
 
   const focusMessageHydratingRef = useRef<string | null>(null);
 
@@ -6034,14 +6100,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       if (selectedIdRef.current === conversationId) {
         setMessages([]);
         setPinnedMessageIds([]);
-        setHasMoreOlderMessages(false);
+        applyHasMoreOlderMessages(false);
         setThreadUnreadAnchorId(null);
       }
 
       void loadThread(conversationId);
       void refreshConversations();
     },
-    [loadThread, refreshConversations],
+    [applyHasMoreOlderMessages, loadThread, refreshConversations],
   );
 
   const handleSidebarClearHistory = useCallback(
@@ -6613,7 +6679,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     setSelectedId: () => undefined,
     setMainView: () => undefined,
     setFlexAiOpen: () => undefined,
-    loadOlderMessages: () => undefined,
+    loadOlderMessages: () => false,
     setFocusMessageId: () => undefined,
     saveConversationScroll: () => undefined,
     bumpThreadReplyCount: (items) => items,
@@ -6697,9 +6763,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     setSelectedId,
     setMainView,
     setFlexAiOpen,
-    loadOlderMessages: () => {
-      void loadOlderMessages();
-    },
+    loadOlderMessages,
     setFocusMessageId,
     bumpThreadReplyCount,
     filterMainChatMessages,
