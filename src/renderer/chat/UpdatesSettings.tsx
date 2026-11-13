@@ -716,10 +716,23 @@ export function UpdatesSettings() {
         )}
 
         {updateState === 'error' && (
-          <p className="mb-4 text-sm text-app-text">
-            {errorMessage ||
-              'The update could not be applied automatically. Tap Retry to clear the cache and try again.'}
-          </p>
+          <div className="mb-4 space-y-3">
+            <p className="text-sm text-app-text">
+              {errorMessage ||
+                'The update could not be applied automatically. Tap Retry to clear the cache and try again.'}
+            </p>
+            <p className="text-xs text-app-muted">
+              On Mac, the app must live in <strong className="text-app-text">/Applications</strong> (install from the
+              DMG once). Unsigned builds may not patch in-app — use the full installer below.
+            </p>
+            <button
+              type="button"
+              onClick={() => void window.electronAPI.openDesktopReleasePage?.()}
+              className="rounded-xl border border-app-border bg-app-surface px-4 py-2 text-sm font-medium text-app-text transition-colors hover:bg-app-chat-hover"
+            >
+              Download full installer (DMG)
+            </button>
+          </div>
         )}
 
         {updateState === 'paused' && errorMessage && (

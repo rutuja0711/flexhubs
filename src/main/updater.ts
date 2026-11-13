@@ -2,6 +2,11 @@ import { autoUpdater, CancellationToken } from 'electron-updater';
 import { BrowserWindow, ipcMain, app, shell } from 'electron';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  cleanupMacZipStaging,
+  launchMacZipInstallHelper,
+  prepareMacZipUpdate,
+} from './macZipFallbackUpdate';
 
 /** Rolling release tag on GitHub (see scripts/ci/publish-desktop-mac.sh and INSTALL.md). */
 const DESKTOP_RELEASE_FEED_URL =
@@ -82,8 +87,19 @@ function clearAutoInstallWaitTimer(): void {
   }
 }
 
-/** Apply a downloaded in-app update and exit. Windows uses silent NSIS (/S); macOS replaces the app in place (no DMG). */
+/** Apply a downloaded in-app update and exit. Windows uses silent NSIS (/S); macOS uses zip→Applications when unsigned. */
 function applyDownloadedUpdateAndQuit(context: string): void {
+  if (
+    process.platform === 'darwin' &&
+    pendingInstallMethod === 'mac-zip' &&
+    pendingMacAppBundlePath &&
+    fs.existsSync(pendingMacAppBundlePath)
+  ) {
+    console.info(`[FlexHubs] ${context} — macOS zip install to /Applications`);
+    launchMacZipInstallHelper(pendingMacAppBundlePath);
+    return;
+  }
+
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.autoRunAppAfterInstall = true;
 
@@ -293,26 +309,47 @@ let lastKnownAvailableVersion: string | undefined;
 /** Set when the in-app patch finished downloading and is waiting for restart. */
 let pendingInstallVersion: string | undefined;
 
+type PendingInstallMethod = 'electron-updater' | 'mac-zip';
+
+type PersistedPendingInstall = {
+  version: string;
+  method?: PendingInstallMethod;
+  appBundlePath?: string;
+  savedAt?: string;
+};
+
+let pendingInstallMethod: PendingInstallMethod = 'electron-updater';
+let pendingMacAppBundlePath: string | undefined;
+
 function pendingInstallFilePath(): string {
   return path.join(app.getPath('userData'), 'pending-update-install.json');
 }
 
-function readPersistedPendingInstallVersion(): string | undefined {
+function readPersistedPendingInstall(): PersistedPendingInstall | null {
   try {
     const raw = fs.readFileSync(pendingInstallFilePath(), 'utf8');
-    const parsed = JSON.parse(raw) as { version?: string };
+    const parsed = JSON.parse(raw) as PersistedPendingInstall;
     const version = parsed?.version?.trim();
-    return version || undefined;
+    if (!version) {
+      return null;
+    }
+
+    return {
+      version,
+      method: parsed.method === 'mac-zip' ? 'mac-zip' : 'electron-updater',
+      appBundlePath: parsed.appBundlePath?.trim() || undefined,
+      savedAt: parsed.savedAt,
+    };
   } catch {
-    return undefined;
+    return null;
   }
 }
 
-function writePersistedPendingInstallVersion(version: string | null): void {
+function writePersistedPendingInstall(record: PersistedPendingInstall | null): void {
   const filePath = pendingInstallFilePath();
 
   try {
-    if (!version) {
+    if (!record?.version?.trim()) {
       if (fs.existsSync(filePath)) {
         fs.unlinkSync(filePath);
       }
@@ -321,7 +358,12 @@ function writePersistedPendingInstallVersion(version: string | null): void {
 
     fs.writeFileSync(
       filePath,
-      JSON.stringify({ version, savedAt: new Date().toISOString() }),
+      JSON.stringify({
+        version: record.version.trim(),
+        method: record.method ?? 'electron-updater',
+        ...(record.appBundlePath ? { appBundlePath: record.appBundlePath } : {}),
+        savedAt: record.savedAt ?? new Date().toISOString(),
+      }),
       'utf8',
     );
   } catch (error) {
@@ -329,20 +371,44 @@ function writePersistedPendingInstallVersion(version: string | null): void {
   }
 }
 
+function clearPersistedPendingInstall(): void {
+  writePersistedPendingInstall(null);
+  pendingInstallVersion = undefined;
+  pendingInstallMethod = 'electron-updater';
+  pendingMacAppBundlePath = undefined;
+}
+
+function setPersistedPendingInstall(record: PersistedPendingInstall): void {
+  pendingInstallVersion = record.version;
+  pendingInstallMethod = record.method ?? 'electron-updater';
+  pendingMacAppBundlePath = record.appBundlePath;
+  writePersistedPendingInstall(record);
+}
+
 function hydratePendingInstallVersion(): void {
-  const persisted = readPersistedPendingInstallVersion();
+  const persisted = readPersistedPendingInstall();
 
   if (!persisted) {
     return;
   }
 
-  if (!isVersionNewer(persisted, app.getVersion())) {
-    writePersistedPendingInstallVersion(null);
-    pendingInstallVersion = undefined;
+  if (!isVersionNewer(persisted.version, app.getVersion())) {
+    clearPersistedPendingInstall();
     return;
   }
 
-  pendingInstallVersion = persisted;
+  if (
+    persisted.method === 'mac-zip' &&
+    (!persisted.appBundlePath || !fs.existsSync(persisted.appBundlePath))
+  ) {
+    clearPersistedPendingInstall();
+    cleanupMacZipStaging();
+    return;
+  }
+
+  pendingInstallVersion = persisted.version;
+  pendingInstallMethod = persisted.method ?? 'electron-updater';
+  pendingMacAppBundlePath = persisted.appBundlePath;
 }
 
 export type UpdaterCheckResult =
@@ -426,6 +492,19 @@ function isVersionNewer(latest: string, current: string): boolean {
   return false;
 }
 
+function isMacAppInstalledInApplications(): boolean {
+  if (process.platform !== 'darwin') {
+    return true;
+  }
+
+  try {
+    const execPath = app.getPath('exe');
+    return execPath.includes('/Applications/');
+  } catch {
+    return false;
+  }
+}
+
 function ensureAutoUpdaterConfigured(): void {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
@@ -434,6 +513,11 @@ function ensureAutoUpdaterConfigured(): void {
   autoUpdater.allowPrerelease = false;
   // Full zip only — differential patches often fail late in the download on macOS.
   autoUpdater.disableDifferentialDownload = true;
+
+  if (process.platform === 'darwin') {
+    // CI builds are often unsigned; without this, zip download finishes then apply fails.
+    autoUpdater.verifyUpdateCodeSignature = false;
+  }
 
   autoUpdater.setFeedURL({
     provider: 'generic',
@@ -483,7 +567,11 @@ export function sanitizeUpdaterError(raw: string): string {
     lower.includes('err_updater') ||
     lower.includes('blockmap')
   ) {
-    return 'This update could not be applied automatically. Tap Retry to clear the cached download and try again.';
+    if (process.platform === 'darwin' && !isMacAppInstalledInApplications()) {
+      return 'In-app updates require FlexHubs in /Applications (not Downloads or the DMG). Install from the DMG, open only from Applications, then Retry — or use Download full installer.';
+    }
+
+    return 'This update could not be applied automatically. Tap Retry to clear the cached download and try again. If it keeps failing, use Download full installer (DMG).';
   }
 
   if (lower.includes('timed out') || lower.includes('timeout')) {
@@ -561,6 +649,7 @@ function attachAutoUpdaterListeners(): void {
 
     const message = err.message || 'Update failed.';
     console.warn('[FlexHubs] Updater error:', message);
+    clearPersistedPendingInstall();
     sendToRenderer('updater:error', {
       error: sanitizeUpdaterError(message),
       version: lastKnownAvailableVersion?.trim() || undefined,
@@ -583,9 +672,11 @@ function attachAutoUpdaterListeners(): void {
     activeDownloadCancellation = null;
 
     if (info.version) {
-      pendingInstallVersion = info.version;
       lastKnownAvailableVersion = info.version;
-      writePersistedPendingInstallVersion(info.version);
+      setPersistedPendingInstall({
+        version: info.version,
+        method: 'electron-updater',
+      });
     }
 
     autoUpdater.autoInstallOnAppQuit = true;
@@ -608,12 +699,61 @@ function pendingInstallState(): UpdaterPendingInstall {
   const version = pendingInstallVersion?.trim();
 
   if (!version || !isVersionNewer(version, app.getVersion())) {
-    pendingInstallVersion = undefined;
-    writePersistedPendingInstallVersion(null);
+    clearPersistedPendingInstall();
+    return { ready: false };
+  }
+
+  if (
+    pendingInstallMethod === 'mac-zip' &&
+    (!pendingMacAppBundlePath || !fs.existsSync(pendingMacAppBundlePath))
+  ) {
+    clearPersistedPendingInstall();
+    cleanupMacZipStaging();
     return { ready: false };
   }
 
   return { ready: true, version };
+}
+
+async function downloadMacZipFallbackUpdate(): Promise<UpdaterDownloadResult> {
+  const currentVersion = app.getVersion();
+  console.info('[FlexHubs] macOS update: downloading release zip (unsigned-safe path)...');
+
+  const prepared = await prepareMacZipUpdate(DESKTOP_RELEASE_FEED_URL, (percent) => {
+    lastDownloadProgressPercent = Math.floor(percent);
+    sendToRenderer('updater:download-progress', {
+      percent,
+      transferred: 0,
+      total: 0,
+    });
+  });
+
+  if (!prepared.ok) {
+    return { ok: false, error: prepared.error };
+  }
+
+  if (!isVersionNewer(prepared.version, currentVersion)) {
+    cleanupMacZipStaging();
+    return { ok: false, error: 'No update is available to download right now.' };
+  }
+
+  lastKnownAvailableVersion = prepared.version;
+  setPersistedPendingInstall({
+    version: prepared.version,
+    method: 'mac-zip',
+    appBundlePath: prepared.appBundlePath,
+  });
+
+  updaterPhase = 'idle';
+  writePersistedDownloadPause(null);
+
+  sendToRenderer('updater:update-downloaded', {
+    version: prepared.version,
+    method: 'mac-zip',
+  });
+
+  scheduleAutoInstallWhenSafe();
+  return { ok: true, method: 'in-app' };
 }
 
 type FeedCheckOutcome =
@@ -666,6 +806,10 @@ async function checkFeedForUpdate(): Promise<FeedCheckOutcome> {
 }
 
 async function downloadInAppUpdate(): Promise<UpdaterDownloadResult> {
+  if (process.platform === 'darwin') {
+    return downloadMacZipFallbackUpdate();
+  }
+
   downloadPausedIntentionally = false;
   await ensureAutoUpdaterHasUpdateInfo();
   const cancellationToken = new CancellationToken();
@@ -847,10 +991,10 @@ async function resetDownloadState(): Promise<{ ok: true }> {
   activeDownloadCancellation = null;
   downloadPausedIntentionally = false;
   lastDownloadProgressPercent = 0;
-  pendingInstallVersion = undefined;
-  writePersistedPendingInstallVersion(null);
+  clearPersistedPendingInstall();
   writePersistedDownloadPause(null);
   clearUpdaterDownloadCache();
+  cleanupMacZipStaging();
   clearDeferredInstallTimer();
   clearAutoInstallWaitTimer();
 
@@ -1143,6 +1287,15 @@ function registerUpdaterIpcHandlers(): void {
     void shell.openExternal(asset);
     return { ok: true as const };
   });
+
+  register('updater:get-diagnostics', () => ({
+    currentVersion: app.getVersion(),
+    platform: process.platform,
+    packaged: app.isPackaged,
+    inApplications: isMacAppInstalledInApplications(),
+    execPath: app.getPath('exe'),
+    feedUrl: DESKTOP_RELEASE_FEED_URL,
+  }));
 
   register('updater:get-capabilities', (): UpdaterCapabilities => ({
     inAppPatchOnly: true,
