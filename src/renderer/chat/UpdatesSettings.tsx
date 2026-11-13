@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { FiDownloadCloud, FiRefreshCcw, FiCheckCircle, FiAlertCircle, FiPause, FiPlay } from 'react-icons/fi';
+import { UPDATE_CANARY_HINT, UPDATE_CANARY_MARKER } from '../../shared/updateCanary';
 
 type UpdateState =
   | 'checking'
@@ -676,6 +677,11 @@ export function UpdatesSettings() {
         </h2>
         <p className="mt-2 text-sm text-app-muted">
           Latest version: <span className="font-medium text-app-text">{latestLabel}</span>
+        </p>
+        <p className="mt-3 rounded-lg border border-accent/35 bg-accent/10 px-3 py-2 text-xs text-app-text">
+          <span className="font-semibold text-accent">Update verify marker:</span>{' '}
+          <code className="font-mono text-[11px]">{UPDATE_CANARY_MARKER}</code>
+          <span className="mt-1 block text-app-muted">{UPDATE_CANARY_HINT}</span>
         </p>
       </div>
 

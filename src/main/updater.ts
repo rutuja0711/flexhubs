@@ -7,6 +7,7 @@ import {
   launchMacZipInstallHelper,
   prepareMacZipUpdate,
 } from './macZipFallbackUpdate';
+import { UPDATE_CANARY_MARKER } from '../shared/updateCanary';
 
 /** Rolling release tag on GitHub (see scripts/ci/publish-desktop-mac.sh and INSTALL.md). */
 const DESKTOP_RELEASE_FEED_URL =
@@ -1290,6 +1291,7 @@ function registerUpdaterIpcHandlers(): void {
 
   register('updater:get-diagnostics', () => ({
     currentVersion: app.getVersion(),
+    canaryMarker: UPDATE_CANARY_MARKER,
     platform: process.platform,
     packaged: app.isPackaged,
     inApplications: isMacAppInstalledInApplications(),
@@ -1337,6 +1339,9 @@ function registerUpdaterIpcHandlers(): void {
 
 /** Call once during app startup (safe to call again after dev HMR). */
 export function initUpdater(): void {
+  console.info(
+    `[FlexHubs] App ${app.getVersion()} · update canary: ${UPDATE_CANARY_MARKER}`,
+  );
   attachAutoUpdaterListeners();
   registerUpdaterIpcHandlers();
   hydratePendingInstallVersion();
