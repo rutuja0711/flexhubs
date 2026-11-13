@@ -136,12 +136,20 @@ export async function sendRealtimeHeartbeat(
     Intl.DateTimeFormat().resolvedOptions().timeZone ||
     'UTC';
   const status = body?.status?.trim() || 'ONLINE';
+  const visible = status.toUpperCase() !== 'OFFLINE';
 
   const result = await apiPost<unknown>(
     `${API_BASE_URL}/realtime/heartbeat`,
     token,
     'Realtime Heartbeat API',
-    { status, timezone },
+    {
+      status,
+      timezone,
+      isOnline: visible,
+      online: visible,
+      sharePresence: visible,
+      shareOnlineStatus: visible,
+    },
   );
 
   if (!result.ok) {

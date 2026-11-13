@@ -69,10 +69,24 @@ export function setPresenceSharingEnabled(enabled: boolean): void {
 
   pushHeartbeatStatus(enabled ? getPublishedPresenceStatus() : 'OFFLINE');
   notify();
+
+  if (started && enabled) {
+    void syncPresenceToServer();
+  }
 }
 
 export function isPresenceSharingEnabled(): boolean {
   return sharePresenceWithOthers;
+}
+
+/** Server/redis may still say OFFLINE while this device is actively sharing presence. */
+export function shouldKeepLocalPresenceOverRemote(remote: UserPresenceStatus): boolean {
+  return (
+    sharePresenceWithOthers &&
+    remote === 'OFFLINE' &&
+    manualStatus !== 'OFFLINE' &&
+    started
+  );
 }
 
 function resolvePublishedPresenceStatus(): UserPresenceStatus {
@@ -125,7 +139,7 @@ function clearBackgroundTimer(): void {
 }
 
 function isAppInBackground(): boolean {
-  return document.hidden || !document.hasFocus();
+  return document.hidden;
 }
 
 function scheduleBackgroundAway(): void {

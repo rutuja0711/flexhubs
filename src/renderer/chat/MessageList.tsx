@@ -28,6 +28,8 @@ import {
   formatMessageSeenByLabel,
   groupMessageReactions,
   isCallLogMessage,
+  isCalendarEventAnnouncementMessage,
+  parseCalendarEventAnnouncementContent,
   isMediaOnlyMessage,
   isVoiceOnlyMessage,
   isPollMessage,
@@ -49,6 +51,7 @@ import { ReactionPicker } from './ReactionPicker';
 import { MessageContent, MessageReplyPreview } from './MessageContent';
 import type { ConversationScrollSnapshot } from '../conversationScrollCache';
 import { JumpToLatestButton } from './JumpToLatestButton';
+import { CalendarEventMessage } from './CalendarEventMessage';
 import { countMessagesBelowAnchor } from './messageListNewBelow';
 
 function MessageListSurface({
@@ -279,6 +282,7 @@ type MessageRowProps = {
   conversationKind?: string;
   hideIncomingSenderMeta?: boolean;
   sendProgressByMessageId?: Record<string, number>;
+  onViewCalendarEvent?: (eventId: string) => void;
 };
 
 function MessageHoverAction({
@@ -323,6 +327,10 @@ function canGenerateAiReply(message: MessageItem): boolean {
   }
 
   if (isCallLogMessage(message)) {
+    return false;
+  }
+
+  if (isCalendarEventAnnouncementMessage(message)) {
     return false;
   }
 
@@ -539,7 +547,8 @@ function areMessageRowPropsEqual(prev: MessageRowProps, next: MessageRowProps): 
     prev.hideIncomingSenderMeta === next.hideIncomingSenderMeta &&
     prev.savedMessageIds === next.savedMessageIds &&
     prev.sendProgressByMessageId === next.sendProgressByMessageId &&
-    prev.sendProgressByMessageId?.[prev.message.id] === next.sendProgressByMessageId?.[next.message.id]
+    prev.sendProgressByMessageId?.[prev.message.id] === next.sendProgressByMessageId?.[next.message.id] &&
+    prev.onViewCalendarEvent === next.onViewCalendarEvent
   );
 }
 
@@ -580,7 +589,17 @@ const MessageRow = memo(function MessageRow({
   conversationKind,
   hideIncomingSenderMeta = false,
   sendProgressByMessageId = {},
+  onViewCalendarEvent,
 }: MessageRowProps) {
+  const calendarAnnouncement = parseCalendarEventAnnouncementContent(message.content);
+  if (calendarAnnouncement) {
+    return (
+      <div data-message-id={message.id} className="flex w-full justify-center px-2 py-2.5">
+        <CalendarEventMessage event={calendarAnnouncement} onViewEvent={onViewCalendarEvent} />
+      </div>
+    );
+  }
+
   const reactionGroups = groupMessageReactions(message.reactions, currentUserId);
   const outboundMediaSending = shouldShowUploadProgress(message);
   const sendProgress = sendProgressByMessageId[message.id];
@@ -609,10 +628,14 @@ const MessageRow = memo(function MessageRow({
   const isEditing = editingId === message.id;
   const isPoll = isPollMessage(message);
   const isCallLog = isCallLogMessage(message);
+  const isCalendarAnnouncement = isCalendarEventAnnouncementMessage(message);
   const isMediaOnly =
-    !isPoll && !isCallLog && (isMediaOnlyMessage(message) || isVoiceOnlyMessage(message));
+    !isPoll &&
+    !isCallLog &&
+    !isCalendarAnnouncement &&
+    (isMediaOnlyMessage(message) || isVoiceOnlyMessage(message));
   const hasMedia = (message.media?.length ?? 0) > 0;
-  const isTextOnly = !isPoll && !isCallLog && !isMediaOnly && !hasMedia;
+  const isTextOnly = !isPoll && !isCallLog && !isCalendarAnnouncement && !isMediaOnly && !hasMedia;
   const bubbleHasMediaCaption = hasMedia && !isMediaOnly;
   const detailsKind = String(
     conversationDetails?.kind ?? conversationDetails?.type ?? conversationDetails?.conversationType ?? '',
@@ -935,6 +958,7 @@ type MessageListProps = {
   sendProgressByMessageId?: Record<string, number>;
   /** True when the signed-in user blocked the direct-chat peer (not shown to the blocked party). */
   peerBlockedByCurrentUser?: boolean;
+  onViewCalendarEvent?: (eventId: string) => void;
 };
 
 export function MessageList({
@@ -980,6 +1004,7 @@ export function MessageList({
   hideIncomingSenderMeta = false,
   sendProgressByMessageId = {},
   peerBlockedByCurrentUser = false,
+  onViewCalendarEvent,
 }: MessageListProps) {
   perfRecordRender('MessageList');
   const virtualListEnabled = isMessageListVirtualizationEnabled();
@@ -1871,6 +1896,7 @@ export function MessageList({
           conversationKind={conversationKind}
           hideIncomingSenderMeta={hideIncomingSenderMeta}
           sendProgressByMessageId={sendProgressByMessageId}
+          onViewCalendarEvent={onViewCalendarEvent}
         />
       );
     },
@@ -1901,6 +1927,7 @@ export function MessageList({
       onSaveMessage,
       onSendThreadMessage,
       onUnsaveMessage,
+      onViewCalendarEvent,
       onVotePoll,
       replyTargetByMessageId,
       savedMessageIds,

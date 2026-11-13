@@ -56,6 +56,7 @@ type CalendarViewProps = {
   highlightEventId?: string | null;
   onHighlightHandled?: () => void;
   hubOptions?: CalendarHubOption[];
+  onHubChatsNotified?: (conversationIds: string[]) => void;
 };
 
 export function CalendarView({
@@ -71,6 +72,7 @@ export function CalendarView({
   highlightEventId = null,
   onHighlightHandled,
   hubOptions = [],
+  onHubChatsNotified,
 }: CalendarViewProps) {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState<number | null>(new Date().getDate());
@@ -957,6 +959,7 @@ export function CalendarView({
         editEvent={editEventForModal}
         initialDate={modalInitialDate}
         hubOptions={hubOptions}
+        onHubChatsNotified={onHubChatsNotified}
       />
     </div>
   );

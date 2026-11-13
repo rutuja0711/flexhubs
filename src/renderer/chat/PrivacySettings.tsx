@@ -20,7 +20,6 @@ import { useToast } from '../ui/Toast';
 
 import type { NotificationPreferenceUpdate, ProfileSettings } from '../../shared/profile';
 import { applyNotificationPreferenceUpdate } from '../../shared/profile';
-import { mergePrivacySettings } from '../privacySettingsStorage';
 import { saveUserProfile, saveNotificationSettings } from '../chatApi';
 import { setPresenceSharingEnabled, syncPresenceToServer } from '../presenceManager';
 
@@ -86,11 +85,8 @@ export function PrivacySettings({
     ]);
 
     const saved = notifResult.ok || profileResult.ok;
-    let merged = applyNotificationPreferenceUpdate(optimistic, preferenceUpdate);
-
-    if (notifResult.ok && notifResult.data) {
-      merged = mergePrivacySettings(notifResult.data, merged);
-    }
+    const serverSettings = notifResult.ok && notifResult.data ? notifResult.data : optimistic;
+    let merged = applyNotificationPreferenceUpdate(serverSettings, preferenceUpdate);
 
     if (!saved) {
       persistSettings({ ...settings, [field]: previousValue } as ProfileSettings);
@@ -152,10 +148,12 @@ export function PrivacySettings({
           type="button"
           disabled={isLoading}
           onClick={() => void handleToggle(field)}
-          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 disabled:opacity-50 sm:ml-4 ml-7 ${isChecked ? 'bg-accent' : 'bg-app-border'}`}
+          className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full px-0.5 transition-colors focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2 disabled:opacity-50 sm:ml-4 ml-7 ${isChecked ? 'bg-accent' : 'bg-app-border'}`}
         >
           <span className="sr-only">Toggle {title}</span>
-          <span className={`inline-block h-3.5 w-3.5 transform rounded-full bg-white transition duration-200 ease-in-out ${isChecked ? 'translate-x-2' : '-translate-x-2'}`} />
+          <span
+            className={`inline-block h-3.5 w-3.5 rounded-full bg-white shadow-sm transition-transform duration-200 ease-in-out ${isChecked ? 'translate-x-4' : 'translate-x-0'}`}
+          />
         </button>
       </div>
     );

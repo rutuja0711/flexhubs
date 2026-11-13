@@ -47,6 +47,7 @@ import {
   getPresenceStatusMessage,
   setManualPresenceStatus,
   setPresenceSharingEnabled,
+  shouldKeepLocalPresenceOverRemote,
   subscribePresenceManager,
   syncPresenceToServer,
 } from '../presenceManager';
@@ -703,7 +704,13 @@ export function ProfileSettingsView({
         ? remoteStatus.statusMessage
         : remoteStatus.statusMessage.trim() || getPresenceStatusMessage(),
     };
-    setManualPresenceStatus(nextProfile.status, nextProfile.statusMessage);
+    const statusForDevice = shouldKeepLocalPresenceOverRemote(remoteStatus.status)
+      ? getEffectivePresenceStatus()
+      : nextProfile.status;
+    setManualPresenceStatus(statusForDevice, nextProfile.statusMessage);
+    if (shouldKeepLocalPresenceOverRemote(remoteStatus.status)) {
+      void syncPresenceToServer();
+    }
     const nextStyles = stylesResult.ok
       ? stylesResult.data
       : cachedBeforeFetch?.avatarStyles ?? avatarStylesRef.current;

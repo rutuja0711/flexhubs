@@ -1236,12 +1236,12 @@ export function formatTypingIndicatorLabel(names: string[]): string {
   }
 
   if (unique.length === 1) {
-    return `${unique[0]} is typing…`;
+    return `${unique[0]} is typing...`;
   }
 
   if (unique.length === 2) {
-    return `${unique[0]} and ${unique[1]} are typing…`;
+    return `${unique[0]} and ${unique[1]} are typing...`;
   }
 
-  return `${unique[0]} and ${unique.length - 1} others are typing…`;
+  return `${unique[0]} and ${unique.length - 1} others are typing...`;
 }

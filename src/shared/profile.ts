@@ -369,11 +369,16 @@ export function normalizeNotificationSettings(payload: unknown): ProfileSettings
       readBoolean(record.readReceipts) ??
       readBoolean(record.readReceiptsEnabled) ??
       true,
-    profileVisibility: readString(record.profileVisibility) ?? 'Everyone',
-    emailVisibility: readString(record.emailVisibility) ?? 'Organization only',
-    statusVisibility: readString(record.statusVisibility) ?? 'Everyone',
-    allowDirectMessagesFrom: readString(record.allowDirectMessagesFrom) ?? 'Organization members',
-    callPrivacy: readString(record.callPrivacy) ?? 'Everyone',
+    profileVisibility:
+      normalizePrivacyStringFromApi(readString(record.profileVisibility)) ?? 'Everyone',
+    emailVisibility:
+      normalizePrivacyStringFromApi(readString(record.emailVisibility)) ?? 'Organization only',
+    statusVisibility:
+      normalizePrivacyStringFromApi(readString(record.statusVisibility)) ?? 'Everyone',
+    allowDirectMessagesFrom:
+      normalizePrivacyStringFromApi(readString(record.allowDirectMessagesFrom)) ??
+      'Organization members',
+    callPrivacy: normalizePrivacyStringFromApi(readString(record.callPrivacy)) ?? 'Everyone',
     messageSoundEnabled:
       readBoolean(record.messageSoundEnabled) ??
       readBoolean(record.messageSound) ??
@@ -434,15 +439,22 @@ export function mergeProfileSettingsFromUser(
       pickBoolean(record.readReceipts, record.readReceiptsEnabled, nested.readReceipts) ??
       settings.readReceipts,
     profileVisibility:
-      pickString(record.profileVisibility, nested.profileVisibility) ?? settings.profileVisibility,
+      normalizePrivacyStringFromApi(
+        pickString(record.profileVisibility, nested.profileVisibility),
+      ) ?? settings.profileVisibility,
     emailVisibility:
-      pickString(record.emailVisibility, nested.emailVisibility) ?? settings.emailVisibility,
+      normalizePrivacyStringFromApi(pickString(record.emailVisibility, nested.emailVisibility)) ??
+      settings.emailVisibility,
     statusVisibility:
-      pickString(record.statusVisibility, nested.statusVisibility) ?? settings.statusVisibility,
+      normalizePrivacyStringFromApi(pickString(record.statusVisibility, nested.statusVisibility)) ??
+      settings.statusVisibility,
     allowDirectMessagesFrom:
-      pickString(record.allowDirectMessagesFrom, nested.allowDirectMessagesFrom) ??
-      settings.allowDirectMessagesFrom,
-    callPrivacy: pickString(record.callPrivacy, nested.callPrivacy) ?? settings.callPrivacy,
+      normalizePrivacyStringFromApi(
+        pickString(record.allowDirectMessagesFrom, nested.allowDirectMessagesFrom),
+      ) ?? settings.allowDirectMessagesFrom,
+    callPrivacy:
+      normalizePrivacyStringFromApi(pickString(record.callPrivacy, nested.callPrivacy)) ??
+      settings.callPrivacy,
   };
 }
 
@@ -1034,19 +1046,6 @@ export function buildProfileUpdatePayload(
   }
 
   if (typeof updates.profileVisibility === 'string') {
-    payload.profileVisibility = updates.profileVisibility;
-  }
-
-  if (typeof updates.emailVisibility === 'string') {
-    payload.emailVisibility = updates.emailVisibility;
-  }
-
-  if (typeof updates.statusVisibility === 'string') {
-    payload.statusVisibility = updates.statusVisibility;
-  }
-
-  if (typeof updates.allowDirectMessagesFrom === 'string') {
-    payload.allowDirectMessagesFrom = updates.allowDirectMessagesFrom;
     payload.profileVisibility = mapPrivacyStringToApi(updates.profileVisibility);
   }
 

@@ -23,6 +23,7 @@ import {
   writeCalendarEventTagSnapshotAsync,
 } from '../../shared/calendarEventTags';
 import type { CalendarEventItem } from '../../shared/features';
+import { announceCalendarEventToHubs } from '../calendarEventHubAnnounce';
 import { loadOrganizationMembers } from '../chatApi';
 import {
   createCalendarEvent,
@@ -47,6 +48,7 @@ type NewEventModalProps = {
   viewerUsername?: string | null;
   viewerDisplayName?: string | null;
   onCalendarResponse?: () => void;
+  onHubChatsNotified?: (conversationIds: string[]) => void;
 };
 
 function channelIdsForHubConversations(
@@ -106,6 +108,7 @@ export function NewEventModal({
   viewerUsername = null,
   viewerDisplayName = null,
   onCalendarResponse,
+  onHubChatsNotified,
 }: NewEventModalProps) {
   const isViewOnly = readOnly && Boolean(editEvent);
   const showCalendarInviteActions =
@@ -576,6 +579,37 @@ export function NewEventModal({
       invitees,
     });
 
+    const announceTargets = [
+      ...new Set(
+        [
+          ...hubConversationIds,
+          ...(savedEvent.taggedHubs ?? [])
+            .map((hub) => hub.conversationId)
+            .filter((id): id is string => Boolean(id)),
+          ...(result.data.taggedHubs ?? [])
+            .map((hub) => hub.conversationId)
+            .filter((id): id is string => Boolean(id)),
+        ].filter(Boolean),
+      ),
+    ];
+
+    if (announceTargets.length > 0) {
+      void announceCalendarEventToHubs(
+        announceTargets,
+        {
+          eventId,
+          title: trimmedTitle,
+          startsAt,
+          endsAt: savedEvent.endsAt ?? result.data.endsAt ?? null,
+        },
+        editEvent ? 'updated' : 'scheduled',
+      ).then((notified) => {
+        if (notified.length > 0) {
+          onHubChatsNotified?.(notified);
+        }
+      });
+    }
+
     onCreated(savedEvent as CalendarEventItem);
     onClose();
   };
@@ -637,7 +671,7 @@ export function NewEventModal({
 
   return (
     <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/60 p-4 sm:p-6 backdrop-blur-md animate-fade-in">
-      <div className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-app-border bg-app-surface backdrop-blur-2xl p-6 sm:p-8 shadow-2xl animate-pop-in origin-center">
+      <div className="relative max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-3xl border border-app-border bg-app-surface backdrop-blur-2xl p-6 sm:p-8 shadow-2xl animate-pop-in origin-center [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-app-border-strong to-transparent pointer-events-none" />
 
         <div className="mb-5 flex items-start justify-between">

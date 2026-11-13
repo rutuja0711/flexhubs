@@ -102,6 +102,14 @@ export async function updateUserStatus(
   if (updates.status) {
     payload.status = updates.status;
     payload.presenceStatus = updates.status;
+    const visible = updates.status !== 'OFFLINE';
+    payload.isOnline = visible;
+    payload.online = visible;
+    if (visible) {
+      payload.sharePresence = true;
+      payload.shareOnlineStatus = true;
+      payload.showOnlineStatus = true;
+    }
   }
 
   if (updates.message !== undefined) {

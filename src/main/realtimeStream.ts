@@ -97,6 +97,11 @@ export function setRealtimeHeartbeatStatus(status: string): void {
   cachedHeartbeatStatus = trimmed || 'ONLINE';
 }
 
+/** Push an immediate Redis heartbeat after PATCH /users/status (do not wait for the 20s interval). */
+export function flushRealtimeHeartbeat(): void {
+  sendHeartbeatIfNeeded();
+}
+
 export function getRealtimeServerSnapshot(): {
   enabled: boolean;
   mode: string | null;
@@ -285,6 +290,9 @@ async function connect(authToken: string): Promise<void> {
       reconnectAttempt = 0;
       loggedNetworkWait = false;
       setStatus('connected');
+      if (redisPresenceEnabled) {
+        sendHeartbeatIfNeeded();
+      }
       return;
     }
 

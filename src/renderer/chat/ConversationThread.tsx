@@ -103,6 +103,7 @@ export type ConversationThreadProps = {
   onHubDeleted?: () => void;
   pinnedMessageIds?: string[];
   onOpenCalendar?: () => void;
+  onOpenCalendarEvent?: (eventId: string) => void;
   focusMessageId?: string | null;
   unreadAnchorMessageId?: string | null;
   scrollRestoreKey?: number;
@@ -171,6 +172,7 @@ function ConversationThreadComponent({
   onHubDeleted,
   pinnedMessageIds = [],
   onOpenCalendar,
+  onOpenCalendarEvent,
   focusMessageId = null,
   unreadAnchorMessageId = null,
   scrollRestoreKey = 0,
@@ -1159,19 +1161,22 @@ function ConversationThreadComponent({
         onVotePoll={onVotePoll}
         showReactionAuthors={conversation.kind === 'hub'}
         peerBlockedByCurrentUser={peerBlockedByCurrentUser}
+        onViewCalendarEvent={onOpenCalendarEvent}
       />
 
       {typingLabel ? (
-        <div
-          className="flex items-center gap-2 border-t border-app-border px-6 py-2 text-sm text-app-text"
-          role="status"
-        >
-          <span className="flex items-end gap-0.5" aria-hidden="true">
-            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.2s]" />
-            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.1s]" />
-            <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent" />
-          </span>
-          <span>{typingLabel}</span>
+        <div className="border-t border-app-border px-6 py-2.5" role="status">
+          <div className="flex items-center gap-2.5">
+            <span
+              className="inline-flex items-center gap-1 rounded-lg bg-app-elevated/80 px-2 py-1.5"
+              aria-hidden="true"
+            >
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.2s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.1s]" />
+              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent" />
+            </span>
+            <span className="text-xs italic text-app-muted">{typingLabel}</span>
+          </div>
         </div>
       ) : null}
 

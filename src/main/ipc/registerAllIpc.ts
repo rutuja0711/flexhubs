@@ -113,6 +113,7 @@ import {
   stopRealtimeStream,
   probeRealtimeServerStatus,
   setRealtimeHeartbeatStatus,
+  flushRealtimeHeartbeat,
 } from '../realtimeStream';
 import {
   sendTypingIndicator,
@@ -896,10 +897,14 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
     'user:update-status',
     async (_event, token: string, status: string, message?: string) => {
       setRealtimeHeartbeatStatus(status);
-      return updateUserStatus(token, {
+      const result = await updateUserStatus(token, {
         status: status as import('../shared/profile').UserPresenceStatus,
         message,
       });
+      if (result.ok && status.toUpperCase() !== 'OFFLINE') {
+        flushRealtimeHeartbeat();
+      }
+      return result;
     },
   );
   ipcMain.handle('user:update-timezone', (_event, token: string, timezone: string) =>
@@ -1024,6 +1029,9 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
   });
   ipcMain.handle('realtime:set-heartbeat-status', (_event, status: string) => {
     setRealtimeHeartbeatStatus(status);
+    if (status.toUpperCase() !== 'OFFLINE') {
+      flushRealtimeHeartbeat();
+    }
     return { ok: true as const };
   });
 

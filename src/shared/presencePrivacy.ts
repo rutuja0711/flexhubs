@@ -37,15 +37,11 @@ export function shouldSharePresenceWithOthers(options: {
   profileShareOnlineStatus?: boolean | null;
   settingsShareOnlineStatus?: boolean | null;
 }): boolean {
+  if (typeof options.settingsShareOnlineStatus === 'boolean') {
+    return options.settingsShareOnlineStatus;
+  }
+
   if (options.profileShareOnlineStatus === false) {
-    return false;
-  }
-
-  if (options.profileShareOnlineStatus === true) {
-    return true;
-  }
-
-  if (options.settingsShareOnlineStatus === false) {
     return false;
   }
 

@@ -3,6 +3,10 @@ import {
   isCallLogMessage as isCallLogContent,
   parseCallLogContent,
 } from './calls';
+import {
+  isCalendarEventAnnouncementMessage as isCalendarEventAnnouncementContent,
+  parseCalendarEventAnnouncementContent,
+} from './calendarChat';
 import { normalizeUploadUrl, readUserStatusMessage, resolveAvatarUrl } from './profile';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -1798,6 +1802,15 @@ export function formatMessagePreview(
     return decoratePreviewText(formatCallLogPreview(callLog, currentUserId));
   }
 
+  const calendarEvent = parseCalendarEventAnnouncementContent(message.content);
+  if (calendarEvent) {
+    return decoratePreviewText(
+      calendarEvent.action === 'updated'
+        ? `Event updated: ${calendarEvent.title}`
+        : `Meeting scheduled: ${calendarEvent.title}`,
+    );
+  }
+
   if (isPollMessage(message)) {
     return 'Poll';
   }
@@ -1977,6 +1990,16 @@ export function isCallLogMessage(
   return isCallLogContent(message);
 }
 
+export function isCalendarEventAnnouncementMessage(
+  message: Pick<MessageItem, 'content' | 'messageType'>,
+): boolean {
+  return isCalendarEventAnnouncementContent(message);
+}
+
+export {
+  parseCalendarEventAnnouncementContent,
+  type FlexhubCalendarEventAnnouncement,
+} from './calendarChat';
 export { parseCallLogContent } from './calls';
 
 function normalizePollOption(

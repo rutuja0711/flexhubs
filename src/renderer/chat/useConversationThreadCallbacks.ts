@@ -33,6 +33,7 @@ export type ConversationThreadActions = {
   applyConversationSnoozed: (conversationId: string, snoozed: boolean) => void;
   handleToggleConversationPin: (conversationId: string, isPinned: boolean) => void;
   loadCalendarData: () => void;
+  openCalendarFromChat: (eventId: string) => void;
   setSelectedId: (id: string | null) => void;
   setMainView: (view: import('../../shared/nav').MainView) => void;
   setFlexAiOpen: (updater: (current: boolean) => boolean) => void;
@@ -216,6 +217,13 @@ export function useConversationThreadCallbacks(
     void actionsRef.current.loadCalendarData();
   }, [actionsRef]);
 
+  const onOpenCalendarEvent = useCallback(
+    (eventId: string) => {
+      actionsRef.current.openCalendarFromChat(eventId);
+    },
+    [actionsRef],
+  );
+
   const onHubDeleted = useCallback(() => {
     actionsRef.current.setSelectedId(null);
     void actionsRef.current.refreshConversations();
@@ -356,6 +364,7 @@ export function useConversationThreadCallbacks(
     onNotificationsSnoozedChange,
     onTogglePin,
     onOpenCalendar,
+    onOpenCalendarEvent,
     onHubDeleted,
     onLoadOlder,
     onFocusMessageHandled,

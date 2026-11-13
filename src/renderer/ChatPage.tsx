@@ -2362,7 +2362,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const applyPresenceSharingPreference = useCallback(
     (userPayload: unknown, settings: ProfileSettings | null | undefined) => {
       const share = shouldSharePresenceWithOthers({
-        profileShareOnlineStatus: normalizeUserProfile(userPayload).shareOnlineStatus,
+        profileShareOnlineStatus: normalizeUserProfile(userPayload, settings ?? undefined)
+          .shareOnlineStatus,
         settingsShareOnlineStatus: settings?.shareOnlineStatus,
       });
 
@@ -2393,13 +2394,24 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       if (!userInOrganization(userPayload)) {
         dispatchOrganizationInvitesRefresh();
       }
+      if (!notificationSettingsRef.current) {
+        const settingsResult = await loadNotificationSettings();
+        if (settingsResult.ok) {
+          notificationSettingsRef.current = settingsResult.data;
+          setNotificationSettings(settingsResult.data);
+        }
+      }
+
       const statusResult = await loadResolvedUserStatus(getUserId(userPayload) ?? '');
       const { status, statusMessage } = mergeRemoteUserStatus(
         userPayload,
         statusResult.ok ? statusResult.data : null,
       );
       applyPresenceSharingPreference(userPayload, notificationSettingsRef.current);
-      startPresenceManager(status, statusMessage);
+
+      const bootstrapStatus =
+        status === 'OFFLINE' && isPresenceSharingEnabled() ? 'ONLINE' : status;
+      startPresenceManager(bootstrapStatus, statusMessage);
 
       if (allowSuperAdminAutoLandingRef.current && userIsSuperAdmin(userPayload)) {
         setMainView('superadmin');
@@ -3848,19 +3860,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             normalizePresenceUserId(presenceUpdate.userId) === normalizePresenceUserId(selfId);
 
           if (isSelfUpdate) {
-            const apiStatus =
-              readUserPresenceStatus({ status: presenceUpdate.status }) ??
-              readUserPresenceStatus(presenceUpdate);
             const nextMessage =
               presenceUpdate.statusMessage !== undefined
                 ? presenceUpdate.statusMessage
                 : undefined;
 
-            if (apiStatus || nextMessage !== undefined) {
-              setManualPresenceStatus(
-                apiStatus ?? getEffectivePresenceStatus(),
-                nextMessage,
-              );
+            if (nextMessage !== undefined) {
+              setManualPresenceStatus(getEffectivePresenceStatus(), nextMessage);
             }
 
             const cachedProfile = readProfileCache();
@@ -3869,7 +3875,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
               writeProfileCache({
                 profile: {
                   ...cachedProfile.profile,
-                  ...(apiStatus ? { status: apiStatus } : {}),
                   statusMessage: nextMessage ?? cachedProfile.profile.statusMessage,
                 },
                 settings: cachedProfile.settings,
@@ -6604,6 +6609,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     applyConversationSnoozed: () => undefined,
     handleToggleConversationPin: () => undefined,
     loadCalendarData: () => undefined,
+    openCalendarFromChat: () => undefined,
     setSelectedId: () => undefined,
     setMainView: () => undefined,
     setFlexAiOpen: () => undefined,
@@ -6684,6 +6690,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     },
     loadCalendarData: () => {
       void loadCalendarData();
+    },
+    openCalendarFromChat: (eventId) => {
+      openCalendarFromNotification(eventId);
     },
     setSelectedId,
     setMainView,
@@ -6907,6 +6916,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           }}
           onNotificationsRefresh={() => {
             void syncNotifications();
+          }}
+          onHubChatsNotified={(conversationIds) => {
+            void refreshConversations();
+            for (const conversationId of conversationIds) {
+              if (conversationId === selectedId) {
+                void loadThread(conversationId);
+              }
+            }
           }}
           onUnauthorized={handleUnauthorized}
           highlightEventId={highlightCalendarEventId}
