@@ -1,4 +1,6 @@
 import type { AvatarStyleItem, ProfileSettings, UserProfileState } from '../shared/profile';
+import { resolveEffectiveCoverBanner } from '../shared/profileBanner';
+import { getStoredUser } from './authApi';
 
 export type ProfileCacheSnapshot = {
   profile: UserProfileState;
@@ -11,6 +13,20 @@ const PROFILE_CACHE_STORAGE_KEY = 'flexhubs:profileSettingsCache';
 const PROFILE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 let snapshot: ProfileCacheSnapshot | null = null;
+
+function withResolvedCoverBanner(profile: UserProfileState): UserProfileState {
+  const cover = resolveEffectiveCoverBanner(
+    profile.id,
+    profile,
+    getStoredUser(),
+  );
+
+  if (!cover || cover === profile.coverBannerUrl) {
+    return profile;
+  }
+
+  return { ...profile, coverBannerUrl: cover };
+}
 
 function readProfileCacheFromDisk(): ProfileCacheSnapshot | null {
   if (typeof localStorage === 'undefined') {
@@ -35,6 +51,7 @@ function readProfileCacheFromDisk(): ProfileCacheSnapshot | null {
 
     return {
       ...parsed,
+      profile: withResolvedCoverBanner(parsed.profile),
       avatarStyles: Array.isArray(parsed.avatarStyles) ? parsed.avatarStyles : [],
     };
   } catch {
@@ -56,6 +73,10 @@ function writeProfileCacheToDisk(next: ProfileCacheSnapshot): void {
 
 export function readProfileCache(): ProfileCacheSnapshot | null {
   if (snapshot) {
+    const profile = withResolvedCoverBanner(snapshot.profile);
+    if (profile !== snapshot.profile) {
+      snapshot = { ...snapshot, profile };
+    }
     return snapshot;
   }
 

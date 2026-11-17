@@ -3,9 +3,11 @@ import {
   memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
+  type MouseEvent,
   type ReactNode,
 } from 'react';
 import {
@@ -54,8 +56,21 @@ import {
   type ConversationScrollSnapshot,
 } from '../conversationScrollCache';
 import { JumpToLatestButton } from './JumpToLatestButton';
+import { canEditMessage, isTextSelectionContext } from '../../shared/messageComposer';
+import { MessageContextMenu } from './MessageContextMenu';
+import { buildMessageContextMenuItems } from './messageContextMenuItems';
+import { useToast } from '../ui/Toast';
 import { CalendarEventMessage } from './CalendarEventMessage';
 import { countMessagesBelowAnchor } from './messageListNewBelow';
+import {
+  STICK_TO_BOTTOM_THRESHOLD_PX,
+  VIRTUOSO_AUTOSCROLL_MIN_INTERVAL_MS,
+  VIRTUOSO_BASE_FIRST_ITEM_INDEX,
+  findMessageEntryIndex,
+  firstMessageEntryId,
+  resolveScrollRestoreTarget,
+  virtuosoDataIndex,
+} from './messageListScroll';
 
 function MessageListSurface({
   children,
@@ -112,10 +127,7 @@ export type MessageListEntry =
   | { kind: 'unread'; key: 'unread-divider' }
   | { kind: 'message'; key: string; message: MessageItem };
 
-const VIRTUOSO_BASE_FIRST_ITEM_INDEX = 10_000;
-const STICK_TO_BOTTOM_THRESHOLD_PX = 150;
 const LOAD_OLDER_TOP_THRESHOLD_PX = 120;
-const VIRTUOSO_AUTOSCROLL_MIN_INTERVAL_MS = 80;
 
 function countMessageRowsInScroller(container: HTMLElement | null): number {
   if (!container) {
@@ -123,12 +135,6 @@ function countMessageRowsInScroller(container: HTMLElement | null): number {
   }
 
   return container.querySelectorAll('[data-message-id]').length;
-}
-
-function findMessageEntryIndex(entries: MessageListEntry[], messageId: string): number {
-  return entries.findIndex(
-    (entry) => entry.kind === 'message' && entry.message.id === messageId,
-  );
 }
 
 const messageListVirtuosoScroller = forwardRef<HTMLDivElement, ScrollerProps>(
@@ -252,13 +258,12 @@ type MessageRowProps = {
   highlightTerm: string;
   conversationId?: string;
   expandedThreadMessageId?: string | null;
-  editingId: string | null;
-  editDraft: string;
-  editSaving?: boolean;
-  onEditDraftChange: (value: string) => void;
-  onStartEdit: (message: MessageItem) => void;
-  onCancelEdit: () => void;
-  onSaveEdit: () => void | Promise<void>;
+  onOpenComposerEdit?: (message: MessageItem) => void;
+  onMessageContextMenu?: (
+    message: MessageItem,
+    position: { top: number; left: number },
+    selectedText: string | null,
+  ) => void;
   onAddReaction: (messageId: string, emoji: string) => void;
   onReplyMessage: (messageId: string) => void;
   onAiReplyMessage?: (messageId: string) => void;
@@ -286,6 +291,16 @@ type MessageRowProps = {
   hideIncomingSenderMeta?: boolean;
   sendProgressByMessageId?: Record<string, number>;
   onViewCalendarEvent?: (eventId: string) => void;
+  memberProfilePopupEnabled?: boolean;
+  onOpenMemberProfile?: (
+    anchor: {
+      userId: string;
+      displayName: string;
+      avatarUrl?: string | null;
+      avatarInitials?: string;
+    },
+    position: { top: number; left: number },
+  ) => void;
 };
 
 function MessageHoverAction({
@@ -538,9 +553,6 @@ function areMessageRowPropsEqual(prev: MessageRowProps, next: MessageRowProps): 
     prev.highlightTerm === next.highlightTerm &&
     prev.conversationId === next.conversationId &&
     prev.expandedThreadMessageId === next.expandedThreadMessageId &&
-    prev.editingId === next.editingId &&
-    prev.editDraft === next.editDraft &&
-    prev.editSaving === next.editSaving &&
     prev.aiReplyLoadingMessageId === next.aiReplyLoadingMessageId &&
     prev.threadsEnabled === next.threadsEnabled &&
     prev.showReactionAuthors === next.showReactionAuthors &&
@@ -551,7 +563,9 @@ function areMessageRowPropsEqual(prev: MessageRowProps, next: MessageRowProps): 
     prev.savedMessageIds === next.savedMessageIds &&
     prev.sendProgressByMessageId === next.sendProgressByMessageId &&
     prev.sendProgressByMessageId?.[prev.message.id] === next.sendProgressByMessageId?.[next.message.id] &&
-    prev.onViewCalendarEvent === next.onViewCalendarEvent
+    prev.onViewCalendarEvent === next.onViewCalendarEvent &&
+    prev.memberProfilePopupEnabled === next.memberProfilePopupEnabled &&
+    prev.onOpenMemberProfile === next.onOpenMemberProfile
   );
 }
 
@@ -563,13 +577,8 @@ const MessageRow = memo(function MessageRow({
   highlightTerm,
   conversationId,
   expandedThreadMessageId,
-  editingId,
-  editDraft,
-  editSaving = false,
-  onEditDraftChange,
-  onStartEdit,
-  onCancelEdit,
-  onSaveEdit,
+  onOpenComposerEdit,
+  onMessageContextMenu,
   onAddReaction,
   onReplyMessage,
   onAiReplyMessage,
@@ -593,6 +602,8 @@ const MessageRow = memo(function MessageRow({
   hideIncomingSenderMeta = false,
   sendProgressByMessageId = {},
   onViewCalendarEvent,
+  memberProfilePopupEnabled = false,
+  onOpenMemberProfile,
 }: MessageRowProps) {
   const calendarAnnouncement = parseCalendarEventAnnouncementContent(message.content);
   if (calendarAnnouncement) {
@@ -628,7 +639,6 @@ const MessageRow = memo(function MessageRow({
   const hasDownloadableMedia =
     isSending &&
     (message.media?.some((item) => Boolean(item.url || item.previewUrl)) ?? false);
-  const isEditing = editingId === message.id;
   const isPoll = isPollMessage(message);
   const isCallLog = isCallLogMessage(message);
   const isCalendarAnnouncement = isCalendarEventAnnouncementMessage(message);
@@ -652,6 +662,30 @@ const MessageRow = memo(function MessageRow({
     conversationDetails?.isDirect === true ||
     conversationDetails?.isDm === true;
   const showIncomingSenderMeta = !message.isOwn && !isDirectChat;
+
+  const openMemberProfile = (event: MouseEvent<HTMLElement>) => {
+    if (!memberProfilePopupEnabled || !onOpenMemberProfile) {
+      return;
+    }
+
+    const senderId = message.senderId?.trim();
+    if (!senderId || senderId === currentUserId) {
+      return;
+    }
+
+    event.stopPropagation();
+    event.preventDefault();
+
+    onOpenMemberProfile(
+      {
+        userId: senderId,
+        displayName: message.senderName?.trim() || senderId,
+        avatarUrl: message.senderAvatarUrl ?? null,
+        avatarInitials: message.senderInitials,
+      },
+      { top: event.clientY, left: event.clientX },
+    );
+  };
 
   const handleDownloadSendingMedia = async () => {
     const item = message.media?.[0];
@@ -692,6 +726,7 @@ const MessageRow = memo(function MessageRow({
   return (
     <div
       data-message-id={message.id}
+      tabIndex={0}
       className={`message-row group flex ${showIncomingSenderMeta ? 'gap-3' : 'gap-0'} ${message.isOwn ? 'flex-row-reverse' : 'flex-row'} ${
         allowMessageAppear && isAppearingMessage(message)
           ? message.isOwn
@@ -701,13 +736,55 @@ const MessageRow = memo(function MessageRow({
       } ${message.isOwn && message.status === 'failed' ? 'opacity-80' : ''} ${
         isHighlighted ? 'message-target-highlight rounded-2xl p-2' : ''
       }`}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        const selectedText = isTextSelectionContext(event.target);
+
+        onMessageContextMenu?.(
+          message,
+          { top: event.clientY, left: event.clientX },
+          selectedText,
+        );
+      }}
+      onKeyDown={(event) => {
+        if (event.key === 'F10' && event.shiftKey) {
+          event.preventDefault();
+          const rect = event.currentTarget.getBoundingClientRect();
+
+          onMessageContextMenu?.(
+            message,
+            { top: rect.top + rect.height / 2, left: rect.left + rect.width / 2 },
+            null,
+          );
+        }
+      }}
     >
       {showIncomingSenderMeta ? (
-        <Avatar imageUrl={message.senderAvatarUrl ?? null} initials={message.senderInitials} size="sm" />
+        <button
+          type="button"
+          className={`shrink-0 rounded-full transition-opacity ${
+            memberProfilePopupEnabled && onOpenMemberProfile ? 'cursor-pointer hover:opacity-90' : 'cursor-default'
+          }`}
+          onClick={openMemberProfile}
+          aria-label={message.senderName ? `View ${message.senderName}'s profile` : 'View sender profile'}
+          tabIndex={memberProfilePopupEnabled && onOpenMemberProfile ? 0 : -1}
+        >
+          <Avatar imageUrl={message.senderAvatarUrl ?? null} initials={message.senderInitials} size="sm" />
+        </button>
       ) : null}
       <div className={`flex max-w-[70%] flex-col ${message.isOwn ? 'items-end' : 'items-start'}`}>
         {showIncomingSenderMeta ? (
-          <p className="mb-1 text-xs font-semibold text-app-muted">{message.senderName}</p>
+          memberProfilePopupEnabled && onOpenMemberProfile ? (
+            <button
+              type="button"
+              className="mb-1 cursor-pointer text-left text-xs font-semibold text-app-muted transition-colors hover:text-app-text"
+              onClick={openMemberProfile}
+            >
+              {message.senderName}
+            </button>
+          ) : (
+            <p className="mb-1 text-xs font-semibold text-app-muted">{message.senderName}</p>
+          )
         ) : null}
         {message.replyToMessage || message.replyToMessageId ? (
           (() => {
@@ -731,55 +808,7 @@ const MessageRow = memo(function MessageRow({
             );
           })()
         ) : null}
-        {isEditing ? (
-          <div className={`flex flex-col gap-1 ${message.isOwn ? 'items-end' : 'items-start'}`}>
-            <div className={bubbleClassName + " p-0 overflow-hidden grid"}>
-              {/* Invisible div to perfectly size the parent bubble */}
-              <div className="invisible col-start-1 row-start-1 min-w-[200px] whitespace-pre-wrap break-words px-3.5 py-2 text-sm leading-relaxed">
-                {editDraft + ' '}
-              </div>
-              <textarea
-                value={editDraft}
-                onChange={(event) => onEditDraftChange(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') {
-                    event.preventDefault();
-                    onCancelEdit();
-                    return;
-                  }
-
-                  if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-                    event.preventDefault();
-                    void onSaveEdit();
-                  }
-                }}
-                className="col-start-1 row-start-1 h-full w-full resize-none bg-transparent px-3.5 py-2 text-sm leading-relaxed text-inherit outline-none overflow-hidden"
-                autoFocus
-              />
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                type="button"
-                className="rounded-lg px-3 py-1.5 text-xs text-app-muted hover:bg-app-chat-hover transition-colors"
-                onClick={onCancelEdit}
-                disabled={editSaving}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="rounded-lg bg-accent/80 hover:bg-accent px-3 py-1.5 text-xs font-medium text-white transition-colors disabled:opacity-60"
-                onClick={() => {
-                  void onSaveEdit();
-                }}
-                disabled={editSaving || !editDraft.trim()}
-              >
-                {editSaving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-          </div>
-        ) : (
-          <div
+        <div
             className={`flex items-end gap-1 ${message.isOwn ? 'flex-row-reverse' : 'flex-row'}`}
           >
             <div className={`min-w-0 max-w-full ${message.isOwn ? 'items-end' : 'items-start'} flex flex-col`}>
@@ -867,6 +896,7 @@ const MessageRow = memo(function MessageRow({
               ) : null}
               <MessageMenu
                 isOwn={message.isOwn}
+                canEdit={canEditMessage(message, currentUserId)}
                 isPinned={isPinned}
                 isSaved={savedMessageIds.has(message.id)}
                 isDeleted={message.content.trim() === 'This message was deleted.'}
@@ -876,7 +906,7 @@ const MessageRow = memo(function MessageRow({
                 showReplyInThread={threadsEnabled}
                 onReply={() => onReplyMessage(message.id)}
                 onReplyInThread={() => onReplyInThread(message.id)}
-                onEdit={() => onStartEdit(message)}
+                onEdit={() => onOpenComposerEdit?.(message)}
                 onDeleteForMe={() => onDeleteMessage(message.id, 'me')}
                 onDeleteForEveryone={() => onDeleteMessage(message.id, 'everyone')}
                 onForward={() => onForwardMessage(message.id)}
@@ -889,7 +919,6 @@ const MessageRow = memo(function MessageRow({
               />
             </div>
           </div>
-        )}
 
         {threadsEnabled && message.threadReplyCount && message.threadReplyCount > 0 ? (
           <div className={`mt-1 flex flex-col ${message.isOwn ? 'items-end' : 'items-start'}`}>
@@ -937,6 +966,7 @@ type MessageListProps = {
   aiReplyLoadingMessageId?: string | null;
   onReplyInThread: (messageId: string) => void;
   onJumpToMessage?: (messageId: string) => void;
+  onOpenComposerEdit?: (message: MessageItem) => void;
   onEditMessage: (messageId: string, content: string) => void | Promise<boolean>;
   onDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
   onForwardMessage: (messageId: string) => void;
@@ -962,6 +992,16 @@ type MessageListProps = {
   /** True when the signed-in user blocked the direct-chat peer (not shown to the blocked party). */
   peerBlockedByCurrentUser?: boolean;
   onViewCalendarEvent?: (eventId: string) => void;
+  memberProfilePopupEnabled?: boolean;
+  onOpenMemberProfile?: (
+    anchor: {
+      userId: string;
+      displayName: string;
+      avatarUrl?: string | null;
+      avatarInitials?: string;
+    },
+    position: { top: number; left: number },
+  ) => void;
 };
 
 export function MessageList({
@@ -988,6 +1028,7 @@ export function MessageList({
   aiReplyLoadingMessageId = null,
   onReplyInThread,
   onJumpToMessage,
+  onOpenComposerEdit,
   onEditMessage,
   onDeleteMessage,
   onForwardMessage,
@@ -1008,14 +1049,18 @@ export function MessageList({
   sendProgressByMessageId = {},
   peerBlockedByCurrentUser = false,
   onViewCalendarEvent,
+  memberProfilePopupEnabled = false,
+  onOpenMemberProfile,
 }: MessageListProps) {
   perfRecordRender('MessageList');
   const virtualListEnabled = isMessageListVirtualizationEnabled();
+  const toast = useToast();
 
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editDraft, setEditDraft] = useState('');
-  const [editSaving, setEditSaving] = useState(false);
-  const editingOriginalRef = useRef('');
+  const [messageContextMenu, setMessageContextMenu] = useState<{
+    message: MessageItem;
+    position: { top: number; left: number };
+    selectedText: string | null;
+  } | null>(null);
   const [allowMessageAppear, setAllowMessageAppear] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -1033,6 +1078,8 @@ export function MessageList({
   const loadOlderStartReachedRef = useRef(false);
   const loadOlderAnchorMessageIdRef = useRef<string | null>(null);
   const jumpAnchorMessageIdRef = useRef<string | null>(null);
+  const topVisibleMessageIdRef = useRef<string | null>(null);
+  const virtuosoFirstItemIndexRef = useRef(VIRTUOSO_BASE_FIRST_ITEM_INDEX);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessagesBelow, setNewMessagesBelow] = useState(0);
   const virtuosoAutoscrollLastAtRef = useRef(0);
@@ -1064,12 +1111,15 @@ export function MessageList({
     suppressAutoScrollRef.current = false;
     scrollPersistReadyRef.current = false;
     setVirtuosoFirstItemIndex(VIRTUOSO_BASE_FIRST_ITEM_INDEX);
+    virtuosoFirstItemIndexRef.current = VIRTUOSO_BASE_FIRST_ITEM_INDEX;
+    topVisibleMessageIdRef.current = null;
+    setMessageContextMenu(null);
   }, [conversationId]);
 
   useEffect(() => {
     const readyTimer = window.setTimeout(() => {
       scrollPersistReadyRef.current = true;
-    }, 700);
+    }, 350);
 
     return () => window.clearTimeout(readyTimer);
   }, [conversationId]);
@@ -1102,6 +1152,7 @@ export function MessageList({
     onSaveScrollPosition({
       scrollTop: container.scrollTop,
       stickToBottom: stickToBottomRef.current,
+      anchorMessageId: topVisibleMessageIdRef.current,
     });
   }, [conversationId, onSaveScrollPosition]);
   const showRefreshing = loading && messages.length > 0;
@@ -1129,9 +1180,8 @@ export function MessageList({
         return;
       }
 
-      const anchorEntry = listEntries.find((entry) => entry.kind === 'message');
       loadOlderAnchorMessageIdRef.current =
-        anchorEntry && anchorEntry.kind === 'message' ? anchorEntry.message.id : null;
+        topVisibleMessageIdRef.current ?? firstMessageEntryId(listEntries);
 
       const started = onLoadOlder();
       if (options?.fromScroll) {
@@ -1164,6 +1214,11 @@ export function MessageList({
 
   const virtuosoAlignToBottom = virtuosoMountScrollTop === undefined;
 
+  const scrollRestoreTarget = useMemo(
+    () => resolveScrollRestoreTarget(resolvedInitialScrollSnapshot, listEntries),
+    [listEntries, resolvedInitialScrollSnapshot],
+  );
+
   const requestStickToBottomIfNeeded = useCallback(() => {
     if (suppressAutoScrollRef.current || pendingScrollToMessageId || scrollToMessageId) {
       return;
@@ -1193,18 +1248,6 @@ export function MessageList({
   }, [requestStickToBottomIfNeeded, virtualListEnabled]);
 
   useEffect(() => {
-    if (!virtualListEnabled || !editingId) {
-      return;
-    }
-
-    const frame = window.requestAnimationFrame(() => {
-      requestStickToBottomIfNeeded();
-    });
-
-    return () => window.cancelAnimationFrame(frame);
-  }, [editingId, requestStickToBottomIfNeeded, virtualListEnabled]);
-
-  useEffect(() => {
     if (!virtualListEnabled) {
       return;
     }
@@ -1221,7 +1264,11 @@ export function MessageList({
       previousFirstKey !== nextFirstKey
     ) {
       const prependedCount = nextLength - previousLength;
-      setVirtuosoFirstItemIndex((current) => current - prependedCount);
+      setVirtuosoFirstItemIndex((current) => {
+        const next = current - prependedCount;
+        virtuosoFirstItemIndexRef.current = next;
+        return next;
+      });
     }
 
     listEntriesFirstKeyRef.current = nextFirstKey;
@@ -1233,6 +1280,10 @@ export function MessageList({
       loadOlderStartReachedRef.current = false;
     }
   }, [loadingOlder]);
+
+  useEffect(() => {
+    virtuosoFirstItemIndexRef.current = virtuosoFirstItemIndex;
+  }, [virtuosoFirstItemIndex]);
 
   useEffect(() => {
     if (!virtualListEnabled || loadingOlder || !loadOlderAnchorMessageIdRef.current) {
@@ -1247,15 +1298,21 @@ export function MessageList({
       return;
     }
 
-    const frame = window.requestAnimationFrame(() => {
-      virtuosoRef.current?.scrollToIndex({
-        index: entryIndex,
-        align: 'start',
-        behavior: 'auto',
+    let innerFrame = 0;
+    const outerFrame = window.requestAnimationFrame(() => {
+      innerFrame = window.requestAnimationFrame(() => {
+        virtuosoRef.current?.scrollToIndex({
+          index: entryIndex,
+          align: 'start',
+          behavior: 'auto',
+        });
       });
     });
 
-    return () => window.cancelAnimationFrame(frame);
+    return () => {
+      window.cancelAnimationFrame(outerFrame);
+      window.cancelAnimationFrame(innerFrame);
+    };
   }, [listEntries, loadingOlder, virtualListEnabled]);
 
   const replyTargetByMessageId = useMemo(() => {
@@ -1630,6 +1687,131 @@ export function MessageList({
     };
   }, [loadingOlder, messages, virtualListEnabled]);
 
+  useLayoutEffect(() => {
+    if (
+      showInitialLoading ||
+      messages.length === 0 ||
+      !conversationId ||
+      pendingScrollToMessageId ||
+      scrollToMessageId
+    ) {
+      return;
+    }
+
+    if (restoredScrollForConversationRef.current === conversationId) {
+      return;
+    }
+
+    if (!scrollRestoreTarget || scrollRestoreTarget.mode === 'bottom') {
+      return;
+    }
+
+    if (scrollRestoreTarget.mode === 'anchor') {
+      const entryIndex = findMessageEntryIndex(listEntries, scrollRestoreTarget.messageId);
+
+      if (entryIndex < 0) {
+        return;
+      }
+    }
+
+    restoredScrollForConversationRef.current = conversationId;
+    suppressAutoScrollRef.current = true;
+    stickToBottomRef.current = false;
+
+    if (scrollRestoreTarget.mode === 'anchor') {
+      const entryIndex = findMessageEntryIndex(listEntries, scrollRestoreTarget.messageId);
+
+      if (entryIndex >= 0 && virtualListEnabled && virtuosoRef.current) {
+        virtuosoRef.current.scrollToIndex({
+          index: entryIndex,
+          align: 'start',
+          behavior: 'auto',
+        });
+      } else if (entryIndex >= 0) {
+        const container = scrollContainerRef.current;
+        const element = container?.querySelector(
+          `[data-message-id="${scrollRestoreTarget.messageId}"]`,
+        );
+
+        if (container && element instanceof HTMLElement) {
+          const elementTop =
+            element.getBoundingClientRect().top -
+            container.getBoundingClientRect().top +
+            container.scrollTop;
+
+          container.scrollTop = Math.max(0, elementTop - 12);
+        }
+      }
+    } else if (scrollRestoreTarget.mode === 'scrollTop') {
+      const targetTop = scrollRestoreTarget.scrollTop;
+
+      if (virtualListEnabled && virtuosoRef.current) {
+        virtuosoRef.current.scrollTo({ top: targetTop, behavior: 'auto' });
+      } else {
+        const container = scrollContainerRef.current;
+
+        if (container) {
+          const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
+          container.scrollTop = Math.min(targetTop, maxTop);
+        }
+      }
+    }
+
+    lastMessageIdRef.current = messages[messages.length - 1]?.id ?? null;
+
+    const timer = window.setTimeout(() => {
+      suppressAutoScrollRef.current = false;
+    }, 200);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    conversationId,
+    listEntries,
+    messages,
+    pendingScrollToMessageId,
+    scrollRestoreKey,
+    scrollRestoreTarget,
+    scrollToMessageId,
+    showInitialLoading,
+    virtualListEnabled,
+  ]);
+
+  useEffect(() => {
+    if (!virtualListEnabled || showInitialLoading) {
+      return;
+    }
+
+    const lastMessage = messages[messages.length - 1];
+    const lastId = lastMessage?.id ?? null;
+    const previousLastId = lastMessageIdRef.current;
+
+    if (!previousLastId) {
+      lastMessageIdRef.current = lastId;
+      return;
+    }
+
+    if (
+      lastId &&
+      previousLastId &&
+      lastId !== previousLastId &&
+      !stickToBottomRef.current &&
+      !suppressAutoScrollRef.current &&
+      !pendingScrollToMessageId &&
+      !scrollToMessageId
+    ) {
+      syncJumpToLatestUi(false);
+    }
+
+    lastMessageIdRef.current = lastId;
+  }, [
+    messages,
+    pendingScrollToMessageId,
+    scrollToMessageId,
+    showInitialLoading,
+    syncJumpToLatestUi,
+    virtualListEnabled,
+  ]);
+
   useEffect(() => {
     if (showInitialLoading || messages.length === 0) {
       return;
@@ -1641,64 +1823,20 @@ export function MessageList({
     const isInitialLoad = previousLastId === null;
     const appendedNewMessage = Boolean(lastId && previousLastId && lastId !== previousLastId);
 
-    const shouldRestoreScroll =
-      isInitialLoad &&
-      !pendingScrollToMessageId &&
-      !scrollToMessageId &&
-      !completedScrollTargetRef.current &&
-      conversationId &&
-      restoredScrollForConversationRef.current !== conversationId &&
-      resolvedInitialScrollSnapshot &&
-      Number.isFinite(resolvedInitialScrollSnapshot.scrollTop) &&
-      !resolvedInitialScrollSnapshot.stickToBottom;
-
-    if (shouldRestoreScroll) {
-      restoredScrollForConversationRef.current = conversationId;
-      lastMessageIdRef.current = lastId;
-      stickToBottomRef.current = false;
-      suppressAutoScrollRef.current = true;
-
-      if (virtualListEnabled && virtuosoMountScrollTop !== undefined) {
-        window.setTimeout(() => {
-          suppressAutoScrollRef.current = false;
-        }, 250);
-        return;
-      }
-
-      const targetTop = resolvedInitialScrollSnapshot.scrollTop;
-      let innerFrame = 0;
-      const outerFrame = window.requestAnimationFrame(() => {
-        innerFrame = window.requestAnimationFrame(() => {
-          if (virtualListEnabled && virtuosoRef.current) {
-            virtuosoRef.current.scrollTo({ top: targetTop });
-          } else {
-            const container = scrollContainerRef.current;
-            if (container) {
-              const maxTop = Math.max(0, container.scrollHeight - container.clientHeight);
-              container.scrollTop = Math.min(targetTop, maxTop);
-            }
-          }
-          window.setTimeout(() => {
-            suppressAutoScrollRef.current = false;
-          }, 250);
-        });
-      });
-
-      return () => {
-        window.cancelAnimationFrame(outerFrame);
-        window.cancelAnimationFrame(innerFrame);
-      };
-    }
+    const shouldRestoreHistoryPosition =
+      scrollRestoreTarget != null && scrollRestoreTarget.mode !== 'bottom';
 
     if (virtualListEnabled) {
-      lastMessageIdRef.current = lastId;
+      if (isInitialLoad) {
+        lastMessageIdRef.current = lastId;
+      }
 
       const shouldPinToBottomOnMount =
         isInitialLoad &&
         !pendingScrollToMessageId &&
         !scrollToMessageId &&
         !completedScrollTargetRef.current &&
-        !shouldRestoreScroll &&
+        !shouldRestoreHistoryPosition &&
         stickToBottomRef.current;
 
       if (shouldPinToBottomOnMount) {
@@ -1740,7 +1878,11 @@ export function MessageList({
     }
 
     const shouldScroll =
-      (isInitialLoad && !pendingScrollToMessageId && !scrollToMessageId && !completedScrollTargetRef.current) ||
+      (isInitialLoad &&
+        !pendingScrollToMessageId &&
+        !scrollToMessageId &&
+        !completedScrollTargetRef.current &&
+        !shouldRestoreHistoryPosition) ||
       isOwnNewMessage ||
       (appendedNewMessage && stickToBottomRef.current);
 
@@ -1770,13 +1912,11 @@ export function MessageList({
     messages,
     pendingScrollToMessageId,
     requestStickToBottomIfNeeded,
-    resolvedInitialScrollSnapshot,
-    scrollRestoreKey,
+    scrollRestoreTarget,
     scrollToBottom,
     scrollToMessageId,
     showInitialLoading,
     virtualListEnabled,
-    virtuosoMountScrollTop,
   ]);
 
   const handleFollowOutput = useCallback(
@@ -1796,7 +1936,8 @@ export function MessageList({
         return 'smooth';
       }
 
-      if (isAtBottom || stickToBottomRef.current) {
+      if (isAtBottom) {
+        stickToBottomRef.current = true;
         return 'auto';
       }
 
@@ -1821,8 +1962,12 @@ export function MessageList({
   );
 
   const handleTotalListHeightChanged = useCallback(() => {
+    if (loadingOlder || loadOlderAnchorMessageIdRef.current) {
+      return;
+    }
+
     requestStickToBottomIfNeeded();
-  }, [requestStickToBottomIfNeeded]);
+  }, [loadingOlder, requestStickToBottomIfNeeded]);
 
   const publishMessageListEntryGauges = useCallback(() => {
     if (!isPerfEnabled()) {
@@ -1851,7 +1996,6 @@ export function MessageList({
     };
   }, [
     conversationId,
-    editingId,
     listEntries,
     loadingOlder,
     messages.length,
@@ -1862,6 +2006,18 @@ export function MessageList({
 
   const handleRangeChanged = useCallback(
     (range: ListRange) => {
+      if (virtualListEnabled) {
+        const dataIndex = virtuosoDataIndex(virtuosoFirstItemIndexRef.current, range.startIndex);
+
+        if (dataIndex >= 0 && dataIndex < listEntries.length) {
+          const entry = listEntries[dataIndex];
+
+          if (entry.kind === 'message') {
+            topVisibleMessageIdRef.current = entry.message.id;
+          }
+        }
+      }
+
       if (!isPerfEnabled() || !virtualListEnabled) {
         return;
       }
@@ -1870,54 +2026,43 @@ export function MessageList({
       perfSetGauge('messageList:virtuosoVisibleRows', visible);
       publishMessageListEntryGauges();
     },
-    [publishMessageListEntryGauges, virtualListEnabled],
+    [listEntries, publishMessageListEntryGauges, virtualListEnabled],
   );
 
-  const startEdit = useCallback((message: MessageItem) => {
-    setEditingId(message.id);
-    setEditDraft(message.content);
-    editingOriginalRef.current = message.content;
-  }, []);
-
-  const cancelEdit = useCallback(() => {
-    setEditingId(null);
-    setEditDraft('');
-    editingOriginalRef.current = '';
-  }, []);
-
-  const saveEdit = useCallback(async () => {
-    if (!editingId || editSaving) {
-      return;
-    }
-
-    const nextContent = editDraft.trim();
-
-    if (!nextContent) {
-      return;
-    }
-
-    if (nextContent === editingOriginalRef.current.trim()) {
-      setEditingId(null);
-      setEditDraft('');
-      editingOriginalRef.current = '';
-      return;
-    }
-
-    setEditSaving(true);
-
-    try {
-      const result = await onEditMessage(editingId, nextContent);
-      if (result === false) {
-        return;
+  const copyToClipboard = useCallback(
+    async (text: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        toast.success('Copied to clipboard.');
+      } catch {
+        toast.error('Could not copy to clipboard.');
       }
+    },
+    [toast],
+  );
 
-      setEditingId(null);
-      setEditDraft('');
-      editingOriginalRef.current = '';
-    } finally {
-      setEditSaving(false);
-    }
-  }, [editDraft, editSaving, editingId, onEditMessage]);
+  const openMessageContextMenu = useCallback(
+    (message: MessageItem, position: { top: number; left: number }, selectedText: string | null) => {
+      setMessageContextMenu({ message, position, selectedText });
+    },
+    [],
+  );
+
+  const handleOpenMemberProfile = useCallback(
+    (
+      anchor: {
+        userId: string;
+        displayName: string;
+        avatarUrl?: string | null;
+        avatarInitials?: string;
+      },
+      position: { top: number; left: number },
+    ) => {
+      setMessageContextMenu(null);
+      onOpenMemberProfile?.(anchor, position);
+    },
+    [onOpenMemberProfile],
+  );
 
   const renderListEntry = useCallback(
     (entry: MessageListEntry) => {
@@ -1940,13 +2085,8 @@ export function MessageList({
           highlightTerm={highlightTerm}
           conversationId={conversationId}
           expandedThreadMessageId={expandedThreadMessageId}
-          editingId={editingId}
-          editDraft={editDraft}
-          editSaving={editSaving}
-          onEditDraftChange={setEditDraft}
-          onStartEdit={startEdit}
-          onCancelEdit={cancelEdit}
-          onSaveEdit={saveEdit}
+          onOpenComposerEdit={onOpenComposerEdit}
+          onMessageContextMenu={openMessageContextMenu}
           onAddReaction={onAddReaction}
           onReplyMessage={onReplyMessage}
           onAiReplyMessage={onAiReplyMessage}
@@ -1971,6 +2111,8 @@ export function MessageList({
           hideIncomingSenderMeta={hideIncomingSenderMeta}
           sendProgressByMessageId={sendProgressByMessageId}
           onViewCalendarEvent={onViewCalendarEvent}
+          memberProfilePopupEnabled={memberProfilePopupEnabled}
+          onOpenMemberProfile={handleOpenMemberProfile}
         />
       );
     },
@@ -1981,10 +2123,9 @@ export function MessageList({
       conversationId,
       conversationKind,
       currentUserId,
-      editDraft,
-      editSaving,
-      editingId,
       expandedThreadMessageId,
+      openMessageContextMenu,
+      onOpenComposerEdit,
       hideIncomingSenderMeta,
       highlightTerm,
       highlightedMessageIds,
@@ -2002,15 +2143,13 @@ export function MessageList({
       onSendThreadMessage,
       onUnsaveMessage,
       onViewCalendarEvent,
+      handleOpenMemberProfile,
+      memberProfilePopupEnabled,
       onVotePoll,
       replyTargetByMessageId,
       savedMessageIds,
-      saveEdit,
-      setEditDraft,
       sendProgressByMessageId,
       showReactionAuthors,
-      startEdit,
-      cancelEdit,
       threadsEnabled,
     ],
   );
@@ -2072,13 +2211,84 @@ export function MessageList({
     [renderListEntry],
   );
 
+  const contextMenuItems = useMemo(() => {
+    if (!messageContextMenu) {
+      return [];
+    }
+
+    const message = messageContextMenu.message;
+    const isPinned = Boolean(message.pinnedAt);
+    const media = message.media?.[0];
+
+    return buildMessageContextMenuItems({
+      message,
+      currentUserId,
+      isPinned,
+      isSaved: savedMessageIds.has(message.id),
+      threadsEnabled,
+      selectedText: messageContextMenu.selectedText,
+      onAddReaction: () => onAddReaction(message.id, '👍'),
+      onReply: () => onReplyMessage(message.id),
+      onReplyInThread: () => onReplyInThread(message.id),
+      onCopyText: (text) => void copyToClipboard(text),
+      onForward: () => onForwardMessage(message.id),
+      onPinToggle: () => onPinMessage(message.id, isPinned),
+      onSave: () => onSaveMessage(message.id),
+      onUnsave: () => onUnsaveMessage(message.id),
+      onEdit: () => onOpenComposerEdit?.(message),
+      onDeleteForMe: () => onDeleteMessage(message.id, 'me'),
+      onDeleteForEveryone: () => onDeleteMessage(message.id, 'everyone'),
+      onOpenMedia: () => {
+        if (media?.url) {
+          window.open(media.url, '_blank', 'noopener,noreferrer');
+        }
+      },
+      onDownloadMedia: () => {
+        if (media?.url) {
+          const link = document.createElement('a');
+          link.href = media.url;
+          link.download = media.name ?? 'download';
+          link.rel = 'noopener';
+          link.click();
+        }
+      },
+      onCopyMediaLink: () => {
+        if (media?.url) {
+          void copyToClipboard(media.url);
+        }
+      },
+    });
+  }, [
+    copyToClipboard,
+    currentUserId,
+    messageContextMenu,
+    onAddReaction,
+    onDeleteMessage,
+    onForwardMessage,
+    onOpenComposerEdit,
+    onPinMessage,
+    onReplyInThread,
+    onReplyMessage,
+    onSaveMessage,
+    onUnsaveMessage,
+    savedMessageIds,
+    threadsEnabled,
+  ]);
+
   const virtuosoInitialTopIndex = useMemo(() => {
+    if (scrollRestoreTarget?.mode === 'anchor') {
+      const entryIndex = findMessageEntryIndex(listEntries, scrollRestoreTarget.messageId);
+      if (entryIndex >= 0) {
+        return entryIndex;
+      }
+    }
+
     if (virtuosoMountScrollTop !== undefined) {
       return 0;
     }
 
     return Math.max(0, listEntries.length - 1);
-  }, [listEntries.length, virtuosoMountScrollTop]);
+  }, [listEntries, scrollRestoreTarget, virtuosoMountScrollTop]);
 
   if (showInitialLoading) {
     return <MessageListSkeleton />;
@@ -2164,6 +2374,14 @@ export function MessageList({
           </div>
         </div>
       )}
+
+      {messageContextMenu ? (
+        <MessageContextMenu
+          items={contextMenuItems}
+          position={messageContextMenu.position}
+          onClose={() => setMessageContextMenu(null)}
+        />
+      ) : null}
     </MessageListSurface>
   );
 }

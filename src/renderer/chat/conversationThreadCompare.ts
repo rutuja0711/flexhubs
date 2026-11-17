@@ -49,7 +49,11 @@ function scrollSnapshotEqual(
     return false;
   }
 
-  return left.scrollTop === right.scrollTop && left.stickToBottom === right.stickToBottom;
+  return (
+    left.scrollTop === right.scrollTop &&
+    left.stickToBottom === right.stickToBottom &&
+    (left.anchorMessageId ?? null) === (right.anchorMessageId ?? null)
+  );
 }
 
 function recordEqual(

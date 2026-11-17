@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 /**
- * Build platform icons from the single source asset: assets/logo-symbol.png
- * (transparent FlexHubs mark). Run after updating the PNG: npm run generate:icons
+ * Build platform icons from assets/app-icon.png (full app icon with background).
+ * Master PNG is composed from assets/logo-symbol.png via scripts/compose-app-icon.py.
+ *
+ * Run: npm run generate:icons
  */
 import { execFileSync, execSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -9,9 +11,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const sourcePng = path.join(projectRoot, 'assets', 'logo-symbol.png');
-const icnsOut = path.join(projectRoot, 'assets', 'logo-symbol.icns');
-const icoOut = path.join(projectRoot, 'assets', 'logo-symbol.ico');
+const symbolPng = path.join(projectRoot, 'assets', 'logo-symbol.png');
+const sourcePng = path.join(projectRoot, 'assets', 'app-icon.png');
+const icnsOut = path.join(projectRoot, 'assets', 'icon.icns');
+const icoOut = path.join(projectRoot, 'assets', 'icon.ico');
+const flatPngOut = path.join(projectRoot, 'assets', 'icon.png');
 const publicDir = path.join(projectRoot, 'src', 'renderer', 'public');
 const iconVenvDir = path.join(projectRoot, '.venv-icons');
 
@@ -64,14 +68,23 @@ function resolveIcoPython() {
   return venvPython;
 }
 
-function assertSource() {
+function assertSymbol() {
+  if (!fs.existsSync(symbolPng)) {
+    throw new Error(`Missing logo symbol: ${symbolPng}`);
+  }
+}
+
+function composeMasterPng(pythonBin) {
+  const scriptPath = path.join(projectRoot, 'scripts', 'compose-app-icon.py');
+  execFileSync(pythonBin, [scriptPath], { stdio: 'inherit', cwd: projectRoot });
+
   if (!fs.existsSync(sourcePng)) {
-    throw new Error(`Missing source logo: ${sourcePng}`);
+    throw new Error(`Missing composed app icon: ${sourcePng}`);
   }
 }
 
 function generateIcnsDarwin() {
-  const iconsetDir = path.join(projectRoot, 'assets', 'logo-symbol.iconset');
+  const iconsetDir = path.join(projectRoot, 'assets', 'icon.iconset');
   const iconSizes = [
     [16, '16x16'],
     [32, '16x16@2x'],
@@ -99,9 +112,8 @@ function generateIcnsDarwin() {
   fs.rmSync(iconsetDir, { recursive: true, force: true });
 }
 
-function generateIcoWithPython() {
+function generateIcoWithPython(pythonBin) {
   const scriptPath = path.join(projectRoot, 'scripts', 'generate-ico.py');
-  const pythonBin = resolveIcoPython();
   execFileSync(pythonBin, [scriptPath], { stdio: 'inherit', cwd: projectRoot });
 }
 
@@ -109,21 +121,31 @@ function syncRendererPublicAssets() {
   fs.mkdirSync(publicDir, { recursive: true });
   const copies = [
     ['logo-symbol.png', 'logo-symbol.png'],
-    ['logo-symbol.png', 'icon.png'],
-    ['logo-symbol.png', 'icon-256.png'],
-    ['logo-symbol.png', 'favicon-32.png'],
-    ['logo-symbol.png', 'favicon-16.png'],
+    [sourcePng, 'icon.png'],
+    [sourcePng, 'icon-256.png'],
+    [sourcePng, 'icon-512.png'],
   ];
 
-  for (const [fromName, toName] of copies) {
-    fs.copyFileSync(path.join(projectRoot, 'assets', fromName), path.join(publicDir, toName));
+  for (const [from, toName] of copies) {
+    const fromPath = typeof from === 'string' && from.includes(path.sep) ? from : path.join(projectRoot, 'assets', from);
+    fs.copyFileSync(fromPath, path.join(publicDir, toName));
+  }
+
+  for (const size of [32, 16]) {
+    execSync(
+      `sips -z ${size} ${size} "${sourcePng}" --out "${path.join(publicDir, `favicon-${size}.png`)}"`,
+      { stdio: 'inherit' },
+    );
   }
 }
 
 function main() {
-  assertSource();
+  assertSymbol();
+  const pythonBin = resolveIcoPython();
+  console.log('[FlexHubs] Composing master app icon from', symbolPng);
+  composeMasterPng(pythonBin);
 
-  console.log('[FlexHubs] Generating icons from', sourcePng);
+  console.log('[FlexHubs] Generating .icns and .ico from', sourcePng);
 
   if (process.platform === 'darwin') {
     try {
@@ -138,16 +160,8 @@ function main() {
     console.warn('[FlexHubs] Skipping .icns generation (requires macOS iconutil).');
   }
 
-  generateIcoWithPython();
-
-  // Legacy filenames still referenced by some tooling — keep in sync with source PNG.
-  fs.copyFileSync(sourcePng, path.join(projectRoot, 'assets', 'icon.png'));
-  if (fs.existsSync(icnsOut)) {
-    fs.copyFileSync(icnsOut, path.join(projectRoot, 'assets', 'icon.icns'));
-  }
-  if (fs.existsSync(icoOut)) {
-    fs.copyFileSync(icoOut, path.join(projectRoot, 'assets', 'icon.ico'));
-  }
+  generateIcoWithPython(pythonBin);
+  fs.copyFileSync(sourcePng, flatPngOut);
 
   syncRendererPublicAssets();
   console.log('[FlexHubs] Icon generation complete.');

@@ -20,7 +20,11 @@ import {
   FiSmartphone,
   FiDownloadCloud,
   FiSettings,
+  FiCommand,
+  FiSliders,
 } from 'react-icons/fi';
+import { KeyboardShortcutsReference } from './KeyboardShortcutsReference';
+import { isMacPlatform } from './keyboardShortcuts';
 import { RemoteImage } from '../RemoteImage';
 import {
   apiStatusToUi,
@@ -42,7 +46,6 @@ import {
 } from '../../shared/profile';
 import { formatTimezoneLabel, getTimezoneOptions } from '../../shared/timezones';
 import { getUserAvatarUrl, getUserInitials } from '../../shared/user';
-import { getCurrentUser } from '../authApi';
 import {
   getEffectivePresenceStatus,
   getPresenceStatusMessage,
@@ -80,6 +83,29 @@ import {
   listAudioOutputDevices,
   setPreferredAudioOutputDeviceId,
 } from '../audioOutputDevice';
+import { Avatar } from './ChatIcons';
+import { ProfileCoverEditorModal } from '../profile/ProfileCoverEditorModal';
+import { ProfileIdentityHeader } from '../profile/ProfileIdentityHeader';
+import {
+  PROFILE_BANNER_ACCEPT,
+  buildCoverUpdatePayload,
+  isProfileCoverFieldKey,
+  mergeCoverFieldsIntoUserRecord,
+  pickCoverUrlFromUpdates,
+  resolveCoverUrlAfterProfileSave,
+  readPersistedLocalCover,
+  resolveEffectiveCoverBanner,
+  resolveProfileBannerUrl,
+  resolveProfileUserId,
+  validateProfileBannerFile,
+  writePersistedLocalCover,
+} from '../../shared/profileBanner';
+import {
+  initialCropForImage,
+  loadImageElement,
+  renderCroppedCoverBlob,
+} from '../profile/profileCoverCrop';
+import { getCurrentUser, getStoredUser, syncStoredAuthUser } from '../authApi';
 import { UpdatesSettings } from './UpdatesSettings';
 import { PrivacySettings } from './PrivacySettings';
 import {
@@ -103,7 +129,7 @@ import {
 import { pickPreferredAvatarUrl } from '../../shared/chat';
 import { normalizeUploadUrl } from '../../shared/profile';
 
-type SettingsTab = 'account' | 'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates';
+type SettingsTab = 'account' | 'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates' | 'shortcuts';
 
 type ProfileSettingsViewProps = {
   user: unknown;
@@ -404,6 +430,14 @@ export function ProfileSettingsView({
   const [savedStatusMessage, setSavedStatusMessage] = useState('');
   const [timezone, setTimezone] = useState('UTC');
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
+  const [coverBannerUrl, setCoverBannerUrl] = useState<string | null>(() => {
+    const stored = getStoredUser();
+    const userId = normalizeUserProfile(stored ?? {}).id;
+    return resolveEffectiveCoverBanner(userId, stored) ?? null;
+  });
+  const [coverPreviewUrl, setCoverPreviewUrl] = useState<string | null>(null);
+  const [coverEditorOpen, setCoverEditorOpen] = useState(false);
+  const [coverUploading, setCoverUploading] = useState(false);
   const [localAvatarPreviewUrl, setLocalAvatarPreviewUrl] = useState<string | null>(null);
   const [avatarUploading, setAvatarUploading] = useState(false);
   const [avatarUploadSucceeded, setAvatarUploadSucceeded] = useState(false);
@@ -478,6 +512,7 @@ export function ProfileSettingsView({
   const saveTimeoutRef = useRef<number | undefined>(undefined);
   const uploadSuccessTimeoutRef = useRef<number | undefined>(undefined);
   const localPreviewRef = useRef<string | null>(null);
+  const coverPreviewRef = useRef<string | null>(null);
   const timezoneOptions = useMemo(() => getTimezoneOptions(), []);
   const sessionAvatarUrl = useMemo(() => getUserAvatarUrl(user), [user]);
   const sessionUserId = useMemo(() => resolveSessionUserId(user), [user]);
@@ -510,6 +545,10 @@ export function ProfileSettingsView({
       }
       if (uploadSuccessTimeoutRef.current) {
         window.clearTimeout(uploadSuccessTimeoutRef.current);
+      }
+      if (coverPreviewRef.current) {
+        URL.revokeObjectURL(coverPreviewRef.current);
+        coverPreviewRef.current = null;
       }
     };
   }, []);
@@ -565,7 +604,14 @@ export function ProfileSettingsView({
       nextStyles: AvatarStyleItem[],
       options?: { syncParentNotificationSettings?: boolean },
     ) => {
-      setProfile(nextProfile);
+      const mergedCover =
+        resolveEffectiveCoverBanner(nextProfile.id, nextProfile, getStoredUser()) ??
+        nextProfile.coverBannerUrl;
+      const profileWithCover: UserProfileState = {
+        ...nextProfile,
+        coverBannerUrl: mergedCover ?? nextProfile.coverBannerUrl,
+      };
+      setProfile(profileWithCover);
       setSettings(nextSettings);
       setStatusUi(apiStatusToUi(nextProfile.status));
       setStatusMessage(nextProfile.statusMessage);
@@ -575,6 +621,14 @@ export function ProfileSettingsView({
       setAvatarUrl((current) =>
         pickPreferredAvatarUrl(nextProfile.avatarUrl ?? sessionAvatarUrl, current),
       );
+      setCoverBannerUrl((current) => {
+        const merged = profileWithCover.coverBannerUrl ?? current;
+        if (merged) {
+          return merged;
+        }
+        const local = readPersistedLocalCover(profileWithCover.id);
+        return local ?? current;
+      });
       setAvatarTab(nextProfile.avatarMode ?? 'avatar');
       setSelectedStyle(nextProfile.avatarStyle ?? 'notionists');
       setAvatarSeed(nextProfile.avatarSeed ?? nextProfile.username ?? nextProfile.id ?? 'flexhubs');
@@ -717,6 +771,9 @@ export function ProfileSettingsView({
     const normalizedProfile = normalizeUserProfile(userPayload, mergedSettings);
     const nextProfile = {
       ...normalizedProfile,
+      coverBannerUrl:
+        resolveEffectiveCoverBanner(normalizedProfile.id, userPayload, getStoredUser()) ??
+        normalizedProfile.coverBannerUrl,
       status: remoteStatus.status,
       statusMessage: statusPayload
         ? remoteStatus.statusMessage
@@ -744,8 +801,12 @@ export function ProfileSettingsView({
 
     applyProfileSnapshot(nextProfile, mergedSettings, nextStyles);
 
+    const storedCoverForCache = resolveProfileBannerUrl(getStoredUser());
     writeProfileCache({
-      profile: nextProfile,
+      profile: {
+        ...nextProfile,
+        coverBannerUrl: nextProfile.coverBannerUrl ?? storedCoverForCache,
+      },
       settings: mergedSettings,
       avatarStyles: nextStyles,
     });
@@ -786,14 +847,6 @@ export function ProfileSettingsView({
 
     void runRefreshProfile({ silent: Boolean(user) });
   }, [buildSessionSnapshot, sessionUserId]);
-
-  useEffect(() => {
-    if (activeTab !== 'profile') {
-      return;
-    }
-
-    void refreshProfileRef.current?.({ silent: true });
-  }, [activeTab]);
 
   useEffect(() => {
     if (activeTab !== 'privacy') {
@@ -1151,7 +1204,59 @@ export function ProfileSettingsView({
       );
     }
 
-    onUserUpdated?.();
+    if (Object.keys(updates).some(isProfileCoverFieldKey)) {
+      const fallback = pickCoverUrlFromUpdates(updates);
+      const clearing = fallback === null;
+      const userId = resolveProfileUserId(profile?.id, sessionUserId, getStoredUser());
+      const fromApi = resolveCoverUrlAfterProfileSave(result.data, fallback);
+      const finalCover = clearing
+        ? null
+        : fromApi ??
+          (typeof fallback === 'string' ? fallback : undefined) ??
+          readPersistedLocalCover(userId);
+
+      setCoverBannerUrl(finalCover);
+      if (clearing) {
+        writePersistedLocalCover(userId, null);
+      } else if (finalCover) {
+        writePersistedLocalCover(userId, finalCover);
+      }
+
+      const stored = getStoredUser();
+      if (stored && typeof stored === 'object') {
+        const patched = mergeCoverFieldsIntoUserRecord(
+          stored as Record<string, unknown>,
+          finalCover,
+        );
+        syncStoredAuthUser(patched);
+      }
+      setProfile((current) => {
+        if (!current) {
+          return current;
+        }
+        const next = { ...current, coverBannerUrl: finalCover ?? current.coverBannerUrl };
+        writeProfileCache({
+          profile: next,
+          settings: settingsRef.current ?? settings ?? normalizeNotificationSettings({}),
+          avatarStyles: avatarStylesRef.current,
+        });
+        return next;
+      });
+    }
+
+    const coverOnly =
+      Object.keys(updates).some(isProfileCoverFieldKey) &&
+      updates.avatarUrl === undefined &&
+      updates.avatarMode === undefined &&
+      updates.username === undefined &&
+      updates.avatarStyle === undefined &&
+      updates.avatarSeed === undefined &&
+      updates.useInitials === undefined;
+
+    if (!coverOnly) {
+      onUserUpdated?.();
+    }
+
     toast.success(successMessage);
     if (typeof updates.avatarUrl === 'string' || updates.avatarMode === 'upload') {
       clearProfileCache();
@@ -1207,6 +1312,123 @@ export function ProfileSettingsView({
       'Avatar applied.',
     );
   };
+
+  const handleQuickCoverUpload = () => {
+    if (coverUploading) {
+      return;
+    }
+
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = PROFILE_BANNER_ACCEPT;
+    input.onchange = () => {
+      const file = input.files?.[0];
+      if (!file) {
+        return;
+      }
+
+      const validation = validateProfileBannerFile(file);
+      if (!validation.ok) {
+        toast.error(validation.error);
+        return;
+      }
+
+      void (async () => {
+        setCoverUploading(true);
+        setActionError('');
+
+        try {
+          const image = await loadImageElement(file);
+          const crop = initialCropForImage(image);
+          let uploadFile: File = file;
+
+          try {
+            const blob = await renderCroppedCoverBlob(image, crop);
+            uploadFile = new File([blob], 'profile-cover.jpg', { type: 'image/jpeg' });
+          } catch {
+            // Fall back to the original file if canvas export fails.
+          }
+
+          if (coverPreviewRef.current) {
+            URL.revokeObjectURL(coverPreviewRef.current);
+          }
+          const uploadPreviewUrl = URL.createObjectURL(uploadFile);
+          coverPreviewRef.current = uploadPreviewUrl;
+          setCoverPreviewUrl(uploadPreviewUrl);
+
+          const uploadResult = await uploadUserProfileImage(uploadFile);
+          if (!uploadResult.ok) {
+            if (!onUnauthorized(uploadResult.status)) {
+              setActionError(uploadResult.error);
+              toast.error(uploadResult.error);
+            }
+            return;
+          }
+
+          const coverUrl = uploadResult.data.url;
+          const userId = resolveProfileUserId(profile?.id, sessionUserId, getStoredUser());
+          writePersistedLocalCover(userId, coverUrl);
+          setCoverBannerUrl(coverUrl);
+          const storedUser = getStoredUser();
+          if (storedUser && typeof storedUser === 'object') {
+            syncStoredAuthUser(
+              mergeCoverFieldsIntoUserRecord(storedUser as Record<string, unknown>, coverUrl),
+            );
+          }
+          setProfile((current) => {
+            if (!current) {
+              return current;
+            }
+            const next = { ...current, coverBannerUrl: coverUrl };
+            writeProfileCache({
+              profile: next,
+              settings: settingsRef.current ?? settings ?? normalizeNotificationSettings({}),
+              avatarStyles: avatarStylesRef.current,
+            });
+            return next;
+          });
+
+          const saved = await handleAvatarSave(
+            buildCoverUpdatePayload(coverUrl),
+            'Cover image saved to your profile.',
+            { skipSavingFlag: true },
+          );
+
+          if (!saved) {
+            toast.warning(
+              'Cover is saved on this device but could not sync to the server. Try again in a moment.',
+            );
+            return;
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Unable to upload cover image.';
+          setActionError(message);
+          toast.error(message);
+        } finally {
+          setCoverUploading(false);
+        }
+      })();
+    };
+
+    input.click();
+  };
+
+  const resolvedCoverBannerUrl = useMemo(
+    () =>
+      coverBannerUrl ??
+      resolveEffectiveCoverBanner(profile?.id, profile, getStoredUser()) ??
+      profile?.coverBannerUrl ??
+      null,
+    [coverBannerUrl, profile, profile?.id, profile?.coverBannerUrl],
+  );
+
+  const clearCoverPreview = useCallback(() => {
+    if (coverPreviewRef.current) {
+      URL.revokeObjectURL(coverPreviewRef.current);
+      coverPreviewRef.current = null;
+    }
+    setCoverPreviewUrl(null);
+  }, []);
 
   const handleUploadAvatar = () => {
     const input = document.createElement('input');
@@ -1441,6 +1663,12 @@ export function ProfileSettingsView({
           <div>
             <p className="mb-2 px-3 text-[10px] font-bold tracking-wider text-app-muted uppercase">Privacy & Security</p>
             <NavButton icon={<FiShield />} label="Privacy" active={activeTab === 'privacy'} onClick={() => setActiveTab('privacy')} />
+            <NavButton
+              icon={isMacPlatform() ? <FiCommand /> : <FiSliders />}
+              label="Shortcuts"
+              active={activeTab === 'shortcuts'}
+              onClick={() => setActiveTab('shortcuts')}
+            />
           </div>
 
           <div>
@@ -1596,34 +1824,51 @@ export function ProfileSettingsView({
 
             {activeTab === 'profile' && (
               <>
-                {/* Profile summary */}
-                <SectionCard className="flex flex-col gap-6 p-6 sm:flex-row sm:items-start sm:gap-8">
-                  <div className="flex shrink-0 flex-col items-center gap-3 sm:items-start">
-                    <div className="relative h-[4.5rem] w-[4.5rem]">
-                      <AvatarPreviewCircle
-                        imageUrl={previewAvatarUrl}
-                        initials={initials}
-                        uploading={avatarUploading}
-                        uploadSucceeded={avatarUploadSucceeded}
-                      />
-                      <span
-                        className={`absolute bottom-0 right-0 z-50 h-3.5 w-3.5 rounded-full border-2 border-app-surface ${statusDotClass(statusUi)}`}
-                        aria-hidden="true"
-                      />
+                <SectionCard className="relative overflow-hidden p-0">
+                  {coverUploading ? (
+                    <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/45 text-sm font-medium text-white">
+                      Uploading cover…
                     </div>
-                    <span
-                      className="inline-flex items-center gap-1.5 rounded-full border border-app-border bg-app-chat-hover px-3 py-1 text-[11px] font-semibold text-app-text"
-                    >
-                      <span className={`h-2 w-2 rounded-full ${statusDotClass(statusUi)}`} />
-                      {statusUi}
-                    </span>
-                    <p className="flex items-center gap-1.5 text-xs text-app-muted">
-                      <FiClock className="shrink-0" aria-hidden="true" />
-                      {formatLocalTime(timezone)}
-                    </p>
-                  </div>
-                  <div className="min-w-0 flex-1 text-center sm:text-left">
-                    <div className="flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+                  ) : null}
+                  <ProfileIdentityHeader
+                    displayName={displayName}
+                    avatarUrl={previewAvatarUrl ?? effectiveSavedAvatarUrl}
+                    avatarInitials={initials}
+                    bannerUrl={resolvedCoverBannerUrl}
+                    bannerPlaceholderUrl={coverPreviewUrl}
+                    onBannerPrimaryLoaded={clearCoverPreview}
+                    presenceStatus={null}
+                    showPresence={false}
+                    showAvatar={false}
+                    onEditCover={() => void handleQuickCoverUpload()}
+                    coverHeightClass="h-[140px] md:h-[168px]"
+                  />
+                  <div className="px-6 pb-6 pt-4">
+                    <div className="flex min-w-0 items-start gap-4">
+                      <div className="relative shrink-0">
+                        <div className="rounded-full border-4 border-app-surface bg-app-surface shadow-md">
+                          <Avatar
+                            imageUrl={previewAvatarUrl ?? effectiveSavedAvatarUrl}
+                            initials={initials}
+                            size="xl"
+                            loading="eager"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleUploadAvatar}
+                          className="absolute bottom-0 right-0 flex h-8 w-8 items-center justify-center rounded-full border-2 border-app-surface bg-app-surface text-app-text shadow-md transition-colors hover:bg-app-chat-hover"
+                          aria-label="Change profile photo"
+                        >
+                          <FiEdit2 className="text-[13px]" aria-hidden />
+                        </button>
+                        <span
+                          className={`absolute bottom-1 left-1 h-3.5 w-3.5 rounded-full border-2 border-app-surface ${statusDotClass(statusUi)}`}
+                          aria-hidden="true"
+                        />
+                      </div>
+                      <div className="min-w-0 pt-0.5 text-left">
+                    <div className="flex flex-wrap items-center gap-2">
                       {usernameEditing ? (
                         <input
                           type="text"
@@ -1676,12 +1921,12 @@ export function ProfileSettingsView({
                       ) : null}
                     </div>
                     {profile.email ? (
-                      <p className="mt-1.5 flex items-center justify-center gap-2 text-sm text-app-muted sm:justify-start">
+                      <p className="mt-1.5 flex items-center gap-2 text-sm text-app-muted">
                         <FiMail className="shrink-0 opacity-80" size={14} aria-hidden="true" />
                         <span className="truncate">{profile.email}</span>
                       </p>
                     ) : null}
-                    <div className="mt-3 flex flex-wrap items-center justify-center gap-2 sm:justify-start">
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
                       {profile.inOrganization ? (
                         <span className="rounded-full bg-app-chat-hover px-2.5 py-0.5 text-[11px] font-medium text-app-text">
                           In organization
@@ -1693,11 +1938,39 @@ export function ProfileSettingsView({
                         </span>
                       ) : null}
                     </div>
+                    <div className="mt-3">
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-app-border bg-app-chat-hover px-3 py-1 text-[11px] font-semibold text-app-text">
+                        <span className={`h-2 w-2 rounded-full ${statusDotClass(statusUi)}`} />
+                        {statusUi}
+                      </span>
+                    </div>
                     {savedStatusMessage.trim() ? (
                       <p className="mt-3 text-sm text-app-muted">{savedStatusMessage.trim()}</p>
                     ) : null}
+                      </div>
+                    </div>
                   </div>
                 </SectionCard>
+                <ProfileCoverEditorModal
+                  open={coverEditorOpen}
+                  currentBannerUrl={resolvedCoverBannerUrl}
+                  onClose={() => setCoverEditorOpen(false)}
+                  onUnauthorized={onUnauthorized}
+                  persistCover={(url) =>
+                    handleAvatarSave(
+                      buildCoverUpdatePayload(url),
+                      url ? 'Cover image saved to your profile.' : 'Cover image removed.',
+                      { skipSavingFlag: true },
+                    )
+                  }
+                  onSaved={(url) => {
+                    const userId = resolveProfileUserId(profile?.id, sessionUserId, getStoredUser());
+                    setCoverBannerUrl(url);
+                    setProfile((current) => (current ? { ...current, coverBannerUrl: url } : current));
+                    writePersistedLocalCover(userId, url);
+                    onUserUpdated?.();
+                  }}
+                />
 
                 {/* Profile Photo */}
                 <section>
@@ -2107,6 +2380,12 @@ export function ProfileSettingsView({
                   </SectionCard>
                 </section>
               </>
+            )}
+
+            {activeTab === 'shortcuts' && (
+              <div className="max-w-2xl">
+                <KeyboardShortcutsReference />
+              </div>
             )}
 
             {activeTab === 'privacy' && (

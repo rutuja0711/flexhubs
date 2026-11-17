@@ -69,6 +69,11 @@ type MessageInputProps = {
   compact?: boolean;
   currentUserId?: string | null;
   attachmentOverlayRootRef?: RefObject<HTMLElement | null>;
+  editingMessage?: MessageItem | null;
+  editSaving?: boolean;
+  onCancelComposerEdit?: () => void;
+  onSaveComposerEdit?: () => void | Promise<void>;
+  onEditLastMessage?: () => void;
 };
 
 export type MessageInputHandle = {
@@ -251,6 +256,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   compact = false,
   currentUserId = null,
   attachmentOverlayRootRef,
+  editingMessage = null,
+  editSaving = false,
+  onCancelComposerEdit,
+  onSaveComposerEdit,
+  onEditLastMessage,
 },
   ref,
 ) {
@@ -1057,6 +1067,15 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   };
 
   const handleSendAction = () => {
+    if (editingMessage) {
+      if (!value.trim() || editSaving) {
+        return;
+      }
+
+      void onSaveComposerEdit?.();
+      return;
+    }
+
     if (pendingVoiceNote && onSendVoice) {
       onSendVoice(pendingVoiceNote.file, value.trim() || undefined);
       clearPendingVoiceNote();
@@ -1329,6 +1348,33 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         </div>
       ) : null}
 
+      {editingMessage ? (
+        <div className="flex items-center justify-between gap-3 rounded-t-2xl border border-b-0 border-app-border bg-app-surface/95 px-4 py-2.5 backdrop-blur-md">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-semibold text-accent-soft">Editing message</p>
+            <p className="truncate text-[11px] text-app-muted">Enter to save · Shift+Enter for a new line · Esc to cancel</p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              type="button"
+              className="rounded-lg px-3 py-1.5 text-xs font-medium text-app-muted hover:bg-app-chat-hover"
+              onClick={onCancelComposerEdit}
+              disabled={editSaving}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white shadow-sm disabled:opacity-50"
+              onClick={() => void onSaveComposerEdit?.()}
+              disabled={editSaving || !value.trim()}
+            >
+              {editSaving ? 'Saving…' : 'Save changes'}
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {replyingToMessage ? (
         <div className="flex flex-col rounded-t-2xl bg-app-surface/95 backdrop-blur-md px-4 py-2 text-xs text-app-muted border-l-4 border-l-accent shadow-sm">
           <div className="mb-1 flex items-center justify-between">
@@ -1408,7 +1454,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         ref={composerSurfaceRef}
         onFocusOut={handleComposerFocusOut}
         className={`relative flex flex-col rounded-[22px] border bg-app-surface/95 backdrop-blur-md transition-all duration-200 shadow-composer focus-within:border-accent/45 focus-within:shadow-composer-focus ${
-          replyingToMessage ? 'rounded-t-none border-t-0' : ''
+          replyingToMessage || editingMessage ? 'rounded-t-none border-t-0' : ''
         } ${
           displayError ? 'border-accent ring-2 ring-accent/30' : 'border-app-border/80'
         } ${hideInlineComposerForAttachments ? 'hidden' : ''}`}
@@ -1426,15 +1472,17 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             ref={textareaRef}
             value={value}
             rows={1}
-            disabled={disabled || isSending || aiBusy || voiceTypingTranscribing}
+            disabled={disabled || isSending || aiBusy || voiceTypingTranscribing || editSaving}
             placeholder={
-              voiceTypingTranscribing
-                ? 'Transcribing…'
-                : aiBusy
-                  ? 'AI is working…'
-                  : pendingVoiceNote || pendingAttachments.length > 0
-                    ? 'Add a caption (optional)'
-                    : 'Type a message'
+              editingMessage
+                ? 'Edit your message'
+                : voiceTypingTranscribing
+                  ? 'Transcribing…'
+                  : aiBusy
+                    ? 'AI is working…'
+                    : pendingVoiceNote || pendingAttachments.length > 0
+                      ? 'Add a caption (optional)'
+                      : 'Type a message'
             }
             aria-invalid={Boolean(displayError)}
             className={`max-h-32 min-w-0 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-snug text-app-text outline-none placeholder:text-app-placeholder disabled:opacity-60 ${
@@ -1458,6 +1506,43 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
             }}
             onPaste={handlePaste}
             onKeyDown={(event) => {
+              if (
+                event.key === 'Escape' &&
+                editingMessage &&
+                !event.metaKey &&
+                !event.ctrlKey &&
+                !event.altKey
+              ) {
+                event.preventDefault();
+                onCancelComposerEdit?.();
+                return;
+              }
+
+              if (pickerOpen || actionsMenuOpen || scheduleOpen || pollOpen) {
+                return;
+              }
+
+              if (
+                event.key === 'ArrowUp' &&
+                !event.metaKey &&
+                !event.ctrlKey &&
+                !event.altKey &&
+                !event.shiftKey &&
+                !editingMessage &&
+                mentionQuery === null &&
+                value.trim().length === 0
+              ) {
+                const textarea = event.currentTarget;
+                const caretAtStart =
+                  (textarea.selectionStart ?? 0) === 0 && (textarea.selectionEnd ?? 0) === 0;
+
+                if (caretAtStart) {
+                  event.preventDefault();
+                  onEditLastMessage?.();
+                  return;
+                }
+              }
+
               if (mentionQuery !== null && visibleMentionSuggestions.length > 0) {
                 if (event.key === 'ArrowDown') {
                   event.preventDefault();
@@ -1497,6 +1582,14 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               if (event.key === 'Enter' && !event.shiftKey) {
                 event.preventDefault();
 
+                if (editingMessage) {
+                  if (!editSaving && value.trim()) {
+                    void onSaveComposerEdit?.();
+                  }
+
+                  return;
+                }
+
                 if (
                   !disabled &&
                   !isSending &&
@@ -1507,13 +1600,6 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                   handleSendAction();
                 }
               }
-            }}
-            onKeyUp={(event) => {
-              updateMentionState(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length);
-            }}
-            onClick={(event) => {
-              const target = event.currentTarget;
-              updateMentionState(target.value, target.selectionStart ?? target.value.length);
             }}
           />
           )}

@@ -36,7 +36,7 @@ function main() {
   const packageDir = findWin32PackageDir();
   const required = [
     path.join(packageDir, 'resources', 'assets', 'windows', 'set-lnk-aumid.ps1'),
-    path.join(packageDir, 'resources', 'assets', 'logo-symbol.png'),
+    path.join(packageDir, 'resources', 'assets', 'app-icon.png'),
   ];
 
   const missing = required.filter((file) => !fs.existsSync(file));

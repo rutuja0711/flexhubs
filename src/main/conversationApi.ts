@@ -508,7 +508,7 @@ export async function editMessage(
     `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}`,
     token,
     'Edit Message API',
-    { content },
+    { content: content.trim() },
   );
 
   if (!result.ok) {

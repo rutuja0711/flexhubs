@@ -63,6 +63,10 @@ type ChatSidebarProps = {
   viewerSharePresence?: boolean;
   notificationSettings?: ProfileSettings | null;
   onOpenNotificationSettings?: () => void;
+  onTeammateOpenProfile?: (
+    anchor: { userId: string; displayName: string; avatarUrl?: string | null; avatarInitials?: string },
+    event: React.MouseEvent<HTMLElement>,
+  ) => void;
 };
 
 export function ChatSidebar({
@@ -102,6 +106,7 @@ export function ChatSidebar({
   viewerSharePresence = true,
   notificationSettings = null,
   onOpenNotificationSettings,
+  onTeammateOpenProfile,
 }: ChatSidebarProps) {
   const [activeTab, setActiveTab] = useState<ChatTab>('all');
   const [composeMode, setComposeMode] = useState<'direct' | 'hub' | 'group'>('direct');
@@ -315,6 +320,7 @@ export function ChatSidebar({
 
         <div className="flex items-center gap-2">
           <SearchField
+            id="chat-quick-search"
             value={searchQuery}
             placeholder="Search people & chats"
             error={searchError}
@@ -482,6 +488,7 @@ export function ChatSidebar({
                 hideAddFriend={hideTeammateAddFriend}
                 onSelect={onTeammateSelect}
                 onAddFriend={onTeammateAddFriend}
+                onOpenProfile={onTeammateOpenProfile}
               />
             ) : null}
           </>

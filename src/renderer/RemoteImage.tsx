@@ -14,6 +14,7 @@ type RemoteImageProps = {
   wrapperClassName?: string;
   loading?: 'eager' | 'lazy';
   onError?: () => void;
+  onLoad?: () => void;
 };
 
 function canUseDirectly(url: string): boolean {
@@ -40,10 +41,12 @@ export function RemoteImage({
   wrapperClassName = '',
   loading = 'lazy',
   onError,
+  onLoad,
 }: RemoteImageProps) {
   const hostRef = useRef<HTMLSpanElement>(null);
   const logicalSrcRef = useRef<string | null>(null);
   const onErrorRef = useRef(onError);
+  const onLoadRef = useRef(onLoad);
   const [shouldLoad, setShouldLoad] = useState(loading === 'eager');
   const [displaySrc, setDisplaySrc] = useState<string | null>(() => resolveImmediateSrc(src));
   const [hasError, setHasError] = useState(false);
@@ -51,6 +54,7 @@ export function RemoteImage({
   const hasErrorRef = useRef(hasError);
 
   onErrorRef.current = onError;
+  onLoadRef.current = onLoad;
   displaySrcRef.current = displaySrc;
   hasErrorRef.current = hasError;
 
@@ -143,17 +147,22 @@ export function RemoteImage({
 
     void resolveAuthenticatedMediaUrl(src)
       .then((nextSrc) => {
-        if (!cancelled && nextSrc !== normalized) {
-          commitDisplaySrc(nextSrc);
-        } else if (!cancelled) {
-          commitHasError(true);
-          onErrorRef.current?.();
+        if (cancelled) {
+          return;
         }
+
+        if (nextSrc && nextSrc !== normalized) {
+          commitDisplaySrc(nextSrc);
+          return;
+        }
+
+        // Auth proxy returned the same URL or skipped — still try a direct load.
+        commitDisplaySrc(normalized);
       })
       .catch(() => {
         if (!cancelled) {
-          commitHasError(true);
-          onErrorRef.current?.();
+          commitDisplaySrc(normalized);
+          commitHasError(false);
         }
       });
 
@@ -176,6 +185,7 @@ export function RemoteImage({
           decoding="async"
           className={className}
           onLoad={() => {
+            onLoadRef.current?.();
             notifyMessageListVirtuosoLayoutSync();
           }}
           onError={() => {

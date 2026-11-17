@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build assets/logo-symbol.ico from assets/logo-symbol.png (multi-size Windows icon)."""
+"""Build assets/icon.ico from assets/app-icon.png (multi-size Windows icon)."""
 
 from __future__ import annotations
 
@@ -14,13 +14,13 @@ except ImportError as exc:  # pragma: no cover
     ) from exc
 
 ROOT = Path(__file__).resolve().parents[1]
-SRC = ROOT / "assets" / "logo-symbol.png"
-OUT = ROOT / "assets" / "logo-symbol.ico"
+SRC = ROOT / "assets" / "app-icon.png"
+OUT = ROOT / "assets" / "icon.ico"
 
 
 def main() -> None:
     if not SRC.is_file():
-        raise SystemExit(f"Missing source logo: {SRC}")
+        raise SystemExit(f"Missing application icon source: {SRC}")
 
     im = Image.open(SRC).convert("RGBA")
     sizes = [16, 24, 32, 48, 64, 128, 256]

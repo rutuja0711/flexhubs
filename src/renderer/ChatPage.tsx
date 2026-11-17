@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState, startTransition } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  startTransition,
+  type MouseEvent,
+} from 'react';
 import { createPortal } from 'react-dom';
 import type {
   CalendarEventItem,
@@ -107,6 +115,7 @@ import { uploadChatFile } from './extrasApi';
 import { ChatSidebar } from './chat/ChatSidebar';
 import { ChatWelcome } from './chat/ChatWelcome';
 import { ConversationThread } from './chat/ConversationThread';
+import { useChatKeyboardShortcuts } from './chat/useChatKeyboardShortcuts';
 import { SummaryPanel } from './chat/SummaryPanel';
 import { FilesView } from './chat/FilesView';
 import { HubsView } from './chat/HubsView';
@@ -119,6 +128,11 @@ import { SuperAdminView } from './chat/SuperAdminView';
 import { OrganizationInviteModal } from './chat/OrganizationInviteModal';
 import { dispatchOrganizationInvitesRefresh } from './organizationInvitesRefresh';
 import { PlanComplianceBanner } from './chat/PlanComplianceBanner';
+import {
+  UserProfileOverlayHost,
+  type UserProfileOverlayState,
+} from './profile/UserProfileOverlayHost';
+import type { UserProfileAnchor } from './profile/UserProfilePopup';
 import { loadOrgSubscription, loadPlanCompliance } from './organizationApi';
 import {
   readPersistedConversationSnooze,
@@ -156,7 +170,7 @@ import type {
 } from '../shared/messages';
 import type { GifPickerItem } from '../shared/gifs';
 import type { ConversationBootstrap } from '../shared/messages';
-import { applyMessageDeletionToList, applyMessageReadReceipts, applyReactionPatch, buildScheduleMessageBody, clearThreadReplyRegistry, compareMessagesChronologically, enrichMessageReplies, extractPeerLastReadMessageIds, filterMainChatMessages, findFirstUnreadMessageId, findHubInviteForNotification, formatMessagePreview, isAlreadyDeletedForEveryoneError, isDeletedMessage, isPendingHubInviteNotification, markMessageDeletedForEveryone, mergeMessageListsChronologically, mergeMessageUpdates, mergeServerMessagesWithLocal, messageReactionMatchesUser, notificationMatchesHubInviteTarget, readLastReadMessageId, registerThreadReplyMessage, resolveMessageReadBy, resolveNotificationAction, resolveNotificationConversationId, resolveThreadRootId, userHasMessageReaction } from '../shared/messages';
+import { applyMessageDeletionToList, applyMessageReadReceipts, applyReactionPatch, applyRecentMessageEdits, buildScheduleMessageBody, clearThreadReplyRegistry, compareMessagesChronologically, enrichMessageReplies, extractPeerLastReadMessageIds, filterMainChatMessages, findFirstUnreadMessageId, findHubInviteForNotification, formatMessagePreview, isAlreadyDeletedForEveryoneError, isDeletedMessage, isPendingHubInviteNotification, markMessageDeletedForEveryone, mergeMessageListsChronologically, mergeMessageUpdates, mergeServerMessagesWithLocal, messageReactionMatchesUser, notificationMatchesHubInviteTarget, readLastReadMessageId, registerThreadReplyMessage, resolveMessageReadBy, resolveNotificationAction, resolveNotificationConversationId, resolveThreadRootId, userHasMessageReaction, type RecentMessageEdit } from '../shared/messages';
 import type { AiTextResult } from '../shared/extras';
 import { hoursToSnoozePreset, inferFlexIntent } from '../shared/extras';
 import type { ProfileSettings } from '../shared/profile';
@@ -272,7 +286,12 @@ import {
   peekDraftContent,
   setDraftContentCache,
 } from './draftCache';
-import { appendThreadReply, applyThreadReplyDeletion, clearThreadRepliesStore } from './threadRepliesStore';
+import {
+  appendThreadReply,
+  applyThreadReplyDeletion,
+  applyThreadReplyEdit,
+  clearThreadRepliesStore,
+} from './threadRepliesStore';
 import {
   perfMeasure,
   perfMeasureAsync,
@@ -348,6 +367,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [focusMessageId, setFocusMessageId] = useState<string | null>(null);
+  const [userProfileOverlay, setUserProfileOverlay] = useState<UserProfileOverlayState>(null);
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [draft, setDraft] = useState('');
   const [draftError, setDraftError] = useState('');
@@ -543,6 +563,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const draftRef = useRef('');
   const draftPreviewsRef = useRef<Record<string, string | null>>({});
   const threadCacheRef = useRef<ThreadCacheStore>({});
+  const recentMessageEditsRef = useRef<Map<string, RecentMessageEdit>>(new Map());
   const threadCacheSyncTimerRef = useRef<number | null>(null);
   const activeHubDetailsRef = useRef<Record<string, unknown> | null>(null);
   const prefetchInFlightRef = useRef<Set<string>>(new Set());
@@ -2686,14 +2707,15 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           getUserId(user),
           bootstrapResult.data.conversation,
         );
-        const pendingLocalMessages =
-          conversationId === selectedIdRef.current
-            ? messagesRef.current.filter(
-                (message) => isLocalMessageId(message.id) || message.status === 'sending',
-              )
-            : [];
+        const localBaseline =
+          cached?.messages ??
+          (conversationId === selectedIdRef.current ? messagesRef.current : []);
 
-        const nextMessages = mergeServerMessagesWithLocal(serverMessages, pendingLocalMessages);
+        const mergedWithLocal = mergeServerMessagesWithLocal(serverMessages, localBaseline);
+        const nextMessages = applyRecentMessageEdits(
+          mergeLocalPendingMessages(mergedWithLocal, localBaseline),
+          recentMessageEditsRef.current,
+        );
         const conversationUnread =
           conversationsRef.current.find((item) => item.id === conversationId)?.unreadCount ?? 0;
 
@@ -2709,6 +2731,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           withConversationSnoozed(bootstrapResult.data.conversation, Boolean(snoozed)),
         );
         setPinnedMessageIds(bootstrapResult.data.pinnedMessageIds);
+        messagesRef.current = nextMessages;
         setMessages(nextMessages);
         const resolvedHasMoreOlder = resolveHasMoreMessagesFromBootstrap(bootstrapResult.data);
         applyHasMoreOlderMessages(resolvedHasMoreOlder);
@@ -2916,9 +2939,12 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         getUserId(user),
         result.data.conversation,
       );
-      const nextMessages = mergeLocalPendingMessages(
-        mergeServerMessagesWithLocal(serverMessages, messagesRef.current),
-        messagesRef.current,
+      const nextMessages = applyRecentMessageEdits(
+        mergeLocalPendingMessages(
+          mergeServerMessagesWithLocal(serverMessages, messagesRef.current),
+          messagesRef.current,
+        ),
+        recentMessageEditsRef.current,
       );
 
       setMessages((current) => {
@@ -2935,6 +2961,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
               message.reactions.length === next.reactions.length
             );
           });
+
+        if (!unchanged) {
+          messagesRef.current = nextMessages;
+        }
 
         return unchanged ? current : nextMessages;
       });
@@ -3029,6 +3059,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         mergedNext = enrichMessageReplies(
           mergeMessageListsChronologically(olderMessages, current),
         );
+        messagesRef.current = mergedNext;
         return mergedNext;
       });
 
@@ -3954,31 +3985,25 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           return;
         }
 
+        const applyUpdatedMessage = (current: MessageItem[]) =>
+          applyRecentMessageEdits(
+            current.map((message) =>
+              message.id === incomingMessage.id
+                ? preserveMessageOwnership(
+                    mergeMessageUpdates(message, incomingMessage),
+                    message,
+                    userId,
+                  )
+                : message,
+            ),
+            recentMessageEditsRef.current,
+          );
+
         if (conversationId === activeConversationId) {
-          setMessages((current) =>
-            current.map((message) =>
-              message.id === incomingMessage.id
-                ? preserveMessageOwnership(
-                    mergeMessageUpdates(message, incomingMessage),
-                    message,
-                    userId,
-                  )
-                : message,
-            ),
-          );
-        } else {
-          patchThreadCacheMessages(threadCacheRef.current, conversationId, (current) =>
-            current.map((message) =>
-              message.id === incomingMessage.id
-                ? preserveMessageOwnership(
-                    mergeMessageUpdates(message, incomingMessage),
-                    message,
-                    userId,
-                  )
-                : message,
-            ),
-          );
+          setMessages(applyUpdatedMessage);
         }
+
+        patchThreadCacheMessages(threadCacheRef.current, conversationId, applyUpdatedMessage);
 
         scheduleConversationsRefresh();
         return;
@@ -4807,6 +4832,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
   };
 
+  const openConversationSearchRef = useRef<() => void>(() => {});
+
   const handleNavigate = useCallback((view: MainView) => {
     if (view !== 'superadmin') {
       allowSuperAdminAutoLandingRef.current = false;
@@ -4816,6 +4843,29 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       setMainView(view);
     });
   }, []);
+
+  useChatKeyboardShortcuts({
+    enabled: true,
+    mainView,
+    onNavigate: handleNavigate,
+    onOpenQuickSwitcher: () => {
+      if (mainView !== 'chat') {
+        handleNavigate('chat');
+      }
+
+      window.requestAnimationFrame(() => {
+        const input = document.getElementById('chat-quick-search');
+        if (input instanceof HTMLInputElement) {
+          input.focus();
+          input.select();
+        }
+      });
+    },
+    onSearchInConversation: () => {
+      openConversationSearchRef.current();
+    },
+    onFocusComposer: () => undefined,
+  });
 
   const handleGoToChatHome = useCallback(() => {
     allowSuperAdminAutoLandingRef.current = false;
@@ -4987,6 +5037,29 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return conversationId;
     },
     [commitConversationList, handleUnauthorized, prefetchDirectPeerProfile, rememberDirectChatMetadata, seedDirectChatMetadata, toast, upsertConversation],
+  );
+
+  const openUserProfilePopup = useCallback(
+    (
+      anchor: UserProfileAnchor,
+      position: { top: number; left: number },
+      contextTitle?: string,
+    ) => {
+      setUserProfileOverlay({
+        mode: 'popup',
+        anchor,
+        position,
+        contextTitle,
+      });
+    },
+    [],
+  );
+
+  const openUserProfileFromTeammate = useCallback(
+    (anchor: UserProfileAnchor, event: MouseEvent<HTMLElement>) => {
+      openUserProfilePopup(anchor, { top: event.clientY, left: event.clientX });
+    },
+    [openUserProfilePopup],
   );
 
   const handleHubMemberDirectCall = useCallback(
@@ -5221,6 +5294,124 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       void deleteChatMessage(conversationId, result.data.id, 'everyone');
     }
   };
+
+  const sendOptimisticTextMessage = useCallback(
+    (conversationId: string, content: string, replyToId?: string) => {
+      const trimmed = content.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      const localId = createLocalMessageId();
+      const userId = getUserId(user);
+      const optimistic: MessageItem = {
+        id: localId,
+        content: trimmed,
+        senderId: userId,
+        senderName: getUserDisplayName(user),
+        senderInitials: getUserInitials(user),
+        createdAt: new Date().toISOString(),
+        editedAt: null,
+        pinnedAt: null,
+        isOwn: true,
+        status: 'sending',
+        readBy: [],
+        reactions: [],
+        replyToMessageId: replyToId,
+        messageType: 'TEXT',
+        media: [],
+        deletedForEveryone: false,
+        poll: null,
+      };
+
+      stopTyping(conversationId);
+      setMessages((current) => appendMessage(current, optimistic, userId));
+      touchConversationWithMessage(conversationId, optimistic, false);
+
+      void sendChatMessage(conversationId, trimmed, replyToId).then((result) => {
+        if (handleUnauthorized(result.status)) {
+          setMessages((current) => current.filter((message) => message.id !== localId));
+          return;
+        }
+
+        if (!result.ok) {
+          toast.error(result.error);
+          setMessages((current) => markMessageStatus(current, localId, 'failed'));
+          return;
+        }
+
+        if (isHiddenOutboundSend(localId)) {
+          finalizeHiddenOutboundSend(localId, conversationId, result.data);
+          return;
+        }
+
+        setMessages((current) => replaceLocalMessage(current, localId, result.data, userId));
+        touchConversationWithMessage(conversationId, withDeliveredStatus(result.data), false);
+
+        if (cancelledLocalMessageIdsRef.current.has(localId)) {
+          cancelledLocalMessageIdsRef.current.delete(localId);
+          void deleteChatMessage(conversationId, result.data.id, 'everyone');
+        }
+      });
+    },
+  [
+      finalizeHiddenOutboundSend,
+      handleUnauthorized,
+      touchConversationWithMessage,
+      user,
+      toast,
+      stopTyping,
+    ],
+  );
+
+  const handleProfileQuickMessage = useCallback(
+    (userId: string, displayName: string, text: string) => {
+      const trimmed = text.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      const anchor =
+        userProfileOverlay?.mode === 'popup' || userProfileOverlay?.mode === 'full'
+          ? userProfileOverlay.anchor
+          : undefined;
+
+      setUserProfileOverlay(null);
+
+      const existing = findConversationForPeerUserId(
+        conversationsRef.current,
+        userId,
+        directChatMetadataRef.current,
+      );
+
+      if (existing) {
+        rememberDirectChatMetadata(existing.id, userId, displayName);
+        handleSelectConversation(existing.id);
+        sendOptimisticTextMessage(existing.id, trimmed);
+        return;
+      }
+
+      void handleOpenDirectChat(userId, {
+        displayName,
+        avatarUrl: anchor?.avatarUrl,
+      }).then((conversationId) => {
+        if (!conversationId) {
+          toast.error('Unable to open conversation.');
+          return;
+        }
+
+        sendOptimisticTextMessage(conversationId, trimmed);
+      });
+    },
+    [
+      handleOpenDirectChat,
+      handleSelectConversation,
+      rememberDirectChatMetadata,
+      sendOptimisticTextMessage,
+      toast,
+      userProfileOverlay,
+    ],
+  );
 
   const handleRetryMessage = async (messageId: string) => {
     if (!selectedId) {
@@ -6454,9 +6645,79 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return false;
     }
 
-    const result = await editChatMessage(selectedId, messageId, content);
+    const trimmed = content.trim();
+
+    if (!trimmed) {
+      return false;
+    }
+
+    const previous = messagesRef.current.find((message) => message.id === messageId);
+
+    if (!previous) {
+      toast.error('Could not find that message in this chat.');
+      return false;
+    }
+
+    if (trimmed === previous.content.trim()) {
+      return true;
+    }
+
+    const viewerUserId = getUserId(user);
+    const optimisticEditedAt = new Date().toISOString();
+
+    recentMessageEditsRef.current.set(messageId, {
+      content: trimmed,
+      editedAt: optimisticEditedAt,
+      savedAt: Date.now(),
+    });
+
+    const buildPatch = (patch: MessageItem): MessageItem => ({
+      ...patch,
+      content: patch.content?.trim() || trimmed,
+      editedAt: patch.editedAt ?? optimisticEditedAt,
+    });
+
+    let updatedForSidebar: MessageItem | null = null;
+
+    const applyEdit = (current: MessageItem[], patch: MessageItem) => {
+      const mapped = current.map((message) => {
+        if (message.id !== messageId) {
+          return message;
+        }
+
+        return preserveMessageOwnership(
+          mergeMessageUpdates(message, buildPatch(patch)),
+          message,
+          viewerUserId,
+        );
+      });
+
+      updatedForSidebar = mapped.find((message) => message.id === messageId) ?? null;
+      return applyRecentMessageEdits(mapped, recentMessageEditsRef.current);
+    };
+
+    const optimisticPatch = buildPatch({ ...previous, content: trimmed, editedAt: optimisticEditedAt });
+    const optimisticNext = applyEdit(messagesRef.current, optimisticPatch);
+    messagesRef.current = optimisticNext;
+    setMessages(optimisticNext);
+    patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
+      applyEdit(current, optimisticPatch),
+    );
+
+    const result = await editChatMessage(selectedId, messageId, trimmed);
 
     if (!result.ok) {
+      recentMessageEditsRef.current.delete(messageId);
+
+      const reverted = messagesRef.current.map((message) =>
+        message.id === messageId ? previous : message,
+      );
+      messagesRef.current = reverted;
+      setMessages(reverted);
+      patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
+        current.map((message) => (message.id === messageId ? previous : message)),
+      );
+
       if (handleUnauthorized(result.status)) {
         return false;
       }
@@ -6465,13 +6726,45 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return false;
     }
 
-    setMessages((current) =>
-      current.map((message) =>
-        message.id === messageId
-          ? preserveMessageOwnership(result.data, message, getUserId(user))
-          : message,
-      ),
+    let authoritative = buildPatch(result.data);
+    const refetch = await loadMessageById(selectedId, messageId);
+
+    if (refetch.ok) {
+      authoritative = buildPatch(mergeMessageUpdates(authoritative, refetch.data));
+    }
+
+    recentMessageEditsRef.current.set(messageId, {
+      content: authoritative.content,
+      editedAt: authoritative.editedAt ?? optimisticEditedAt,
+      savedAt: Date.now(),
+    });
+
+    const finalNext = applyEdit(messagesRef.current, authoritative);
+    messagesRef.current = finalNext;
+    setMessages(finalNext);
+    patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
+      applyEdit(current, authoritative),
     );
+
+    const cached = getThreadCacheEntry(threadCacheRef.current, selectedId);
+    if (cached) {
+      syncThreadCache(selectedId, {
+        ...cached,
+        messages: applyEdit(cached.messages, authoritative),
+      });
+    }
+
+    const latestMainMessage = [...finalNext].sort(compareMessagesChronologically).at(-1);
+
+    if (updatedForSidebar && latestMainMessage?.id === messageId) {
+      touchConversationWithMessage(selectedId, updatedForSidebar, false);
+    }
+
+    const threadRootId = updatedForSidebar?.threadRootId;
+    if (threadRootId && updatedForSidebar) {
+      applyThreadReplyEdit(selectedId, threadRootId, messageId, updatedForSidebar);
+    }
+
     showActionMessage('Message updated.');
     return true;
   };
@@ -7361,6 +7654,22 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           savedMessageIds={savedMessageIds}
           focusMessageId={focusMessageId}
           unreadAnchorMessageId={threadUnreadAnchorId}
+          scrollRestoreKey={
+            selectedId
+              ? (() => {
+                  const snapshot = getConversationScrollSnapshot(selectedId);
+                  if (!snapshot) {
+                    return 0;
+                  }
+
+                  return (
+                    Math.round(snapshot.scrollTop) +
+                    (snapshot.stickToBottom ? 1_000_000 : 0) +
+                    (snapshot.anchorMessageId ? 1 : 0)
+                  );
+                })()
+              : 0
+          }
           initialScrollSnapshot={
             focusMessageId || !selectedId
               ? null
@@ -7369,6 +7678,19 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           hasMoreOlder={hasMoreOlderMessages}
           loadingOlder={loadingOlderMessages}
           callBusy={callManager.busy || callManager.session.phase !== 'idle'}
+          onBindSearchShortcut={(open) => {
+            openConversationSearchRef.current = open;
+          }}
+          onOpenMemberProfile={(anchor, position) => {
+            const conversation = selectedConversationForDisplay ?? selectedConversation;
+            openUserProfilePopup(
+              anchor,
+              position,
+              conversation?.kind === 'hub' || conversation?.kind === 'group'
+                ? conversation.title
+                : undefined,
+            );
+          }}
           {...conversationThreadCallbacks}
         />
       );
@@ -7406,6 +7728,31 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       className={`flex h-full bg-app-chat-bg ${callImmersiveMode ? 'overflow-hidden bg-[#101114]' : ''}`}
     >
       <MediaPreviewHost />
+      <UserProfileOverlayHost
+        state={userProfileOverlay}
+        onClose={() => setUserProfileOverlay(null)}
+        currentUserId={getUserId(user)}
+        presenceByUserId={presenceByUserId}
+        viewerSharePresence
+        blockedUserIds={blockedUserIds}
+        blockedByPeerIds={blockedByPeerIds}
+        callBusy={callManager.busy || callManager.session.phase !== 'idle'}
+        onSendMessage={handleProfileQuickMessage}
+        onVoiceCall={(userId, displayName) => {
+          setUserProfileOverlay(null);
+          void handleHubMemberDirectCall(userId, displayName, false);
+        }}
+        onVideoCall={(userId, displayName) => {
+          setUserProfileOverlay(null);
+          void handleHubMemberDirectCall(userId, displayName, true);
+        }}
+        onRefreshPresence={(peerUserId) => {
+          void refreshPresence([peerUserId], { snapshotMissingAsOffline: false });
+        }}
+        onViewFullProfile={(anchor) => {
+          setUserProfileOverlay({ mode: 'full', anchor });
+        }}
+      />
       {showMeetingBanner && callManager.session.meetingBanner
         ? createPortal(
             <MeetingStartedBanner
@@ -7544,6 +7891,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           void loadData();
         }}
         onTeammateSelect={handleTeammateSelect}
+        onTeammateOpenProfile={openUserProfileFromTeammate}
         onTeammateAddFriend={handleTeammateAddFriend}
         friendUserIds={friendUserIds}
         onSelectPerson={(person) => {

@@ -1,4 +1,9 @@
 import type { LoginCredentials, LoginResult, LoginSuccess } from '../shared/auth';
+import {
+  mergeCoverFieldsIntoUserRecord,
+  readPersistedLocalCover,
+  resolveProfileBannerUrl,
+} from '../shared/profileBanner';
 
 export type { LoginCredentials, LoginResult, LoginSuccess } from '../shared/auth';
 
@@ -49,6 +54,48 @@ function persistAuthSessionToDisk(token: string, user: unknown): void {
   void window.electronAPI?.writeAuthSession?.({ token, user });
 }
 
+function mergeIncomingAuthUser(incoming: unknown): unknown {
+  const previous = getStoredUser();
+
+  if (!previous || typeof previous !== 'object' || !incoming || typeof incoming !== 'object') {
+    return incoming;
+  }
+
+  const previousCover = resolveProfileBannerUrl(previous as Record<string, unknown>);
+  const incomingCover = resolveProfileBannerUrl(incoming as Record<string, unknown>);
+
+  if (incomingCover) {
+    return incoming;
+  }
+
+  if (previousCover) {
+    return mergeCoverFieldsIntoUserRecord(incoming as Record<string, unknown>, previousCover);
+  }
+
+  const record = incoming as Record<string, unknown>;
+  const userId =
+    (typeof record.id === 'string' && record.id) ||
+    (typeof record.userId === 'string' && record.userId) ||
+    null;
+  const localCover = readPersistedLocalCover(userId);
+
+  if (localCover) {
+    return mergeCoverFieldsIntoUserRecord(record, localCover);
+  }
+
+  return incoming;
+}
+
+/** Persist `authUser` to localStorage and the main-process session store. */
+export function syncStoredAuthUser(user: unknown): void {
+  localStorage.setItem('authUser', JSON.stringify(user));
+  const token = getStoredToken();
+
+  if (token) {
+    persistAuthSessionToDisk(token, user);
+  }
+}
+
 export function getStoredToken(): string | null {
   return localStorage.getItem('authToken');
 }
@@ -60,12 +107,8 @@ export function storeAuth(data: LoginSuccess): void {
     localStorage.setItem('authToken', token);
   }
 
-  const user = data.user ?? data;
-  localStorage.setItem('authUser', JSON.stringify(user));
-
-  if (token) {
-    persistAuthSessionToDisk(token, user);
-  }
+  const user = mergeIncomingAuthUser(data.user ?? data);
+  syncStoredAuthUser(user);
 }
 
 export function clearAuth(): void {
@@ -172,10 +215,21 @@ export async function getCurrentUser(): Promise<LoginResult> {
   }
 
   if (result.ok) {
-    storeAuth({
-      token,
-      user: result.data.user ?? result.data,
-    });
+    const incoming = result.data.user ?? result.data;
+    const user = mergeIncomingAuthUser(incoming);
+    syncStoredAuthUser(user);
+
+    if (token) {
+      localStorage.setItem('authToken', token);
+    }
+
+    return {
+      ok: true,
+      data: {
+        ...(typeof result.data === 'object' && result.data ? result.data : {}),
+        user,
+      },
+    };
   }
 
   return result;

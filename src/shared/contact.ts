@@ -1,5 +1,15 @@
 import { mapApiPresenceToStatus, type PresenceStatus } from './chat';
-import { normalizeUserProfile, resolveAvatarUrl, type UserPresenceStatus } from './profile';
+import {
+  normalizeUserProfile,
+  resolveAvatarUrl,
+  type UserPresenceStatus,
+} from './profile';
+import {
+  readUserClientDevice,
+  readUserDesignation,
+  readUserOrganizationName,
+  resolveProfileBannerUrl,
+} from './profileBanner';
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
@@ -39,6 +49,9 @@ export type ContactUserProfile = {
   sharePresence: boolean;
   email: string | null;
   role: string | null;
+  designation: string | null;
+  organizationName: string | null;
+  coverBannerUrl: string | null;
   tagline: string | null;
   createdAt: string | null;
 };
@@ -66,6 +79,9 @@ export function normalizeContactUser(payload: unknown): ContactUserProfile | nul
     sharePresence: readBoolean(user.sharePresence) ?? readBoolean(user.shareOnlineStatus) ?? true,
     email: readString(user.email) ?? profile.email ?? null,
     role: readString(user.role) ?? readString(user.organizationRole) ?? profile.organizationRole ?? null,
+    designation: readUserDesignation(user),
+    organizationName: readUserOrganizationName(user) ?? profile.organizationName ?? null,
+    coverBannerUrl: resolveProfileBannerUrl(user),
     tagline: readString(user.tagline) ?? readString(user.statusMessage) ?? profile.statusMessage ?? null,
     createdAt: readString(user.createdAt) ?? readString(user.joinedAt) ?? null,
   };

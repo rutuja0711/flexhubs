@@ -418,11 +418,53 @@ export function mergeMessageListsChronologically(
 
   for (const list of lists) {
     for (const message of list) {
-      byId.set(message.id, message);
+      const existing = byId.get(message.id);
+      byId.set(message.id, existing ? mergeMessageUpdates(existing, message) : message);
     }
   }
 
   return [...byId.values()].sort(compareMessagesChronologically);
+}
+
+export type RecentMessageEdit = {
+  content: string;
+  editedAt: string;
+  savedAt: number;
+};
+
+const RECENT_MESSAGE_EDIT_TTL_MS = 5 * 60_000;
+
+export function applyRecentMessageEdits(
+  messages: MessageItem[],
+  edits: Map<string, RecentMessageEdit>,
+  maxAgeMs = RECENT_MESSAGE_EDIT_TTL_MS,
+): MessageItem[] {
+  if (edits.size === 0) {
+    return messages;
+  }
+
+  const now = Date.now();
+
+  return messages.map((message) => {
+    const edit = edits.get(message.id);
+
+    if (!edit || now - edit.savedAt > maxAgeMs) {
+      return message;
+    }
+
+    const serverEditedMs = editedAtMillis(message.editedAt);
+    const localEditedMs = editedAtMillis(edit.editedAt);
+
+    if (localEditedMs >= serverEditedMs && message.content !== edit.content) {
+      return { ...message, content: edit.content, editedAt: edit.editedAt };
+    }
+
+    if (localEditedMs >= serverEditedMs && edit.editedAt && !message.editedAt) {
+      return { ...message, content: edit.content, editedAt: edit.editedAt };
+    }
+
+    return message;
+  });
 }
 
 export type ConversationDraftSummary = {
@@ -756,6 +798,80 @@ export function mergeServerMessagesWithLocal(
   return mergeMessageListsChronologically(olderOnly, mergedServer);
 }
 
+function editedAtMillis(value: string | null | undefined): number {
+  if (!value) {
+    return 0;
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function resolveMergedEditedContent(
+  previous: MessageItem,
+  incoming: MessageItem,
+): Pick<MessageItem, 'content' | 'editedAt'> {
+  const previousEditedMs = editedAtMillis(previous.editedAt);
+  const incomingEditedMs = editedAtMillis(incoming.editedAt);
+
+  if (incomingEditedMs > previousEditedMs) {
+    return {
+      content: incoming.content,
+      editedAt: incoming.editedAt,
+    };
+  }
+
+  if (previousEditedMs > incomingEditedMs) {
+    return {
+      content: previous.content,
+      editedAt: previous.editedAt,
+    };
+  }
+
+  if (previous.editedAt && !incoming.editedAt) {
+    return {
+      content: previous.content,
+      editedAt: previous.editedAt,
+    };
+  }
+
+  if (incoming.editedAt && !previous.editedAt) {
+    return {
+      content: incoming.content,
+      editedAt: incoming.editedAt,
+    };
+  }
+
+  if (previous.content !== incoming.content) {
+    const incomingLooksEdited = Boolean(incoming.editedAt);
+    const previousLooksEdited = Boolean(previous.editedAt);
+
+    if (incomingLooksEdited && !previousLooksEdited) {
+      return {
+        content: incoming.content,
+        editedAt: incoming.editedAt,
+      };
+    }
+
+    if (previousLooksEdited && !incomingLooksEdited) {
+      return {
+        content: previous.content,
+        editedAt: previous.editedAt,
+      };
+    }
+
+    return {
+      content: incoming.content,
+      editedAt: incoming.editedAt ?? previous.editedAt ?? null,
+    };
+  }
+
+  return {
+    content: previous.content,
+    editedAt: incoming.editedAt ?? previous.editedAt ?? null,
+  };
+}
+
 export function mergeMessageUpdates(
   previous: MessageItem,
   incoming: MessageItem,
@@ -777,10 +893,12 @@ export function mergeMessageUpdates(
       ? mergeMessageReactions(previous.reactions, incoming.reactions)
       : previous.reactions;
 
+  const editedFields = resolveMergedEditedContent(previous, incoming);
+
   return {
     ...previous,
     ...incoming,
-    content: incoming.content || previous.content,
+    ...editedFields,
     senderName: incoming.senderName !== 'Unknown' ? incoming.senderName : previous.senderName,
     senderId: incoming.senderId ?? previous.senderId,
     reactions: mergedReactions,
@@ -2221,6 +2339,16 @@ export function normalizeMessagePoll(record: Record<string, unknown>): MessagePo
   };
 }
 
+function readMessageEditedAt(record: Record<string, unknown>): string | null {
+  return (
+    readString(record.editedAt) ??
+    readString(record.edited_at) ??
+    (record.isEdited === true || record.edited === true
+      ? readString(record.updatedAt) ?? readString(record.updated_at)
+      : null)
+  );
+}
+
 export function normalizeMessage(record: Record<string, unknown>, index: number): MessageItem {
   const sender = asRecord(record.sender) ?? asRecord(record.user) ?? asRecord(record.author);
   const senderName =
@@ -2296,7 +2424,7 @@ export function normalizeMessage(record: Record<string, unknown>, index: number)
       readString(record.sentAt) ??
       readString(record.timestamp) ??
       '',
-    editedAt: readString(record.editedAt),
+    editedAt: readMessageEditedAt(record),
     pinnedAt: readString(record.pinnedAt),
     isOwn: record.isOwn === true || record.isMine === true || record.mine === true,
     status,

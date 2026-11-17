@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type MouseEvent } from 'react';
 import { FiMessageSquare, FiUserPlus } from 'react-icons/fi';
 import type { DirectChatMetadata, PresenceStatus } from '../../shared/chat';
 import { shouldRedactUserIdentity } from '../../shared/blocking';
@@ -16,6 +16,10 @@ type TeammatesSectionProps = {
   hideAddFriend?: boolean;
   onSelect: (memberId: string) => void;
   onAddFriend: (memberId: string) => Promise<void>;
+  onOpenProfile?: (
+    anchor: { userId: string; displayName: string; avatarUrl?: string | null; avatarInitials?: string },
+    event: MouseEvent<HTMLElement>,
+  ) => void;
 };
 
 export function TeammatesSection({
@@ -28,6 +32,7 @@ export function TeammatesSection({
   hideAddFriend = false,
   onSelect,
   onAddFriend,
+  onOpenProfile,
 }: TeammatesSectionProps) {
   const blockedUsers = blockedUserIds ?? new Set<string>();
   const blockedByPeers = blockedByPeerIds ?? new Set<string>();
@@ -70,6 +75,23 @@ export function TeammatesSection({
             blockedByPeers,
           );
 
+          const openProfileFromEvent = (event: MouseEvent<HTMLElement>) => {
+            if (!onOpenProfile || redactIdentity) {
+              return;
+            }
+
+            event.stopPropagation();
+            onOpenProfile(
+              {
+                userId: teammate.id,
+                displayName: teammate.name,
+                avatarUrl: teammate.avatarUrl,
+                avatarInitials: teammate.initials,
+              },
+              event,
+            );
+          };
+
           return (
             <div
               key={teammate.id}
@@ -80,9 +102,9 @@ export function TeammatesSection({
               <button
                 type="button"
                 disabled={isOpening}
-                aria-label={`Message ${teammate.name}`}
+                aria-label={onOpenProfile ? `View ${teammate.name}'s profile` : `Message ${teammate.name}`}
                 className="relative shrink-0 overflow-visible rounded-full transition-opacity hover:opacity-90 disabled:cursor-wait disabled:opacity-60"
-                onClick={() => onSelect(teammate.id)}
+                onClick={onOpenProfile ? openProfileFromEvent : () => onSelect(teammate.id)}
               >
                 <Avatar
                   imageUrl={redactIdentity ? null : teammate.avatarUrl}
@@ -100,7 +122,7 @@ export function TeammatesSection({
                 type="button"
                 disabled={isOpening}
                 className="min-w-0 flex-1 text-left disabled:cursor-wait disabled:opacity-60"
-                onClick={() => onSelect(teammate.id)}
+                onClick={onOpenProfile ? openProfileFromEvent : () => onSelect(teammate.id)}
               >
                 <p className="truncate text-xs font-semibold text-app-text hover:text-accent">{teammate.name}</p>
                 {!redactIdentity && teammate.statusMessage ? (

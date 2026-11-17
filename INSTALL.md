@@ -140,6 +140,8 @@ Follow **[SIGNING.md](./SIGNING.md)** to add Apple + Windows code signing secret
 npm ci
 ```
 
+**Application icons:** `npm run generate:icons` composes `assets/app-icon.png` (FlexHubs mark on the official light background), then builds `assets/icon.icns` and `assets/icon.ico`. The Mac and Windows `make` scripts run this automatically; on macOS, commit updated `app-icon.png` / `icon.*` when you change `assets/logo-symbol.png`.
+
 Optional (CI / production API): set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in the environment before `make` if your build pipeline requires them (GitHub Actions uses repository secrets).
 
 ### Mac DMG (on a Mac)

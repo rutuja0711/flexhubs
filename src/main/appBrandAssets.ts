@@ -15,16 +15,44 @@ export function resolveAssetsDir(): string {
   return path.join(__dirname, '..', '..', 'assets');
 }
 
+/** Full application icon PNG (symbol on background) — for notifications and fallbacks. */
 export function resolveAppIconPngPath(): string {
   const assetsDir = resolveAssetsDir();
-  return path.join(assetsDir, 'logo-symbol.png');
+  const candidates = [
+    path.join(assetsDir, 'app-icon.png'),
+    path.join(assetsDir, 'icon.png'),
+  ];
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) {
+      return candidate;
+    }
+  }
+
+  return path.join(assetsDir, 'app-icon.png');
+}
+
+export function resolveAppIconIcnsPath(): string | undefined {
+  const icnsPath = path.join(resolveAssetsDir(), 'icon.icns');
+  return fs.existsSync(icnsPath) ? icnsPath : undefined;
 }
 
 export function resolveAppIconImage(): Electron.NativeImage | undefined {
   const assetsDir = resolveAssetsDir();
+
+  if (process.platform === 'darwin') {
+    const icnsPath = path.join(assetsDir, 'icon.icns');
+    if (fs.existsSync(icnsPath)) {
+      const icon = nativeImage.createFromPath(icnsPath);
+      if (!icon.isEmpty()) {
+        return icon;
+      }
+    }
+  }
+
   const candidates = [
-    path.join(assetsDir, 'logo-symbol.png'),
-    path.join(assetsDir, 'logo-symbol.icns'),
+    path.join(assetsDir, 'app-icon.png'),
+    path.join(assetsDir, 'icon.png'),
     path.join(assetsDir, 'icon.ico'),
   ];
 
@@ -47,9 +75,4 @@ export function resolveAppIconImage(): Electron.NativeImage | undefined {
   }
 
   return undefined;
-}
-
-export function resolveAppIconIcnsPath(): string | undefined {
-  const icnsPath = path.join(resolveAssetsDir(), 'logo-symbol.icns');
-  return fs.existsSync(icnsPath) ? icnsPath : undefined;
 }

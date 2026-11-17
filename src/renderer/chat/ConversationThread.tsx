@@ -40,6 +40,7 @@ import {
   trackPendingThreadSend,
 } from '../../shared/messages';
 import { validateSearchInput } from '../../shared/search';
+import { canEditMessage, findLastEditableOwnMessage } from '../../shared/messageComposer';
 import {
   loadMessageSearch,
   loadPinnedMessages,
@@ -130,6 +131,16 @@ export type ConversationThreadProps = {
   onMessageHubMember?: (userId: string, displayName: string) => void;
   onVoiceCallHubMember?: (userId: string, displayName: string) => void;
   onVideoCallHubMember?: (userId: string, displayName: string) => void;
+  onBindSearchShortcut?: (open: () => void) => void;
+  onOpenMemberProfile?: (
+    anchor: {
+      userId: string;
+      displayName: string;
+      avatarUrl?: string | null;
+      avatarInitials?: string;
+    },
+    position: { top: number; left: number },
+  ) => void;
 };
 
 function ConversationThreadComponent({
@@ -197,6 +208,8 @@ function ConversationThreadComponent({
   onMessageHubMember,
   onVoiceCallHubMember,
   onVideoCallHubMember,
+  onBindSearchShortcut,
+  onOpenMemberProfile,
 }: ConversationThreadProps) {
   perfRecordRender('ConversationThread');
 
@@ -216,6 +229,9 @@ function ConversationThreadComponent({
   const [forwardLoading, setForwardLoading] = useState(false);
   const [forwardError, setForwardError] = useState('');
   const [replyingToMessage, setReplyingToMessage] = useState<MessageItem | null>(null);
+  const [composerEditMessage, setComposerEditMessage] = useState<MessageItem | null>(null);
+  const [composerEditSaving, setComposerEditSaving] = useState(false);
+  const composerDraftBackupRef = useRef('');
   const [aiReplyLoadingMessageId, setAiReplyLoadingMessageId] = useState<string | null>(null);
   const [threadRootMessage, setThreadRootMessage] = useState<MessageItem | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -349,6 +365,9 @@ function ConversationThreadComponent({
     setForwardLoading(false);
     setForwardError('');
     setReplyingToMessage(null);
+    setComposerEditMessage(null);
+    setComposerEditSaving(false);
+    composerDraftBackupRef.current = '';
     setThreadRootMessage(null);
     setSettingsOpen(false);
     setMenuOpen(false);
@@ -506,6 +525,82 @@ function ConversationThreadComponent({
     setBannerScrollTargetId(messageId);
     setScrollRequestKey((current) => current + 1);
   }, []);
+
+  const openComposerEdit = useCallback(
+    (message: MessageItem) => {
+      if (!canEditMessage(message, currentUserId)) {
+        return;
+      }
+
+      composerDraftBackupRef.current = draft;
+      setComposerEditMessage(message);
+      setReplyingToMessage(null);
+      onDraftChange(message.content);
+      composerRef.current?.focusComposer();
+    },
+    [currentUserId, draft, onDraftChange],
+  );
+
+  const cancelComposerEdit = useCallback(() => {
+    setComposerEditMessage(null);
+    setComposerEditSaving(false);
+    onDraftChange(composerDraftBackupRef.current);
+    composerDraftBackupRef.current = '';
+  }, [onDraftChange]);
+
+  const saveComposerEdit = useCallback(async () => {
+    if (!composerEditMessage || composerEditSaving) {
+      return;
+    }
+
+    const nextContent = draft.trim();
+
+    if (!nextContent) {
+      toast.error('Message cannot be empty.');
+      return;
+    }
+
+    if (nextContent === composerEditMessage.content.trim()) {
+      cancelComposerEdit();
+      return;
+    }
+
+    setComposerEditSaving(true);
+
+    try {
+      const result = await onEditMessage(composerEditMessage.id, nextContent);
+
+      if (result === true) {
+        setComposerEditMessage(null);
+        composerDraftBackupRef.current = '';
+        onDraftChange('');
+        toast.success('Message updated.');
+        return;
+      }
+
+      if (result !== false) {
+        setComposerEditMessage(null);
+        composerDraftBackupRef.current = '';
+        onDraftChange('');
+      }
+    } finally {
+      setComposerEditSaving(false);
+    }
+  }, [cancelComposerEdit, composerEditMessage, composerEditSaving, draft, onDraftChange, onEditMessage, toast]);
+
+  const editLastMessage = useCallback(() => {
+    const candidate = findLastEditableOwnMessage(messages, currentUserId);
+
+    if (candidate) {
+      openComposerEdit(candidate);
+    }
+  }, [currentUserId, messages, openComposerEdit]);
+
+  useEffect(() => {
+    onBindSearchShortcut?.(() => {
+      setSearchOpen(true);
+    });
+  }, [onBindSearchShortcut]);
 
   const jumpToMessage = useCallback((messageId: string) => {
     setHighlightedMessageIds((current) => [...new Set([...current, messageId])]);
@@ -1131,6 +1226,7 @@ function ConversationThreadComponent({
 
           setThreadRootMessage(threadRootMessage?.id === messageId ? null : messages.find((m) => m.id === messageId) || null);
         }}
+        onOpenComposerEdit={openComposerEdit}
         onEditMessage={onEditMessage}
         onDeleteMessage={onDeleteMessage}
         sendProgressByMessageId={sendProgressByMessageId}
@@ -1162,6 +1258,10 @@ function ConversationThreadComponent({
         showReactionAuthors={conversation.kind === 'hub'}
         peerBlockedByCurrentUser={peerBlockedByCurrentUser}
         onViewCalendarEvent={onOpenCalendarEvent}
+        memberProfilePopupEnabled={isGroupConversation}
+        onOpenMemberProfile={
+          isGroupConversation && onOpenMemberProfile ? onOpenMemberProfile : undefined
+        }
       />
 
       {typingLabel ? (
@@ -1199,7 +1299,17 @@ function ConversationThreadComponent({
         }}
         onChange={onDraftChange}
         onComposerBlur={onComposerBlur}
+        editingMessage={composerEditMessage}
+        editSaving={composerEditSaving}
+        onCancelComposerEdit={cancelComposerEdit}
+        onSaveComposerEdit={saveComposerEdit}
+        onEditLastMessage={editLastMessage}
         onSend={() => {
+          if (composerEditMessage) {
+            void saveComposerEdit();
+            return;
+          }
+
           onSend(replyingToMessage?.id);
           setReplyingToMessage(null);
         }}
@@ -1374,6 +1484,7 @@ function ConversationThreadComponent({
           viewerUserId={currentUserId}
           viewerSharePresence={viewerSharePresence}
           onRefreshPeerPresence={onRefreshPeerPresence}
+          onFocusComposer={() => composerRef.current?.focusComposer()}
         />
       ) : null}
       {settingsOpen && isHubPanel ? (

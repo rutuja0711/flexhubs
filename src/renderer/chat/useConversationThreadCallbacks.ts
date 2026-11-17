@@ -114,9 +114,8 @@ export function useConversationThreadCallbacks(
   );
 
   const onEditMessage = useCallback(
-    (messageId: string, content: string) => {
-      void actionsRef.current.handleEditMessage(messageId, content);
-    },
+    (messageId: string, content: string) =>
+      actionsRef.current.handleEditMessage(messageId, content),
     [actionsRef],
   );
 

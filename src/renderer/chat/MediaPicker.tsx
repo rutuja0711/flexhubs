@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSPropert
 import { FiSearch, FiUpload, FiX } from 'react-icons/fi';
 import type { GifPickerItem } from '../../shared/gifs';
 import { createUploadedStickerItem } from '../../shared/gifs';
+import { searchCatalogEmojis } from '../../shared/emojiSearch';
 import { REACTION_EMOJI_CATEGORIES } from '../../shared/reactionEmojis';
 import {
   loadStickerSearch,
@@ -84,9 +85,21 @@ export function MediaPicker({
     }
 
     function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') {
-        onClose();
+      if (event.key !== 'Escape') {
+        return;
       }
+
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.closest('[data-emoji-search]') || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')
+      ) {
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+
+      onClose();
     }
 
     document.addEventListener('mousedown', handleClickOutside);
@@ -214,19 +227,21 @@ export function MediaPicker({
   };
 
   const emojiGridEmojis = useMemo(() => {
-    const trimmedQuery = query.trim().toLowerCase();
+    const trimmedQuery = query.trim();
 
     if (!trimmedQuery) {
       return REACTION_EMOJI_CATEGORIES[emojiCategoryIndex]?.emojis ?? [];
     }
 
-    const matchingCategories = REACTION_EMOJI_CATEGORIES.filter((category) =>
-      category.label.toLowerCase().includes(trimmedQuery),
-    );
-
-    if (matchingCategories.length === 0) {
-      return [];
+    const keywordMatches = searchCatalogEmojis(trimmedQuery);
+    if (keywordMatches.length > 0) {
+      return keywordMatches;
     }
+
+    const lowered = trimmedQuery.toLowerCase();
+    const matchingCategories = REACTION_EMOJI_CATEGORIES.filter((category) =>
+      category.label.toLowerCase().includes(lowered),
+    );
 
     return [...new Set(matchingCategories.flatMap((category) => category.emojis))];
   }, [emojiCategoryIndex, query]);
@@ -240,7 +255,7 @@ export function MediaPicker({
       ? 'Search GIFs...'
       : tab === 'sticker'
         ? 'Search stickers...'
-        : 'Search categories (e.g. Smileys)...';
+        : 'Search emojis (e.g. heart, pizza, thumbs up)';
 
   return (
     <div
@@ -293,9 +308,14 @@ export function MediaPicker({
           <FiSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-app-muted" />
           <input
             type="search"
+            data-emoji-search={tab === 'emoji' ? '1' : undefined}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
+            onMouseDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
             placeholder={searchPlaceholder}
+            autoComplete="off"
+            spellCheck={false}
             className="w-full rounded-xl border border-app-border bg-app-surface py-2 pl-9 pr-3 text-sm text-app-text outline-none placeholder:text-app-placeholder focus:border-accent"
           />
         </div>
@@ -343,7 +363,9 @@ export function MediaPicker({
 
           {emojiGridEmojis.length === 0 ? (
             <p className="py-4 text-center text-sm text-app-muted">
-              {query.trim() ? 'No categories match. Try Smileys, Food, Hearts…' : 'No emojis in this category.'}
+              {query.trim()
+                ? 'No emojis match that search. Try heart, smile, dog, or pizza.'
+                : 'No emojis in this category.'}
             </p>
           ) : (
             <div className="grid grid-cols-8 gap-0.5">

@@ -23,7 +23,7 @@ const config: ForgeConfig = {
     appCategoryType: 'public.app-category.business',
     executableName: 'FlexHubs Desktop',
     extraResource: [path.join(__dirname, 'assets'), path.join(__dirname, 'build', 'app-update.yml')],
-    icon: path.join(__dirname, 'assets', 'logo-symbol'),
+    icon: path.join(__dirname, 'assets', 'icon'),
     win32metadata: {
       CompanyName: 'Flexodyn Solutions',
       ProductName: 'FlexHubs Desktop',
@@ -58,7 +58,7 @@ const config: ForgeConfig = {
       ? [
           new MakerDMG({
             name: 'FlexHubs-Desktop',
-            icon: path.join(__dirname, 'assets', 'logo-symbol.icns'),
+            icon: path.join(__dirname, 'assets', 'icon.icns'),
             format: 'ULFO',
           }),
         ]

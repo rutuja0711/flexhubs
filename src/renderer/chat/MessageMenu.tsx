@@ -15,6 +15,7 @@ import type { ReactNode } from 'react';
 
 type MessageMenuProps = {
   isOwn: boolean;
+  canEdit?: boolean;
   isPinned: boolean;
   isSaved: boolean;
   isDeleted?: boolean;
@@ -45,6 +46,7 @@ const MENU_WIDTH = 212;
 
 export function MessageMenu({
   isOwn,
+  canEdit = false,
   isPinned,
   isSaved,
   isDeleted = false,
@@ -127,7 +129,7 @@ export function MessageMenu({
               },
             ]
           : []),
-        ...(isOwn
+        ...(isOwn && canEdit
           ? [
               {
                 label: 'Edit',

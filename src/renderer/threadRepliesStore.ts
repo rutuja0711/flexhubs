@@ -87,6 +87,29 @@ export function clearThreadRepliesStore(): void {
   repliesByThread.clear();
 }
 
+export function applyThreadReplyEdit(
+  conversationId: string,
+  rootId: string,
+  messageId: string,
+  updated: MessageItem,
+): MessageItem[] {
+  const key = threadKey(conversationId, rootId);
+  const cached = repliesByThread.get(key);
+
+  if (!cached?.length) {
+    return cached ?? [];
+  }
+
+  const next = dedupeThreadReplies(
+    cached.map((message) => (message.id === messageId ? { ...message, ...updated } : message)),
+    rootId,
+  );
+
+  repliesByThread.set(key, next);
+  notify(key);
+  return next;
+}
+
 export function applyThreadReplyDeletion(
   conversationId: string,
   messageId: string,

@@ -264,8 +264,8 @@ function buildAppIconIcnsFromPng(): string | undefined {
     return undefined;
   }
 
-  const iconsetDir = path.join(app.getPath('temp'), 'flexhubs-logo-symbol.iconset');
-  const outputIcns = path.join(app.getPath('temp'), 'flexhubs-logo-symbol.icns');
+  const iconsetDir = path.join(app.getPath('temp'), 'flexhubs-app-icon.iconset');
+  const outputIcns = path.join(app.getPath('temp'), 'flexhubs-app-icon.icns');
   const iconSizes: Array<[number, string]> = [
     [16, '16x16'],
     [32, '16x16@2x'],
@@ -294,7 +294,7 @@ function buildAppIconIcnsFromPng(): string | undefined {
 
     return fs.existsSync(outputIcns) ? outputIcns : undefined;
   } catch (error) {
-    console.warn('[FlexHubs] Could not build app icon from logo-symbol.png:', error);
+    console.warn('[FlexHubs] Could not build app icon from app-icon.png:', error);
     return undefined;
   }
 }
@@ -331,7 +331,8 @@ function applyApplicationIcon(): void {
     return;
   }
 
-  if (process.platform === 'darwin' && app.dock) {
+  // Packaged macOS builds use the bundle .icns (correct Dock size). Override only in dev.
+  if (process.platform === 'darwin' && app.dock && !app.isPackaged) {
     app.dock.setIcon(icon);
   }
 }

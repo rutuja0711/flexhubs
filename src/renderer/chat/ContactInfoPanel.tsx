@@ -25,7 +25,6 @@ import {
   mapContactPresenceStatus,
   normalizeContactUser,
   initialsFromName,
-  presenceDotClass,
   type ContactUserProfile,
 } from '../../shared/contact';
 import { canViewPeerPresence } from '../../shared/presencePrivacy';
@@ -41,7 +40,8 @@ import { redactPeerProfileForViewerBlocked } from '../../shared/blocking';
 import { blockUser, loadFriendRelationship, loadUserProfile, unblockUser } from '../chatApi';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
-import { Avatar, PinIcon } from './ChatIcons';
+import { PinIcon } from './ChatIcons';
+import { ProfileIdentityHeader } from '../profile/ProfileIdentityHeader';
 import { ConversationSharedFiles } from './ConversationSharedFiles';
 
 const EMPTY_PRESENCE_MAP = new Map<string, PresenceStatus>();
@@ -73,6 +73,7 @@ type ContactInfoPanelProps = {
   viewerUserId?: string | null;
   viewerSharePresence?: boolean;
   onRefreshPeerPresence?: (peerUserId: string) => void;
+  onFocusComposer?: () => void;
 };
 
 type AccordionProps = {
@@ -145,6 +146,7 @@ export function ContactInfoPanel({
   viewerUserId = null,
   viewerSharePresence = true,
   onRefreshPeerPresence,
+  onFocusComposer,
 }: ContactInfoPanelProps) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -309,56 +311,62 @@ export function ContactInfoPanel({
 
   return (
     <div className="flex h-full w-[360px] shrink-0 flex-col border-l border-app-border/70 bg-app-surface/95 backdrop-blur-xl font-sans text-app-text shadow-2xl">
-      <header className="flex items-center justify-between border-b border-app-border/40 px-4 py-4">
-        <h2 className="text-[17px] font-bold text-app-text tracking-tight">Conversation details</h2>
-        <button
-          type="button"
-          onClick={onClose}
-          className="flex h-8 w-8 items-center justify-center rounded-xl text-app-muted transition-colors hover:bg-app-inset hover:text-app-text"
-          aria-label="Close contact panel"
-        >
-          <FiX className="text-xl" />
-        </button>
-      </header>
+      <div className="relative shrink-0">
+        <ProfileIdentityHeader
+          displayName={displayName}
+          avatarUrl={visibleProfile?.avatarUrl ?? conversation.avatarUrl ?? null}
+          avatarInitials={profile?.avatarInitials ?? initialsFromName(displayName)}
+          bannerUrl={visibleProfile?.coverBannerUrl}
+          presenceStatus={presenceStatus}
+          showPresence={!peerBlockedViewer && peerPresenceVisible}
+          coverHeightClass="h-[128px]"
+          flush
+        />
+        <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-gradient-to-b from-black/50 to-transparent px-3 py-3">
+          <h2 className="text-[15px] font-bold tracking-tight text-white drop-shadow-sm">
+            Conversation details
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="pointer-events-auto flex h-8 w-8 items-center justify-center rounded-xl bg-black/35 text-white backdrop-blur-sm transition-colors hover:bg-black/50"
+            aria-label="Close contact panel"
+          >
+            <FiX className="text-lg" />
+          </button>
+        </div>
+      </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <div className="flex flex-col items-center pt-8 pb-6 px-4">
-          <div className="relative isolate mb-3 shrink-0">
-            <Avatar
-              imageUrl={visibleProfile?.avatarUrl ?? conversation.avatarUrl ?? null}
-              initials={profile?.avatarInitials ?? initialsFromName(displayName)}
-              size="xl"
-              loading="eager"
-            />
-          </div>
-          <div className="flex items-center gap-1 mb-1">
-            <h3 className="text-[17px] font-bold text-app-text">{displayName}</h3>
-          </div>
+        <div className="flex flex-col items-center px-4 pb-6 pt-2 text-center">
+          <h3 className="text-[17px] font-bold text-app-text">{displayName}</h3>
           {!peerBlockedViewer && peerPresenceVisible ? (
-            <div className="flex items-center gap-1.5 text-[13px] mb-1">
-              <span
-                className={`h-2 w-2 rounded-full ${presenceDotClass(presenceStatus)}`}
-                aria-hidden
-              />
-              <span className="text-app-text font-medium">{presenceLabel}</span>
-            </div>
+            <p className="mt-1 text-[13px] text-app-muted">{presenceLabel}</p>
           ) : !peerBlockedViewer ? (
-            <div className="flex items-center gap-1.5 text-[13px] mb-1 text-app-muted">
-              <span className="h-2 w-2 rounded-full bg-app-muted" aria-hidden />
-              <span>Offline</span>
-            </div>
+            <p className="mt-1 text-[13px] text-app-muted">Offline</p>
           ) : null}
-          {!peerBlockedViewer && visibleProfile?.role ? (
-            <p className="text-[13px] text-app-muted mb-1">{visibleProfile.role}</p>
+          {!peerBlockedViewer && visibleProfile?.designation ? (
+            <p className="mt-1 text-[13px] text-app-text">{visibleProfile.designation}</p>
+          ) : null}
+          {!peerBlockedViewer && visibleProfile?.organizationName ? (
+            <p className="text-[13px] text-app-muted">{visibleProfile.organizationName}</p>
           ) : null}
           {!peerBlockedViewer && visibleProfile?.tagline ? (
-            <p className="text-[13px] text-app-muted">"{visibleProfile.tagline}"</p>
+            <p className="mt-1 text-[13px] text-app-muted">"{visibleProfile.tagline}"</p>
           ) : null}
         </div>
 
         <div className="flex flex-wrap items-start justify-center gap-5 pb-6 border-b border-app-border/40 px-4">
-          <button type="button" className="flex flex-col items-center gap-2 group">
-            <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-app-border bg-transparent text-[#972c44] transition-colors group-hover:bg-[#972c44]/5">
+          <button
+            type="button"
+            className="flex flex-col items-center gap-2 group"
+            disabled={peerBlockedViewer || isBlocked}
+            onClick={() => {
+              onClose();
+              onFocusComposer?.();
+            }}
+          >
+            <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full border border-app-border bg-transparent text-[#972c44] transition-colors group-hover:bg-[#972c44]/5 disabled:opacity-40">
               <FiMessageSquare className="text-lg" />
             </div>
             <span className="text-[11px] font-medium text-app-text">Message</span>

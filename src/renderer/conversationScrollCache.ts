@@ -1,6 +1,8 @@
 export type ConversationScrollSnapshot = {
   scrollTop: number;
   stickToBottom: boolean;
+  /** Topmost visible message id (Virtuoso restore). */
+  anchorMessageId?: string | null;
 };
 
 const scrollByConversationId = new Map<string, ConversationScrollSnapshot>();

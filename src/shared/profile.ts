@@ -1,3 +1,9 @@
+import {
+  isProfileCoverFieldKey,
+  readPersistedLocalCover,
+  resolveProfileBannerUrl,
+} from './profileBanner';
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -222,6 +228,7 @@ export type UserProfileState = {
   name: string;
   username: string;
   email: string;
+  coverBannerUrl: string | null;
   avatarUrl: string | null;
   avatarStyle: string | null;
   avatarSeed: string | null;
@@ -582,6 +589,9 @@ export function normalizeUserProfile(user: unknown, settings?: ProfileSettings):
     name,
     username: readString(record.username) ?? '',
     email: readString(record.email) ?? '',
+    coverBannerUrl:
+      resolveProfileBannerUrl(record) ??
+      readPersistedLocalCover(readString(record.id) ?? readString(record.userId)),
     avatarUrl: resolveAvatarUrl(record),
     avatarStyle:
       readString(record.avatarStyle) ?? readString(record.avatarStyleId) ?? readString(record.style),
@@ -989,6 +999,11 @@ function omitNullishValues(payload: Record<string, unknown>): Record<string, unk
   const cleaned: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(payload)) {
+    if (value === null && isProfileCoverFieldKey(key)) {
+      cleaned[key] = null;
+      continue;
+    }
+
     if (value !== null && value !== undefined) {
       cleaned[key] = value;
     }
@@ -1003,8 +1018,34 @@ export function buildProfileUpdatePayload(
   const payload: Record<string, unknown> = { ...updates };
   const avatarUrl = readString(updates.avatarUrl);
   const avatarMode = readString(updates.avatarMode);
+  const coverUrl =
+    updates.coverUrl === null
+      ? null
+      : readString(updates.coverUrl) ??
+        readString(updates.cover) ??
+        readString(updates.cover_image) ??
+        readString(updates.coverImageUrl) ??
+        readString(updates.coverImage) ??
+        readString(updates.bannerUrl) ??
+        readString(updates.coverBannerUrl) ??
+        readString(updates.profileBannerUrl) ??
+        readString(updates.profileCoverUrl);
 
   delete payload.avatarMode;
+
+  if (Object.keys(updates).some(isProfileCoverFieldKey)) {
+    for (const key of Object.keys(payload)) {
+      if (isProfileCoverFieldKey(key)) {
+        delete payload[key];
+      }
+    }
+
+    if (coverUrl === null) {
+      payload.cover = null;
+    } else if (coverUrl) {
+      payload.cover = coverUrl;
+    }
+  }
 
   if (avatarUrl) {
     payload.avatarUrl = avatarUrl;

@@ -977,8 +977,9 @@ export async function saveUserTimezone(timezone: string): Promise<ApiResult<{ ok
 
 export async function uploadUserProfileImage(
   file: File,
+  onProgress?: (progress: number) => void,
 ): Promise<ApiResult<{ url: string }>> {
-  return uploadFileToApi(file);
+  return uploadFileToApi(file, onProgress);
 }
 
 export async function loadOrganizationMembersDetailed(): Promise<

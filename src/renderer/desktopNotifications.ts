@@ -176,7 +176,7 @@ function notificationIconUrl(): string {
     return APP_LOGO_SYMBOL_SRC;
   }
 
-  return new URL('./logo-symbol.png', window.location.href).href;
+  return new URL('./icon-256.png', window.location.href).href;
 }
 
 export function dismissDesktopNotificationForMessage(messageId: string): void {
