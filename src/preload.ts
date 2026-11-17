@@ -149,11 +149,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pageSize?: number,
   ): Promise<ApiResult<import('./shared/superadmin').SuperAdminOrganizationsPage>> =>
     ipcRenderer.invoke('superadmin:organizations', token, page, pageSize),
+  getSuperAdminOrganizationMembers: (
+    token: string,
+    organizationId: string,
+  ): Promise<ApiResult<import('./shared/superadmin').SuperAdminOrganizationMembersResponse>> =>
+    ipcRenderer.invoke('superadmin:organization-members', token, organizationId),
   suspendSuperAdminOrganization: (
     token: string,
     organizationId: string,
-  ): Promise<ApiResult<{ ok: true }>> =>
-    ipcRenderer.invoke('superadmin:suspend', token, organizationId),
+    suspend: boolean,
+  ): Promise<ApiResult<import('./shared/superadmin').SuperAdminSuspendOrganizationResult>> =>
+    ipcRenderer.invoke('superadmin:suspend', token, organizationId, suspend),
   getConversations: (
     token: string,
     viewerUserId?: string | null,
@@ -634,6 +640,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('user:update-notification-settings', token, updatesJson),
   updateUserProfile: (token: string, updatesJson: string): Promise<ApiResult<unknown>> =>
     ipcRenderer.invoke('user:update-profile', token, updatesJson),
+  deleteUserAccount: (token: string): Promise<ApiResult<{ deleted: boolean }>> =>
+    ipcRenderer.invoke('user:delete-account', token),
   getUserStatus: (token: string): Promise<ApiResult<unknown>> =>
     ipcRenderer.invoke('user:status', token),
   updateUserStatus: (
@@ -851,7 +859,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   showDesktopNotification: (
     payload: any
-  ): Promise<{ ok: boolean }> => ipcRenderer.invoke('desktop:notify', payload),
+  ): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('desktop:notify', payload),
+  dismissDesktopNotification: (payload: {
+    tag?: string;
+    conversationId?: string;
+  }): Promise<{ ok: boolean }> => ipcRenderer.invoke('desktop:notify-dismiss', payload),
   onNotificationRender: (callback: (payload: any) => void): (() => void) => {
     const handler = (_event: Electron.IpcRendererEvent, payload: any) => callback(payload);
     ipcRenderer.on('notification:render', handler);

@@ -1,6 +1,39 @@
 ; FlexHubs Desktop — electron-builder NSIS hooks (see electron-builder.win.yml).
 
+!ifndef FLEXHUBS_AUMID
+  !define FLEXHUBS_AUMID "com.flexodyn.flexhubs"
+!endif
+
+!ifndef FLEXHUBS_NOTIFICATION_NAME
+  !define FLEXHUBS_NOTIFICATION_NAME "FlexHubs"
+!endif
+
+!macro FlexHubsRegisterNotificationIdentity
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\${FLEXHUBS_AUMID}" "" "${FLEXHUBS_NOTIFICATION_NAME}"
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\${FLEXHUBS_AUMID}" "DisplayName" "${FLEXHUBS_NOTIFICATION_NAME}"
+  WriteRegStr HKCU "Software\Classes\AppUserModelId\${FLEXHUBS_AUMID}" "IconResource" "$INSTDIR\${PRODUCT_FILENAME}.exe,0"
+  WriteRegStr HKCU "Software\RegisteredApplications" "${FLEXHUBS_NOTIFICATION_NAME}" "Software\Classes\AppUserModelId\${FLEXHUBS_AUMID}"
+!macroend
+
+!macro FlexHubsApplyShortcutAppId shortcutPath
+  IfFileExists "$INSTDIR\resources\assets\windows\set-lnk-aumid.ps1" 0 FlexHubsApplyShortcutAppIdDone
+    ExecWait '"$WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\assets\windows\set-lnk-aumid.ps1" -ShortcutPath "${shortcutPath}" -TargetPath "$INSTDIR\${PRODUCT_FILENAME}.exe" -WorkingDirectory "$INSTDIR" -AppUserModelId "${FLEXHUBS_AUMID}" -Description "${FLEXHUBS_NOTIFICATION_NAME}"'
+  FlexHubsApplyShortcutAppIdDone:
+!macroend
+
+!macro FlexHubsEnsureShellShortcut
+  CreateDirectory "$SMPROGRAMS\FlexHubs"
+  CreateShortCut "$SMPROGRAMS\FlexHubs\FlexHubs.lnk" "$INSTDIR\${PRODUCT_FILENAME}.exe" "" "$INSTDIR\${PRODUCT_FILENAME}.exe" 0 SW_SHOWNORMAL "" "" "${APP_DESCRIPTION}"
+  !insertmacro FlexHubsApplyShortcutAppId "$SMPROGRAMS\FlexHubs\FlexHubs.lnk"
+!macroend
+
+!macro customInit
+  !insertmacro FlexHubsRegisterNotificationIdentity
+!macroend
+
 !macro customInstall
+  !insertmacro FlexHubsRegisterNotificationIdentity
+  !insertmacro FlexHubsEnsureShellShortcut
   ReadEnvStr $0 LOCALAPPDATA
   IfFileExists "$0\FlexHubsDesktop\Update.exe" 0 flexhubsLegacyDone
     IfSilent flexhubsLegacyRemove
@@ -40,12 +73,14 @@ Function FlexHubsCreateStartMenuShortcut
   !insertmacro FlexHubsStartMenuLinkPath $R8
   CreateShortCut "$R8" "$INSTDIR\${PRODUCT_FILENAME}.exe" "" "$INSTDIR\${PRODUCT_FILENAME}.exe" 0 "" "" "${APP_DESCRIPTION}"
   ClearErrors
+  !insertmacro FlexHubsApplyShortcutAppId "$R8"
   StrCpy $FlexHubsLaunchLink "$R8"
 FunctionEnd
 
 Function FlexHubsCreateDesktopShortcut
   CreateShortCut "$DESKTOP\${SHORTCUT_NAME}.lnk" "$INSTDIR\${PRODUCT_FILENAME}.exe" "" "$INSTDIR\${PRODUCT_FILENAME}.exe" 0 "" "" "${APP_DESCRIPTION}"
   ClearErrors
+  !insertmacro FlexHubsApplyShortcutAppId "$DESKTOP\${SHORTCUT_NAME}.lnk"
 FunctionEnd
 
 Function FlexHubsFinishPageShowShortcutOptions

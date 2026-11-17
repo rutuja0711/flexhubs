@@ -19,6 +19,7 @@ import {
   FiShield,
   FiSmartphone,
   FiDownloadCloud,
+  FiSettings,
 } from 'react-icons/fi';
 import { RemoteImage } from '../RemoteImage';
 import {
@@ -56,6 +57,7 @@ import {
   loadAvatarStyles,
   loadBlockedUsers,
   loadResolvedUserStatus,
+  deleteUserAccount,
   loadNotificationSettings,
   saveNotificationSettings,
   saveUserProfile,
@@ -101,17 +103,30 @@ import {
 import { pickPreferredAvatarUrl } from '../../shared/chat';
 import { normalizeUploadUrl } from '../../shared/profile';
 
+type SettingsTab = 'account' | 'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates';
+
 type ProfileSettingsViewProps = {
   user: unknown;
   sessionNotificationSettings?: ProfileSettings | null;
   onLogout: () => void;
+  onAccountDeleted?: () => void;
   onUnauthorized: (status?: number) => boolean;
   onUserUpdated?: () => void;
   hasUpdateBadge?: boolean;
   onUpdateViewed?: () => void;
   onNotificationSettingsChange?: (settings: ProfileSettings) => void;
-  initialTab?: 'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates';
+  initialTab?: SettingsTab;
 };
+
+function validateUsername(username: string): string | null {
+  const trimmed = username.trim();
+
+  if (trimmed.length < 3 || trimmed.length > 30) {
+    return 'Username must be 3–30 characters.';
+  }
+
+  return null;
+}
 
 type AvatarTab = 'avatar' | 'upload' | 'initials';
 
@@ -360,6 +375,7 @@ export function ProfileSettingsView({
   user,
   sessionNotificationSettings = null,
   onLogout,
+  onAccountDeleted,
   onUnauthorized,
   onUserUpdated,
   hasUpdateBadge,
@@ -369,7 +385,7 @@ export function ProfileSettingsView({
 }: ProfileSettingsViewProps) {
   const { theme, setTheme } = useTheme();
   const toast = useToast();
-  const [activeTab, setActiveTab] = useState<'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates'>(initialTab);
+  const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
 
   useEffect(() => {
     setActiveTab(initialTab);
@@ -380,6 +396,8 @@ export function ProfileSettingsView({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [actionError, setActionError] = useState('');
+  const [deleteEmailConfirm, setDeleteEmailConfirm] = useState('');
+  const [deletingAccount, setDeletingAccount] = useState(false);
   const [saving, setSaving] = useState(false);
   const [statusUi, setStatusUi] = useState('Available');
   const [statusMessage, setStatusMessage] = useState('');
@@ -1259,10 +1277,12 @@ export function ProfileSettingsView({
   };
 
   const handleSaveUsername = async () => {
-    if (!usernameDraft.trim()) {
-      setActionError('Username cannot be empty.');
-      toast.error('Username cannot be empty.');
-      return;
+    const usernameError = validateUsername(usernameDraft);
+
+    if (usernameError) {
+      setActionError(usernameError);
+      toast.error(usernameError);
+      return false;
     }
 
     if (usernameDraft.trim() === savedUsername) {
@@ -1275,6 +1295,61 @@ export function ProfileSettingsView({
       setSavedUsername(usernameDraft.trim());
     }
     return ok;
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!profile?.email?.trim()) {
+      toast.error('Unable to verify your email for account deletion.');
+      return;
+    }
+
+    const expectedEmail = profile.email.trim().toLowerCase();
+    const typedEmail = deleteEmailConfirm.trim().toLowerCase();
+
+    if (typedEmail !== expectedEmail) {
+      const message = `Type ${profile.email.trim()} to confirm deletion.`;
+      setActionError(message);
+      toast.error(message);
+      return;
+    }
+
+    setDeletingAccount(true);
+    setActionError('');
+
+    try {
+      await disableDesktopPushNotifications();
+    } catch {
+      // Continue even if push cleanup fails.
+    }
+
+    const result = await deleteUserAccount();
+    setDeletingAccount(false);
+
+    if (!result.ok) {
+      if (onUnauthorized(result.status)) {
+        return;
+      }
+
+      const message =
+        result.status === 403
+          ? 'This account cannot be deleted here. Contact support if you need help.'
+          : result.status === 400
+            ? result.error ||
+              'You must transfer workspace ownership or remove other members before deleting an admin account.'
+            : result.error || 'Unable to delete account.';
+
+      setActionError(message);
+      toast.error(message);
+      return;
+    }
+
+    clearProfileCache();
+    toast.success('Your account has been deleted.');
+    if (onAccountDeleted) {
+      onAccountDeleted();
+    } else {
+      onLogout();
+    }
   };
 
   if (loading && !profile) {
@@ -1336,6 +1411,10 @@ export function ProfileSettingsView({
     return buildGeneratedAvatarUrl(selectedStyle, avatarSeed);
   })();
   const usernameChanged = usernameDraft.trim() !== savedUsername;
+  const accountUsernameInvalid = Boolean(usernameDraft.trim() && validateUsername(usernameDraft));
+  const deleteEmailMatches =
+  profile.email?.trim() &&
+    deleteEmailConfirm.trim().toLowerCase() === profile.email.trim().toLowerCase();
   const statusMessageChanged = statusMessage !== savedStatusMessage;
   const selectedAvatarStyleName =
     avatarStyles.find((style) => style.id === selectedStyle)?.name ?? selectedStyle;
@@ -1349,6 +1428,7 @@ export function ProfileSettingsView({
         <div className="space-y-6">
           <div>
             <p className="mb-2 px-3 text-[10px] font-bold tracking-wider text-app-muted uppercase">Account</p>
+            <NavButton icon={<FiSettings />} label="Account" active={activeTab === 'account'} onClick={() => setActiveTab('account')} />
             <NavButton icon={<FiUser />} label="Profile" active={activeTab === 'profile'} onClick={() => setActiveTab('profile')} />
           </div>
 
@@ -1384,7 +1464,14 @@ export function ProfileSettingsView({
         <div className="w-full max-w-4xl">
           <div className="mb-8 flex items-start justify-between gap-4">
             <div>
-              {activeTab === 'profile' ? (
+              {activeTab === 'account' ? (
+                <>
+                  <h2 className="text-2xl font-bold tracking-tight text-app-text">Account</h2>
+                  <p className="mt-1 text-sm text-app-muted">
+                    Username, workspace membership, privacy, and notifications
+                  </p>
+                </>
+              ) : activeTab === 'profile' ? (
                 <>
                   <h2 className="text-2xl font-bold tracking-tight text-app-text">Profile</h2>
                   <p className="mt-1 text-sm text-app-muted">
@@ -1405,6 +1492,108 @@ export function ProfileSettingsView({
           ) : null}
 
           <div className="space-y-8 pb-12 animate-in fade-in slide-in-from-bottom-2 duration-300">
+            {activeTab === 'account' && (
+              <>
+                <section>
+                  <h4 className="mb-3 text-base font-semibold text-app-text">Account information</h4>
+                  <SectionCard className="space-y-5 p-6">
+                    <div>
+                      <label htmlFor="account-email" className="mb-1.5 block text-xs font-semibold text-app-muted">
+                        Email
+                      </label>
+                      <input
+                        id="account-email"
+                        type="email"
+                        readOnly
+                        value={profile.email}
+                        className="w-full cursor-not-allowed rounded-lg border border-app-border bg-app-inset/50 px-3 py-2.5 text-sm text-app-muted"
+                      />
+                    </div>
+                    <div>
+                      <label htmlFor="account-username" className="mb-1.5 block text-xs font-semibold text-app-muted">
+                        Username
+                      </label>
+                      <input
+                        id="account-username"
+                        type="text"
+                        value={usernameDraft}
+                        onChange={(event) => setUsernameDraft(event.target.value)}
+                        className="w-full rounded-lg border border-app-border bg-app-chat-bg px-3 py-2.5 text-sm text-app-text focus:border-accent focus:outline-none"
+                        autoComplete="username"
+                      />
+                      {accountUsernameInvalid ? (
+                        <p className="mt-1.5 text-xs text-accent-soft">Username must be 3–30 characters.</p>
+                      ) : null}
+                    </div>
+                    <div>
+                      <label htmlFor="account-organization" className="mb-1.5 block text-xs font-semibold text-app-muted">
+                        Organization
+                      </label>
+                      <input
+                        id="account-organization"
+                        type="text"
+                        readOnly
+                        value={
+                          profile.organizationName?.trim() ||
+                          (profile.inOrganization ? 'Your workspace' : 'Not in an organization')
+                        }
+                        className="w-full cursor-not-allowed rounded-lg border border-app-border bg-app-inset/50 px-3 py-2.5 text-sm text-app-muted"
+                      />
+                      {profile.organizationRole ? (
+                        <p className="mt-1.5 text-xs text-app-muted">Role: {profile.organizationRole}</p>
+                      ) : null}
+                    </div>
+                    <div className="flex justify-end pt-1">
+                      <button
+                        type="button"
+                        disabled={
+                          saving ||
+                          !usernameChanged ||
+                          !usernameDraft.trim() ||
+                          Boolean(validateUsername(usernameDraft))
+                        }
+                        onClick={() => void handleSaveUsername()}
+                        className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
+                      >
+                        Save changes
+                      </button>
+                    </div>
+                  </SectionCard>
+                </section>
+
+                <section>
+                  <h4 className="mb-3 text-base font-semibold text-app-text">Delete account</h4>
+                  <SectionCard className="space-y-4 p-6">
+                    <p className="text-sm text-app-muted">
+                      Permanently remove your FlexHubs account and sign out on this device. This cannot be undone.
+                    </p>
+                    <div>
+                      <label htmlFor="delete-account-confirm" className="mb-1.5 block text-xs font-semibold text-app-text">
+                        Type <span className="font-mono text-app-muted">{profile.email}</span> to confirm
+                      </label>
+                      <input
+                        id="delete-account-confirm"
+                        type="email"
+                        value={deleteEmailConfirm}
+                        onChange={(event) => setDeleteEmailConfirm(event.target.value)}
+                        autoComplete="off"
+                        className="w-full rounded-lg border border-app-border bg-app-chat-bg px-3 py-2.5 text-sm text-app-text focus:border-red-500/60 focus:outline-none"
+                        placeholder={profile.email}
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={deletingAccount || !deleteEmailMatches}
+                      onClick={() => void handleDeleteAccount()}
+                      className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+                    >
+                      {deletingAccount ? 'Deleting…' : 'Delete my account'}
+                    </button>
+                  </SectionCard>
+                </section>
+              </>
+            )}
+
             {activeTab === 'profile' && (
               <>
                 {/* Profile summary */}

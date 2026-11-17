@@ -179,6 +179,22 @@ function notificationIconUrl(): string {
   return new URL('./logo-symbol.png', window.location.href).href;
 }
 
+export function dismissDesktopNotificationForMessage(messageId: string): void {
+  if (!messageId) {
+    return;
+  }
+
+  void window.electronAPI?.dismissDesktopNotification?.({ tag: `message-${messageId}` });
+}
+
+export function dismissDesktopNotificationsForConversation(conversationId: string): void {
+  if (!conversationId) {
+    return;
+  }
+
+  void window.electronAPI?.dismissDesktopNotification?.({ conversationId });
+}
+
 function bindNativeNotificationClicks(): void {
   if (clickListenerBound || !window.electronAPI?.onDesktopNotificationClick) {
     return;
@@ -325,12 +341,9 @@ async function openDesktopNotification(
   if (window.electronAPI?.showDesktopNotification) {
     pendingClicks.set(tag, onClick);
 
-    const data = payload || { title, body, tag };
-    data.tag = tag;
+    const data = { ...(payload ?? {}), title, body, tag };
     data.id = data.id ?? tag;
     data.timestamp = data.timestamp ?? new Date().toISOString();
-    data.title = data.title ?? title;
-    data.body = data.body ?? body;
 
     if (navigation?.conversationId) {
       data.conversationId = navigation.conversationId;
@@ -395,6 +408,29 @@ function parseSenderFromNotificationBody(body: string): string | null {
   return match[1].trim() || null;
 }
 
+function isHubOrGroupConversation(
+  conversation: Pick<ConversationItem, 'kind'> | null | undefined,
+): boolean {
+  return conversation?.kind === 'hub';
+}
+
+function resolveConversationForDesktopAlert(
+  conversation: ConversationItem | null | undefined,
+  conversationId: string | null | undefined,
+  conversations: ConversationItem[],
+): ConversationItem | null {
+  if (conversation) {
+    return conversation;
+  }
+
+  const id = conversationId?.trim();
+  if (!id || conversations.length === 0) {
+    return null;
+  }
+
+  return conversations.find((item) => item.id === id) ?? null;
+}
+
 export function formatDesktopMessageNotification(
   preview: string,
   senderName: string,
@@ -403,7 +439,7 @@ export function formatDesktopMessageNotification(
   const trimmedPreview = preview.trim();
   const trimmedSender = senderName.trim() || 'Someone';
 
-  if (conversation?.kind === 'hub') {
+  if (isHubOrGroupConversation(conversation)) {
     return {
       title: conversation.title.trim() || 'Group message',
       body: buildConversationListPreview('hub', trimmedPreview, trimmedSender),
@@ -455,14 +491,24 @@ export async function showDesktopNotification(
   if (isIncomingMessageNotification(notification)) {
     const senderName =
       parseSenderFromNotificationBody(formattedBody) ?? notification.title.trim() ?? '';
+    const resolvedConversation = resolveConversationForDesktopAlert(
+      conversation,
+      notification.conversationId,
+      conversations,
+    );
     const effectiveConversation =
-      conversation ??
-      (senderName
+      resolvedConversation ??
+      (senderName && !notification.conversationId
         ? ({ kind: 'direct' as const, title: senderName } satisfies Pick<
             ConversationItem,
             'kind' | 'title'
           >)
-        : null);
+        : senderName && parseSenderFromNotificationBody(formattedBody)
+          ? ({ kind: 'hub' as const, title: 'Group message' } satisfies Pick<
+              ConversationItem,
+              'kind' | 'title'
+            >)
+          : null);
     const formatted = formatDesktopMessageNotification(
       formattedBody,
       senderName,
@@ -658,16 +704,16 @@ export async function showIncomingMessageDesktopNotification(
   rememberConversationAlert(conversationId);
   maybePlayAlertSound(message.id);
 
-  const payload = mapMessageToNotificationData(message, conversation?.title, conversation?.kind === 'hub');
+  const hubContext = isHubOrGroupConversation(conversation);
+  const payload = mapMessageToNotificationData(message, conversation?.title, hubContext);
   payload.avatarUrl = avatarUrl || payload.avatarUrl;
   payload.title = title;
   payload.body = body;
   payload.id = message.id;
   payload.timestamp = message.createdAt;
-  if (conversation?.kind === 'hub') {
+  if (hubContext && conversation) {
     payload.type = 'group_chat';
     payload.subtitle = conversation.title;
-    payload.title = message.senderName;
   }
   const delivered = await openDesktopNotification(
     title,

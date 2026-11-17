@@ -1,8 +1,10 @@
 import { readEmbeddedSupabaseBuildConfig } from './supabaseEnv';
 import { readUserStatusMessage, readUserStatusMessageUpdate } from './profile';
 import {
+  isDeletedMessage,
   normalizeMessage,
   parseMessageReactions,
+  recordIndicatesDeletedForEveryone,
   type MessageItem,
   type MessageReaction,
 } from './messages';
@@ -800,7 +802,11 @@ export function extractReactionEvent(payload: unknown): ReactionEventPatch | nul
   return null;
 }
 
-export function isNewMessageEvent(type: string): boolean {
+export function isNewMessageEvent(type: string, payload?: unknown): boolean {
+  if (isMessageDeleteEvent(type, payload) || resolveRealtimeMessageDeletion(type, payload)) {
+    return false;
+  }
+
   const normalized = type.toLowerCase();
 
   if (
@@ -826,6 +832,10 @@ export function isNewMessageEvent(type: string): boolean {
 }
 
 export function isMessageUpdateEvent(type: string, payload?: unknown): boolean {
+  if (isMessageDeleteEvent(type, payload) || resolveRealtimeMessageDeletion(type, payload)) {
+    return false;
+  }
+
   const normalized = type.toLowerCase();
 
   if (
@@ -854,6 +864,23 @@ export function isMessageUpdateEvent(type: string, payload?: unknown): boolean {
   return false;
 }
 
+function messageTableDeleteUpdate(record: Record<string, unknown>): boolean {
+  const table = readString(record.table)?.toLowerCase() ?? '';
+
+  if (table && !table.includes('message')) {
+    return false;
+  }
+
+  const rows = [
+    asRecord(record.new),
+    asRecord(record.record),
+    asRecord(record.message),
+    record,
+  ].filter((value): value is Record<string, unknown> => Boolean(value));
+
+  return rows.some((row) => recordIndicatesDeletedForEveryone(row));
+}
+
 export function isMessageDeleteEvent(type: string, payload?: unknown): boolean {
   const normalized = type.toLowerCase();
 
@@ -875,7 +902,60 @@ export function isMessageDeleteEvent(type: string, payload?: unknown): boolean {
     return true;
   }
 
+  if (record && messageTableDeleteUpdate(record)) {
+    return true;
+  }
+
+  if (
+    (normalized.includes('update') || normalized.includes('updated')) &&
+    record &&
+    messageTableDeleteUpdate(record)
+  ) {
+    return true;
+  }
+
   return false;
+}
+
+export function resolveRealtimeMessageDeletion(
+  type: string,
+  payload: unknown,
+  incomingMessage?: MessageItem | null,
+): { messageId: string; scope: 'me' | 'everyone' } | null {
+  const incoming = incomingMessage ?? extractMessageFromRealtimePayload(payload);
+
+  if (incoming && isDeletedMessage(incoming)) {
+    return {
+      messageId: incoming.id,
+      scope: 'everyone',
+    };
+  }
+
+  const record = asRecord(unwrapRealtimePayload(payload));
+
+  if (record && messageTableDeleteUpdate(record)) {
+    const messageId = extractDeletedMessageId(payload, incoming);
+
+    if (messageId) {
+      return {
+        messageId,
+        scope: extractMessageDeleteScope(payload) ?? 'everyone',
+      };
+    }
+  }
+
+  if (isMessageDeleteEvent(type, payload)) {
+    const messageId = extractDeletedMessageId(payload, incoming);
+
+    if (messageId) {
+      return {
+        messageId,
+        scope: extractMessageDeleteScope(payload) ?? 'everyone',
+      };
+    }
+  }
+
+  return null;
 }
 
 export function extractMessageDeleteScope(payload: unknown): 'me' | 'everyone' | null {

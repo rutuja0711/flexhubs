@@ -4,7 +4,13 @@ import type { ProfileSettings } from '../../shared/profile';
 import { NotificationStatusBanner } from './NotificationStatusBanner';
 import type { TeammateItem } from '../../shared/messages';
 import type { GlobalSearchResult, SearchPerson } from '../../shared/search';
-import { validateSearchQuery, filterTeammatesForSidebar, prepareSidebarConversationList, sortSidebarTeammates, type SidebarConversationTab } from '../../shared/chat';
+import {
+  validateSearchQuery,
+  filterTeammatesForSidebar,
+  prepareSidebarConversationList,
+  sortSidebarTeammates,
+  type SidebarConversationTab,
+} from '../../shared/chat';
 import { validateSearchInput } from '../../shared/search';
 import { loadGlobalSearch } from '../chatApi';
 import { FiMoon, FiSun } from 'react-icons/fi';
@@ -50,6 +56,8 @@ type ChatSidebarProps = {
   onPrepareConversationContextMenu?: () => void;
   openingTeammateId?: string | null;
   directChatMetadata?: Record<string, DirectChatMetadata>;
+  friendUserIds?: ReadonlySet<string>;
+  hideTeammateAddFriend?: boolean;
   presenceByUserId?: ReadonlyMap<string, PresenceStatus>;
   viewerUserId?: string | null;
   viewerSharePresence?: boolean;
@@ -87,6 +95,8 @@ export function ChatSidebar({
   onPrepareConversationContextMenu,
   openingTeammateId = null,
   directChatMetadata = {},
+  friendUserIds,
+  hideTeammateAddFriend = false,
   presenceByUserId = EMPTY_PRESENCE_MAP,
   viewerUserId = null,
   viewerSharePresence = true,
@@ -468,6 +478,8 @@ export function ChatSidebar({
                 blockedUserIds={blockedUserIds}
                 blockedByPeerIds={blockedByPeerIds}
                 presenceByUserId={presenceByUserId}
+                friendUserIds={friendUserIds}
+                hideAddFriend={hideTeammateAddFriend}
                 onSelect={onTeammateSelect}
                 onAddFriend={onTeammateAddFriend}
               />

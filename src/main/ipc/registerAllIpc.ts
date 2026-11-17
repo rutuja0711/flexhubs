@@ -144,6 +144,7 @@ import {
   fetchUserById,
   fetchUserStatus,
   updateNotificationSettings,
+  deleteUserAccount,
   updateUserProfile,
   updateUserStatus,
   updateUserTimezone,
@@ -196,6 +197,7 @@ import {
   updateOrganizationRole,
 } from '../organizationsApi';
 import {
+  fetchSuperAdminOrganizationMembers,
   fetchSuperAdminOrganizations,
   fetchSuperAdminStats,
   suspendSuperAdminOrganization,
@@ -387,8 +389,15 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
   ipcMain.handle('superadmin:organizations', (_event, token: string, page: number, pageSize?: number) =>
     fetchSuperAdminOrganizations(token, page, pageSize),
   );
-  ipcMain.handle('superadmin:suspend', (_event, token: string, organizationId: string) =>
-    suspendSuperAdminOrganization(token, organizationId),
+  ipcMain.handle(
+    'superadmin:organization-members',
+    (_event, token: string, organizationId: string) =>
+      fetchSuperAdminOrganizationMembers(token, organizationId),
+  );
+  ipcMain.handle(
+    'superadmin:suspend',
+    (_event, token: string, organizationId: string, suspend: boolean) =>
+      suspendSuperAdminOrganization(token, organizationId, suspend),
   );
   
   ipcMain.handle('chat:summarize-unread', (_event, token: string, conversationId: string) =>
@@ -908,6 +917,7 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
       return updateNotificationSettings(token, updates);
     },
   );
+  ipcMain.handle('user:delete-account', (_event, token: string) => deleteUserAccount(token));
   ipcMain.handle('user:update-profile', (_event, token: string, updatesJson: string) => {
     let updates: Record<string, unknown> = {};
   

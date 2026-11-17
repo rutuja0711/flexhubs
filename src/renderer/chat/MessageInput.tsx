@@ -3,6 +3,7 @@ import {
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   type RefObject,
@@ -122,18 +123,76 @@ function parseMentionSuggestions(payload: unknown[]): MentionSuggestion[] {
     .filter((item): item is MentionSuggestion => item !== null);
 }
 
-const MENTION_REPLACE_PATTERN = /(^|[\s([{])@([a-zA-Z0-9._-]*)$/;
+/** Active @mention token at cursor (username or prefix typed after @). */
+const MENTION_AT_CURSOR_PATTERN = /(?:^|[\s([{<.,:;!?-])@([^\s@]*)$/;
 
 function detectMentionQuery(text: string, cursor: number): string | null {
   const before = text.slice(0, cursor);
-  const match = before.match(MENTION_REPLACE_PATTERN);
-  return match ? match[2] : null;
+  const match = before.match(MENTION_AT_CURSOR_PATTERN);
+  if (!match) {
+    return null;
+  }
+
+  return match[1] ?? '';
 }
 
 function detectMentionAnchor(text: string, cursor: number): number | null {
   const before = text.slice(0, cursor);
-  const match = before.match(MENTION_REPLACE_PATTERN);
+  const match = before.match(MENTION_AT_CURSOR_PATTERN);
   return match ? cursor - match[0].length : null;
+}
+
+function mentionMatchesQuery(user: MentionSuggestion, query: string): boolean {
+  const trimmed = query.trim().toLowerCase();
+  if (!trimmed) {
+    return true;
+  }
+
+  const username = user.username.toLowerCase();
+  const name = user.name.toLowerCase();
+
+  if (username.startsWith(trimmed) || name.startsWith(trimmed)) {
+    return true;
+  }
+
+  const nameTokens = name.split(/\s+/).filter(Boolean);
+  if (nameTokens.some((token) => token.startsWith(trimmed))) {
+    return true;
+  }
+
+  return name.includes(trimmed) || username.includes(trimmed);
+}
+
+function mergeMentionSuggestions(...lists: MentionSuggestion[][]): MentionSuggestion[] {
+  const seen = new Set<string>();
+  const merged: MentionSuggestion[] = [];
+
+  for (const list of lists) {
+    for (const item of list) {
+      if (!item.id || seen.has(item.id)) {
+        continue;
+      }
+
+      seen.add(item.id);
+      merged.push(item);
+    }
+  }
+
+  return merged;
+}
+
+function filterMentionSuggestions(suggestions: MentionSuggestion[], query: string): MentionSuggestion[] {
+  return mergeMentionSuggestions(suggestions.filter((user) => mentionMatchesQuery(user, query))).slice(0, 8);
+}
+
+function teammatesToMentionSuggestions(
+  members: Array<{ id: string; username: string; name: string }>,
+): MentionSuggestion[] {
+  return members.map((member) => ({
+    id: member.id,
+    username: member.username,
+    name: member.name?.trim() || member.username,
+  }));
 }
 
 const VOICE_RECORDER_MIME_TYPES = [
@@ -207,7 +266,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const [scheduleBusy, setScheduleBusy] = useState(false);
   const [aiBusy, setAiBusy] = useState(false);
   const [mentionQuery, setMentionQuery] = useState<string | null>(null);
-  const [mentionSuggestions, setMentionSuggestions] = useState<MentionSuggestion[]>([]);
+  const [mentionCandidatePool, setMentionCandidatePool] = useState<MentionSuggestion[]>([]);
+  const [mentionRemoteSuggestions, setMentionRemoteSuggestions] = useState<MentionSuggestion[]>([]);
   const [mentionLoading, setMentionLoading] = useState(false);
   const [mentionHighlightIndex, setMentionHighlightIndex] = useState(0);
   const [mentionMenuStyle, setMentionMenuStyle] = useState<{
@@ -391,26 +451,56 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   };
 
   useEffect(() => {
-    if (!conversationId || mentionQuery === null) {
-      setMentionSuggestions([]);
-      setMentionLoading(false);
+    if (!conversationId) {
+      setMentionCandidatePool([]);
+      setMentionRemoteSuggestions([]);
       return;
     }
 
     let cancelled = false;
 
-    const load = async () => {
-      setMentionLoading(true);
-      let suggestions: MentionSuggestion[] = [];
+    const preload = async () => {
+      const membersResult = await loadOrganizationMembers();
+      const fromMembers = membersResult.ok ? teammatesToMentionSuggestions(membersResult.data) : [];
 
-      const result = await loadMentionSuggestions(conversationId, mentionQuery);
-      if (!cancelled && result.ok) {
-        suggestions = parseMentionSuggestions(result.data);
+      const mentionResult = await loadMentionSuggestions(conversationId, '');
+      const fromConversation = mentionResult.ok ? parseMentionSuggestions(mentionResult.data) : [];
+
+      if (!cancelled) {
+        setMentionCandidatePool(mergeMentionSuggestions(fromConversation, fromMembers));
       }
+    };
 
-      if (!cancelled && suggestions.length === 0) {
-        if (mentionQuery.trim().length >= 1) {
-          const searchResult = await loadUserSearch(mentionQuery.trim());
+    void preload();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (!conversationId || mentionQuery === null) {
+      setMentionRemoteSuggestions([]);
+      setMentionLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    const debounceMs = mentionQuery.length === 0 ? 0 : 120;
+
+    const timer = window.setTimeout(() => {
+      const load = async () => {
+        setMentionLoading(true);
+        let suggestions: MentionSuggestion[] = [];
+
+        const result = await loadMentionSuggestions(conversationId, mentionQuery);
+        if (!cancelled && result.ok) {
+          suggestions = parseMentionSuggestions(result.data);
+        }
+
+        const query = mentionQuery.trim();
+        if (!cancelled && suggestions.length === 0 && query.length >= 1) {
+          const searchResult = await loadUserSearch(query);
           if (searchResult.ok) {
             suggestions = searchResult.data.map((person) => ({
               id: person.id,
@@ -418,34 +508,40 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               name: person.name || person.username,
             }));
           }
-        } else {
-          const membersResult = await loadOrganizationMembers();
-          if (membersResult.ok) {
-            suggestions = membersResult.data.map((member) => ({
-              id: member.id,
-              username: member.username,
-              name: member.name || member.username,
-            }));
-          }
         }
-      }
 
-      if (cancelled) return;
+        if (cancelled) {
+          return;
+        }
 
-      setMentionSuggestions(suggestions.slice(0, 8));
-      setMentionLoading(false);
-    };
+        setMentionRemoteSuggestions(suggestions);
+        setMentionCandidatePool((current) => mergeMentionSuggestions(suggestions, current));
+        setMentionLoading(false);
+      };
 
-    void load();
+      void load();
+    }, debounceMs);
 
     return () => {
       cancelled = true;
+      window.clearTimeout(timer);
     };
   }, [conversationId, mentionQuery]);
 
+  const visibleMentionSuggestions = useMemo(() => {
+    if (mentionQuery === null) {
+      return [];
+    }
+
+    return filterMentionSuggestions(
+      mergeMentionSuggestions(mentionRemoteSuggestions, mentionCandidatePool),
+      mentionQuery,
+    );
+  }, [mentionCandidatePool, mentionQuery, mentionRemoteSuggestions]);
+
   useEffect(() => {
     setMentionHighlightIndex(0);
-  }, [mentionQuery, mentionSuggestions]);
+  }, [mentionQuery, visibleMentionSuggestions]);
 
   useLayoutEffect(() => {
     if (mentionQuery === null || !textareaRef.current) {
@@ -459,7 +555,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       top: Math.max(8, rect.top - 8),
       width: Math.max(rect.width, 240),
     });
-  }, [mentionQuery, mentionSuggestions.length, value]);
+  }, [mentionQuery, visibleMentionSuggestions.length, value]);
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
@@ -565,11 +661,12 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       nextCursor = anchor + username.length + 2;
     } else {
       const before = value.slice(0, cursor);
-      const nextBefore = before.replace(MENTION_REPLACE_PATTERN, (_match, prefix) => {
-        return `${prefix}@${username}`;
-      });
+      const match = before.match(MENTION_AT_CURSOR_PATTERN);
+      const nextBefore = match
+        ? `${before.slice(0, before.length - match[0].length)}@${username}`
+        : `${before}@${username}`;
       nextValue = after ? `${nextBefore} ${after}` : `${nextBefore} `;
-      nextCursor = nextValue.length;
+      nextCursor = nextBefore.length + 1;
     }
 
     handleChange(nextValue);
@@ -1347,13 +1444,25 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               handleChange(event.target.value);
               updateMentionState(event.target.value, event.target.selectionStart ?? event.target.value.length);
             }}
+            onKeyUp={(event) => {
+              const target = event.currentTarget;
+              updateMentionState(target.value, target.selectionStart ?? target.value.length);
+            }}
+            onClick={(event) => {
+              const target = event.currentTarget;
+              updateMentionState(target.value, target.selectionStart ?? target.value.length);
+            }}
+            onSelect={(event) => {
+              const target = event.currentTarget;
+              updateMentionState(target.value, target.selectionStart ?? target.value.length);
+            }}
             onPaste={handlePaste}
             onKeyDown={(event) => {
-              if (mentionQuery !== null && mentionSuggestions.length > 0 && !mentionLoading) {
+              if (mentionQuery !== null && visibleMentionSuggestions.length > 0) {
                 if (event.key === 'ArrowDown') {
                   event.preventDefault();
                   setMentionHighlightIndex((current) =>
-                    Math.min(current + 1, mentionSuggestions.length - 1),
+                    Math.min(current + 1, visibleMentionSuggestions.length - 1),
                   );
                   return;
                 }
@@ -1371,10 +1480,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                   return;
                 }
 
-                if (event.key === 'Enter' || event.key === 'Tab') {
+                if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
                   event.preventDefault();
                   const selected =
-                    mentionSuggestions[mentionHighlightIndex] ?? mentionSuggestions[0];
+                    visibleMentionSuggestions[mentionHighlightIndex] ??
+                    visibleMentionSuggestions[0];
 
                   if (selected) {
                     insertMention(selected.username);
@@ -1649,30 +1759,35 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                 transform: 'translateY(-100%)',
               }}
             >
-                {mentionLoading ? (
-                  <p className="px-3 py-2 text-sm text-app-muted">Searching people...</p>
-                ) : mentionSuggestions.length === 0 ? (
-                  <p className="px-3 py-2 text-sm text-app-muted">No people found</p>
+                {visibleMentionSuggestions.length === 0 ? (
+                  <p className="px-3 py-2 text-sm text-app-muted">
+                    {mentionLoading ? 'Searching people…' : 'No people found'}
+                  </p>
                 ) : (
-                  mentionSuggestions.map((user, index) => (
-                    <button
-                      key={user.id}
-                      type="button"
-                      className={`block w-full px-3 py-2 text-left text-sm text-app-text rounded-lg hover:bg-app-chat-hover ${
-                        index === mentionHighlightIndex ? 'bg-app-chat-hover' : ''
-                      }`}
-                      onMouseDown={(event) => {
-                        event.preventDefault();
-                        insertMention(user.username);
-                      }}
-                      onMouseEnter={() => setMentionHighlightIndex(index)}
-                    >
-                      @{user.username}
-                      {user.name && user.name !== user.username ? (
-                        <span className="ml-2 text-app-muted">{user.name}</span>
-                      ) : null}
-                    </button>
-                  ))
+                  <>
+                    {mentionLoading ? (
+                      <p className="px-3 py-1.5 text-xs text-app-muted border-b border-app-border/60">
+                        Searching…
+                      </p>
+                    ) : null}
+                    {visibleMentionSuggestions.map((user, index) => (
+                      <button
+                        key={user.id}
+                        type="button"
+                        className={`block w-full px-3 py-2 text-left text-sm text-app-text rounded-lg hover:bg-app-chat-hover ${
+                          index === mentionHighlightIndex ? 'bg-app-chat-hover' : ''
+                        }`}
+                        onMouseDown={(event) => {
+                          event.preventDefault();
+                          insertMention(user.username);
+                        }}
+                        onMouseEnter={() => setMentionHighlightIndex(index)}
+                      >
+                        <span className="font-medium text-app-text">{user.name}</span>
+                        <span className="ml-2 text-app-muted">@{user.username}</span>
+                      </button>
+                    ))}
+                  </>
                 )}
               </div>,
               document.body,

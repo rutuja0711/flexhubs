@@ -1,13 +1,22 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
+  FiChevronDown,
+  FiChevronRight,
   FiGrid,
   FiLogOut,
   FiMessageSquare,
   FiRefreshCw,
+  FiShield,
   FiUsers,
 } from 'react-icons/fi';
-import type { SuperAdminOrganization, SuperAdminStats } from '../../shared/superadmin';
+import type {
+  SuperAdminOrganization,
+  SuperAdminOrganizationMembersResponse,
+  SuperAdminStats,
+} from '../../shared/superadmin';
+import { formatSuperAdminAccountStatus, formatSuperAdminPlanTier } from '../../shared/superadmin';
 import {
+  loadSuperAdminOrganizationMembers,
   loadSuperAdminOrganizations,
   loadSuperAdminStats,
   suspendSuperAdminOrganization,
@@ -70,19 +79,142 @@ function StatCard({
   );
 }
 
-function StatusBadge({ status, suspended }: { status: string; suspended: boolean }) {
-  const active = !suspended && status.toLowerCase() === 'active';
-
+function OrganizationStatusBadge({ isSuspended }: { isSuspended: boolean }) {
   return (
     <span
       className={
-        active
-          ? 'inline-flex rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400'
-          : 'inline-flex rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-semibold text-amber-300'
+        isSuspended
+          ? 'inline-flex rounded-full bg-rose-500/15 px-2.5 py-1 text-xs font-semibold text-rose-300'
+          : 'inline-flex rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-semibold text-emerald-400'
       }
     >
-      {active ? 'Active' : status}
+      {isSuspended ? 'Suspended' : 'Active'}
     </span>
+  );
+}
+
+function OrganizationMembersPanel({
+  organizationId,
+  onUnauthorized,
+}: {
+  organizationId: string;
+  onUnauthorized: (status?: number) => boolean;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [data, setData] = useState<SuperAdminOrganizationMembersResponse | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError('');
+    setData(null);
+
+    void loadSuperAdminOrganizationMembers(organizationId).then((result) => {
+      if (cancelled) {
+        return;
+      }
+
+      setLoading(false);
+
+      if (!result.ok) {
+        if (onUnauthorized(result.status)) {
+          return;
+        }
+
+        setError(result.error || 'Unable to load members.');
+        return;
+      }
+
+      setData(result.data);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [onUnauthorized, organizationId]);
+
+  if (loading) {
+    return (
+      <div className="px-2 py-4 text-sm text-white/45" role="status">
+        Loading members…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 px-4 py-3 text-sm text-rose-200" role="alert">
+        {error}
+      </div>
+    );
+  }
+
+  if (!data) {
+    return null;
+  }
+
+  const adminUsernames = data.members.filter((m) => m.isOrganizationAdmin).map((m) => m.username);
+
+  return (
+    <div className="space-y-4">
+      <p className="text-sm text-white/55">
+        {data.members.length} member{data.members.length === 1 ? '' : 's'} · {data.adminCount} org admin
+        {data.adminCount === 1 ? '' : 's'}
+        {adminUsernames.length > 0 ? ` (${adminUsernames.join(', ')})` : ''}
+      </p>
+
+      <div className="overflow-x-auto rounded-xl border border-white/[0.06]">
+        <table className="min-w-full text-left text-sm">
+          <thead>
+            <tr className="border-b border-white/[0.06] text-xs uppercase tracking-[0.08em] text-white/40">
+              <th className="px-4 py-2.5 font-semibold">Username</th>
+              <th className="px-4 py-2.5 font-semibold">Email</th>
+              <th className="px-4 py-2.5 font-semibold">Role</th>
+              <th className="px-4 py-2.5 font-semibold">Access</th>
+              <th className="px-4 py-2.5 font-semibold">Account</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.members.map((member) => (
+              <tr key={member.id} className="border-b border-white/[0.04] last:border-b-0">
+                <td className="px-4 py-2.5 font-medium text-white">
+                  <span className="inline-flex items-center gap-2">
+                    {member.username}
+                    {member.isOrganizationAdmin ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-soft">
+                        <FiShield size={10} aria-hidden />
+                        Admin
+                      </span>
+                    ) : null}
+                  </span>
+                </td>
+                <td className="px-4 py-2.5 text-white/70">{member.email}</td>
+                <td className="px-4 py-2.5 text-white/70">{member.organizationRole?.name ?? '—'}</td>
+                <td className="px-4 py-2.5 text-white/70">
+                  {member.isOrganizationAdmin ? 'Org admin' : 'Member'}
+                </td>
+                <td className="px-4 py-2.5 text-white/70">{formatSuperAdminAccountStatus(member.accountStatus)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {data.pendingInvites.length > 0 ? (
+        <div>
+          <h5 className="mb-2 text-xs font-semibold uppercase tracking-[0.1em] text-white/40">Pending invites</h5>
+          <ul className="space-y-1.5 text-sm text-white/70">
+            {data.pendingInvites.map((invite) => (
+              <li key={invite.id}>
+                {invite.email}
+                <span className="text-white/40"> · {invite.role?.name ?? 'No role'}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -146,7 +278,8 @@ export function SuperAdminView({
   const [pageSize] = useState(10);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
-  const [suspendingId, setSuspendingId] = useState<string | null>(null);
+  const [pendingId, setPendingId] = useState<string | null>(null);
+  const [expandedOrgId, setExpandedOrgId] = useState<string | null>(null);
 
   const pageLabel = useMemo(() => {
     if (total === 0) {
@@ -196,11 +329,15 @@ export function SuperAdminView({
       return;
     }
 
-    setOrganizations(result.data.items);
-    setTotal(result.data.total);
-    setTotalPages(result.data.totalPages);
+    setOrganizations(result.data.organizations);
+    setTotal(result.data.pagination.total);
+    setTotalPages(result.data.pagination.totalPages);
     setOrganizationsUpdatedAt(new Date());
   }, [onUnauthorized, page, pageSize]);
+
+  useEffect(() => {
+    setExpandedOrgId(null);
+  }, [page]);
 
   useEffect(() => {
     if (tab === 'overview') {
@@ -223,30 +360,42 @@ export function SuperAdminView({
     void loadOrganizations();
   };
 
-  const handleSuspend = async (organization: SuperAdminOrganization) => {
-    if (organization.suspended) {
-      toast.info('This organization is already suspended.');
-      return;
+  const handleToggleSuspend = async (organization: SuperAdminOrganization) => {
+    const nextSuspended = !organization.isSuspended;
+
+    if (nextSuspended) {
+      const confirmed = await confirm({
+        title: 'Suspend organization?',
+        message: `Suspend "${organization.name}"? Members will lose access until it is restored.`,
+        confirmLabel: 'Suspend',
+        tone: 'danger',
+      });
+
+      if (!confirmed) {
+        return;
+      }
     }
 
-    const confirmed = await confirm({
-      title: 'Suspend organization?',
-      message: `Suspend "${organization.name}"? Members will lose access until it is restored.`,
-      confirmLabel: 'Suspend',
-      tone: 'danger',
-    });
+    const previousSuspended = organization.isSuspended;
 
-    if (!confirmed) {
-      return;
-    }
+    setOrganizations((current) =>
+      current.map((item) =>
+        item.id === organization.id ? { ...item, isSuspended: nextSuspended } : item,
+      ),
+    );
+    setPendingId(organization.id);
 
-    setSuspendingId(organization.id);
+    const result = await suspendSuperAdminOrganization(organization.id, nextSuspended);
 
-    const result = await suspendSuperAdminOrganization(organization.id);
-
-    setSuspendingId(null);
+    setPendingId(null);
 
     if (!result.ok) {
+      setOrganizations((current) =>
+        current.map((item) =>
+          item.id === organization.id ? { ...item, isSuspended: previousSuspended } : item,
+        ),
+      );
+
       if (onUnauthorized(result.status)) {
         return;
       }
@@ -255,11 +404,11 @@ export function SuperAdminView({
       return;
     }
 
-    toast.success(`${organization.name} suspended.`);
-    void loadOrganizations();
-    if (stats) {
-      void loadStats();
-    }
+    toast.success(nextSuspended ? `${organization.name} suspended.` : `${organization.name} unsuspended.`);
+  };
+
+  const toggleExpandedOrganization = (organizationId: string) => {
+    setExpandedOrgId((current) => (current === organizationId ? null : organizationId));
   };
 
   const lastUpdated =
@@ -408,28 +557,57 @@ export function SuperAdminView({
                   </thead>
                   <tbody>
                     {organizations.map((organization) => (
-                      <tr
-                        key={organization.id}
-                        className="border-b border-white/[0.04] transition-colors last:border-b-0 hover:bg-white/[0.02]"
-                      >
-                        <td className="px-5 py-4 font-medium text-white">{organization.name}</td>
-                        <td className="px-5 py-4 font-mono text-xs text-white/45">{organization.slug}</td>
-                        <td className="px-5 py-4 text-white/80">{organization.plan}</td>
-                        <td className="px-5 py-4 text-white/80">{organization.memberCount}</td>
-                        <td className="px-5 py-4">
-                          <StatusBadge status={organization.status} suspended={organization.suspended} />
-                        </td>
-                        <td className="px-5 py-4">
-                          <button
-                            type="button"
-                            disabled={organization.suspended || suspendingId === organization.id}
-                            onClick={() => void handleSuspend(organization)}
-                            className="text-sm font-semibold text-accent-soft transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
-                          >
-                            {suspendingId === organization.id ? 'Suspending…' : 'Suspend'}
-                          </button>
-                        </td>
-                      </tr>
+                      <Fragment key={organization.id}>
+                        <tr className="border-b border-white/[0.04] transition-colors hover:bg-white/[0.02]">
+                          <td className="px-5 py-4 font-medium text-white">{organization.name}</td>
+                          <td className="px-5 py-4 font-mono text-xs text-white/45">{organization.slug}</td>
+                          <td className="px-5 py-4 text-white/80">
+                            {formatSuperAdminPlanTier(organization.planTier)}
+                          </td>
+                          <td className="px-5 py-4 text-white/80">
+                            <button
+                              type="button"
+                              onClick={() => toggleExpandedOrganization(organization.id)}
+                              className="inline-flex items-center gap-1.5 rounded-lg px-1 py-0.5 font-medium text-accent-soft transition-colors hover:bg-white/[0.04] hover:text-white"
+                              aria-expanded={expandedOrgId === organization.id}
+                            >
+                              {expandedOrgId === organization.id ? (
+                                <FiChevronDown size={14} aria-hidden />
+                              ) : (
+                                <FiChevronRight size={14} aria-hidden />
+                              )}
+                              {organization.memberCount}
+                            </button>
+                          </td>
+                          <td className="px-5 py-4">
+                            <OrganizationStatusBadge isSuspended={organization.isSuspended} />
+                          </td>
+                          <td className="px-5 py-4">
+                            <button
+                              type="button"
+                              disabled={pendingId === organization.id}
+                              onClick={() => void handleToggleSuspend(organization)}
+                              className="text-sm font-semibold text-accent-soft transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-35"
+                            >
+                              {pendingId === organization.id
+                                ? 'Saving…'
+                                : organization.isSuspended
+                                  ? 'Unsuspend'
+                                  : 'Suspend'}
+                            </button>
+                          </td>
+                        </tr>
+                        {expandedOrgId === organization.id ? (
+                          <tr className="border-b border-white/[0.04] bg-black/20">
+                            <td colSpan={6} className="px-5 py-4">
+                              <OrganizationMembersPanel
+                                organizationId={organization.id}
+                                onUnauthorized={onUnauthorized}
+                              />
+                            </td>
+                          </tr>
+                        ) : null}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>

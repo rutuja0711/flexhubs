@@ -13,7 +13,7 @@ import {
   type ProfileSettings,
   type UserPresenceStatus,
 } from '../shared/profile';
-import { apiGet, apiPatch, apiPostForm } from './apiRequest';
+import { apiDelete, apiGet, apiPatch, apiPostForm } from './apiRequest';
 
 export async function fetchAvatarStyles(token: string): Promise<ApiResult<AvatarStyleItem[]>> {
   const result = await apiGet<unknown>(
@@ -209,4 +209,27 @@ export async function uploadProfileImage(
 
 export async function fetchUserById(token: string, userId: string): Promise<ApiResult<unknown>> {
   return apiGet<unknown>(`${API_BASE_URL}/users/${userId}`, token, 'User Profile API');
+}
+
+export async function deleteUserAccount(
+  token: string,
+): Promise<ApiResult<{ deleted: boolean }>> {
+  const result = await apiDelete<unknown>(
+    `${API_BASE_URL}/users/me`,
+    token,
+    'Delete Account API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const record = result.data && typeof result.data === 'object' ? (result.data as Record<string, unknown>) : null;
+
+  return {
+    ok: true,
+    data: {
+      deleted: record?.deleted === true || record?.deleted === undefined,
+    },
+  };
 }

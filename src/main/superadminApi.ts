@@ -1,10 +1,14 @@
 import { API_BASE_URL } from '../shared/api';
 import type { ApiResult } from '../shared/api';
 import {
+  normalizeSuperAdminOrganizationMembers,
   normalizeSuperAdminOrganizations,
   normalizeSuperAdminStats,
+  normalizeSuperAdminSuspendResult,
+  type SuperAdminOrganizationMembersResponse,
   type SuperAdminOrganizationsPage,
   type SuperAdminStats,
+  type SuperAdminSuspendOrganizationResult,
 } from '../shared/superadmin';
 import { apiGet, apiPost } from './apiRequest';
 
@@ -45,20 +49,39 @@ export async function fetchSuperAdminOrganizations(
   return { ok: true, data: normalizeSuperAdminOrganizations(result.data) };
 }
 
-export async function suspendSuperAdminOrganization(
+export async function fetchSuperAdminOrganizationMembers(
   token: string,
   organizationId: string,
-): Promise<ApiResult<{ ok: true }>> {
-  const result = await apiPost<unknown>(
-    `${API_BASE_URL}/superadmin/organizations/suspend`,
+): Promise<ApiResult<SuperAdminOrganizationMembersResponse>> {
+  const encoded = encodeURIComponent(organizationId);
+  const result = await apiGet<unknown>(
+    `${API_BASE_URL}/superadmin/organizations/${encoded}/members`,
     token,
-    'Superadmin Suspend Organization API',
-    { organizationId, id: organizationId },
+    'Superadmin Organization Members API',
   );
 
   if (!result.ok) {
     return result;
   }
 
-  return { ok: true, data: { ok: true } };
+  return { ok: true, data: normalizeSuperAdminOrganizationMembers(result.data) };
+}
+
+export async function suspendSuperAdminOrganization(
+  token: string,
+  organizationId: string,
+  suspend: boolean,
+): Promise<ApiResult<SuperAdminSuspendOrganizationResult>> {
+  const result = await apiPost<unknown>(
+    `${API_BASE_URL}/superadmin/organizations/suspend`,
+    token,
+    'Superadmin Suspend Organization API',
+    { organizationId, suspend },
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return { ok: true, data: normalizeSuperAdminSuspendResult(result.data) };
 }

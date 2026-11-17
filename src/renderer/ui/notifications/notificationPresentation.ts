@@ -97,6 +97,14 @@ function bodyWithoutSenderPrefix(body: string): string {
   return body.replace(/^([^:\n]{1,64}):\s/, '').trim();
 }
 
+function parseSenderFromNotificationBody(body: string): string | null {
+  const match = body.trim().match(/^([^:\n]{1,48}):\s([\s\S]+)$/);
+  if (!match) {
+    return null;
+  }
+  return match[1].trim() || null;
+}
+
 function extractDomain(url: string): string {
   try {
     return new URL(url).hostname.replace(/^www\./, '');
@@ -266,13 +274,19 @@ function resolveAvatar(
 
   let title = senderName;
   if (conversation && conversation.kind !== 'direct') {
-    if (
-      resolveNotificationPresentationType(notification) === 'mention' ||
-      resolveNotificationPresentationType(notification) === 'thread_reply'
-    ) {
-      title = senderName;
-    } else if (notification.title.trim().toLowerCase() === 'new message') {
-      title = senderName;
+    const presentationType = resolveNotificationPresentationType(notification);
+    const hubName = conversation.title.trim();
+    if (hubName) {
+      if (
+        presentationType === 'mention' ||
+        presentationType === 'thread_reply' ||
+        presentationType === 'group_chat' ||
+        presentationType === 'hub_message' ||
+        notification.title.trim().toLowerCase() === 'new message' ||
+        parseSenderFromNotificationBody(notification.body) != null
+      ) {
+        title = hubName;
+      }
     }
   }
 

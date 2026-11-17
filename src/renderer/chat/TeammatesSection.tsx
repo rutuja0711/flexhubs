@@ -12,6 +12,8 @@ type TeammatesSectionProps = {
   blockedUserIds?: ReadonlySet<string>;
   blockedByPeerIds?: ReadonlySet<string>;
   presenceByUserId?: ReadonlyMap<string, PresenceStatus>;
+  friendUserIds?: ReadonlySet<string>;
+  hideAddFriend?: boolean;
   onSelect: (memberId: string) => void;
   onAddFriend: (memberId: string) => Promise<void>;
 };
@@ -22,6 +24,8 @@ export function TeammatesSection({
   blockedUserIds,
   blockedByPeerIds,
   presenceByUserId,
+  friendUserIds,
+  hideAddFriend = false,
   onSelect,
   onAddFriend,
 }: TeammatesSectionProps) {
@@ -58,6 +62,8 @@ export function TeammatesSection({
         {teammates.map((teammate) => {
           const isOpening = openingTeammateId === teammate.id;
           const isSendingFriendRequest = pendingFriendId === teammate.id;
+          const isAlreadyFriend = friendUserIds?.has(teammate.id) ?? false;
+          const showAddFriend = !hideAddFriend && !isAlreadyFriend;
           const redactIdentity = shouldRedactUserIdentity(
             teammate.id,
             blockedUsers,
@@ -102,18 +108,20 @@ export function TeammatesSection({
                 ) : null}
               </button>
               <div className="flex shrink-0 items-center gap-0.5">
-                <button
-                  type="button"
-                  aria-label={`Add ${teammate.name} as friend`}
-                  title="Add friend"
-                  disabled={isSendingFriendRequest}
-                  className="flex h-8 w-8 items-center justify-center rounded-xl text-accent transition-colors hover:bg-accent/10 disabled:cursor-wait disabled:opacity-60"
-                  onClick={() => {
-                    void handleAddFriend(teammate.id);
-                  }}
-                >
-                  <FiUserPlus className="h-[17px] w-[17px]" strokeWidth={2} aria-hidden="true" />
-                </button>
+                {showAddFriend ? (
+                  <button
+                    type="button"
+                    aria-label={`Add ${teammate.name} as friend`}
+                    title="Add friend"
+                    disabled={isSendingFriendRequest}
+                    className="flex h-8 w-8 items-center justify-center rounded-xl text-accent transition-colors hover:bg-accent/10 disabled:cursor-wait disabled:opacity-60"
+                    onClick={() => {
+                      void handleAddFriend(teammate.id);
+                    }}
+                  >
+                    <FiUserPlus className="h-[17px] w-[17px]" strokeWidth={2} aria-hidden="true" />
+                  </button>
+                ) : null}
                 <button
                   type="button"
                   aria-label={`Message ${teammate.name}`}

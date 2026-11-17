@@ -49,7 +49,10 @@ import { MessageMenu } from './MessageMenu';
 import { ReactionChip } from './ReactionChip';
 import { ReactionPicker } from './ReactionPicker';
 import { MessageContent, MessageReplyPreview } from './MessageContent';
-import type { ConversationScrollSnapshot } from '../conversationScrollCache';
+import {
+  normalizeConversationScrollSnapshot,
+  type ConversationScrollSnapshot,
+} from '../conversationScrollCache';
 import { JumpToLatestButton } from './JumpToLatestButton';
 import { CalendarEventMessage } from './CalendarEventMessage';
 import { countMessagesBelowAnchor } from './messageListNewBelow';
@@ -1033,6 +1036,11 @@ export function MessageList({
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [newMessagesBelow, setNewMessagesBelow] = useState(0);
   const virtuosoAutoscrollLastAtRef = useRef(0);
+  const scrollPersistReadyRef = useRef(false);
+  const resolvedInitialScrollSnapshot = useMemo(
+    () => normalizeConversationScrollSnapshot(initialScrollSnapshot),
+    [initialScrollSnapshot],
+  );
   const listEntriesFirstKeyRef = useRef<string | null>(null);
   const listEntriesLengthRef = useRef(0);
   const [virtuosoFirstItemIndex, setVirtuosoFirstItemIndex] = useState(
@@ -1054,7 +1062,16 @@ export function MessageList({
     restoredScrollForConversationRef.current = null;
     stickToBottomRef.current = true;
     suppressAutoScrollRef.current = false;
+    scrollPersistReadyRef.current = false;
     setVirtuosoFirstItemIndex(VIRTUOSO_BASE_FIRST_ITEM_INDEX);
+  }, [conversationId]);
+
+  useEffect(() => {
+    const readyTimer = window.setTimeout(() => {
+      scrollPersistReadyRef.current = true;
+    }, 700);
+
+    return () => window.clearTimeout(readyTimer);
   }, [conversationId]);
 
   useEffect(() => {
@@ -1073,7 +1090,7 @@ export function MessageList({
   }, [messages]);
 
   const persistScrollPosition = useCallback(() => {
-    if (!conversationId || !onSaveScrollPosition) {
+    if (!conversationId || !onSaveScrollPosition || !scrollPersistReadyRef.current) {
       return;
     }
 
@@ -1133,14 +1150,14 @@ export function MessageList({
       return undefined;
     }
 
-    if (initialScrollSnapshot && !initialScrollSnapshot.stickToBottom) {
-      return initialScrollSnapshot.scrollTop;
+    if (resolvedInitialScrollSnapshot && !resolvedInitialScrollSnapshot.stickToBottom) {
+      return resolvedInitialScrollSnapshot.scrollTop;
     }
 
     return undefined;
   }, [
-    initialScrollSnapshot,
     pendingScrollToMessageId,
+    resolvedInitialScrollSnapshot,
     scrollToMessageId,
     virtualListEnabled,
   ]);
@@ -1437,13 +1454,13 @@ export function MessageList({
       return;
     }
 
-    if (initialScrollSnapshot && !initialScrollSnapshot.stickToBottom) {
+    if (resolvedInitialScrollSnapshot && !resolvedInitialScrollSnapshot.stickToBottom) {
       stickToBottomRef.current = false;
       suppressAutoScrollRef.current = false;
       return;
     }
 
-    if (initialScrollSnapshot?.stickToBottom) {
+    if (resolvedInitialScrollSnapshot?.stickToBottom) {
       stickToBottomRef.current = true;
       suppressAutoScrollRef.current = false;
       return;
@@ -1457,7 +1474,7 @@ export function MessageList({
 
     stickToBottomRef.current = true;
     suppressAutoScrollRef.current = false;
-  }, [initialScrollSnapshot, pendingScrollToMessageId, scrollToMessageId]);
+  }, [pendingScrollToMessageId, resolvedInitialScrollSnapshot, scrollToMessageId]);
 
   useEffect(() => {
     return () => {
@@ -1631,9 +1648,9 @@ export function MessageList({
       !completedScrollTargetRef.current &&
       conversationId &&
       restoredScrollForConversationRef.current !== conversationId &&
-      initialScrollSnapshot &&
-      Number.isFinite(initialScrollSnapshot.scrollTop) &&
-      !initialScrollSnapshot.stickToBottom;
+      resolvedInitialScrollSnapshot &&
+      Number.isFinite(resolvedInitialScrollSnapshot.scrollTop) &&
+      !resolvedInitialScrollSnapshot.stickToBottom;
 
     if (shouldRestoreScroll) {
       restoredScrollForConversationRef.current = conversationId;
@@ -1648,7 +1665,7 @@ export function MessageList({
         return;
       }
 
-      const targetTop = initialScrollSnapshot.scrollTop;
+      const targetTop = resolvedInitialScrollSnapshot.scrollTop;
       let innerFrame = 0;
       const outerFrame = window.requestAnimationFrame(() => {
         innerFrame = window.requestAnimationFrame(() => {
@@ -1675,6 +1692,30 @@ export function MessageList({
 
     if (virtualListEnabled) {
       lastMessageIdRef.current = lastId;
+
+      const shouldPinToBottomOnMount =
+        isInitialLoad &&
+        !pendingScrollToMessageId &&
+        !scrollToMessageId &&
+        !completedScrollTargetRef.current &&
+        !shouldRestoreScroll &&
+        stickToBottomRef.current;
+
+      if (shouldPinToBottomOnMount) {
+        let innerFrame = 0;
+        const outerFrame = window.requestAnimationFrame(() => {
+          innerFrame = window.requestAnimationFrame(() => {
+            scrollToBottom('auto');
+            requestStickToBottomIfNeeded();
+          });
+        });
+
+        return () => {
+          window.cancelAnimationFrame(outerFrame);
+          window.cancelAnimationFrame(innerFrame);
+        };
+      }
+
       return;
     }
 
@@ -1726,9 +1767,10 @@ export function MessageList({
     };
   }, [
     conversationId,
-    initialScrollSnapshot,
     messages,
     pendingScrollToMessageId,
+    requestStickToBottomIfNeeded,
+    resolvedInitialScrollSnapshot,
     scrollRestoreKey,
     scrollToBottom,
     scrollToMessageId,

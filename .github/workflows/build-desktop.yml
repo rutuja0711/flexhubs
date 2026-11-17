@@ -99,6 +99,10 @@ jobs:
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
         run: npm run package:win
 
+      - name: Verify Windows notification packaging
+        if: matrix.os == 'windows-latest'
+        run: npm run verify:windows-notifications-packaging
+
       - name: Build Windows NSIS installer
         if: matrix.os == 'windows-latest'
         run: npm run installer:win

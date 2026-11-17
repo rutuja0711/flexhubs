@@ -126,6 +126,7 @@ import {
 } from './conversationSnoozeStorage';
 import {
   getConversationScrollSnapshot,
+  normalizeConversationScrollSnapshot,
   setConversationScrollSnapshot,
   type ConversationScrollSnapshot,
 } from './conversationScrollCache';
@@ -145,7 +146,7 @@ import {
   bootstrapPresenceFromConversations,
   mapLivePresenceUpdateStatus,
 } from '../shared/presence';
-import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationByAnyId, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, readConversationSnoozeState, sanitizeDirectDisplayName, withConversationSnoozed, buildConversationSnoozePayload, formatConversationSnoozeUntil, resolveConversationForMessage, resolveTypingConversationId, buildConversationListPreview, areConversationSidebarListsEqual, mergeConversationMemberPreview, collectDirectPeerUserIds, collectSidebarPresenceUserIds, enrichSidebarConversationAvatars, sortSidebarTeammates, lookupPresenceStatus, normalizePresenceUserId, applyPendingHubInvitesToConversations, hubConversationMatchesTarget, isHubChannelConversation, isJoinedHubConversation, markHubConversationsJoined } from '../shared/chat';
+import { mapApiPresenceToStatus, mergeConversationDraftPreviews, seedDraftPreviewCache, buildPlaceholderDirectConversation, dedupeDirectConversations, mergeConversationLists, repairConversationPeerIds, patchDirectConversationMetadata, applyStoredDirectChatMetadata, findConversationByAnyId, findConversationForPeerUserId, reconcileDirectConversations, dropBrokenDirectConversations, isBrokenDirectTitle, readDirectPeerDisplayName, readConversationSnoozeState, sanitizeDirectDisplayName, withConversationSnoozed, buildConversationSnoozePayload, formatConversationSnoozeUntil, resolveConversationForMessage, resolveTypingConversationId, buildConversationListPreview, areConversationSidebarListsEqual, mergeConversationMemberPreview, collectDirectPeerUserIds, collectSidebarPresenceUserIds, enrichSidebarConversationAvatars, sortSidebarTeammates, lookupPresenceStatus, normalizePresenceUserId, applyPendingHubInvitesToConversations, hubConversationMatchesTarget, isHubChannelConversation, isJoinedHubConversation, markHubConversationsJoined, applyDraftPreviewToConversation } from '../shared/chat';
 import { enrichCallHistoryItems, type CallHistoryItem } from '../shared/calls';
 import type {
   MessageItem,
@@ -182,16 +183,16 @@ import {
   hasShownMessageAlert,
   showCalendarEventReminder,
   showIncomingMessageDesktopNotification,
+  dismissDesktopNotificationsForConversation,
 } from './desktopNotifications';
 import {
   ensureDesktopNotificationsReady,
   shouldDeliverDesktopNotifications,
 } from './pushNotifications';
 import {
+  extractConversationId,
   extractConversationIdFromRealtime,
   extractConversationMemberIds,
-  extractDeletedMessageId,
-  extractMessageDeleteScope,
   extractMessageFromRealtimePayload,
   extractPresenceUpdate,
   extractReactionEvent,
@@ -200,9 +201,9 @@ import {
   isCacheInvalidateEvent,
   isConversationUpdateEvent,
   isSameTypingUser,
-  isMessageDeleteEvent,
   isMessageUpdateEvent,
   isNewMessageEvent,
+  resolveRealtimeMessageDeletion,
   isPresenceEvent,
   isReactionEvent,
   isTypingChannelEvent,
@@ -259,13 +260,19 @@ import { clearConversationScrollSnapshot } from './conversationScrollCache';
 import {
   getThreadCacheEntry,
   invalidateThreadCacheEntry,
+  patchThreadCacheDraft,
   patchThreadCacheMessages,
   writeThreadCacheEntry,
   type ThreadCacheStore,
 } from './threadCache';
 import { syncDesktopAppBadge } from './desktopAppBadge';
-import { clearDraftContentCache, setDraftContentCache } from './draftCache';
-import { appendThreadReply, clearThreadRepliesStore } from './threadRepliesStore';
+import {
+  clearDraftContentCache,
+  invalidateDraftCache,
+  peekDraftContent,
+  setDraftContentCache,
+} from './draftCache';
+import { appendThreadReply, applyThreadReplyDeletion, clearThreadRepliesStore } from './threadRepliesStore';
 import {
   perfMeasure,
   perfMeasureAsync,
@@ -504,7 +511,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [updateViewed, setUpdateViewed] = useState(false);
   const [profileInitialTab, setProfileInitialTab] = useState<
-    'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates'
+    'account' | 'profile' | 'appearance' | 'notifications' | 'privacy' | 'updates'
   >('profile');
   const [planComplianceRules, setPlanComplianceRules] = useState<string[]>([]);
   const [planComplianceDismissed, setPlanComplianceDismissed] = useState(() =>
@@ -526,6 +533,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const draftSaveChainRef = useRef<Promise<void>>(Promise.resolve());
   const draftPersistTokenRef = useRef(0);
   const draftDirtyRef = useRef(false);
+  const skipNextDraftSaveRef = useRef(false);
+  const skipNextDraftLoadRef = useRef(false);
   const composerReplyToIdRef = useRef<string | null>(null);
   const typingStopTimerRef = useRef<number | null>(null);
   const typingTimersRef = useRef<Map<string, number>>(new Map());
@@ -534,6 +543,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const draftRef = useRef('');
   const draftPreviewsRef = useRef<Record<string, string | null>>({});
   const threadCacheRef = useRef<ThreadCacheStore>({});
+  const threadCacheSyncTimerRef = useRef<number | null>(null);
   const activeHubDetailsRef = useRef<Record<string, unknown> | null>(null);
   const prefetchInFlightRef = useRef<Set<string>>(new Set());
   const hubAvatarHydrateInFlightRef = useRef<Set<string>>(new Set());
@@ -752,6 +762,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     viewerUserId,
   ]);
 
+  const friendUserIds = useMemo(
+    () => new Set(hubsFriends.map((friend) => friend.id)),
+    [hubsFriends],
+  );
+
   const conversationsForSidebar = useMemo(() => {
     const withHubMembership = applyPendingHubInvitesToConversations(
       conversations,
@@ -847,13 +862,42 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   }, [conversationPlaceholders, conversations, selectedId]);
 
   const applyDraftPreviews = useCallback((items: ConversationItem[]) => {
-    return mergeConversationDraftPreviews(
-      items,
-      draftPreviewsRef.current,
-      selectedIdRef.current,
-      draftRef.current,
+    return mergeConversationDraftPreviews(items, draftPreviewsRef.current);
+  }, []);
+
+  const setDraftPreviewForConversation = useCallback((conversationId: string, preview: string | null) => {
+    const trimmed = preview?.trim();
+
+    if (trimmed) {
+      draftPreviewsRef.current[conversationId] = trimmed;
+      return;
+    }
+
+    draftPreviewsRef.current[conversationId] = null;
+  }, []);
+
+  const isDraftPreviewCleared = useCallback((conversationId: string) => {
+    return (
+      Object.prototype.hasOwnProperty.call(draftPreviewsRef.current, conversationId) &&
+      draftPreviewsRef.current[conversationId] === null
     );
   }, []);
+
+  const notifyDraftPreviewChange = useCallback(
+    (conversationId: string, preview: string | null) => {
+      setDraftPreviewForConversation(conversationId, preview);
+      const normalizedPreview = preview?.trim() || null;
+      setConversations((current) => {
+        const next = current.map((conversation) =>
+          conversation.id === conversationId
+            ? applyDraftPreviewToConversation(conversation, normalizedPreview)
+            : conversation,
+        );
+        return areConversationSidebarListsEqual(current, next) ? current : next;
+      });
+    },
+    [setDraftPreviewForConversation],
+  );
 
   const applyConversationSidebarPatch = useCallback(
     (current: ConversationItem[], map: (items: ConversationItem[]) => ConversationItem[]) => {
@@ -1102,17 +1146,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     }
   }, [conversations, prefetchDirectPeerProfile, user]);
 
-  const setDraftPreviewForConversation = useCallback((conversationId: string, preview: string | null) => {
-    const trimmed = preview?.trim();
-
-    if (trimmed) {
-      draftPreviewsRef.current[conversationId] = trimmed;
-      return;
-    }
-
-    draftPreviewsRef.current[conversationId] = null;
-  }, []);
-
   const syncThreadCache = useCallback(
     (
       conversationId: string,
@@ -1142,11 +1175,21 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     );
     setActiveHubDetails(cached.activeHubDetails);
     setPinnedMessageIds(cached.pinnedMessageIds);
-    setDraft(cached.draft);
-    lastSavedDraftRef.current = cached.draft.trim();
+    const clearedPreview = isDraftPreviewCleared(conversationId);
+    const cachedCompose = peekDraftContent(conversationId);
+    const restoreDraft = clearedPreview ? '' : (cachedCompose ?? cached.draft);
+
+    setDraft(restoreDraft);
+    draftRef.current = restoreDraft;
+    lastSavedDraftRef.current = clearedPreview ? '' : cached.draft.trim();
     lastSavedReplyToIdRef.current = null;
     draftDirtyRef.current = false;
-    setDraftContentCache(conversationId, cached.draft);
+
+    if (restoreDraft.trim()) {
+      setDraftContentCache(conversationId, restoreDraft);
+    } else {
+      clearDraftContentCache(conversationId);
+    }
     setThreadError('');
     setDraftError('');
     setThreadLoading(false);
@@ -1162,7 +1205,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       ),
     );
     return true;
-  }, [applyHasMoreOlderMessages]);
+  }, [applyHasMoreOlderMessages, isDraftPreviewCleared]);
 
   const bumpDraftPersistToken = useCallback(() => {
     draftPersistTokenRef.current += 1;
@@ -1171,7 +1214,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const flushDraftSave = useCallback(
     (conversationId: string) => {
-      if (!conversationId || !draftDirtyRef.current) {
+      if (!conversationId || skipNextDraftSaveRef.current || !draftDirtyRef.current) {
         return;
       }
 
@@ -1186,9 +1229,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         const normalizedReply = replySnapshot;
 
         const applyPreview = (preview: string | null) => {
-          setDraftPreviewForConversation(conversationId, preview);
-          setDraftContentCache(conversationId, preview);
-          setConversations((current) => applyDraftPreviews(current));
+          if (preview?.trim()) {
+            setDraftContentCache(conversationId, preview);
+          } else {
+            clearDraftContentCache(conversationId);
+          }
+          patchThreadCacheDraft(threadCacheRef.current, conversationId, preview?.trim() ? preview : '');
+          notifyDraftPreviewChange(conversationId, preview);
+        };
+
+        const rollbackStaleWrite = async () => {
+          await clearChatDraft(conversationId).catch(() => {});
         };
 
         if (!trimmed) {
@@ -1200,9 +1251,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             return;
           }
 
+          setDraftPreviewForConversation(conversationId, null);
+          patchThreadCacheDraft(threadCacheRef.current, conversationId, '');
+          notifyDraftPreviewChange(conversationId, null);
+
           const result = await clearChatDraft(conversationId);
 
           if (persistToken !== draftPersistTokenRef.current) {
+            await rollbackStaleWrite();
             return;
           }
 
@@ -1212,6 +1268,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             applyPreview(null);
           } else {
             draftDirtyRef.current = true;
+            const restorePreview = lastSavedDraftRef.current.trim() || null;
+            setDraftPreviewForConversation(conversationId, restorePreview);
+            notifyDraftPreviewChange(conversationId, restorePreview);
           }
 
           return;
@@ -1231,6 +1290,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         const result = await saveChatDraft(conversationId, content, normalizedReply);
 
         if (persistToken !== draftPersistTokenRef.current) {
+          await rollbackStaleWrite();
           return;
         }
 
@@ -1248,7 +1308,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         draftDirtyRef.current = true;
       });
     },
-    [applyDraftPreviews, setDraftPreviewForConversation],
+    [notifyDraftPreviewChange],
   );
 
   const clearConversationUnread = useCallback(
@@ -1663,6 +1723,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             return;
           }
 
+          dismissDesktopNotificationsForConversation(conversationId);
+
           for (const notification of removedNotifications) {
             if (!notification.isRead) {
               void markNotificationRead(notification.id).then((readResult) => {
@@ -1991,25 +2053,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           );
 
           if (conversationId) {
-            const conversation = findConversationByAnyId(
-              conversationsRef.current,
-              conversationId,
-            );
-
-            if (conversation) {
-              return conversation;
-            }
-          }
-
-          const title = notification.title.trim();
-
-          if (title) {
             return (
-              conversationsRef.current.find(
-                (item) =>
-                  item.kind === 'direct' &&
-                  item.title.trim().toLowerCase() === title.toLowerCase(),
-              ) ?? null
+              findConversationByAnyId(conversationsRef.current, conversationId) ?? null
             );
           }
 
@@ -2461,7 +2506,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     const [bootstrap, membersResult, friendsResult, orgBootstrapResult] = await Promise.all([
       loadChatBootstrap(),
       inOrg ? loadOrganizationMembers() : Promise.resolve(null),
-      inOrg ? Promise.resolve(null) : loadFriends(),
+      loadFriends(),
       inOrg
         ? loadOrgSubscription().then(async (subscriptionResult) => {
             if (!subscriptionResult.ok || !subscriptionResult.data) {
@@ -2552,6 +2597,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     if (friendsResult?.ok) {
       setHubsFriends(friendsResult.data);
+    } else if (friendsResult && !friendsResult.ok) {
+      handleUnauthorized(friendsResult.status);
     }
 
     if (orgBootstrapResult?.complianceRules.length) {
@@ -2647,7 +2694,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             : [];
 
         const nextMessages = mergeServerMessagesWithLocal(serverMessages, pendingLocalMessages);
-        let nextDraft = cached?.draft ?? '';
         const conversationUnread =
           conversationsRef.current.find((item) => item.id === conversationId)?.unreadCount ?? 0;
 
@@ -2727,19 +2773,26 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           ),
         );
 
-        if (draftResult.ok) {
-          const summary = draftResult.data;
+        let nextDraft = draftRef.current;
 
-          if (summary?.content) {
-            nextDraft = summary.content;
-            setDraft(summary.content);
-            draftRef.current = summary.content;
-            lastSavedDraftRef.current = summary.content.trim();
-            lastSavedReplyToIdRef.current = summary.replyToId ?? null;
-            draftDirtyRef.current = false;
-            setDraftContentCache(conversationId, summary.content);
-            setDraftPreviewForConversation(conversationId, summary.content.trim() || null);
-          } else {
+        if (skipNextDraftLoadRef.current || draftDirtyRef.current) {
+          nextDraft = draftRef.current;
+        } else if (isDraftPreviewCleared(conversationId)) {
+          nextDraft = '';
+          setDraft('');
+          draftRef.current = '';
+          lastSavedDraftRef.current = '';
+          lastSavedReplyToIdRef.current = null;
+          draftDirtyRef.current = false;
+          clearDraftContentCache(conversationId);
+          if (draftResult.ok && draftResult.data?.content?.trim()) {
+            void clearChatDraft(conversationId).catch(() => {});
+          }
+        } else if (draftResult.ok && draftResult.data?.content?.trim()) {
+          const summary = draftResult.data;
+          const serverDraft = summary.content;
+
+          if (!draftRef.current.trim() && isDraftPreviewCleared(conversationId)) {
             nextDraft = '';
             setDraft('');
             draftRef.current = '';
@@ -2747,10 +2800,19 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             lastSavedReplyToIdRef.current = null;
             draftDirtyRef.current = false;
             clearDraftContentCache(conversationId);
-            setDraftPreviewForConversation(conversationId, null);
+            void clearChatDraft(conversationId).catch(() => {});
+          } else {
+            nextDraft = serverDraft;
+            setDraft(serverDraft);
+            draftRef.current = serverDraft;
+            lastSavedDraftRef.current = serverDraft.trim();
+            lastSavedReplyToIdRef.current = summary.replyToId ?? null;
+            draftDirtyRef.current = false;
+            setDraftContentCache(conversationId, serverDraft);
+            notifyDraftPreviewChange(conversationId, serverDraft.trim());
           }
         } else if (!draftResult.ok && draftResult.status !== 404) {
-          // Keep local/cached draft; draft sync failures should not block the composer.
+          nextDraft = draftRef.current;
         } else {
           nextDraft = '';
           setDraft('');
@@ -2759,7 +2821,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           lastSavedReplyToIdRef.current = null;
           draftDirtyRef.current = false;
           clearDraftContentCache(conversationId);
-          setDraftPreviewForConversation(conversationId, null);
+          notifyDraftPreviewChange(conversationId, null);
         }
 
         syncThreadCache(conversationId, {
@@ -2787,7 +2849,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
       }
     },
-    [applyDraftPreviews, applyHasMoreOlderMessages, commitConversationList, handleUnauthorized, hydrateConversationSnooze, patchHubMemberPreview, prefetchDirectPeerProfile, rememberDirectChatMetadata, refreshPresence, setDraftPreviewForConversation, syncConversationReadState, syncThreadCache, user],
+    [applyHasMoreOlderMessages, commitConversationList, handleUnauthorized, hydrateConversationSnooze, isDraftPreviewCleared, notifyDraftPreviewChange, patchHubMemberPreview, prefetchDirectPeerProfile, rememberDirectChatMetadata, refreshPresence, syncConversationReadState, syncThreadCache, user],
   );
 
   const callManager = useCallManager({
@@ -3717,24 +3779,30 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       const incomingMessage = extractMessageFromRealtimePayload(event.payload);
       const activeConversationId = selectedIdRef.current;
 
-      if (incomingMessage && conversationId && isDeletedMessage(incomingMessage)) {
-        const messageId = incomingMessage.id;
-        const applyDelete = (current: MessageItem[]) =>
-          applyMessageDeletionToList(current, messageId, 'everyone');
+      const realtimeDeletion = resolveRealtimeMessageDeletion(type, event.payload, incomingMessage);
+      const deletionConversationId =
+        conversationId ??
+        extractConversationId(event.payload) ??
+        (realtimeDeletion ? extractConversationIdFromRealtime(rawEvent, event.payload) : null);
 
-        if (conversationId === activeConversationId) {
+      if (realtimeDeletion && deletionConversationId) {
+        const { messageId, scope } = realtimeDeletion;
+        const applyDelete = (current: MessageItem[]) =>
+          applyMessageDeletionToList(current, messageId, scope);
+
+        if (deletionConversationId === activeConversationId) {
           setMessages(applyDelete);
-        } else {
-          patchThreadCacheMessages(threadCacheRef.current, conversationId, applyDelete);
         }
 
+        patchThreadCacheMessages(threadCacheRef.current, deletionConversationId, applyDelete);
+        applyThreadReplyDeletion(deletionConversationId, messageId, scope);
         setSavedItems((current) => current.filter((item) => item.messageId !== messageId));
         scheduleConversationsRefresh();
         void syncNotifications();
         return;
       }
 
-      if (incomingMessage && conversationId && isNewMessageEvent(type)) {
+      if (incomingMessage && conversationId && isNewMessageEvent(type, event.payload)) {
         const message = markOwnMessages([incomingMessage], userId)[0];
         const { conversationId: resolvedConversationId, conversation } = resolveConversationForMessage(
           conversationsRef.current,
@@ -3870,6 +3938,22 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       }
 
       if (incomingMessage && conversationId && isMessageUpdateEvent(type, event.payload)) {
+        if (isDeletedMessage(incomingMessage)) {
+          const applyDelete = (current: MessageItem[]) =>
+            applyMessageDeletionToList(current, incomingMessage.id, 'everyone');
+
+          if (conversationId === activeConversationId) {
+            setMessages(applyDelete);
+          }
+
+          patchThreadCacheMessages(threadCacheRef.current, conversationId, applyDelete);
+          applyThreadReplyDeletion(conversationId, incomingMessage.id, 'everyone');
+          setSavedItems((current) => current.filter((item) => item.messageId !== incomingMessage.id));
+          scheduleConversationsRefresh();
+          void syncNotifications();
+          return;
+        }
+
         if (conversationId === activeConversationId) {
           setMessages((current) =>
             current.map((message) =>
@@ -3897,28 +3981,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
 
         scheduleConversationsRefresh();
-        return;
-      }
-
-      if (isMessageDeleteEvent(type, event.payload) && conversationId) {
-        const messageId = extractDeletedMessageId(event.payload, incomingMessage);
-
-        if (messageId) {
-          const deleteScope = extractMessageDeleteScope(event.payload) ?? 'everyone';
-          const applyDelete = (current: MessageItem[]) =>
-            applyMessageDeletionToList(current, messageId, deleteScope);
-
-          if (conversationId === activeConversationId) {
-            setMessages(applyDelete);
-          } else {
-            patchThreadCacheMessages(threadCacheRef.current, conversationId, applyDelete);
-          }
-
-          setSavedItems((current) => current.filter((item) => item.messageId !== messageId));
-        }
-
-        scheduleConversationsRefresh();
-        void syncNotifications();
         return;
       }
 
@@ -4330,6 +4392,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
   const handleDraftChange = useCallback(
     (value: string) => {
+      skipNextDraftSaveRef.current = false;
       draftRef.current = value;
       draftDirtyRef.current = true;
       setDraft(value);
@@ -4338,9 +4401,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return;
       }
 
-      setDraftContentCache(selectedId, value);
-      setDraftPreviewForConversation(selectedId, value.trim() || null);
-      setConversations((current) => applyDraftPreviews(current));
+      if (value.trim()) {
+        setDraftContentCache(selectedId, value);
+      } else {
+        clearDraftContentCache(selectedId);
+        patchThreadCacheDraft(threadCacheRef.current, selectedId, '');
+        if (lastSavedDraftRef.current.trim()) {
+          setDraftPreviewForConversation(selectedId, null);
+          notifyDraftPreviewChange(selectedId, null);
+          flushDraftSave(selectedId);
+        }
+      }
 
       if (value.trim()) {
         pulseTyping(selectedId);
@@ -4348,7 +4419,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         stopTyping(selectedId);
       }
     },
-    [applyDraftPreviews, pulseTyping, selectedId, setDraftPreviewForConversation, stopTyping],
+    [flushDraftSave, notifyDraftPreviewChange, pulseTyping, selectedId, setDraftPreviewForConversation, stopTyping],
   );
 
   const handleComposerBlur = useCallback(() => {
@@ -4495,10 +4566,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    void loadThread(selectedId);
+    const activeConversationId = selectedId;
+    void loadThread(activeConversationId);
 
     return () => {
-      flushDraftSave(selectedId);
+      flushDraftSave(activeConversationId);
     };
   }, [applyHasMoreOlderMessages, flushDraftSave, loadThread, selectedId]);
 
@@ -4586,13 +4658,37 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return;
     }
 
-    syncThreadCache(selectedId, {
+    const conversationId = selectedId;
+    const snapshot = {
       messages,
       pinnedMessageIds,
       activeHubDetails,
       draft,
       hasMoreOlderMessages,
-    });
+    };
+
+    if (threadCacheSyncTimerRef.current) {
+      window.clearTimeout(threadCacheSyncTimerRef.current);
+    }
+
+    threadCacheSyncTimerRef.current = window.setTimeout(() => {
+      threadCacheSyncTimerRef.current = null;
+      syncThreadCache(conversationId, snapshot);
+    }, 350);
+
+    return () => {
+      if (threadCacheSyncTimerRef.current) {
+        window.clearTimeout(threadCacheSyncTimerRef.current);
+        threadCacheSyncTimerRef.current = null;
+      }
+      syncThreadCache(conversationId, {
+        messages: messagesRef.current,
+        pinnedMessageIds,
+        activeHubDetails: activeHubDetailsRef.current,
+        draft: draftRef.current,
+        hasMoreOlderMessages,
+      });
+    };
   }, [
     activeHubDetails,
     draft,
@@ -4636,10 +4732,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     const outgoingId = selectedIdRef.current;
 
     if (outgoingId && outgoingId !== conversationId) {
-      setDraftPreviewForConversation(outgoingId, draftRef.current.trim() || null);
+      bumpDraftPersistToken();
       flushDraftSave(outgoingId);
-      setConversations((current) => applyDraftPreviews(current));
     }
+
+    skipNextDraftLoadRef.current = false;
 
     const shouldUseCache = !options?.forceReload;
     const hasCachedThread = shouldUseCache && hydrateThreadFromCache(conversationId);
@@ -4649,9 +4746,30 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       setMessages([]);
       setActiveHubDetails(null);
       setPinnedMessageIds([]);
-      setDraft('');
       setThreadError('');
       setThreadUnreadAnchorId(null);
+
+      const clearedPreview = isDraftPreviewCleared(conversationId);
+      const cachedDraft = peekDraftContent(conversationId);
+      const listPreview =
+        conversationsRef.current.find((item) => item.id === conversationId)?.draftPreview?.trim() ??
+        '';
+      const previewDraft = clearedPreview ? '' : (cachedDraft ?? listPreview);
+
+      if (previewDraft) {
+        setDraft(previewDraft);
+        draftRef.current = previewDraft;
+        lastSavedDraftRef.current = previewDraft.trim();
+        lastSavedReplyToIdRef.current = null;
+        draftDirtyRef.current = false;
+        setDraftContentCache(conversationId, previewDraft);
+      } else {
+        setDraft('');
+        draftRef.current = '';
+        lastSavedDraftRef.current = '';
+        lastSavedReplyToIdRef.current = null;
+        draftDirtyRef.current = false;
+      }
     }
 
     setMainView('chat');
@@ -4963,6 +5081,13 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     const result = await sendFriendRequest(memberId);
 
     if (!result.ok) {
+      const message = result.error?.toLowerCase() ?? '';
+      if (message.includes('already friend')) {
+        const friendsRefresh = await loadFriends();
+        if (friendsRefresh.ok) {
+          setHubsFriends(friendsRefresh.data);
+        }
+      }
       toast.error(result.error);
       throw new Error(result.error);
     }
@@ -5042,6 +5167,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       poll: null,
     };
 
+    skipNextDraftSaveRef.current = true;
+    skipNextDraftLoadRef.current = true;
     bumpDraftPersistToken();
     draftDirtyRef.current = false;
     draftRef.current = '';
@@ -5049,9 +5176,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     lastSavedDraftRef.current = '';
     lastSavedReplyToIdRef.current = null;
     setDraftError('');
-    clearDraftContentCache(conversationId);
-    setDraftPreviewForConversation(conversationId, null);
-    setConversations((current) => applyDraftPreviews(current));
+    invalidateDraftCache(conversationId);
+    notifyDraftPreviewChange(conversationId, null);
     stopTyping(conversationId);
     setMessages((current) => appendMessage(current, optimistic, userId));
     touchConversationWithMessage(conversationId, optimistic, false);
@@ -5063,21 +5189,21 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     if (handleUnauthorized(result.status)) {
       setMessages((current) => current.filter((message) => message.id !== localId));
+      skipNextDraftSaveRef.current = false;
       draftRef.current = content;
       draftDirtyRef.current = true;
       setDraft(content);
-      setDraftPreviewForConversation(conversationId, content.trim() || null);
-      setConversations((current) => applyDraftPreviews(current));
+      setDraftContentCache(conversationId, content);
       return;
     }
 
     if (!result.ok) {
       setDraftError(result.error);
+      skipNextDraftSaveRef.current = false;
       draftRef.current = content;
       draftDirtyRef.current = true;
       setDraft(content);
-      setDraftPreviewForConversation(conversationId, content.trim() || null);
-      setConversations((current) => applyDraftPreviews(current));
+      setDraftContentCache(conversationId, content);
       setMessages((current) => markMessageStatus(current, localId, 'failed'));
       return;
     }
@@ -5551,15 +5677,16 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       threadRootId,
     });
     if (!threadRootId) {
+      skipNextDraftSaveRef.current = true;
+      skipNextDraftLoadRef.current = true;
       bumpDraftPersistToken();
       draftDirtyRef.current = false;
       draftRef.current = '';
       setDraft('');
       lastSavedDraftRef.current = '';
       lastSavedReplyToIdRef.current = null;
-      clearDraftContentCache(conversationId);
-      setDraftPreviewForConversation(conversationId, null);
-      setConversations((current) => applyDraftPreviews(current));
+      invalidateDraftCache(conversationId);
+      notifyDraftPreviewChange(conversationId, null);
       void clearChatDraft(conversationId);
     }
     stopTyping(conversationId);
@@ -6419,23 +6546,54 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     setSavedItems((current) => current.filter((item) => item.messageId !== messageId));
 
     if (scope === 'everyone') {
-      let isUndone = false;
+      let undone = false;
       toast.success('Message deleted for everyone', {
         action: {
           label: 'Undo',
           onClick: () => {
-            isUndone = true;
+            undone = true;
             setMessages(originalMessages);
             setSavedItems(originalSaved);
           },
         },
       });
 
-      await new Promise((resolve) => setTimeout(resolve, 5000));
+      const result = await deleteChatMessage(selectedId, messageId, scope);
 
-      if (isUndone) {
+      if (undone) {
+        if (!result.ok) {
+          return;
+        }
+        toast.info('Undo only restored this view. Ask the sender to resend if the message was already removed for everyone.');
         return;
       }
+
+      if (!result.ok) {
+        if (handleUnauthorized(result.status)) {
+          return;
+        }
+
+        if (isAlreadyDeletedForEveryoneError(result.error)) {
+          return;
+        }
+
+        setMessages(originalMessages);
+        setSavedItems(originalSaved);
+        toast.error(result.error);
+        return;
+      }
+
+      if (savedMessageIds.has(messageId)) {
+        void unsaveChatMessage(selectedId, messageId);
+      }
+
+      patchThreadCacheMessages(
+        threadCacheRef.current,
+        selectedId,
+        (current) => applyMessageDeletionToList(current, messageId, 'everyone'),
+      );
+      applyThreadReplyDeletion(selectedId, messageId, 'everyone');
+      return;
     }
 
     const result = await deleteChatMessage(selectedId, messageId, scope);
@@ -7107,6 +7265,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           user={user}
           sessionNotificationSettings={notificationSettings}
           onLogout={() => void handleSignOut()}
+          onAccountDeleted={() => {
+            clearProfileCache();
+            void window.electronAPI?.setAppBadge?.({ count: 0, mentionUnread: 0 });
+            onSessionExpired();
+          }}
           onUnauthorized={handleUnauthorized}
           onUserUpdated={() => {
             void getCurrentUser().then(async (result) => {
@@ -7201,7 +7364,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           initialScrollSnapshot={
             focusMessageId || !selectedId
               ? null
-              : getConversationScrollSnapshot(selectedId) ?? null
+              : normalizeConversationScrollSnapshot(getConversationScrollSnapshot(selectedId)) ?? null
           }
           hasMoreOlder={hasMoreOlderMessages}
           loadingOlder={loadingOlderMessages}
@@ -7382,6 +7545,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }}
         onTeammateSelect={handleTeammateSelect}
         onTeammateAddFriend={handleTeammateAddFriend}
+        friendUserIds={friendUserIds}
         onSelectPerson={(person) => {
           void handleSelectPerson(person);
         }}

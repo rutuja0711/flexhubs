@@ -79,3 +79,18 @@ export function patchThreadCacheMessages(
   entry.messages = updater(entry.messages);
   entry.fetchedAt = Date.now();
 }
+
+export function patchThreadCacheDraft(
+  store: ThreadCacheStore,
+  conversationId: string,
+  draft: string,
+): void {
+  const entry = store[conversationId];
+
+  if (!entry) {
+    return;
+  }
+
+  entry.draft = draft;
+  entry.fetchedAt = Date.now();
+}

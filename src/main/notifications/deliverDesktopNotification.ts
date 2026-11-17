@@ -33,7 +33,18 @@ export function deliverDesktopNotification(
   const title = payloadTitle(payload);
   const body = payloadBody(payload);
 
-  if (showNativeDesktopNotification(title, body, onClick)) {
+  const tag = typeof payload.tag === 'string' ? payload.tag.trim() : '';
+  const conversationId =
+    typeof payload.conversationId === 'string' || payload.conversationId === null
+      ? payload.conversationId
+      : undefined;
+
+  if (
+    showNativeDesktopNotification(title, body, onClick, {
+      tag: tag || undefined,
+      conversationId,
+    })
+  ) {
     return { ok: true, channel: 'native' };
   }
 

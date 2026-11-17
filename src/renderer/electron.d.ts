@@ -121,10 +121,15 @@ declare global {
         page: number,
         pageSize?: number,
       ) => Promise<ApiResult<import('../shared/superadmin').SuperAdminOrganizationsPage>>;
+      getSuperAdminOrganizationMembers: (
+        token: string,
+        organizationId: string,
+      ) => Promise<ApiResult<import('../shared/superadmin').SuperAdminOrganizationMembersResponse>>;
       suspendSuperAdminOrganization: (
         token: string,
         organizationId: string,
-      ) => Promise<ApiResult<{ ok: true }>>;
+        suspend: boolean,
+      ) => Promise<ApiResult<import('../shared/superadmin').SuperAdminSuspendOrganizationResult>>;
       getConversations: (
         token: string,
         viewerUserId?: string | null,
@@ -478,6 +483,7 @@ declare global {
         updatesJson: string,
       ) => Promise<ApiResult<ProfileSettings>>;
       updateUserProfile: (token: string, updatesJson: string) => Promise<ApiResult<unknown>>;
+      deleteUserAccount: (token: string) => Promise<ApiResult<{ deleted: boolean }>>;
       getUserStatus: (token: string) => Promise<ApiResult<unknown>>;
       updateUserStatus: (
         token: string,
@@ -617,6 +623,10 @@ declare global {
       showDesktopNotification: (
         payload: any
       ) => Promise<{ ok: boolean; error?: string }>;
+      dismissDesktopNotification: (payload: {
+        tag?: string;
+        conversationId?: string;
+      }) => Promise<{ ok: boolean }>;
       logRendererDebug: (message: string) => Promise<{ ok: boolean }>;
       onDesktopNotificationClick: (
         callback: (

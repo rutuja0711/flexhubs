@@ -266,6 +266,11 @@ export function isDeletedMessage(
   return message.deletedForEveryone || message.content.trim() === DELETED_MESSAGE_TEXT;
 }
 
+/** True when a raw API / realtime payload row represents delete-for-everyone. */
+export function recordIndicatesDeletedForEveryone(record: Record<string, unknown>): boolean {
+  return readDeletedForEveryone(record);
+}
+
 export function isAlreadyDeletedForEveryoneError(error: string): boolean {
   return /already deleted/i.test(error);
 }

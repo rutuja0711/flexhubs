@@ -1,5 +1,10 @@
 import type { ApiResult } from '../shared/api';
-import type { SuperAdminOrganizationsPage, SuperAdminStats } from '../shared/superadmin';
+import type {
+  SuperAdminOrganizationMembersResponse,
+  SuperAdminOrganizationsPage,
+  SuperAdminStats,
+  SuperAdminSuspendOrganizationResult,
+} from '../shared/superadmin';
 import { getStoredToken } from './authApi';
 
 function unavailable<T>(): ApiResult<T> {
@@ -37,12 +42,25 @@ export async function loadSuperAdminOrganizations(
   return withToken((token) => window.electronAPI.getSuperAdminOrganizations(token, page, pageSize));
 }
 
+export async function loadSuperAdminOrganizationMembers(
+  organizationId: string,
+): Promise<ApiResult<SuperAdminOrganizationMembersResponse>> {
+  if (!window.electronAPI?.getSuperAdminOrganizationMembers) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getSuperAdminOrganizationMembers(token, organizationId));
+}
+
 export async function suspendSuperAdminOrganization(
   organizationId: string,
-): Promise<ApiResult<{ ok: true }>> {
+  suspend: boolean,
+): Promise<ApiResult<SuperAdminSuspendOrganizationResult>> {
   if (!window.electronAPI?.suspendSuperAdminOrganization) {
     return unavailable();
   }
 
-  return withToken((token) => window.electronAPI.suspendSuperAdminOrganization(token, organizationId));
+  return withToken((token) =>
+    window.electronAPI.suspendSuperAdminOrganization(token, organizationId, suspend),
+  );
 }

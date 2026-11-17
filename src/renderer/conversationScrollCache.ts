@@ -11,6 +11,27 @@ export function getConversationScrollSnapshot(
   return scrollByConversationId.get(conversationId);
 }
 
+const BOGUS_SCROLL_TOP_MAX_PX = 8;
+
+export function normalizeConversationScrollSnapshot(
+  snapshot: ConversationScrollSnapshot | null | undefined,
+): ConversationScrollSnapshot | null {
+  if (!snapshot) {
+    return null;
+  }
+
+  if (snapshot.stickToBottom) {
+    return snapshot;
+  }
+
+  // Virtuoso often emits scrollTop≈0 before layout in production; don't restore that as "read history at top".
+  if (snapshot.scrollTop <= BOGUS_SCROLL_TOP_MAX_PX) {
+    return null;
+  }
+
+  return snapshot;
+}
+
 export function setConversationScrollSnapshot(
   conversationId: string,
   snapshot: ConversationScrollSnapshot,
@@ -23,9 +44,16 @@ export function setConversationScrollSnapshot(
     return;
   }
 
+  const normalized =
+    snapshot.stickToBottom
+      ? { scrollTop: snapshot.scrollTop, stickToBottom: true as const }
+      : snapshot.scrollTop <= BOGUS_SCROLL_TOP_MAX_PX
+        ? { scrollTop: 0, stickToBottom: true as const }
+        : snapshot;
+
   scrollByConversationId.set(conversationId, {
-    scrollTop: snapshot.scrollTop,
-    stickToBottom: snapshot.stickToBottom,
+    scrollTop: normalized.scrollTop,
+    stickToBottom: normalized.stickToBottom,
   });
 }
 

@@ -919,6 +919,14 @@ export async function saveUserProfile(
   return withToken((token) => window.electronAPI.updateUserProfile(token, JSON.stringify(payload)));
 }
 
+export async function deleteUserAccount(): Promise<ApiResult<{ deleted: boolean }>> {
+  if (!window.electronAPI?.deleteUserAccount) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.deleteUserAccount(token));
+}
+
 export async function loadCurrentUserStatus(): Promise<ApiResult<unknown>> {
   if (!window.electronAPI?.getUserStatus) {
     return unavailable();

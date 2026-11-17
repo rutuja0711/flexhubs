@@ -45,7 +45,7 @@ export function PresenceStatusIcon({
   }
 
   if (label === 'Busy') {
-    return <span className={`${base} bg-red-500`} aria-hidden="true" />;
+    return <span className={`${base} ${presenceDotClassForUiLabel('Busy')}`} aria-hidden="true" />;
   }
 
   if (label === 'Do not disturb') {

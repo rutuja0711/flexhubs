@@ -32,7 +32,20 @@ import {
   setAuthenticatedMediaRequestToken,
 } from './main/authenticatedMediaRequest';
 import { API_BASE_URL } from './shared/auth';
-import { DESKTOP_APP_BUNDLE_ID } from './shared/desktopAppId';
+import { DESKTOP_APP_BUNDLE_ID, WINDOWS_NOTIFICATION_DISPLAY_NAME } from './shared/desktopAppId';
+import {
+  resolveAppIconIcnsPath,
+  resolveAppIconImage,
+  resolveAppIconPngPath,
+} from './main/appBrandAssets';
+import {
+  getWindowsNotificationIdentityStatus,
+  registerWindowsNotificationIdentity,
+} from './main/platform/windowsNotificationIdentity';
+import {
+  closeDesktopNotificationByTag,
+  closeDesktopNotificationsForConversation,
+} from './main/notifications/nativeNotification';
 import {
   fetchInviteRegistrationDetails,
   performForgotPassword,
@@ -153,6 +166,7 @@ import {
   fetchOrganizationMembersDetailed,
   fetchUserById,
   updateNotificationSettings,
+  deleteUserAccount,
   updateUserProfile,
   updateUserStatus,
   updateUserTimezone,
@@ -205,6 +219,7 @@ import {
   updateOrganizationRole,
 } from './main/organizationsApi';
 import {
+  fetchSuperAdminOrganizationMembers,
   fetchSuperAdminOrganizations,
   fetchSuperAdminStats,
   suspendSuperAdminOrganization,
@@ -238,51 +253,6 @@ let savedMainBounds: Electron.Rectangle | null = null;
 let savedCallWindowBounds: Electron.Rectangle | null = null;
 let callWindowWasNativeFullscreen = false;
 const DEFAULT_MIN_SIZE = { width: 960, height: 640 };
-function resolveAssetsDir(): string {
-  if (app.isPackaged) {
-    return path.join(process.resourcesPath, 'assets');
-  }
-
-  const fromAppPath = path.join(app.getAppPath(), 'assets');
-  if (fs.existsSync(fromAppPath)) {
-    return fromAppPath;
-  }
-
-  return path.join(__dirname, '..', '..', 'assets');
-}
-
-function resolveAppIconPngPath(): string {
-  const assetsDir = resolveAssetsDir();
-  const candidate = path.join(assetsDir, 'logo-symbol.png');
-  return fs.existsSync(candidate) ? candidate : path.join(assetsDir, 'logo-symbol.png');
-}
-
-function resolveAppIconImage(): Electron.NativeImage | undefined {
-  const assetsDir = resolveAssetsDir();
-  const candidates = [
-    path.join(assetsDir, 'logo-symbol.png'),
-    path.join(assetsDir, 'logo-symbol.icns'),
-  ];
-
-  for (const iconPath of candidates) {
-    if (!fs.existsSync(iconPath)) {
-      continue;
-    }
-
-    const icon = nativeImage.createFromPath(iconPath);
-    if (!icon.isEmpty()) {
-      return icon;
-    }
-  }
-
-  return undefined;
-}
-
-function resolveAppIconIcnsPath(): string | undefined {
-  const icnsPath = path.join(resolveAssetsDir(), 'logo-symbol.icns');
-  return fs.existsSync(icnsPath) ? icnsPath : undefined;
-}
-
 function buildAppIconIcnsFromPng(): string | undefined {
   if (process.platform !== 'darwin') {
     return undefined;
@@ -376,35 +346,6 @@ function applyNativeTheme(mode: 'light' | 'dark'): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setBackgroundColor(resolveWindowBackgroundColor());
   }
-}
-
-function notificationOptions(title: string, body: string): Electron.NotificationConstructorOptions {
-  const options: Electron.NotificationConstructorOptions = {
-    title,
-    body,
-    silent: false,
-  };
-
-  if (process.platform === 'darwin') {
-    options.timeoutType = 'never';
-  } else if (process.platform === 'win32') {
-    (options as Electron.NotificationConstructorOptions & { requireInteraction?: boolean }).requireInteraction =
-      true;
-  }
-
-  // macOS uses the app bundle icon on the left; setting `icon` adds a right-side thumbnail.
-  if (process.platform !== 'darwin') {
-    const iconImage = resolveAppIconImage();
-    const iconPath = resolveAppIconPngPath();
-
-    if (iconImage && !iconImage.isEmpty()) {
-      options.icon = iconImage;
-    } else if (fs.existsSync(iconPath)) {
-      options.icon = iconPath;
-    }
-  }
-
-  return options;
 }
 
 if (handleSquirrelStartup()) {
@@ -699,6 +640,10 @@ function resolveNotificationSettingsAppName(): string {
     return 'Electron';
   }
 
+  if (process.platform === 'win32' && app.isPackaged) {
+    return WINDOWS_NOTIFICATION_DISPLAY_NAME;
+  }
+
   return app.getName();
 }
 
@@ -737,19 +682,34 @@ function logNotificationStartupHint(): void {
 
   console.log('[FlexHubs] Native notifications are supported in the main process.');
 
-  if (process.platform !== 'darwin') {
+  const appName = resolveNotificationSettingsAppName();
+
+  if (process.platform === 'darwin') {
+    console.log(
+      `[FlexHubs] Desktop alerts — enable "${appName}" in System Settings → Notifications (binary: ${process.execPath}).`,
+    );
+
+    if (!app.isPackaged) {
+      console.log(
+        '[FlexHubs] Dev note: npm start runs unsigned Electron. If alerts never appear, enable Electron in Notifications or test with a signed packaged build.',
+      );
+    }
     return;
   }
 
-  const appName = resolveNotificationSettingsAppName();
-  console.log(
-    `[FlexHubs] Desktop alerts — enable "${appName}" in System Settings → Notifications (binary: ${process.execPath}).`,
-  );
-
-  if (!app.isPackaged) {
+  if (process.platform === 'win32') {
     console.log(
-      '[FlexHubs] Dev note: npm start runs unsigned Electron. If alerts never appear, enable Electron in Notifications or test with a signed packaged build.',
+      `[FlexHubs] Windows toasts — enable "${appName}" in Settings → System → Notifications (AppUserModelID: ${DESKTOP_APP_BUNDLE_ID}).`,
     );
+
+    if (app.isPackaged) {
+      const status = getWindowsNotificationIdentityStatus();
+      if (!status.ok) {
+        console.warn(
+          `[FlexHubs] Windows toast shell registration incomplete — shortcut: ${status.shellShortcut ? 'ok' : 'missing'}, script: ${status.aumidScript ? 'ok' : 'missing'}.`,
+        );
+      }
+    }
   }
 }
 
@@ -891,6 +851,10 @@ app.whenReady().then(() => {
   patchDevElectronNotificationIcon();
   applyApplicationIcon();
 
+  if (process.platform === 'win32' && app.isPackaged) {
+    registerWindowsNotificationIdentity();
+  }
+
   session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
     callback(isAllowedSessionPermission(permission));
   });
@@ -971,6 +935,21 @@ app.whenReady().then(() => {
         }
       }),
   );
+
+  ipcMain.handle('desktop:notify-dismiss', (_event, payload: { tag?: string; conversationId?: string }) => {
+    const tag = payload?.tag?.trim();
+    const conversationId = payload?.conversationId?.trim();
+
+    if (tag) {
+      closeDesktopNotificationByTag(tag);
+    }
+
+    if (conversationId) {
+      closeDesktopNotificationsForConversation(conversationId);
+    }
+
+    return { ok: true };
+  });
 
   setupApplicationMenu();
   createWindow();

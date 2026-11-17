@@ -230,6 +230,7 @@ export type UserProfileState = {
   statusMessage: string;
   timezone: string;
   organizationRole: string | null;
+  organizationName: string | null;
   inOrganization: boolean;
   shareOnlineStatus: boolean;
 };
@@ -631,6 +632,10 @@ export function normalizeUserProfile(user: unknown, settings?: ProfileSettings):
     statusMessage: readUserStatusMessage(record),
     timezone: readString(record.timezone) ?? readString(record.timeZone) ?? 'UTC',
     organizationRole: roleName,
+    organizationName:
+      readString(asRecord(record.organization)?.name) ??
+      readString(record.organizationName) ??
+      null,
     inOrganization: Boolean(
       record.inOrganization === true ||
         record.organizationId ||

@@ -1,4 +1,4 @@
-import type { MessageItem } from '../shared/messages';
+import { applyMessageDeletionToList, type MessageItem } from '../shared/messages';
 
 type ThreadKey = string;
 
@@ -85,4 +85,27 @@ export function subscribeThreadReplies(listener: (key: ThreadKey) => void): () =
 
 export function clearThreadRepliesStore(): void {
   repliesByThread.clear();
+}
+
+export function applyThreadReplyDeletion(
+  conversationId: string,
+  messageId: string,
+  scope: 'me' | 'everyone',
+): void {
+  const prefix = `${conversationId}:`;
+
+  for (const [key, replies] of repliesByThread.entries()) {
+    if (!key.startsWith(prefix)) {
+      continue;
+    }
+
+    const next = applyMessageDeletionToList(replies, messageId, scope);
+
+    if (next === replies) {
+      continue;
+    }
+
+    repliesByThread.set(key, next);
+    notify(key);
+  }
 }

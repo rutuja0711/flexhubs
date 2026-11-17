@@ -124,18 +124,61 @@ export type SuperAdminOrganization = {
   id: string;
   name: string;
   slug: string;
-  plan: string;
+  planTier: string;
+  subscriptionStatus: string;
+  isSuspended: boolean;
   memberCount: number;
-  status: string;
-  suspended: boolean;
+  createdAt: string;
 };
 
 export type SuperAdminOrganizationsPage = {
-  items: SuperAdminOrganization[];
-  page: number;
-  pageSize: number;
-  total: number;
-  totalPages: number;
+  organizations: SuperAdminOrganization[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+  };
+};
+
+export type SuperAdminOrganizationMember = {
+  id: string;
+  username: string;
+  email: string;
+  accountStatus: 'ACTIVE' | 'INVITED' | 'DELETED';
+  isOrganizationAdmin: boolean;
+  organizationRole: { id: string; name: string } | null;
+  joinedAt: string;
+};
+
+export type SuperAdminOrganizationPendingInvite = {
+  id: string;
+  email: string;
+  status: 'PENDING' | 'ACCEPTED' | 'REVOKED' | 'REJECTED';
+  role: { id: string; name: string } | null;
+  invitedAt: string;
+};
+
+export type SuperAdminOrganizationMembersResponse = {
+  organization: {
+    id: string;
+    name: string;
+    slug: string;
+    isSuspended: boolean;
+    planTier: string;
+    subscriptionStatus: string;
+  };
+  members: SuperAdminOrganizationMember[];
+  pendingInvites: SuperAdminOrganizationPendingInvite[];
+  adminCount: number;
+};
+
+export type SuperAdminSuspendOrganizationResult = {
+  organization: {
+    id: string;
+    name: string;
+    isSuspended: boolean;
+  };
 };
 
 function readCount(record: Record<string, unknown>, keys: string[]): number {
@@ -161,16 +204,44 @@ export function normalizeSuperAdminStats(payload: unknown): SuperAdminStats {
   };
 }
 
+function readRoleRef(record: Record<string, unknown>): { id: string; name: string } | null {
+  const role = asRecord(record.role) ?? asRecord(record.organizationRole);
+
+  if (!role) {
+    return null;
+  }
+
+  const id = readString(role.id) ?? '';
+  const name = readString(role.name);
+
+  if (!name) {
+    return null;
+  }
+
+  return { id: id || name, name };
+}
+
+function readAccountStatus(value: unknown): SuperAdminOrganizationMember['accountStatus'] {
+  const raw = readString(value)?.toUpperCase();
+
+  if (raw === 'INVITED' || raw === 'DELETED') {
+    return raw;
+  }
+
+  return 'ACTIVE';
+}
+
 function normalizeOrganization(record: Record<string, unknown>, index: number): SuperAdminOrganization {
-  const statusRaw =
-    readString(record.status) ??
-    readString(record.state) ??
-    (record.suspended === true ? 'Suspended' : 'Active');
-  const normalizedStatus = statusRaw.trim() || 'Active';
-  const suspended =
-    record.suspended === true ||
-    normalizedStatus.toLowerCase() === 'suspended' ||
-    normalizedStatus.toLowerCase() === 'inactive';
+  const isSuspended =
+    record.isSuspended === true ||
+    record.suspended === true;
+
+  const planTier =
+    readString(record.planTier) ??
+    readString(record.plan) ??
+    readString(record.planName) ??
+    readString(asRecord(record.plan)?.name) ??
+    '—';
 
   return {
     id:
@@ -184,50 +255,152 @@ function normalizeOrganization(record: Record<string, unknown>, index: number): 
       readString(record.title) ??
       'Untitled organization',
     slug: readString(record.slug) ?? readString(record.handle) ?? '—',
-    plan:
-      readString(record.plan) ??
-      readString(record.planName) ??
-      readString(asRecord(record.plan)?.name) ??
-      '—',
+    planTier,
+    subscriptionStatus: readString(record.subscriptionStatus) ?? '—',
+    isSuspended,
     memberCount:
       readNumber(record.memberCount) ??
       readNumber(record.members) ??
       readNumber(record.membersCount) ??
       readNumber(record.userCount) ??
       0,
-    status: suspended ? 'Suspended' : normalizedStatus,
-    suspended,
+    createdAt:
+      readString(record.createdAt) ??
+      readString(record.created_at) ??
+      '',
   };
 }
 
 export function normalizeSuperAdminOrganizations(payload: unknown): SuperAdminOrganizationsPage {
   const record = asRecord(payload) ?? {};
-  const items = extractArray(payload, ['organizations', 'items', 'data', 'results'])
+  const organizations = extractArray(payload, ['organizations', 'items', 'data', 'results'])
     .map(asRecord)
     .filter((item): item is Record<string, unknown> => item !== null)
     .map(normalizeOrganization);
 
-  const page = readNumber(record.page) ?? readNumber(record.currentPage) ?? 1;
-  const pageSize =
-    readNumber(record.pageSize) ??
-    readNumber(record.limit) ??
-    readNumber(record.perPage) ??
-    (items.length > 0 ? items.length : 10);
+  const paginationRecord = asRecord(record.pagination) ?? record;
+  const limit =
+    readNumber(paginationRecord.limit) ??
+    readNumber(paginationRecord.pageSize) ??
+    readNumber(paginationRecord.perPage) ??
+    10;
+  const page = readNumber(paginationRecord.page) ?? readNumber(paginationRecord.currentPage) ?? 1;
   const total =
+    readNumber(paginationRecord.total) ??
+    readNumber(paginationRecord.totalCount) ??
     readNumber(record.total) ??
-    readNumber(record.totalCount) ??
-    readNumber(record.count) ??
-    items.length;
+    organizations.length;
   const totalPages =
-    readNumber(record.totalPages) ??
-    readNumber(record.pageCount) ??
-    Math.max(1, Math.ceil(total / Math.max(pageSize, 1)));
+    readNumber(paginationRecord.totalPages) ??
+    readNumber(paginationRecord.pageCount) ??
+    Math.max(1, Math.ceil(total / Math.max(limit, 1)));
 
   return {
-    items,
-    page: Math.max(1, page),
-    pageSize: Math.max(1, pageSize),
-    total: Math.max(0, total),
-    totalPages: Math.max(1, totalPages),
+    organizations,
+    pagination: {
+      page: Math.max(1, page),
+      limit: Math.max(1, Math.min(50, limit)),
+      total: Math.max(0, total),
+      totalPages: Math.max(1, totalPages),
+    },
   };
+}
+
+function normalizeMember(record: Record<string, unknown>, index: number): SuperAdminOrganizationMember {
+  return {
+    id: readString(record.id) ?? `member-${index}`,
+    username: readString(record.username) ?? '—',
+    email: readString(record.email) ?? '—',
+    accountStatus: readAccountStatus(record.accountStatus ?? record.status),
+    isOrganizationAdmin: record.isOrganizationAdmin === true,
+    organizationRole: readRoleRef(record),
+    joinedAt: readString(record.joinedAt) ?? readString(record.createdAt) ?? '',
+  };
+}
+
+function normalizePendingInvite(
+  record: Record<string, unknown>,
+  index: number,
+): SuperAdminOrganizationPendingInvite {
+  const statusRaw = readString(record.status)?.toUpperCase();
+
+  return {
+    id: readString(record.id) ?? `invite-${index}`,
+    email: readString(record.email) ?? '—',
+    status:
+      statusRaw === 'ACCEPTED' || statusRaw === 'REVOKED' || statusRaw === 'REJECTED'
+        ? statusRaw
+        : 'PENDING',
+    role: readRoleRef(record),
+    invitedAt: readString(record.invitedAt) ?? readString(record.createdAt) ?? '',
+  };
+}
+
+export function normalizeSuperAdminOrganizationMembers(
+  payload: unknown,
+): SuperAdminOrganizationMembersResponse {
+  const record = asRecord(payload) ?? {};
+  const orgRecord = asRecord(record.organization) ?? record;
+
+  const members = extractArray(record, ['members', 'users', 'items'])
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => item !== null)
+    .map(normalizeMember);
+
+  const pendingInvites = extractArray(record, ['pendingInvites', 'invites', 'pending'])
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => item !== null)
+    .map(normalizePendingInvite);
+
+  return {
+    organization: {
+      id: readString(orgRecord.id) ?? '',
+      name: readString(orgRecord.name) ?? '—',
+      slug: readString(orgRecord.slug) ?? '—',
+      isSuspended: orgRecord.isSuspended === true || orgRecord.suspended === true,
+      planTier:
+        readString(orgRecord.planTier) ??
+        readString(orgRecord.plan) ??
+        '—',
+      subscriptionStatus: readString(orgRecord.subscriptionStatus) ?? '—',
+    },
+    members,
+    pendingInvites,
+    adminCount: readNumber(record.adminCount) ?? members.filter((m) => m.isOrganizationAdmin).length,
+  };
+}
+
+export function normalizeSuperAdminSuspendResult(payload: unknown): SuperAdminSuspendOrganizationResult {
+  const record = asRecord(payload) ?? {};
+  const org = asRecord(record.organization) ?? record;
+
+  return {
+    organization: {
+      id: readString(org.id) ?? '',
+      name: readString(org.name) ?? '—',
+      isSuspended: org.isSuspended === true || org.suspended === true,
+    },
+  };
+}
+
+/** Capitalize plan tier for display (e.g. business → Business). */
+export function formatSuperAdminPlanTier(planTier: string): string {
+  const trimmed = planTier.trim();
+
+  if (!trimmed || trimmed === '—') {
+    return '—';
+  }
+
+  return trimmed.charAt(0).toUpperCase() + trimmed.slice(1).toLowerCase();
+}
+
+export function formatSuperAdminAccountStatus(status: SuperAdminOrganizationMember['accountStatus']): string {
+  switch (status) {
+    case 'INVITED':
+      return 'Invited (incomplete)';
+    case 'DELETED':
+      return 'Deleted';
+    default:
+      return 'Active';
+  }
 }

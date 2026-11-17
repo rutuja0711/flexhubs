@@ -34,6 +34,7 @@ nsis:
   # (see scripts/windows/installer.nsh). Defaults are checked.
   createDesktopShortcut: false
   createStartMenuShortcut: false
+  # User-facing shortcuts; toast identity uses AppUserModelID + DisplayName "FlexHubs" (see installer.nsh).
   shortcutName: FlexHubs Desktop
   runAfterFinish: true
   menuCategory: FlexHubs
