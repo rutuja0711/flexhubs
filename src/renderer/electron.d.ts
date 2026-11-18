@@ -69,7 +69,21 @@ declare global {
         token: string,
       ) => Promise<ApiResult<OrganizationMemberItem[]>>;
       removeOrganizationMember: (token: string, userId: string) => Promise<ApiResult<{ ok: true }>>;
+      patchOrganizationMember: (
+        token: string,
+        userId: string,
+        input: import('../shared/profile').PatchOrganizationMemberInput,
+      ) => Promise<ApiResult<import('../shared/profile').OrganizationMemberItem>>;
+      patchOrganizationInvite: (
+        token: string,
+        inviteId: string,
+        input: import('../shared/profile').PatchOrganizationMemberInput,
+      ) => Promise<ApiResult<import('../shared/organization').OrganizationInviteItem[]>>;
       leaveOrganizationWorkspace: (token: string) => Promise<ApiResult<{ ok: true }>>;
+      transferOrganizationOwnership: (
+        token: string,
+        targetUserId: string,
+      ) => Promise<ApiResult<import('../shared/organization').TransferOrganizationOwnershipResult>>;
       getOrganizationRoles: (
         token: string,
       ) => Promise<ApiResult<import('../shared/organization').OrganizationRoleItem[]>>;
@@ -120,6 +134,7 @@ declare global {
         token: string,
         page: number,
         pageSize?: number,
+        options?: import('../shared/superadmin').SuperAdminOrganizationsListOptions,
       ) => Promise<ApiResult<import('../shared/superadmin').SuperAdminOrganizationsPage>>;
       getSuperAdminOrganizationMembers: (
         token: string,
@@ -191,6 +206,10 @@ declare global {
         threadRootId?: string,
         mediaJson?: string,
       ) => Promise<ApiResult<MessageItem>>;
+      getGifCategories: (
+        token: string,
+        locale?: string,
+      ) => Promise<ApiResult<import('../shared/gifs').GifCategoryItem[]>>;
       getTrendingGifs: (
         token: string,
         limit?: number,

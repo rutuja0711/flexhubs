@@ -20,6 +20,12 @@ export type GifPickerItem = {
   mimeType: string | null;
 };
 
+export type GifCategoryItem = {
+  category: string;
+  query: string;
+  previewUrl: string;
+};
+
 export const STICKER_MESSAGE_MARKER = 'sticker';
 
 function extractArray(payload: unknown, keys: string[]): unknown[] {
@@ -115,6 +121,38 @@ function normalizeGifItem(record: Record<string, unknown>, index: number): GifPi
     height,
     mimeType: readString(record.mimeType) ?? readString(record.contentType),
   };
+}
+
+export function normalizeGifCategories(payload: unknown): GifCategoryItem[] {
+  const items = extractArray(payload, ['categories', 'items', 'data']);
+
+  return items
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => item !== null)
+    .map((record, index) => {
+      const query =
+        readString(record.query) ??
+        readString(record.search) ??
+        readString(record.q) ??
+        '';
+      const category =
+        readString(record.category) ??
+        readString(record.name) ??
+        readString(record.title) ??
+        (query || `Category ${index + 1}`);
+      const previewUrl =
+        readString(record.previewUrl) ??
+        readString(record.preview) ??
+        readString(record.thumbnailUrl) ??
+        '';
+
+      if (!query) {
+        return null;
+      }
+
+      return { category, query, previewUrl };
+    })
+    .filter((item): item is GifCategoryItem => item !== null);
 }
 
 export function normalizeGifItems(payload: unknown): GifPickerItem[] {

@@ -9,8 +9,15 @@ import {
   type OrganizationRoleItem,
   type OrganizationSeatsInfo,
   type OrgInvoiceItem,
+  normalizeTransferOrganizationOwnership,
+  type TransferOrganizationOwnershipResult,
 } from '../shared/organization';
-import { normalizeOrganizationMembers, type OrganizationMemberItem } from '../shared/profile';
+import {
+  normalizeOrganizationMemberResponse,
+  normalizeOrganizationMembers,
+  type OrganizationMemberItem,
+  type PatchOrganizationMemberInput,
+} from '../shared/profile';
 import { apiDelete, apiGet, apiPatch, apiPost } from './apiRequest';
 
 export async function fetchOrganizationMembersAdmin(
@@ -27,6 +34,98 @@ export async function fetchOrganizationMembersAdmin(
   }
 
   return { ok: true, data: normalizeOrganizationMembers(result.data) };
+}
+
+export async function patchOrganizationMember(
+  token: string,
+  userId: string,
+  input: PatchOrganizationMemberInput,
+): Promise<ApiResult<OrganizationMemberItem>> {
+  const body: Record<string, unknown> = {};
+
+  if (input.email !== undefined) {
+    body.email = input.email.trim().toLowerCase();
+  }
+
+  if (input.organizationRoleId !== undefined) {
+    body.organizationRoleId = input.organizationRoleId;
+  }
+
+  const result = await apiPatch<unknown>(
+    `${API_BASE_URL}/organizations/members/${encodeURIComponent(userId)}`,
+    token,
+    'Patch Organization Member API',
+    body,
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const member = normalizeOrganizationMemberResponse(result.data);
+
+  if (!member) {
+    return { ok: false, error: 'Member update succeeded but the response was invalid.', status: result.status };
+  }
+
+  return { ok: true, data: member };
+}
+
+export async function patchOrganizationInvite(
+  token: string,
+  inviteId: string,
+  input: PatchOrganizationMemberInput,
+): Promise<ApiResult<OrganizationInviteItem[]>> {
+  const body: Record<string, unknown> = {};
+
+  if (input.email !== undefined) {
+    body.email = input.email.trim().toLowerCase();
+  }
+
+  if (input.organizationRoleId !== undefined) {
+    body.organizationRoleId = input.organizationRoleId;
+  }
+
+  const result = await apiPatch<unknown>(
+    `${API_BASE_URL}/organizations/invites/${encodeURIComponent(inviteId)}`,
+    token,
+    'Patch Organization Invite API',
+    body,
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return { ok: true, data: normalizeOrganizationInvites(result.data) };
+}
+
+export async function transferOrganizationOwnership(
+  token: string,
+  targetUserId: string,
+): Promise<ApiResult<TransferOrganizationOwnershipResult>> {
+  const result = await apiPost<unknown>(
+    `${API_BASE_URL}/organizations/transfer-ownership`,
+    token,
+    'Transfer Organization Ownership API',
+    { targetUserId },
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  const parsed = normalizeTransferOrganizationOwnership(result.data);
+
+  if (!parsed) {
+    return {
+      ok: false,
+      error: 'Ownership transfer succeeded but the response was invalid.',
+      status: result.status,
+    };
+  }
+
+  return { ok: true, data: parsed };
 }
 
 export async function removeOrganizationMember(

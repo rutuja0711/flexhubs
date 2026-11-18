@@ -506,6 +506,16 @@ export async function sendChatVoiceMessage(
   return sendChatMessage(conversationId, '', replyToId, threadRootId, JSON.stringify(mediaPayload));
 }
 
+export async function loadGifCategories(): Promise<
+  ApiResult<import('../shared/gifs').GifCategoryItem[]>
+> {
+  if (!window.electronAPI?.getGifCategories) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.getGifCategories(token));
+}
+
 export async function loadGifTrending(): Promise<ApiResult<import('../shared/gifs').GifPickerItem[]>> {
   if (!window.electronAPI?.getTrendingGifs) {
     return unavailable();

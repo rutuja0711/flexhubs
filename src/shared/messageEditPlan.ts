@@ -10,9 +10,21 @@ export type MessageEditMediaChange =
       fileName: string;
       mimeType: string;
       messageType: string;
+      fileSize?: number;
     };
 
-const EDITABLE_MEDIA_KINDS = new Set(['image', 'file', 'video']);
+/** PATCH `/conversations/:id/messages/:messageId` body (web-aligned). */
+export type EditMessageRequestBody = {
+  content: string;
+  mentionUserIds?: string[];
+  fileUrl?: string;
+  fileName?: string;
+  fileSize?: number;
+  mimeType?: string;
+  removeMedia?: boolean;
+};
+
+const EDITABLE_MEDIA_KINDS = new Set(['image', 'file', 'video', 'gif']);
 
 export function isEditableAttachmentMedia(item: MessageMedia): boolean {
   return EDITABLE_MEDIA_KINDS.has(item.kind);
@@ -25,11 +37,43 @@ export function filterEditableMessageMedia(message: MessageItem): MessageMedia[]
 
   const messageType = String(message.messageType ?? '').toUpperCase();
 
-  if (messageType === 'GIF' || messageType === 'STICKER' || messageType === 'VOICE') {
+  if (messageType === 'STICKER' || messageType === 'VOICE') {
     return [];
   }
 
+  if (messageType === 'GIF') {
+    return message.media.length > 0 ? message.media : [];
+  }
+
   return message.media.filter(isEditableAttachmentMedia);
+}
+
+export function buildEditMessageRequestBody(
+  content: string,
+  mediaUpdate: MessageEditMediaChange | null,
+): EditMessageRequestBody {
+  const trimmed = content;
+
+  if (!mediaUpdate || mediaUpdate.kind === 'unchanged') {
+    return { content: trimmed };
+  }
+
+  if (mediaUpdate.kind === 'cleared') {
+    return { content: trimmed, removeMedia: true };
+  }
+
+  const body: EditMessageRequestBody = {
+    content: trimmed,
+    fileUrl: mediaUpdate.fileUrl,
+    fileName: mediaUpdate.fileName,
+    mimeType: mediaUpdate.mimeType,
+  };
+
+  if (typeof mediaUpdate.fileSize === 'number' && mediaUpdate.fileSize >= 0) {
+    body.fileSize = mediaUpdate.fileSize;
+  }
+
+  return body;
 }
 
 export function resolveMessageEditMediaChange(
@@ -57,7 +101,8 @@ export function resolveMessageEditMediaChange(
     const isImage = mimeType.startsWith('image/');
     const isVideo = mimeType.startsWith('video/');
 
-    const messageType = isImage ? 'IMAGE' : isVideo ? 'FILE' : 'FILE';
+    const isGif = mimeType === 'image/gif' || original.messageType?.toUpperCase() === 'GIF';
+    const messageType = isGif ? 'GIF' : isImage ? 'IMAGE' : isVideo ? 'FILE' : 'FILE';
 
     return {
       kind: 'replaced',
@@ -65,6 +110,7 @@ export function resolveMessageEditMediaChange(
       fileName: uploaded.fileName || addedFile?.name || 'file',
       mimeType,
       messageType,
+      fileSize: addedFile.size,
     };
   }
 
@@ -77,12 +123,15 @@ export function resolveMessageEditMediaChange(
           ? 'video/mp4'
           : 'application/octet-stream';
 
+    const isGif =
+      primary.kind === 'gif' || original.messageType?.toUpperCase() === 'GIF' || mimeType === 'image/gif';
+
     return {
       kind: 'replaced',
       fileUrl: primary.url,
       fileName: primary.name ?? 'file',
-      mimeType,
-      messageType: primary.kind === 'image' ? 'IMAGE' : 'FILE',
+      mimeType: isGif ? 'image/gif' : mimeType,
+      messageType: isGif ? 'GIF' : primary.kind === 'image' ? 'IMAGE' : 'FILE',
     };
   }
 

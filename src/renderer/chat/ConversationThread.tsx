@@ -611,7 +611,6 @@ function ConversationThreadComponent({
       if (result === true) {
         cancelComposerEdit();
         onDraftChange('');
-        toast.success('Message updated.');
         return;
       }
 

@@ -1,6 +1,7 @@
 import type { ApiResult } from '../shared/api';
 import type {
   SuperAdminOrganizationMembersResponse,
+  SuperAdminOrganizationsListOptions,
   SuperAdminOrganizationsPage,
   SuperAdminStats,
   SuperAdminSuspendOrganizationResult,
@@ -34,12 +35,13 @@ export async function loadSuperAdminStats(): Promise<ApiResult<SuperAdminStats>>
 export async function loadSuperAdminOrganizations(
   page: number,
   pageSize = 10,
+  options?: SuperAdminOrganizationsListOptions,
 ): Promise<ApiResult<SuperAdminOrganizationsPage>> {
   if (!window.electronAPI?.getSuperAdminOrganizations) {
     return unavailable();
   }
 
-  return withToken((token) => window.electronAPI.getSuperAdminOrganizations(token, page, pageSize));
+  return withToken((token) => window.electronAPI.getSuperAdminOrganizations(token, page, pageSize, options));
 }
 
 export async function loadSuperAdminOrganizationMembers(

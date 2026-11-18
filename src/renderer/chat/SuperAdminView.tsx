@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   FiChevronDown,
   FiChevronRight,
@@ -6,9 +6,11 @@ import {
   FiLogOut,
   FiMessageSquare,
   FiRefreshCw,
+  FiSearch,
   FiShield,
   FiUsers,
 } from 'react-icons/fi';
+import { getDefaultPaymentPlans } from '../../shared/payments';
 import type {
   SuperAdminOrganization,
   SuperAdminOrganizationMembersResponse,
@@ -274,12 +276,17 @@ export function SuperAdminView({
   const [organizationsLoading, setOrganizationsLoading] = useState(true);
   const [organizationsError, setOrganizationsError] = useState('');
   const [organizationsUpdatedAt, setOrganizationsUpdatedAt] = useState<Date | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [planFilter, setPlanFilter] = useState('');
   const [page, setPage] = useState(1);
   const [pageSize] = useState(10);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [pendingId, setPendingId] = useState<string | null>(null);
   const [expandedOrgId, setExpandedOrgId] = useState<string | null>(null);
+  const organizationsFetchIdRef = useRef(0);
+  const planFilterOptions = useMemo(() => getDefaultPaymentPlans(), []);
 
   const pageLabel = useMemo(() => {
     if (total === 0) {
@@ -312,28 +319,78 @@ export function SuperAdminView({
     setStatsUpdatedAt(new Date());
   }, [onUnauthorized]);
 
-  const loadOrganizations = useCallback(async () => {
+  useEffect(() => {
+    const handle = window.setTimeout(() => {
+      setDebouncedSearch(searchQuery.trim());
+    }, 300);
+
+    return () => window.clearTimeout(handle);
+  }, [searchQuery]);
+
+  const loadOrganizations = useCallback(async (fetchPage: number) => {
+    const requestId = ++organizationsFetchIdRef.current;
     setOrganizationsLoading(true);
     setOrganizationsError('');
 
-    const result = await loadSuperAdminOrganizations(page, pageSize);
+    const trimmedPlan = planFilter.trim().toLowerCase();
+    const q = debouncedSearch.trim();
 
-    setOrganizationsLoading(false);
+    try {
+      const result = await loadSuperAdminOrganizations(fetchPage, pageSize, {
+        q: q || undefined,
+        sort: trimmedPlan ? undefined : 'plan_asc',
+        plan: trimmedPlan || undefined,
+      });
 
-    if (!result.ok) {
-      if (onUnauthorized(result.status)) {
+      if (requestId !== organizationsFetchIdRef.current) {
         return;
       }
 
-      setOrganizationsError(result.error);
+      if (!result.ok) {
+        if (onUnauthorized(result.status)) {
+          return;
+        }
+
+        setOrganizationsError(result.error);
+        return;
+      }
+
+      setOrganizations(result.data.organizations);
+      setTotal(result.data.pagination.total);
+      setTotalPages(result.data.pagination.totalPages);
+      setPage(result.data.pagination.page);
+      setOrganizationsUpdatedAt(new Date());
+    } finally {
+      if (requestId === organizationsFetchIdRef.current) {
+        setOrganizationsLoading(false);
+      }
+    }
+  }, [debouncedSearch, onUnauthorized, pageSize, planFilter]);
+
+  const listFiltersRef = useRef({ debouncedSearch, planFilter });
+
+  useEffect(() => {
+    if (tab !== 'organizations') {
       return;
     }
 
-    setOrganizations(result.data.organizations);
-    setTotal(result.data.pagination.total);
-    setTotalPages(result.data.pagination.totalPages);
-    setOrganizationsUpdatedAt(new Date());
-  }, [onUnauthorized, page, pageSize]);
+    const filtersChanged =
+      listFiltersRef.current.debouncedSearch !== debouncedSearch ||
+      listFiltersRef.current.planFilter !== planFilter;
+
+    if (filtersChanged) {
+      listFiltersRef.current = { debouncedSearch, planFilter };
+      setExpandedOrgId(null);
+      if (page !== 1) {
+        setPage(1);
+        return;
+      }
+      void loadOrganizations(1);
+      return;
+    }
+
+    void loadOrganizations(page);
+  }, [debouncedSearch, loadOrganizations, page, planFilter, tab]);
 
   useEffect(() => {
     setExpandedOrgId(null);
@@ -345,19 +402,13 @@ export function SuperAdminView({
     }
   }, [loadStats, tab]);
 
-  useEffect(() => {
-    if (tab === 'organizations') {
-      void loadOrganizations();
-    }
-  }, [loadOrganizations, tab]);
-
   const handleRefresh = () => {
     if (tab === 'overview') {
       void loadStats();
       return;
     }
 
-    void loadOrganizations();
+    void loadOrganizations(page);
   };
 
   const handleToggleSuspend = async (organization: SuperAdminOrganization) => {
@@ -483,7 +534,7 @@ export function SuperAdminView({
             description={
               tab === 'overview'
                 ? 'Live counts from the database. Refresh to update — not streamed in real time.'
-                : 'View all workspaces and suspend or restore access. 10 per page, server-side.'
+                : 'Search by name or slug, filter by plan, and paginate on the server (10 per page).'
             }
             lastUpdated={lastUpdated}
             isLoading={isLoading}
@@ -543,6 +594,42 @@ export function SuperAdminView({
             <div
               className={`overflow-hidden rounded-2xl border border-white/[0.06] bg-[#141414] shadow-[0_12px_40px_rgba(0,0,0,0.35)] ${organizationsLoading ? 'opacity-70' : ''}`}
             >
+              <div className="flex flex-col gap-3 border-b border-white/[0.06] px-5 py-4 sm:flex-row sm:items-center">
+                <div className="relative min-w-0 flex-1">
+                  <FiSearch
+                    className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/35"
+                    size={16}
+                    aria-hidden
+                  />
+                  <input
+                    type="search"
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search name or slug…"
+                    className="w-full rounded-xl border border-white/10 bg-white/[0.03] py-2.5 pl-10 pr-3 text-sm text-white placeholder:text-white/35 focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/25"
+                    aria-label="Search organizations"
+                  />
+                </div>
+                <label className="flex shrink-0 items-center gap-2 text-sm text-white/50">
+                  <span className="sr-only">Filter by plan</span>
+                  <select
+                    value={planFilter}
+                    onChange={(event) => {
+                      setPlanFilter(event.target.value);
+                      setPage(1);
+                      setExpandedOrgId(null);
+                    }}
+                    className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2.5 text-sm text-white focus:border-accent/40 focus:outline-none focus:ring-1 focus:ring-accent/25"
+                  >
+                    <option value="">All plans</option>
+                    {planFilterOptions.map((plan) => (
+                      <option key={plan.id} value={plan.id}>
+                        {plan.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <div className="overflow-x-auto">
                 <table className="min-w-full text-left text-sm">
                   <thead>

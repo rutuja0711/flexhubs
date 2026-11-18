@@ -81,8 +81,25 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke('org:members', token),
   removeOrganizationMember: (token: string, userId: string): Promise<ApiResult<{ ok: true }>> =>
     ipcRenderer.invoke('org:remove-member', token, userId),
+  patchOrganizationMember: (
+    token: string,
+    userId: string,
+    input: import('./shared/profile').PatchOrganizationMemberInput,
+  ): Promise<ApiResult<import('./shared/profile').OrganizationMemberItem>> =>
+    ipcRenderer.invoke('org:patch-member', token, userId, input),
+  patchOrganizationInvite: (
+    token: string,
+    inviteId: string,
+    input: import('./shared/profile').PatchOrganizationMemberInput,
+  ): Promise<ApiResult<import('./shared/organization').OrganizationInviteItem[]>> =>
+    ipcRenderer.invoke('org:patch-invite', token, inviteId, input),
   leaveOrganizationWorkspace: (token: string): Promise<ApiResult<{ ok: true }>> =>
     ipcRenderer.invoke('org:leave', token),
+  transferOrganizationOwnership: (
+    token: string,
+    targetUserId: string,
+  ): Promise<ApiResult<import('./shared/organization').TransferOrganizationOwnershipResult>> =>
+    ipcRenderer.invoke('org:transfer-ownership', token, targetUserId),
   getOrganizationRoles: (
     token: string,
   ): Promise<ApiResult<import('./shared/organization').OrganizationRoleItem[]>> =>
@@ -147,8 +164,17 @@ contextBridge.exposeInMainWorld('electronAPI', {
     token: string,
     page: number,
     pageSize?: number,
+    options?: import('./shared/superadmin').SuperAdminOrganizationsListOptions,
   ): Promise<ApiResult<import('./shared/superadmin').SuperAdminOrganizationsPage>> =>
-    ipcRenderer.invoke('superadmin:organizations', token, page, pageSize),
+    ipcRenderer.invoke(
+      'superadmin:organizations',
+      token,
+      page,
+      pageSize,
+      options?.q,
+      options?.sort,
+      options?.plan,
+    ),
   getSuperAdminOrganizationMembers: (
     token: string,
     organizationId: string,
@@ -243,6 +269,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     mediaJson?: string,
   ): Promise<ApiResult<MessageItem>> =>
     ipcRenderer.invoke('chat:send-message', token, conversationId, content, replyToId, threadRootId, mediaJson),
+  getGifCategories: (
+    token: string,
+    locale?: string,
+  ): Promise<ApiResult<import('./shared/gifs').GifCategoryItem[]>> =>
+    ipcRenderer.invoke('gifs:categories', token, locale),
   getTrendingGifs: (token: string, limit?: number): Promise<ApiResult<import('./shared/gifs').GifPickerItem[]>> =>
     ipcRenderer.invoke('gifs:trending', token, limit),
   searchGifs: (

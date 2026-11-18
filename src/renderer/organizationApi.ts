@@ -4,13 +4,14 @@ import type {
   OrganizationRoleItem,
   OrganizationSeatsInfo,
   OrgInvoiceItem,
+  TransferOrganizationOwnershipResult,
 } from '../shared/organization';
 import type {
   OrgSubscriptionInfo,
   PaymentPlanItem,
   PlanComplianceInfo,
 } from '../shared/payments';
-import type { OrganizationMemberItem } from '../shared/profile';
+import type { OrganizationMemberItem, PatchOrganizationMemberInput } from '../shared/profile';
 import type {
   CreateOrgOrderInput,
   OrgOrderResult,
@@ -206,8 +207,40 @@ export async function removeOrganizationMember(userId: string): Promise<ApiResul
   return withToken((token) => window.electronAPI.removeOrganizationMember(token, userId));
 }
 
+export async function updateOrganizationMember(
+  userId: string,
+  input: PatchOrganizationMemberInput,
+): Promise<ApiResult<OrganizationMemberItem>> {
+  if (!window.electronAPI?.patchOrganizationMember) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.patchOrganizationMember(token, userId, input));
+}
+
+export async function updateOrganizationInvite(
+  inviteId: string,
+  input: PatchOrganizationMemberInput,
+): Promise<ApiResult<OrganizationInviteItem[]>> {
+  if (!window.electronAPI?.patchOrganizationInvite) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.patchOrganizationInvite(token, inviteId, input));
+}
+
 export async function leaveOrganizationWorkspace(): Promise<ApiResult<{ ok: true }>> {
   return withToken((token) => window.electronAPI.leaveOrganizationWorkspace(token));
+}
+
+export async function transferOrganizationOwnership(
+  targetUserId: string,
+): Promise<ApiResult<TransferOrganizationOwnershipResult>> {
+  if (!window.electronAPI?.transferOrganizationOwnership) {
+    return unavailable();
+  }
+
+  return withToken((token) => window.electronAPI.transferOrganizationOwnership(token, targetUserId));
 }
 
 export async function loadOrganizationRoles(): Promise<ApiResult<OrganizationRoleItem[]>> {

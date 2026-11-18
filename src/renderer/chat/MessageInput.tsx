@@ -1375,33 +1375,6 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
         </div>
       ) : null}
 
-      {editingMessage ? (
-        <div className="flex items-center justify-between gap-3 rounded-t-2xl border border-b-0 border-app-border bg-app-surface/95 px-4 py-2.5 backdrop-blur-md">
-          <div className="min-w-0 flex-1">
-            <p className="text-xs font-semibold text-accent-soft">Editing message</p>
-            <p className="truncate text-[11px] text-app-muted">Enter to save · Shift+Enter for a new line · Esc to cancel</p>
-          </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <button
-              type="button"
-              className="rounded-lg px-3 py-1.5 text-xs font-medium text-app-muted hover:bg-app-chat-hover"
-              onClick={onCancelComposerEdit}
-              disabled={editSaving}
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white shadow-sm disabled:opacity-50"
-              onClick={() => void onSaveComposerEdit?.()}
-              disabled={editSaving || !editCanSave}
-            >
-              {editSaving ? 'Saving…' : 'Save changes'}
-            </button>
-          </div>
-        </div>
-      ) : null}
-
       {replyingToMessage ? (
         <div className="flex flex-col rounded-t-2xl bg-app-surface/95 backdrop-blur-md px-4 py-2 text-xs text-app-muted border-l-4 border-l-accent shadow-sm">
           <div className="mb-1 flex items-center justify-between">

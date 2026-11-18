@@ -14,7 +14,7 @@ import {
 } from '../shared/messages';
 import type { MessageHistoryPage } from '../shared/messages';
 import { normalizeScheduledMessage, normalizeScheduledMessages } from '../shared/extras';
-import type { MessageEditMediaChange } from '../shared/messageEditPlan';
+import { buildEditMessageRequestBody, type MessageEditMediaChange } from '../shared/messageEditPlan';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './apiRequest';
 
 function parseEditMediaUpdate(value: string | undefined): MessageEditMediaChange | null {
@@ -34,41 +34,27 @@ function parseEditMediaUpdate(value: string | undefined): MessageEditMediaChange
   return null;
 }
 
+/** Web-aligned PATCH body first; legacy shapes only as fallbacks on 400. */
 function buildEditMessageBodies(content: string, mediaUpdate: MessageEditMediaChange | null): unknown[] {
-  const trimmed = content.trim();
-  const bodies: unknown[] = [{ content: trimmed }];
+  const primary = buildEditMessageRequestBody(content, mediaUpdate);
+  const fallbacks: unknown[] = [];
 
-  if (!mediaUpdate || mediaUpdate.kind === 'unchanged') {
-    return bodies;
+  if (mediaUpdate?.kind === 'cleared') {
+    fallbacks.push({ content: primary.content, type: 'TEXT' });
+    fallbacks.push({ content: primary.content, fileUrl: null });
+  } else if (mediaUpdate?.kind === 'replaced') {
+    const { messageType, fileUrl, fileName, mimeType } = mediaUpdate;
+    fallbacks.push({
+      content: primary.content,
+      type: messageType,
+      messageType,
+      fileUrl,
+      fileName,
+      mimeType,
+    });
   }
 
-  if (mediaUpdate.kind === 'cleared') {
-    bodies.push({ content: trimmed, type: 'TEXT' });
-    bodies.push({ content: trimmed, messageType: 'TEXT' });
-    bodies.push({ content: trimmed, fileUrl: null });
-    bodies.push({ content: trimmed, attachments: [] });
-    bodies.push({ content: trimmed, media: [] });
-    return bodies;
-  }
-
-  const { fileUrl, fileName, mimeType, messageType } = mediaUpdate;
-  bodies.push({
-    content: trimmed,
-    type: messageType,
-    messageType,
-    fileUrl,
-    fileName,
-    mimeType,
-  });
-  bodies.push({
-    type: messageType,
-    content: trimmed,
-    fileUrl,
-    fileName,
-    mimeType,
-  });
-
-  return bodies;
+  return [primary, ...fallbacks];
 }
 
 export async function fetchConversationBootstrap(

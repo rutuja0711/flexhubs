@@ -4055,6 +4055,14 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           return;
         }
 
+        if (incomingMessage.editedAt) {
+          recentMessageEditsRef.current.set(incomingMessage.id, {
+            content: incomingMessage.content,
+            editedAt: incomingMessage.editedAt,
+            savedAt: Date.now(),
+          });
+        }
+
         const applyUpdatedMessage = (current: MessageItem[]) =>
           applyRecentMessageEdits(
             current.map((message) =>
@@ -4070,7 +4078,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           );
 
         if (conversationId === activeConversationId) {
-          setMessages(applyUpdatedMessage);
+          setMessages((current) => {
+            const next = applyUpdatedMessage(current);
+            messagesRef.current = next;
+            return next;
+          });
         }
 
         patchThreadCacheMessages(threadCacheRef.current, conversationId, applyUpdatedMessage);
@@ -6823,64 +6835,61 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         savedAt: Date.now(),
       });
 
-      const buildPatch = (patch: MessageItem): MessageItem => {
-        let media = patch.media;
-
+      const resolveEditMedia = (base: MessageItem): MessageItem['media'] => {
         if (mediaChange.kind === 'cleared') {
-          media = [];
-        } else if (mediaChange.kind === 'replaced') {
+          return [];
+        }
+
+        if (mediaChange.kind === 'replaced') {
+          const isGif = mediaChange.messageType === 'GIF' || mediaChange.mimeType === 'image/gif';
           const isImage = mediaChange.mimeType.startsWith('image/');
           const isVideo = mediaChange.mimeType.startsWith('video/');
-          media = [
+          return [
             {
-              kind: isImage ? 'image' : isVideo ? 'video' : 'file',
+              kind: isGif ? 'gif' : isImage ? 'image' : isVideo ? 'video' : 'file',
               url: mediaChange.fileUrl,
-              previewUrl: isImage || isVideo ? mediaChange.fileUrl : null,
+              previewUrl: isImage || isVideo || isGif ? mediaChange.fileUrl : null,
               name: mediaChange.fileName,
             },
           ];
-        } else if (patch.media.length === 0 && keptMedia.length > 0) {
-          media = keptMedia;
         }
 
-        return {
-          ...patch,
-          content: patch.content?.trim() ?? trimmed,
-          editedAt: patch.editedAt ?? optimisticEditedAt,
-          media,
-        };
+        return base.media.length > 0 ? base.media : keptMedia;
       };
+
+      const mergeAuthoritative = (serverRow: MessageItem): MessageItem =>
+        preserveMessageOwnership(mergeMessageUpdates(previous, serverRow), previous, viewerUserId);
 
       let updatedForSidebar: MessageItem | null = null;
 
-      const applyEdit = (current: MessageItem[], patch: MessageItem) => {
-        const mapped = current.map((message) => {
-          if (message.id !== messageId) {
-            return message;
-          }
-
-          return preserveMessageOwnership(
-            mergeMessageUpdates(message, buildPatch(patch)),
-            message,
-            viewerUserId,
-          );
-        });
-
+      const applyEditRow = (current: MessageItem[], row: MessageItem) => {
+        const mapped = current.map((message) => (message.id === messageId ? row : message));
         updatedForSidebar = mapped.find((message) => message.id === messageId) ?? null;
         return applyRecentMessageEdits(mapped, recentMessageEditsRef.current);
       };
 
-      const optimisticPatch = buildPatch({
-        ...previous,
-        content: trimmed,
-        editedAt: optimisticEditedAt,
-        media: keptMedia,
-      });
-      const optimisticNext = applyEdit(messagesRef.current, optimisticPatch);
+      const optimisticRow = preserveMessageOwnership(
+        {
+          ...previous,
+          content: trimmed,
+          editedAt: optimisticEditedAt,
+          messageType:
+            mediaChange.kind === 'cleared'
+              ? 'TEXT'
+              : mediaChange.kind === 'replaced'
+                ? mediaChange.messageType
+                : previous.messageType,
+          media: resolveEditMedia(previous),
+        },
+        previous,
+        viewerUserId,
+      );
+
+      const optimisticNext = applyEditRow(messagesRef.current, optimisticRow);
       messagesRef.current = optimisticNext;
       setMessages(optimisticNext);
       patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
-        applyEdit(current, optimisticPatch),
+        applyEditRow(current, optimisticRow),
       );
 
       const result = await editChatMessage(selectedId, messageId, trimmed, mediaChange);
@@ -6905,31 +6914,35 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         return false;
       }
 
-      let authoritative = buildPatch(result.data);
+      let authoritative = mergeAuthoritative(result.data);
       const refetch = await loadMessageById(selectedId, messageId);
 
       if (refetch.ok) {
-        authoritative = buildPatch(mergeMessageUpdates(authoritative, refetch.data));
+        authoritative = mergeAuthoritative(mergeMessageUpdates(result.data, refetch.data));
+      }
+
+      if (!authoritative.editedAt) {
+        authoritative = { ...authoritative, editedAt: optimisticEditedAt };
       }
 
       recentMessageEditsRef.current.set(messageId, {
         content: authoritative.content,
-        editedAt: authoritative.editedAt ?? optimisticEditedAt,
+        editedAt: authoritative.editedAt,
         savedAt: Date.now(),
       });
 
-      const finalNext = applyEdit(messagesRef.current, authoritative);
+      const finalNext = applyEditRow(messagesRef.current, authoritative);
       messagesRef.current = finalNext;
       setMessages(finalNext);
       patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
-        applyEdit(current, authoritative),
+        applyEditRow(current, authoritative),
       );
 
       const cached = getThreadCacheEntry(threadCacheRef.current, selectedId);
       if (cached) {
         syncThreadCache(selectedId, {
           ...cached,
-          messages: applyEdit(cached.messages, authoritative),
+          messages: applyEditRow(cached.messages, authoritative),
         });
       }
 
@@ -6944,7 +6957,6 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         applyThreadReplyEdit(selectedId, threadRootId, messageId, updatedForSidebar);
       }
 
-      showActionMessage('Message updated.');
       return true;
     } finally {
       editInFlightRef.current.delete(editInFlightKey);
@@ -7796,6 +7808,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           user={user}
           onUnauthorized={handleUnauthorized}
           onUserUpdated={handleOrganizationUserUpdated}
+          onBeforeOpenChat={() => setMainView('chat')}
+          onOpenDirectChat={handleOpenDirectChat}
+          onMemberCall={handleHubMemberDirectCall}
+          callBusy={callManager.busy || callManager.session.phase !== 'idle'}
           onLeftOrganization={() => {
             setMainView('chat');
             void getCurrentUser().then((result) => {

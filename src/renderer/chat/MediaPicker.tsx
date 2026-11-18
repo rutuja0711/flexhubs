@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent, type CSSProperties } from 'react';
-import { FiSearch, FiUpload, FiX } from 'react-icons/fi';
+import { FiArrowLeft, FiSearch, FiTrendingUp, FiUpload, FiX } from 'react-icons/fi';
 import type { GifPickerItem } from '../../shared/gifs';
 import { createUploadedStickerItem } from '../../shared/gifs';
 import { searchCatalogEmojis } from '../../shared/emojiSearch';
 import { REACTION_EMOJI_CATEGORIES } from '../../shared/reactionEmojis';
+import type { GifCategoryItem } from '../../shared/gifs';
 import {
+  loadGifCategories,
   loadStickerSearch,
   loadStickerTrending,
   loadGifSearch,
@@ -65,6 +67,9 @@ export function MediaPicker({
   const [emojiCategoryIndex, setEmojiCategoryIndex] = useState(0);
   const [query, setQuery] = useState('');
   const [items, setItems] = useState<GifPickerItem[]>([]);
+  const [gifCategories, setGifCategories] = useState<GifCategoryItem[]>([]);
+  /** Web GifPicker: categories home first; trending/search only after a tile or typed query. */
+  const [gifScreen, setGifScreen] = useState<'categories' | 'results'>('categories');
   const [myStickers, setMyStickers] = useState<GifPickerItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -121,6 +126,7 @@ export function MediaPicker({
     setMyStickers(readCustomStickers());
     setRecentEmojis(readRecentEmojis());
     setEmojiCategoryIndex(0);
+    setGifScreen('categories');
   }, [initialTab, open]);
 
   useEffect(() => {
@@ -129,6 +135,21 @@ export function MediaPicker({
     }
 
     setQuery('');
+    if (tab === 'gif') {
+      setGifScreen('categories');
+    }
+  }, [open, tab]);
+
+  useEffect(() => {
+    if (!open || tab !== 'gif') {
+      return;
+    }
+
+    void loadGifCategories().then((result) => {
+      if (result.ok) {
+        setGifCategories(result.data);
+      }
+    });
   }, [open, tab]);
 
   useEffect(() => {
@@ -136,7 +157,14 @@ export function MediaPicker({
       return;
     }
 
-    const trimmedQuery = query.trim();
+    if (tab === 'gif' && gifScreen === 'categories') {
+      setItems([]);
+      setLoading(false);
+      setError('');
+      return;
+    }
+
+    const trimmedQuery = query.trim().slice(0, 100);
     setLoading(true);
     setError('');
 
@@ -154,7 +182,11 @@ export function MediaPicker({
         setLoading(false);
 
         if (!result.ok) {
-          setError(result.error);
+          const message =
+            result.status === 503
+              ? 'GIF search is not available on this server.'
+              : result.error;
+          setError(message);
           setItems([]);
           return;
         }
@@ -164,7 +196,7 @@ export function MediaPicker({
     }, trimmedQuery ? 300 : 0);
 
     return () => window.clearTimeout(timer);
-  }, [open, query, tab]);
+  }, [gifScreen, open, query, tab]);
 
   const handleStickerUploadClick = () => {
     if (uploading) {
@@ -252,10 +284,34 @@ export function MediaPicker({
 
   const searchPlaceholder =
     tab === 'gif'
-      ? 'Search GIFs...'
+      ? 'Search Klipy'
       : tab === 'sticker'
         ? 'Search stickers...'
         : 'Search emojis (e.g. heart, pizza, thumbs up)';
+
+  const showGifCategoryHome = tab === 'gif' && gifScreen === 'categories';
+  const showGifBack =
+    tab === 'gif' && gifScreen === 'results';
+
+  const openGifResults = (nextQuery: string) => {
+    setGifScreen('results');
+    setQuery(nextQuery.slice(0, 100));
+  };
+
+  const handleGifSearchChange = (value: string) => {
+    const next = value.slice(0, 100);
+    setQuery(next);
+    if (next.trim()) {
+      setGifScreen('results');
+    }
+  };
+
+  const handleGifSearchBack = () => {
+    setGifScreen('categories');
+    setQuery('');
+    setItems([]);
+    setError('');
+  };
 
   return (
     <div
@@ -263,7 +319,7 @@ export function MediaPicker({
       style={panelStyle}
       className={
         panelClassName ??
-        'absolute bottom-full left-0 z-50 mb-2 w-[min(100vw-2rem,420px)] overflow-hidden rounded-2xl border border-app-border bg-app-elevated shadow-2xl'
+        'absolute bottom-full left-0 z-50 mb-2 w-[min(100vw-2rem,440px)] overflow-hidden rounded-2xl border border-app-border bg-app-elevated shadow-2xl'
       }
       role="dialog"
       aria-label="Insert GIF, emoji, or sticker"
@@ -290,7 +346,7 @@ export function MediaPicker({
             }`}
             onClick={() => setTab(option)}
           >
-            {option === 'gif' ? 'Gifs' : option === 'emoji' ? 'Emojis' : 'Stickers'}
+            {option === 'gif' ? 'GIF' : option === 'emoji' ? 'Emojis' : 'Stickers'}
           </button>
         ))}
         <button
@@ -304,13 +360,30 @@ export function MediaPicker({
       </div>
 
       <div className="flex items-center gap-2 px-3 pb-3">
+        {showGifBack ? (
+          <button
+            type="button"
+            aria-label="Back to GIF categories"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-app-border text-app-muted transition-colors hover:bg-app-chat-hover hover:text-app-text"
+            onClick={handleGifSearchBack}
+          >
+            <FiArrowLeft className="h-4 w-4" aria-hidden="true" />
+          </button>
+        ) : null}
         <div className="relative min-w-0 flex-1">
           <FiSearch className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-app-muted" />
           <input
             type="search"
             data-emoji-search={tab === 'emoji' ? '1' : undefined}
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              if (tab === 'gif') {
+                handleGifSearchChange(event.target.value);
+                return;
+              }
+
+              setQuery(event.target.value.slice(0, 100));
+            }}
             onMouseDown={(event) => event.stopPropagation()}
             onKeyDown={(event) => event.stopPropagation()}
             placeholder={searchPlaceholder}
@@ -429,7 +502,49 @@ export function MediaPicker({
             <p className="mb-2 text-sm font-medium text-app-muted">Trending</p>
           ) : null}
 
-          {loading ? (
+          {showGifCategoryHome ? (
+            <div className="grid grid-cols-2 gap-2.5">
+              <button
+                type="button"
+                className="relative flex h-24 items-end overflow-hidden rounded-xl bg-gradient-to-br from-rose-400 via-pink-500 to-fuchsia-600 p-3 text-left shadow-sm transition-transform hover:scale-[1.02] active:scale-[0.98]"
+                onClick={() => openGifResults('')}
+              >
+                <FiTrendingUp
+                  className="absolute right-3 top-3 h-7 w-7 text-white/90"
+                  strokeWidth={2}
+                  aria-hidden="true"
+                />
+                <span className="text-sm font-semibold leading-tight text-white">Trending GIFs</span>
+              </button>
+              {gifCategories.map((category) => (
+                <button
+                  key={category.category}
+                  type="button"
+                  title={category.category}
+                  className="group relative h-24 overflow-hidden rounded-xl bg-app-surface shadow-sm ring-1 ring-app-border/60 transition-transform hover:scale-[1.02] active:scale-[0.98]"
+                  onClick={() => openGifResults(category.query)}
+                >
+                  {category.previewUrl ? (
+                    <RemoteImage
+                      src={category.previewUrl}
+                      alt=""
+                      loading="lazy"
+                      className="absolute inset-0 h-full w-full object-cover"
+                    />
+                  ) : (
+                    <div className="absolute inset-0 bg-gradient-to-br from-app-inset to-app-surface" />
+                  )}
+                  <span className="absolute inset-0 bg-black/25 transition-colors group-hover:bg-black/35" />
+                  <span className="absolute inset-x-0 bottom-0 p-2 text-center text-sm font-semibold text-white drop-shadow-sm">
+                    {category.category}
+                  </span>
+                </button>
+              ))}
+              {gifCategories.length === 0 && !loading ? (
+                <p className="col-span-2 py-6 text-center text-sm text-app-muted">Loading categories…</p>
+              ) : null}
+            </div>
+          ) : loading ? (
             <p className="py-4 text-center text-sm text-app-muted">Loading...</p>
           ) : error ? (
             <p className="py-4 text-center text-sm text-accent-soft">{error}</p>
@@ -465,6 +580,12 @@ export function MediaPicker({
           )}
         </div>
       )}
+
+      {tab === 'gif' ? (
+        <p className="border-t border-app-border/50 px-3 py-2 text-center text-[10px] font-medium tracking-wide text-app-muted">
+          Powered by <span className="text-app-text/70">KLIPY</span>
+        </p>
+      ) : null}
     </div>
   );
 }

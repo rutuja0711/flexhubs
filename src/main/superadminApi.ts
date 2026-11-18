@@ -6,6 +6,7 @@ import {
   normalizeSuperAdminStats,
   normalizeSuperAdminSuspendResult,
   type SuperAdminOrganizationMembersResponse,
+  type SuperAdminOrganizationsListOptions,
   type SuperAdminOrganizationsPage,
   type SuperAdminStats,
   type SuperAdminSuspendOrganizationResult,
@@ -30,11 +31,24 @@ export async function fetchSuperAdminOrganizations(
   token: string,
   page: number,
   pageSize = 10,
+  options?: SuperAdminOrganizationsListOptions,
 ): Promise<ApiResult<SuperAdminOrganizationsPage>> {
   const params = new URLSearchParams({
     page: String(Math.max(1, page)),
-    limit: String(Math.max(1, pageSize)),
+    limit: String(Math.max(1, Math.min(50, pageSize))),
   });
+
+  const q = options?.q?.trim();
+  if (q) {
+    params.set('q', q);
+  }
+  if (options?.sort) {
+    params.set('sort', options.sort);
+  }
+  const plan = options?.plan?.trim().toLowerCase();
+  if (plan) {
+    params.set('plan', plan);
+  }
 
   const result = await apiGet<unknown>(
     `${API_BASE_URL}/superadmin/organizations?${params.toString()}`,

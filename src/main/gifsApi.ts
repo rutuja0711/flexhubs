@@ -1,7 +1,7 @@
 import { API_BASE_URL } from '../shared/api';
 import type { ApiResult } from '../shared/api';
-import type { GifPickerItem } from '../shared/gifs';
-import { normalizeGifItems } from '../shared/gifs';
+import type { GifCategoryItem, GifPickerItem } from '../shared/gifs';
+import { normalizeGifCategories, normalizeGifItems } from '../shared/gifs';
 import { apiGet } from './apiRequest';
 
 async function fetchGifList(
@@ -16,6 +16,23 @@ async function fetchGifList(
   }
 
   return { ok: true, data: normalizeGifItems(result.data) };
+}
+
+export async function fetchGifCategories(
+  token: string,
+  locale = 'en_US',
+): Promise<ApiResult<GifCategoryItem[]>> {
+  const result = await apiGet<unknown>(
+    `${API_BASE_URL}/gifs/categories?locale=${encodeURIComponent(locale)}`,
+    token,
+    'GIF Categories API',
+  );
+
+  if (!result.ok) {
+    return result;
+  }
+
+  return { ok: true, data: normalizeGifCategories(result.data) };
 }
 
 export async function fetchTrendingGifs(

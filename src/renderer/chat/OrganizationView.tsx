@@ -6,7 +6,6 @@ import {
   FiFileText,
   FiHeadphones,
   FiHome,
-  FiLogOut,
   FiSend,
   FiShield,
   FiTrash2,
@@ -47,12 +46,13 @@ import {
   loadOrganizationSeats,
   loadPaymentPlans,
   loadPlanCompliance,
-  removeOrganizationMember,
   revokeOrganizationInvite,
   sendOrganizationInvite,
+  updateOrganizationInvite,
   verifyUpgradeSubscription,
 } from '../organizationApi';
-import { Avatar, BuildingIcon } from './ChatIcons';
+import { BuildingIcon } from './ChatIcons';
+import { OrganizationMembersSettings } from './OrganizationMembersSettings';
 import { useConfirm } from '../ui/ConfirmDialog';
 import { useToast } from '../ui/Toast';
 
@@ -69,6 +69,13 @@ type OrganizationViewProps = {
   onUnauthorized: (status?: number) => boolean;
   onLeftOrganization?: () => void;
   onUserUpdated?: (user: unknown) => void;
+  onOpenDirectChat?: (
+    userId: string,
+    options?: { displayName?: string; username?: string; avatarUrl?: string | null },
+  ) => void | Promise<unknown>;
+  onBeforeOpenChat?: () => void;
+  onMemberCall?: (userId: string, displayName: string, video: boolean) => void | Promise<void>;
+  callBusy?: boolean;
 };
 
 function loadRazorpay(): Promise<boolean> {
@@ -126,6 +133,10 @@ export function OrganizationView({
   onUnauthorized,
   onLeftOrganization,
   onUserUpdated,
+  onOpenDirectChat,
+  onBeforeOpenChat,
+  onMemberCall,
+  callBusy = false,
 }: OrganizationViewProps) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -172,6 +183,10 @@ export function OrganizationView({
   const [paying, setPaying] = useState(false);
   const [leaving, setLeaving] = useState(false);
   const [sendingInvite, setSendingInvite] = useState(false);
+  const [editingInvite, setEditingInvite] = useState<OrganizationInviteItem | null>(null);
+  const [editInviteEmail, setEditInviteEmail] = useState('');
+  const [editInviteRoleId, setEditInviteRoleId] = useState('');
+  const [savingInviteEdit, setSavingInviteEdit] = useState(false);
 
   const selectedPlan = plans.find((plan) => plan.id === selectedPlanId) ?? plans[1] ?? plans[0];
   const pricing = useMemo(
@@ -538,25 +553,61 @@ export function OrganizationView({
     toast.success('Invitation revoked.');
   };
 
-  const handleRemoveMember = async (member: OrganizationMemberItem) => {
-    const confirmed = await confirm({
-      title: 'Remove member',
-      message: `Remove ${member.name} from the organization?`,
-      confirmLabel: 'Remove',
-      tone: 'danger',
-    });
+  const openEditInvite = (invite: OrganizationInviteItem) => {
+    setEditingInvite(invite);
+    setEditInviteEmail(invite.email);
+    setEditInviteRoleId(invite.roleId ?? '');
+  };
 
-    if (!confirmed) return;
+  const closeEditInvite = () => {
+    if (savingInviteEdit) return;
+    setEditingInvite(null);
+  };
 
-    const result = await removeOrganizationMember(member.id);
+  const handleSaveInviteEdit = async () => {
+    if (!editingInvite) return;
+
+    const normalizedEmail = editInviteEmail.trim().toLowerCase();
+    if (!normalizedEmail) {
+      toast.error('Email is required.');
+      return;
+    }
+
+    const patch: { email?: string; organizationRoleId?: string | null } = {};
+    const previousEmail = editingInvite.email.trim().toLowerCase();
+
+    if (normalizedEmail !== previousEmail) {
+      patch.email = normalizedEmail;
+    }
+
+    const previousRoleId = editingInvite.roleId ?? '';
+    if (editInviteRoleId !== previousRoleId) {
+      patch.organizationRoleId = editInviteRoleId ? editInviteRoleId : null;
+    }
+
+    if (Object.keys(patch).length === 0) {
+      toast.info('No changes to save.');
+      setEditingInvite(null);
+      return;
+    }
+
+    setSavingInviteEdit(true);
+    const result = await updateOrganizationInvite(editingInvite.id, patch);
+    setSavingInviteEdit(false);
+
     if (!result.ok) {
       if (onUnauthorized(result.status)) return;
+      if (result.status === 409) {
+        toast.error('That email is already in use.');
+        return;
+      }
       toast.error(result.error);
       return;
     }
 
-    toast.success(`${member.name} removed.`);
-    void loadAll();
+    setInvites(result.data);
+    setEditingInvite(null);
+    toast.success('Invitation updated.');
   };
 
   const handleViewInvoice = async (invoiceId: string) => {
@@ -578,19 +629,6 @@ export function OrganizationView({
   };
 
   const handleLeave = async () => {
-    const confirmed = await confirm({
-      title: 'Leave organization?',
-      message:
-        'You will lose access to this workspace, organization chats, and hubs. This cannot be undone from the app.',
-      confirmLabel: 'Leave organization',
-      cancelLabel: 'Stay',
-      tone: 'danger',
-    });
-
-    if (!confirmed) {
-      return;
-    }
-
     setLeaving(true);
     const result = await leaveOrganizationWorkspace();
     setLeaving(false);
@@ -601,8 +639,14 @@ export function OrganizationView({
       return;
     }
 
+    setMembers([]);
     toast.success('You left the organization.');
     onLeftOrganization?.();
+  };
+
+  const handleMembersUserUpdated = (nextUser: unknown) => {
+    setSessionUser(unwrapAuthUser(nextUser));
+    onUserUpdatedRef.current?.(nextUser);
   };
 
   if (loading) {
@@ -629,12 +673,6 @@ export function OrganizationView({
       </div>
     );
   }
-
-  const formatMemberRoleAndEmail = (member: OrganizationMemberItem) => {
-    const roleLabel = member.role?.trim() || 'No role';
-    const email = member.email?.trim();
-    return email ? `${roleLabel} · ${email}` : roleLabel;
-  };
 
   if (!canManageOrganization) {
     return (
@@ -664,60 +702,23 @@ export function OrganizationView({
               </p>
             </div>
 
-            {/* Bottom Card: Team members */}
-            <div className="rounded-2xl border border-app-border bg-white dark:bg-app-surface shadow-sm overflow-hidden">
-              <div className="flex items-center gap-3.5 p-5 bg-black/[0.02] dark:bg-white/[0.02]">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-accent/10 text-accent">
-                  <FiUsers size={18} />
-                </div>
-                <div>
-                  <h3 className="text-sm font-bold text-app-text flex items-center gap-2">
-                    Team members <span className="text-sm font-normal text-app-muted">{members.length}</span>
-                  </h3>
-                  <p className="text-xs text-app-muted">People in your organization.</p>
-                </div>
-              </div>
-
-              <div className="p-4 space-y-2.5">
-                {members.map((member) => (
-                  <div
-                    key={member.id}
-                    className="flex items-center gap-3.5 rounded-2xl bg-white dark:bg-app-surface-input p-3.5 shadow-xs transition-colors"
-                  >
-                    <Avatar imageUrl={member.avatarUrl} initials={member.initials} size="sm" />
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-medium text-app-text">{member.name}</span>
-                        {member.isAdmin || member.isOwner ? (
-                          <span className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent">
-                            <FiShield className="text-[10px]" />
-                            Admin
-                          </span>
-                        ) : null}
-                      </div>
-                      <p className="mt-0.5 truncate text-xs text-app-muted">
-                        {formatMemberRoleAndEmail(member)}
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            {/* Subtle Leave Organization option */}
-            <div className="flex justify-center pt-2">
-              <button
-                type="button"
-                disabled={leaving}
-                onClick={() => {
-                  void handleLeave();
-                }}
-                className="inline-flex items-center gap-1.5 text-xs text-red-500/70 hover:text-red-500 transition-colors disabled:opacity-50"
-              >
-                <FiLogOut size={13} />
-                {leaving ? 'Leaving…' : 'Leave organization'}
-              </button>
-            </div>
+            <OrganizationMembersSettings
+              members={members}
+              onMembersChange={setMembers}
+              roles={roles}
+              onRolesChange={setRoles}
+              currentUserId={currentUserId}
+              canManage={false}
+              leaving={leaving}
+              onLeave={handleLeave}
+              onUnauthorized={onUnauthorized}
+              onUserUpdated={handleMembersUserUpdated}
+              onOpenDirectChat={onOpenDirectChat}
+              onBeforeOpenChat={onBeforeOpenChat}
+              onMemberCall={onMemberCall}
+              callBusy={callBusy}
+              variant="card"
+            />
           </div>
         </div>
       </div>
@@ -1023,16 +1024,26 @@ export function OrganizationView({
                             {invite.role ? ` · ${invite.role}` : ''}
                           </p>
                         </div>
-                        <button
-                          type="button"
-                          aria-label={`Revoke invite for ${invite.email}`}
-                          className="shrink-0 text-app-muted hover:text-accent-soft"
-                          onClick={() => {
-                            void handleRevokeInvite(invite);
-                          }}
-                        >
-                          <FiTrash2 size={15} />
-                        </button>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <button
+                            type="button"
+                            aria-label={`Edit invite for ${invite.email}`}
+                            className="text-app-muted hover:text-app-text"
+                            onClick={() => openEditInvite(invite)}
+                          >
+                            <FiEdit2 size={15} />
+                          </button>
+                          <button
+                            type="button"
+                            aria-label={`Revoke invite for ${invite.email}`}
+                            className="text-app-muted hover:text-accent-soft"
+                            onClick={() => {
+                              void handleRevokeInvite(invite);
+                            }}
+                          >
+                            <FiTrash2 size={15} />
+                          </button>
+                        </div>
                       </div>
                     ))
                   )}
@@ -1156,75 +1167,87 @@ export function OrganizationView({
         </>
         ) : null}
 
-        <section className="rounded-2xl border border-app-border bg-app-surface p-6">
-          <div className="mb-2 flex items-center gap-2.5">
-            <FiUsers className="text-accent" size={20} />
-            <h3 className="text-lg font-semibold text-app-text">Team members {members.length}</h3>
-          </div>
-          <p className="mb-5 text-sm text-app-muted">
-            {isOwner
-              ? 'View teammates, transfer ownership, or remove members from your workspace.'
-              : 'Teammates in this workspace.'}
-          </p>
-          <div className="space-y-2">
-            {members.map((member) => (
-              <div
-                key={member.id}
-                className="flex items-center justify-between rounded-xl border border-app-border px-4 py-3.5"
-              >
-                <div className="flex min-w-0 items-center gap-3">
-                  <Avatar imageUrl={member.avatarUrl} initials={member.initials} size="sm" />
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <p className="truncate text-sm font-semibold text-app-text">
-                        {member.name}
-                        {member.id === currentUserId ? ' (you)' : ''}
-                      </p>
-                      {member.isAdmin ? (
-                        <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[11px] font-medium text-accent-soft">
-                          Admin
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="mt-0.5 truncate text-xs text-app-muted">
-                      {formatMemberRoleAndEmail(member)}
-                    </p>
-                  </div>
-                </div>
-                {isAdmin && member.id !== currentUserId ? (
-                  <button
-                    type="button"
-                    aria-label={`Remove ${member.name}`}
-                    className="shrink-0 text-app-muted hover:text-accent-soft"
-                    onClick={() => {
-                      void handleRemoveMember(member);
-                    }}
-                  >
-                    <FiTrash2 size={16} />
-                  </button>
-                ) : null}
-              </div>
-            ))}
-          </div>
-          {isOwner ? (
-          <p className="mt-5 text-sm text-app-muted">
-            Transfer ownership to hand off billing, invoices, and admin controls to another teammate. You will
-            keep your account as a regular member.
-          </p>
-          ) : null}
-          <button
-            type="button"
-            disabled={leaving}
-            onClick={() => {
-              void handleLeave();
-            }}
-            className="mt-4 inline-flex items-center gap-2 rounded-xl border border-red-500/40 px-4 py-2.5 text-sm font-semibold text-red-400 hover:bg-red-500/10 disabled:opacity-50"
-          >
-            <FiLogOut size={16} />
-            {leaving ? 'Leaving…' : 'Leave organization'}
-          </button>
-        </section>
+        <OrganizationMembersSettings
+          members={members}
+          onMembersChange={setMembers}
+          roles={roles}
+          onRolesChange={setRoles}
+          currentUserId={currentUserId}
+          canManage={isAdmin}
+          leaving={leaving}
+          onLeave={handleLeave}
+          onUnauthorized={onUnauthorized}
+          onUserUpdated={handleMembersUserUpdated}
+          onOpenDirectChat={onOpenDirectChat}
+          onBeforeOpenChat={onBeforeOpenChat}
+          onMemberCall={onMemberCall}
+          callBusy={callBusy}
+          variant="section"
+        />
       </div>
+
+      {editingInvite ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeEditInvite();
+            }
+          }}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-app-border bg-app-surface p-6 shadow-xl"
+            role="dialog"
+            aria-labelledby="edit-invite-title"
+          >
+            <h4 id="edit-invite-title" className="text-lg font-semibold text-app-text">
+              Edit invitation
+            </h4>
+            <p className="mt-1 text-sm text-app-muted">Changes apply before the member registers.</p>
+            <label className="mt-4 mb-1.5 block text-sm font-medium text-app-text">Email</label>
+            <input
+              type="email"
+              value={editInviteEmail}
+              onChange={(event) => setEditInviteEmail(event.target.value)}
+              className="mb-3 w-full rounded-lg border border-app-border bg-app-surface-input px-3 py-2.5 text-sm focus:border-accent focus:outline-none"
+            />
+            <label className="mb-1.5 block text-sm font-medium text-app-text">Organization role</label>
+            <select
+              value={editInviteRoleId}
+              onChange={(event) => setEditInviteRoleId(event.target.value)}
+              className="mb-5 w-full rounded-lg border border-app-border bg-app-surface-input px-3 py-2.5 text-sm focus:border-accent focus:outline-none"
+            >
+              <option value="">No role assigned</option>
+              {roles.map((roleItem) => (
+                <option key={roleItem.id} value={roleItem.id}>
+                  {roleItem.name}
+                </option>
+              ))}
+            </select>
+            <div className="flex justify-end gap-2">
+              <button
+                type="button"
+                disabled={savingInviteEdit}
+                className="rounded-xl border border-app-border px-4 py-2 text-sm font-medium text-app-text hover:bg-app-chat-hover disabled:opacity-50"
+                onClick={closeEditInvite}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={savingInviteEdit}
+                className="rounded-xl bg-accent px-4 py-2 text-sm font-semibold text-white hover:bg-accent-hover disabled:opacity-50"
+                onClick={() => {
+                  void handleSaveInviteEdit();
+                }}
+              >
+                {savingInviteEdit ? 'Saving…' : 'Save changes'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

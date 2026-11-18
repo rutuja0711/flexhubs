@@ -1690,7 +1690,9 @@ export function ProfileSettingsView({
 
       {/* Main Content Area */}
       <div className="flex-1 overflow-y-auto px-8 py-8 md:px-12 lg:px-20">
-        <div className="w-full max-w-4xl">
+        <div
+          className={`w-full ${activeTab === 'account' ? 'max-w-6xl' : 'max-w-4xl'}`}
+        >
           <div className="mb-8 flex items-start justify-between gap-4">
             <div>
               {activeTab === 'account' ? (
@@ -1722,8 +1724,8 @@ export function ProfileSettingsView({
 
           <div className="space-y-8 pb-12 animate-in fade-in slide-in-from-bottom-2 duration-300">
             {activeTab === 'account' && (
-              <>
-                <section>
+              <div className="grid grid-cols-1 items-start gap-8 md:grid-cols-2">
+                <section className="min-w-0">
                   <h4 className="mb-3 text-base font-semibold text-app-text">Account information</h4>
                   <SectionCard className="space-y-5 p-6">
                     <div>
@@ -1790,7 +1792,7 @@ export function ProfileSettingsView({
                   </SectionCard>
                 </section>
 
-                <section>
+                <section className="min-w-0">
                   <h4 className="mb-3 text-base font-semibold text-app-text">Delete account</h4>
                   <SectionCard className="space-y-4 p-6">
                     <p className="text-sm text-app-muted">
@@ -1820,7 +1822,7 @@ export function ProfileSettingsView({
                     </button>
                   </SectionCard>
                 </section>
-              </>
+              </div>
             )}
 
             {activeTab === 'profile' && (

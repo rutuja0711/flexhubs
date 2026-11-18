@@ -786,6 +786,20 @@ export function mergeServerMessagesWithLocal(
       return serverMessage;
     }
 
+    const localEditedMs = editedAtMillis(localMessage.editedAt);
+    const serverEditedMs = editedAtMillis(serverMessage.editedAt);
+
+    if (
+      typeof localMessage.editedAt === 'string' &&
+      (!serverMessage.editedAt || localEditedMs > serverEditedMs)
+    ) {
+      return mergeMessageUpdates(serverMessage, localMessage);
+    }
+
+    if (typeof serverMessage.editedAt === 'string' && serverEditedMs >= localEditedMs) {
+      return mergeMessageUpdates(localMessage, serverMessage);
+    }
+
     return mergeMessageUpdates(serverMessage, localMessage);
   });
 

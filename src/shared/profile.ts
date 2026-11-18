@@ -248,10 +248,16 @@ export type OrganizationMemberItem = {
   username: string;
   email: string;
   role: string;
+  organizationRoleId: string | null;
   avatarUrl: string | null;
   initials: string;
   isAdmin: boolean;
   isOwner: boolean;
+};
+
+export type PatchOrganizationMemberInput = {
+  email?: string;
+  organizationRoleId?: string | null;
 };
 
 const UI_STATUS_TO_API: Record<string, UserPresenceStatus> = {
@@ -836,17 +842,14 @@ export function userCanManageOrganization(
   );
 }
 
-export function normalizeOrganizationMembers(payload: unknown): OrganizationMemberItem[] {
-  return extractArray(payload, ['members', 'users', 'items', 'data'])
-    .map(asRecord)
-    .filter((item): item is Record<string, unknown> => item !== null)
-    .map((record, index) => {
-      const userRecord = asRecord(record.user) ?? record;
-      const membership = asRecord(record.membership) ?? asRecord(record.organizationMembership);
-      const roleRecord =
-        asRecord(record.role) ??
-        asRecord(userRecord.organizationRole) ??
-        asRecord(membership?.role);
+function mapOrganizationMemberRecord(record: Record<string, unknown>, index: number): OrganizationMemberItem {
+  const userRecord = asRecord(record.user) ?? record;
+  const membership = asRecord(record.membership) ?? asRecord(record.organizationMembership);
+  const roleRecord =
+    asRecord(record.role) ??
+    asRecord(record.organizationRole) ??
+    asRecord(userRecord.organizationRole) ??
+    asRecord(membership?.role);
 
       const name =
         readString(userRecord.name) ??
@@ -876,46 +879,73 @@ export function normalizeOrganizationMembers(payload: unknown): OrganizationMemb
         readString(typeof membership?.role === 'string' ? membership.role : null) ??
         '';
 
-      const normalizedRole = role.toLowerCase();
-      const memberType = readString(record.memberType) ?? readString(record.type);
-      const normalizedMemberType = (memberType ?? '').toLowerCase();
-      const isOwner =
-        record.isOwner === true ||
-        userRecord.isOwner === true ||
-        record.isFounder === true ||
-        userRecord.isFounder === true ||
-        record.isOrganizationOwner === true ||
-        userRecord.isOrganizationOwner === true ||
-        normalizedMemberType.includes('founder') ||
-        normalizedMemberType.includes('owner') ||
-        normalizedRole.includes('founder') ||
-        normalizedRole.includes('owner');
-      const isAdmin =
-        isOwner ||
-        record.isOrganizationAdmin === true ||
-        userRecord.isOrganizationAdmin === true ||
-        record.organizationAdmin === true ||
-        userRecord.organizationAdmin === true;
+  const organizationRoleId =
+    readString(roleRecord?.id) ??
+    readString(asRecord(record.organizationRole)?.id) ??
+    readString(asRecord(userRecord.organizationRole)?.id) ??
+    readString(record.organizationRoleId) ??
+    readString(userRecord.organizationRoleId) ??
+    null;
 
-      return {
-        id:
-          readString(userRecord.id) ??
-          readString(record.userId) ??
-          readString(record.id) ??
-          `member-${index}`,
-        name,
-        username: readString(userRecord.username) ?? readString(record.username) ?? '',
-        email:
-          readString(userRecord.email) ??
-          readString(record.email) ??
-          '',
-        role,
-        avatarUrl: resolveAvatarUrl(userRecord) ?? resolveAvatarUrl(record),
-        initials: initialsFromName(name),
-        isAdmin,
-        isOwner,
-      };
-    });
+  const normalizedRole = role.toLowerCase();
+  const memberType = readString(record.memberType) ?? readString(record.type);
+  const normalizedMemberType = (memberType ?? '').toLowerCase();
+  const isOwner =
+    record.isOwner === true ||
+    userRecord.isOwner === true ||
+    record.isFounder === true ||
+    userRecord.isFounder === true ||
+    record.isOrganizationOwner === true ||
+    userRecord.isOrganizationOwner === true ||
+    normalizedMemberType.includes('founder') ||
+    normalizedMemberType.includes('owner') ||
+    normalizedRole.includes('founder') ||
+    normalizedRole.includes('owner');
+  const isAdmin =
+    isOwner ||
+    record.isOrganizationAdmin === true ||
+    userRecord.isOrganizationAdmin === true ||
+    record.organizationAdmin === true ||
+    userRecord.organizationAdmin === true;
+
+  return {
+    id:
+      readString(userRecord.id) ??
+      readString(record.userId) ??
+      readString(record.id) ??
+      `member-${index}`,
+    name,
+    username: readString(userRecord.username) ?? readString(record.username) ?? '',
+    email:
+      readString(userRecord.email) ??
+      readString(record.email) ??
+      '',
+    role,
+    organizationRoleId,
+    avatarUrl: resolveAvatarUrl(userRecord) ?? resolveAvatarUrl(record),
+    initials: initialsFromName(name),
+    isAdmin,
+    isOwner,
+  };
+}
+
+export function normalizeOrganizationMembers(payload: unknown): OrganizationMemberItem[] {
+  return extractArray(payload, ['members', 'users', 'items', 'data'])
+    .map(asRecord)
+    .filter((item): item is Record<string, unknown> => item !== null)
+    .map(mapOrganizationMemberRecord);
+}
+
+/** PATCH /organizations/members/:userId → `{ member }` */
+export function normalizeOrganizationMemberResponse(payload: unknown): OrganizationMemberItem | null {
+  const record = asRecord(payload);
+
+  if (!record) {
+    return null;
+  }
+
+  const memberRecord = asRecord(record.member) ?? record;
+  return mapOrganizationMemberRecord(memberRecord, 0);
 }
 
 function readUploadUrlFromRecord(record: Record<string, unknown> | null): string | null {

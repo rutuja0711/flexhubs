@@ -131,6 +131,20 @@ export type SuperAdminOrganization = {
   createdAt: string;
 };
 
+export type SuperAdminOrganizationsSort =
+  | 'newest'
+  | 'oldest'
+  | 'plan_asc'
+  | 'plan_desc'
+  | 'name_asc'
+  | 'name_desc';
+
+export type SuperAdminOrganizationsListOptions = {
+  q?: string;
+  sort?: SuperAdminOrganizationsSort;
+  plan?: string;
+};
+
 export type SuperAdminOrganizationsPage = {
   organizations: SuperAdminOrganization[];
   pagination: {
@@ -139,6 +153,9 @@ export type SuperAdminOrganizationsPage = {
     total: number;
     totalPages: number;
   };
+  sort?: SuperAdminOrganizationsSort;
+  query?: string;
+  plan?: string;
 };
 
 export type SuperAdminOrganizationMember = {
@@ -295,6 +312,21 @@ export function normalizeSuperAdminOrganizations(payload: unknown): SuperAdminOr
     readNumber(paginationRecord.pageCount) ??
     Math.max(1, Math.ceil(total / Math.max(limit, 1)));
 
+  const sortRaw = readString(record.sort);
+  const sortValues: SuperAdminOrganizationsSort[] = [
+    'newest',
+    'oldest',
+    'plan_asc',
+    'plan_desc',
+    'name_asc',
+    'name_desc',
+  ];
+  const sort = sortValues.includes(sortRaw as SuperAdminOrganizationsSort)
+    ? (sortRaw as SuperAdminOrganizationsSort)
+    : undefined;
+  const query = readString(record.query) ?? undefined;
+  const planFilter = readString(record.plan) ?? undefined;
+
   return {
     organizations,
     pagination: {
@@ -303,6 +335,9 @@ export function normalizeSuperAdminOrganizations(payload: unknown): SuperAdminOr
       total: Math.max(0, total),
       totalPages: Math.max(1, totalPages),
     },
+    ...(sort ? { sort } : {}),
+    ...(query?.trim() ? { query: query.trim() } : {}),
+    ...(planFilter?.trim() ? { plan: planFilter.trim() } : {}),
   };
 }
 

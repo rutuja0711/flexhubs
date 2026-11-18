@@ -153,6 +153,7 @@ import {
 import { fetchAuthenticatedMedia } from '../mediaApi';
 import { prepareFileDragFromUrl, startPreparedFileDrag } from '../startFileDrag';
 import {
+  fetchGifCategories,
   fetchTrendingGifs,
   searchGifs,
   fetchTrendingStickers,
@@ -191,9 +192,12 @@ import {
   fetchOrganizationRoles,
   fetchOrganizationSeats,
   leaveOrganization,
+  patchOrganizationInvite,
+  patchOrganizationMember,
   removeOrganizationMember,
   revokeOrganizationInvite,
   sendOrganizationInvite,
+  transferOrganizationOwnership,
   updateOrganizationRole,
 } from '../organizationsApi';
 import {
@@ -357,7 +361,28 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
   ipcMain.handle('org:remove-member', (_event, token: string, userId: string) =>
     removeOrganizationMember(token, userId),
   );
+  ipcMain.handle(
+    'org:patch-member',
+    (
+      _event,
+      token: string,
+      userId: string,
+      input: import('../../shared/profile').PatchOrganizationMemberInput,
+    ) => patchOrganizationMember(token, userId, input ?? {}),
+  );
+  ipcMain.handle(
+    'org:patch-invite',
+    (
+      _event,
+      token: string,
+      inviteId: string,
+      input: import('../../shared/profile').PatchOrganizationMemberInput,
+    ) => patchOrganizationInvite(token, inviteId, input ?? {}),
+  );
   ipcMain.handle('org:leave', (_event, token: string) => leaveOrganization(token));
+  ipcMain.handle('org:transfer-ownership', (_event, token: string, targetUserId: string) =>
+    transferOrganizationOwnership(token, targetUserId),
+  );
   ipcMain.handle('org:roles', (_event, token: string) => fetchOrganizationRoles(token));
   ipcMain.handle('org:create-role', (_event, token: string, name: string) => createOrganizationRole(token, name));
   ipcMain.handle('org:update-role', (_event, token: string, roleId: string, name: string) =>
@@ -386,8 +411,22 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
     fetchOrgInvoiceById(token, invoiceId),
   );
   ipcMain.handle('superadmin:stats', (_event, token: string) => fetchSuperAdminStats(token));
-  ipcMain.handle('superadmin:organizations', (_event, token: string, page: number, pageSize?: number) =>
-    fetchSuperAdminOrganizations(token, page, pageSize),
+  ipcMain.handle(
+    'superadmin:organizations',
+    (
+      _event,
+      token: string,
+      page: number,
+      pageSize?: number,
+      q?: string,
+      sort?: import('../../shared/superadmin').SuperAdminOrganizationsSort,
+      plan?: string,
+    ) =>
+      fetchSuperAdminOrganizations(token, page, pageSize, {
+        q: typeof q === 'string' && q.trim() ? q.trim() : undefined,
+        sort,
+        plan: typeof plan === 'string' && plan.trim() ? plan.trim().toLowerCase() : undefined,
+      }),
   );
   ipcMain.handle(
     'superadmin:organization-members',
@@ -491,6 +530,9 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
       m.sendMessageStream(token, conversationId, content, replyToId, threadRootId),
     );
   });
+  ipcMain.handle('gifs:categories', (_event, token: string, locale?: string) =>
+    fetchGifCategories(token, locale),
+  );
   ipcMain.handle('gifs:trending', (_event, token: string, limit?: number) =>
     fetchTrendingGifs(token, limit),
   );

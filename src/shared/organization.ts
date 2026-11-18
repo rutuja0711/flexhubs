@@ -54,6 +54,28 @@ export type OrganizationRoleItem = {
   memberCount: number;
 };
 
+export type TransferOrganizationOwnershipResult = {
+  user: unknown;
+  newOwnerId: string | null;
+  organizationName: string | null;
+};
+
+export function normalizeTransferOrganizationOwnership(
+  payload: unknown,
+): TransferOrganizationOwnershipResult | null {
+  const record = asRecord(payload);
+
+  if (!record) {
+    return null;
+  }
+
+  return {
+    user: record.user ?? record,
+    newOwnerId: readString(record.newOwnerId),
+    organizationName: readString(record.organizationName),
+  };
+}
+
 export type OrganizationInviteItem = {
   id: string;
   email: string;

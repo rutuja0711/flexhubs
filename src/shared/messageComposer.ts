@@ -40,14 +40,18 @@ export function canEditMessage(
   }
 
   const messageType = String(message.messageType ?? 'TEXT').toUpperCase();
-  if (messageType === 'GIF' || messageType === 'STICKER' || messageType === 'VOICE' || messageType === 'POLL') {
+  if (messageType === 'STICKER' || messageType === 'VOICE' || messageType === 'POLL') {
     return false;
   }
 
   const hasEditableAttachments = filterEditableMessageMedia(message).length > 0;
   const hasText = message.content.trim().length > 0;
 
-  if (!hasText && !hasEditableAttachments) {
+  if (messageType === 'GIF' || messageType === 'IMAGE' || messageType === 'TEXT') {
+    if (!hasText && !hasEditableAttachments && messageType !== 'GIF') {
+      return false;
+    }
+  } else if (!hasText && !hasEditableAttachments) {
     return false;
   }
 
