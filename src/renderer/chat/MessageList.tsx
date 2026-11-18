@@ -1438,9 +1438,8 @@ export function MessageList({
 
   const syncJumpToLatestUi = useCallback(
     (atBottom: boolean) => {
-      setShowJumpToLatest(!atBottom);
-
       if (atBottom) {
+        setShowJumpToLatest(false);
         jumpAnchorMessageIdRef.current = null;
         setNewMessagesBelow(0);
         return;
@@ -1450,9 +1449,12 @@ export function MessageList({
         jumpAnchorMessageIdRef.current = messages[messages.length - 1]?.id ?? null;
       }
 
-      if (jumpAnchorMessageIdRef.current) {
-        setNewMessagesBelow(countMessagesBelowAnchor(messages, jumpAnchorMessageIdRef.current));
-      }
+      const below = jumpAnchorMessageIdRef.current
+        ? countMessagesBelowAnchor(messages, jumpAnchorMessageIdRef.current)
+        : 0;
+
+      setNewMessagesBelow(below);
+      setShowJumpToLatest(below > 0);
     },
     [messages],
   );

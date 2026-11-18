@@ -868,6 +868,17 @@ function resolveMergedEditedContent(
   const previousEditedMs = editedAtMillis(previous.editedAt);
   const incomingEditedMs = editedAtMillis(incoming.editedAt);
 
+  if (
+    incoming.content.trim() &&
+    incoming.content !== previous.content &&
+    incomingEditedMs >= previousEditedMs
+  ) {
+    return {
+      content: incoming.content,
+      editedAt: incoming.editedAt ?? previous.editedAt ?? new Date().toISOString(),
+    };
+  }
+
   if (incomingEditedMs > previousEditedMs) {
     return {
       content: incoming.content,

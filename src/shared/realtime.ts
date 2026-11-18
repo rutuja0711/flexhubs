@@ -910,7 +910,13 @@ export function extractMessageUpdateFromRealtimePayload(payload: unknown): Messa
   const editedAt = readString(row.editedAt) ?? readString(row.edited_at);
   const pinnedAt = readString(row.pinnedAt) ?? readString(row.pinned_at);
 
-  if (!content && !editedAt && !pinnedAt && row.media === undefined) {
+  const isEdited =
+    row.isEdited === true ||
+    row.is_edited === true ||
+    record.isEdited === true ||
+    Boolean(editedAt);
+
+  if (!content && !editedAt && !pinnedAt && row.media === undefined && !isEdited) {
     return null;
   }
 
@@ -952,6 +958,60 @@ export function isNewMessageEvent(type: string, payload?: unknown): boolean {
       normalized.includes('sent') ||
       normalized.includes('insert') ||
       normalized.includes('received'))
+  );
+}
+
+export function isMessageEditRealtimeEvent(type: string, payload?: unknown): boolean {
+  const normalized = type.toLowerCase();
+
+  if (normalized.includes('edit') && !normalized.includes('reaction')) {
+    return true;
+  }
+
+  const record = asRecord(unwrapRealtimePayload(payload));
+
+  if (!record) {
+    return false;
+  }
+
+  const row =
+    asRecord(record.new) ??
+    asRecord(record.record) ??
+    asRecord(record.data) ??
+    record;
+
+  if (
+    readString(row.editedAt) ??
+    readString(row.edited_at) ??
+    readString(record.editedAt) ??
+    readString(record.edited_at)
+  ) {
+    return true;
+  }
+
+  return row.isEdited === true || row.is_edited === true || record.isEdited === true;
+}
+
+export function extractEditMessageIdFromRealtime(payload: unknown): string | null {
+  const record = asRecord(unwrapRealtimePayload(payload));
+
+  if (!record) {
+    return null;
+  }
+
+  const row =
+    asRecord(record.new) ??
+    asRecord(record.record) ??
+    asRecord(record.data) ??
+    record;
+
+  return (
+    readString(row.messageId) ??
+    readString(row.message_id) ??
+    readString(row.id) ??
+    readString(record.messageId) ??
+    readString(record.message_id) ??
+    readString(asRecord(row.message)?.id)
   );
 }
 
