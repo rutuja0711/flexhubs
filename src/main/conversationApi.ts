@@ -11,6 +11,7 @@ import {
   normalizeMessageHistoryPage,
   normalizeMessageReadReceipts,
   normalizeMessageThread,
+  pollOptionIdLooksUnresolved,
 } from '../shared/messages';
 import type { MessageHistoryPage } from '../shared/messages';
 import { normalizeScheduledMessage, normalizeScheduledMessages } from '../shared/extras';
@@ -34,16 +35,22 @@ function parseEditMediaUpdate(value: string | undefined): MessageEditMediaChange
   return null;
 }
 
-/** Web-aligned PATCH body first; legacy shapes only as fallbacks on 400. */
+/** Web-aligned PATCH body first; legacy shapes as fallbacks when the API rejects the primary body. */
 function buildEditMessageBodies(content: string, mediaUpdate: MessageEditMediaChange | null): unknown[] {
   const primary = buildEditMessageRequestBody(content, mediaUpdate);
   const fallbacks: unknown[] = [];
 
+  if (!mediaUpdate || mediaUpdate.kind === 'unchanged') {
+    fallbacks.push({ content: primary.content, type: 'TEXT' });
+    fallbacks.push({ content: primary.content, messageType: 'TEXT' });
+  }
+
   if (mediaUpdate?.kind === 'cleared') {
     fallbacks.push({ content: primary.content, type: 'TEXT' });
     fallbacks.push({ content: primary.content, fileUrl: null });
+    fallbacks.push({ content: primary.content, attachments: [] });
   } else if (mediaUpdate?.kind === 'replaced') {
-    const { messageType, fileUrl, fileName, mimeType } = mediaUpdate;
+    const { messageType, fileUrl, fileName, mimeType, fileSize } = mediaUpdate;
     fallbacks.push({
       content: primary.content,
       type: messageType,
@@ -51,10 +58,19 @@ function buildEditMessageBodies(content: string, mediaUpdate: MessageEditMediaCh
       fileUrl,
       fileName,
       mimeType,
+      ...(typeof fileSize === 'number' ? { fileSize } : {}),
     });
   }
 
   return [primary, ...fallbacks];
+}
+
+function messagePayloadLooksValid(messageId: string, message: MessageItem): boolean {
+  if (!message.id || message.id === `message-0`) {
+    return false;
+  }
+
+  return message.id === messageId;
 }
 
 export async function fetchConversationBootstrap(
@@ -548,7 +564,7 @@ export async function editMessage(
 ): Promise<ApiResult<MessageItem>> {
   const mediaUpdate = parseEditMediaUpdate(mediaUpdateJson);
   const bodies = buildEditMessageBodies(content, mediaUpdate);
-  const url = `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}`;
+  const url = `${API_BASE_URL}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`;
 
   let lastResult: ApiResult<unknown> = {
     ok: false,
@@ -559,12 +575,30 @@ export async function editMessage(
     const result = await apiPatch<unknown>(url, token, 'Edit Message API', body);
 
     if (result.ok) {
-      return { ok: true, data: normalizeMessageResult(result.data) };
+      let data = normalizeMessageResult(result.data);
+
+      if (!messagePayloadLooksValid(messageId, data)) {
+        const refetch = await fetchMessageById(token, conversationId, messageId);
+
+        if (refetch.ok) {
+          data = refetch.data;
+        }
+      }
+
+      if (!messagePayloadLooksValid(messageId, data)) {
+        return {
+          ok: false,
+          error: 'Message was updated but the server response could not be parsed.',
+          status: result.status,
+        };
+      }
+
+      return { ok: true, data };
     }
 
     lastResult = result;
 
-    if (result.status !== 400 || !result.error?.toLowerCase().includes('invalid')) {
+    if (result.status === 401 || result.status === 403 || result.status === 404) {
       return result;
     }
   }
@@ -960,18 +994,39 @@ export async function votePollMessage(
   messageId: string,
   optionId: string,
 ): Promise<ApiResult<MessageItem>> {
-  const result = await apiPost<unknown>(
-    `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}/poll/vote`,
-    token,
-    'Vote Poll API',
+  const url = `${API_BASE_URL}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}/poll/vote`;
+  const bodies: Record<string, unknown>[] = [
     { optionId },
-  );
+    { pollOptionId: optionId },
+    { optionIds: [optionId] },
+  ];
 
-  if (!result.ok) {
-    return result;
+  let lastResult: ApiResult<unknown> = { ok: false, error: 'Could not record your vote.' };
+
+  for (const body of bodies) {
+    const result = await apiPost<unknown>(url, token, 'Vote Poll API', body);
+
+    if (result.ok) {
+      const data = normalizeMessageResult(result.data);
+      if (data.poll?.options.some((option) => !pollOptionIdLooksUnresolved(option.id))) {
+        return { ok: true, data };
+      }
+
+      const refetch = await fetchMessageById(token, conversationId, messageId);
+      if (refetch.ok && refetch.data.poll) {
+        return { ok: true, data: refetch.data };
+      }
+
+      return { ok: true, data };
+    }
+
+    lastResult = result;
+    if (result.status !== 400 && result.status !== 404 && result.status !== 422) {
+      break;
+    }
   }
 
-  return { ok: true, data: normalizeMessageResult(result.data) };
+  return lastResult as ApiResult<MessageItem>;
 }
 
 export async function fetchPinnedMessages(
@@ -1012,7 +1067,7 @@ export async function fetchMessageById(
   messageId: string,
 ): Promise<ApiResult<MessageItem>> {
   const result = await apiGet<unknown>(
-    `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}`,
+    `${API_BASE_URL}/conversations/${encodeURIComponent(conversationId)}/messages/${encodeURIComponent(messageId)}`,
     token,
     'Message API',
   );

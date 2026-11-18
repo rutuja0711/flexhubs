@@ -30,7 +30,8 @@ export function PollMessage({ poll, disabled = false, onVote }: PollMessageProps
         ) : (
           poll.options.map((option) => {
           const percent = totalVotes > 0 ? Math.round((option.voteCount / totalVotes) * 100) : 0;
-          const isInteractive = !disabled && Boolean(onVote) && !singleChoiceLocked;
+          const isInteractive =
+            !disabled && Boolean(onVote) && !singleChoiceLocked && !option.votedByMe;
 
           return (
             <button

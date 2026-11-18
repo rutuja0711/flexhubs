@@ -722,6 +722,62 @@ export function isReactionEvent(type: string): boolean {
   return type.toLowerCase().includes('reaction');
 }
 
+function realtimePayloadIndicatesReaction(
+  payload: unknown,
+  fullMessage: MessageItem | null,
+): boolean {
+  const record = asRecord(unwrapRealtimePayload(payload));
+
+  if (!record) {
+    return Boolean(fullMessage?.reactions.length);
+  }
+
+  const eventHint = String(
+    record.type ??
+      record.eventType ??
+      record.event_type ??
+      record.event ??
+      record.action ??
+      '',
+  ).toLowerCase();
+
+  if (eventHint.includes('reaction')) {
+    return true;
+  }
+
+  if (
+    fullMessage?.editedAt &&
+    !eventHint.includes('reaction') &&
+    !readString(record.emoji) &&
+    !readString(record.reaction)
+  ) {
+    return false;
+  }
+
+  if (eventHint.includes('edit') || eventHint.includes('updated') || eventHint.includes('update')) {
+    if (
+      !eventHint.includes('reaction') &&
+      (fullMessage?.editedAt || readString(record.editedAt) || readString(record.edited_at))
+    ) {
+      return false;
+    }
+  }
+
+  const row =
+    asRecord(record.record) ?? asRecord(record.new) ?? asRecord(record.old) ?? record;
+
+  if (
+    readString(row.emoji) ||
+    readString(row.reaction) ||
+    readString(record.emoji) ||
+    Array.isArray(record.reactions)
+  ) {
+    return true;
+  }
+
+  return Boolean(fullMessage?.reactions.length && eventHint.includes('reaction'));
+}
+
 export function extractReactionEvent(payload: unknown): ReactionEventPatch | null {
   const record = asRecord(payload);
 
@@ -732,6 +788,10 @@ export function extractReactionEvent(payload: unknown): ReactionEventPatch | nul
   const message = extractMessageFromRealtimePayload(payload);
 
   if (message) {
+    if (!realtimePayloadIndicatesReaction(payload, message)) {
+      return null;
+    }
+
     return {
       messageId: message.id,
       message,
@@ -753,6 +813,7 @@ export function extractReactionEvent(payload: unknown): ReactionEventPatch | nul
     readString(asRecord(row.message)?.id) ??
     readString(row.id) ??
     readString(record.messageId) ??
+    readString(record.message_id) ??
     readString(record.id);
 
   if (!messageId) {
@@ -812,6 +873,57 @@ export function extractReactionEvent(payload: unknown): ReactionEventPatch | nul
   }
 
   return null;
+}
+
+export function extractMessageUpdateFromRealtimePayload(payload: unknown): MessageItem | null {
+  const existing = extractMessageFromRealtimePayload(payload);
+
+  if (existing) {
+    return existing;
+  }
+
+  const record = asRecord(unwrapRealtimePayload(payload));
+
+  if (!record) {
+    return null;
+  }
+
+  const row =
+    asRecord(record.new) ??
+    asRecord(record.record) ??
+    asRecord(record.data) ??
+    asRecord(asRecord(record.data)?.message) ??
+    record;
+
+  const messageId =
+    readString(row.messageId) ??
+    readString(row.message_id) ??
+    readString(row.id) ??
+    readString(record.messageId) ??
+    readString(record.message_id);
+
+  if (!messageId) {
+    return null;
+  }
+
+  const content = readString(row.content) ?? readString(row.text);
+  const editedAt = readString(row.editedAt) ?? readString(row.edited_at);
+  const pinnedAt = readString(row.pinnedAt) ?? readString(row.pinned_at);
+
+  if (!content && !editedAt && !pinnedAt && row.media === undefined) {
+    return null;
+  }
+
+  return normalizeMessage(
+    {
+      ...row,
+      id: messageId,
+      ...(content ? { content } : {}),
+      ...(editedAt ? { editedAt, edited_at: editedAt } : {}),
+      ...(pinnedAt ? { pinnedAt, pinned_at: pinnedAt } : {}),
+    },
+    0,
+  );
 }
 
 export function isNewMessageEvent(type: string, payload?: unknown): boolean {

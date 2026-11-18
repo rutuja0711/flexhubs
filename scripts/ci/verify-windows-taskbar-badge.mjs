@@ -30,6 +30,7 @@ function main() {
   assertIncludes(appBadge, "process.platform === 'darwin'", 'macOS dock badge branch');
   assertIncludes(appBadge, 'setOverlayIcon', 'Windows overlay API');
   assertIncludes(appBadge, 'createWindowsOverlayImage', 'Windows overlay image builder');
+  assertIncludes(read('src/main/windowsTaskbarBadgeBitmap.ts'), 'createFromBuffer', 'Windows RGBA bitmap badge');
   assertIncludes(appBadge, 'setBadgeHostWindow', 'badge host window registration');
   assertIncludes(ipc, "'desktop:set-app-badge'", 'IPC channel desktop:set-app-badge');
   assertIncludes(ipc, 'updateApplicationBadge', 'IPC calls updateApplicationBadge');

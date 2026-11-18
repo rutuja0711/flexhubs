@@ -568,6 +568,15 @@ const createWindow = (): void => {
 
   mainWindow.on('restore', () => {
     updateDisplaySleepBlocker();
+    if (process.platform === 'win32') {
+      reapplyApplicationBadge();
+    }
+  });
+
+  mainWindow.on('focus', () => {
+    if (process.platform === 'win32') {
+      reapplyApplicationBadge();
+    }
   });
 
   mainWindow.on('enter-full-screen', () => {

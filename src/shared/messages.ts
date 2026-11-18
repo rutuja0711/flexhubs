@@ -141,6 +141,46 @@ export type MessagePoll = {
   totalVotes: number;
 };
 
+export function pollOptionIdLooksUnresolved(id: string): boolean {
+  return /^option-\d+$/i.test(id.trim());
+}
+
+export function applyOptimisticPollVote(
+  poll: MessagePoll,
+  optionId: string,
+): MessagePoll {
+  const previousMyVotes = poll.options.filter((option) => option.votedByMe);
+
+  const options = poll.options.map((option) => {
+    if (option.id === optionId) {
+      const wasVoted = option.votedByMe;
+      return {
+        ...option,
+        votedByMe: true,
+        voteCount: wasVoted ? option.voteCount : option.voteCount + 1,
+      };
+    }
+
+    if (!poll.allowMultiple && option.votedByMe) {
+      return {
+        ...option,
+        votedByMe: false,
+        voteCount: Math.max(0, option.voteCount - 1),
+      };
+    }
+
+    return option;
+  });
+
+  const totalVotes = options.reduce((sum, option) => sum + option.voteCount, 0);
+
+  return {
+    ...poll,
+    options,
+    totalVotes,
+  };
+}
+
 export type MessageReadReceipt = {
   userId: string;
   name: string;
@@ -1870,6 +1910,10 @@ export function findFirstUnreadMessageId(
   lastReadMessageId: string | null,
   currentUserId: string | null,
 ): string | null {
+  if (unreadCount <= 0) {
+    return null;
+  }
+
   const isIncoming = (message: MessageItem) =>
     !message.isOwn && message.senderId !== currentUserId;
 
@@ -1885,10 +1929,6 @@ export function findFirstUnreadMessageId(
 
       return null;
     }
-  }
-
-  if (unreadCount <= 0) {
-    return null;
   }
 
   let remaining = unreadCount;
@@ -2242,7 +2282,13 @@ function normalizePollOption(
     return null;
   }
 
-  const id = readString(record.id) ?? readString(record.optionId) ?? `option-${index}`;
+  const id =
+    readString(record.id) ??
+    readString(record.optionId) ??
+    readString(record.pollOptionId) ??
+    readString(record.option_id) ??
+    readString(record.pollOption_id) ??
+    `option-${index}`;
   const countRecord = asRecord(record._count);
   const voteCount =
     typeof record.voteCount === 'number'
@@ -2499,8 +2545,32 @@ export function extractMessageFromPayload(payload: unknown): Record<string, unkn
     return null;
   }
 
-  if (asRecord(record.message)) {
-    return asRecord(record.message);
+  const nestedMessage = asRecord(record.message);
+
+  if (nestedMessage) {
+    return nestedMessage;
+  }
+
+  const dataRecord = asRecord(record.data);
+
+  if (dataRecord) {
+    const dataMessage = asRecord(dataRecord.message);
+
+    if (dataMessage) {
+      return dataMessage;
+    }
+
+    if (
+      readString(dataRecord.id) ||
+      readString(dataRecord.messageId) ||
+      readString(dataRecord.content) !== null
+    ) {
+      return dataRecord;
+    }
+  }
+
+  if (readString(record.id) || readString(record.messageId)) {
+    return record;
   }
 
   return record;
@@ -3212,12 +3282,20 @@ function resolveConversationIdFromReference(
     return byPeerUserId.id;
   }
 
-  const byHubChannelId = conversations.find(
-    (item) => item.kind === 'hub' && item.channelId === normalizedId,
+  const byChannelId = conversations.find(
+    (item) => item.channelId !== null && item.channelId === normalizedId,
   );
 
-  if (byHubChannelId) {
-    return byHubChannelId.id;
+  if (byChannelId) {
+    return byChannelId.id;
+  }
+
+  const byConversationAsChannelId = conversations.find(
+    (item) => item.channelId !== null && item.id === normalizedId,
+  );
+
+  if (byConversationAsChannelId) {
+    return byConversationAsChannelId.id;
   }
 
   return null;

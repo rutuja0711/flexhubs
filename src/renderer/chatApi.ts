@@ -373,9 +373,29 @@ export async function editChatMessage(
   const mediaUpdateJson =
     mediaUpdate && mediaUpdate.kind !== 'unchanged' ? JSON.stringify(mediaUpdate) : undefined;
 
-  return withToken((token) =>
+  const result = await withToken((token) =>
     window.electronAPI.editMessage(token, conversationId, messageId, content, mediaUpdateJson),
   );
+
+  if (import.meta.env?.DEV) {
+    if (result.ok) {
+      console.info('[editChatMessage] ok', {
+        conversationId,
+        messageId,
+        editedAt: result.data.editedAt,
+        content: result.data.content?.slice(0, 80),
+      });
+    } else {
+      console.warn('[editChatMessage] failed', {
+        conversationId,
+        messageId,
+        status: result.status,
+        error: result.error,
+      });
+    }
+  }
+
+  return result;
 }
 
 export async function deleteChatMessage(

@@ -1,11 +1,13 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FiPlus, FiSmile } from 'react-icons/fi';
+import { FiPlus, FiSearch, FiSmile } from 'react-icons/fi';
+import { searchCatalogEmojis } from '../../shared/emojiSearch';
 import {
   QUICK_REACTIONS,
   REACTION_EMOJI_CATEGORIES,
   extractSingleEmoji,
 } from '../../shared/reactionEmojis';
+import { EmojiGlyph } from './EmojiGlyph';
 
 type ReactionPickerProps = {
   align: 'left' | 'right';
@@ -13,23 +15,45 @@ type ReactionPickerProps = {
 };
 
 const PICKER_WIDTH = 320;
-const PICKER_MAX_HEIGHT = 360;
+const PICKER_MAX_HEIGHT = 400;
 
 export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
   const [open, setOpen] = useState(false);
   const [hovered, setHovered] = useState(false);
   const [activeCategory, setActiveCategory] = useState(0);
   const [customEmoji, setCustomEmoji] = useState('');
+  const [query, setQuery] = useState('');
   const [pickerPosition, setPickerPosition] = useState({ top: 0, left: 0 });
   const buttonRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
-  const customInputRef = useRef<HTMLInputElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const selectEmoji = (emoji: string) => {
     setOpen(false);
     setCustomEmoji('');
+    setQuery('');
     onSelect(emoji);
   };
+
+  const emojiGridEmojis = useMemo(() => {
+    const trimmed = query.trim();
+
+    if (!trimmed) {
+      return REACTION_EMOJI_CATEGORIES[activeCategory]?.emojis ?? [];
+    }
+
+    const keywordMatches = searchCatalogEmojis(trimmed);
+    if (keywordMatches.length > 0) {
+      return keywordMatches;
+    }
+
+    const lowered = trimmed.toLowerCase();
+    const matchingCategories = REACTION_EMOJI_CATEGORIES.filter((category) =>
+      category.label.toLowerCase().includes(lowered),
+    );
+
+    return [...new Set(matchingCategories.flatMap((category) => category.emojis))];
+  }, [activeCategory, query]);
 
   useLayoutEffect(() => {
     if (!open || !buttonRef.current) {
@@ -54,6 +78,10 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
       return;
     }
 
+    setQuery('');
+    setCustomEmoji('');
+    const focusTimer = window.setTimeout(() => searchInputRef.current?.focus(), 50);
+
     const handlePointerDown = (event: MouseEvent) => {
       const target = event.target as Node;
 
@@ -63,18 +91,21 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
 
       setOpen(false);
       setCustomEmoji('');
+      setQuery('');
     };
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') {
         setOpen(false);
         setCustomEmoji('');
+        setQuery('');
       }
     };
 
     document.addEventListener('mousedown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
     return () => {
+      window.clearTimeout(focusTimer);
       document.removeEventListener('mousedown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
@@ -103,58 +134,83 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
       role="dialog"
       aria-label="Choose a reaction"
     >
-      {/* Removed QUICK_REACTIONS from popover per user request */}
-
-      <div className="shrink-0 flex gap-1 overflow-x-auto border-b border-app-border/40 px-2 py-1.5 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-        {REACTION_EMOJI_CATEGORIES.map((category, index) => (
-          <button
-            key={category.label}
-            type="button"
-            className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold tracking-tight transition-colors ${
-              activeCategory === index
-                ? 'bg-accent/20 text-accent-soft'
-                : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
-            }`}
-            onClick={() => setActiveCategory(index)}
-          >
-            {category.label}
-          </button>
-        ))}
+      <div className="shrink-0 px-3 pt-2.5 pb-2">
+        <div className="relative">
+          <FiSearch className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-app-muted" />
+          <input
+            ref={searchInputRef}
+            type="search"
+            value={query}
+            onChange={(event) => setQuery(event.target.value.slice(0, 100))}
+            onMouseDown={(event) => event.stopPropagation()}
+            onKeyDown={(event) => event.stopPropagation()}
+            placeholder="Search emojis (e.g. heart, pizza)"
+            autoComplete="off"
+            spellCheck={false}
+            aria-label="Search emojis"
+            className="w-full rounded-xl border border-app-border/60 bg-app-surface-input py-2 pl-9 pr-3 text-xs text-app-text outline-none transition-all placeholder:text-app-muted focus:border-accent focus:ring-1 focus:ring-accent/30"
+          />
+        </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
-        <div className="grid grid-cols-8 gap-0.5">
-          {REACTION_EMOJI_CATEGORIES[activeCategory]?.emojis.map((emoji) => (
+      {!query.trim() ? (
+        <div className="shrink-0 flex gap-1 overflow-x-auto border-b border-app-border/40 px-2 py-1.5 [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+          {REACTION_EMOJI_CATEGORIES.map((category, index) => (
             <button
-              key={`${activeCategory}-${emoji}`}
+              key={category.label}
               type="button"
-              aria-label={`React with ${emoji}`}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-xl transition-transform hover:scale-110 active:scale-95 hover:bg-app-chat-hover"
-              onClick={() => selectEmoji(emoji)}
+              className={`shrink-0 rounded-lg px-2.5 py-1 text-xs font-semibold tracking-tight transition-colors ${
+                activeCategory === index
+                  ? 'bg-accent/20 text-accent-soft'
+                  : 'text-app-muted hover:bg-app-chat-hover hover:text-app-text'
+              }`}
+              onClick={() => setActiveCategory(index)}
             >
-              {emoji}
+              {category.label}
             </button>
           ))}
         </div>
+      ) : null}
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2">
+        {emojiGridEmojis.length === 0 ? (
+          <p className="py-4 text-center text-xs text-app-muted">
+            {query.trim()
+              ? 'No emojis match that search. Try heart, smile, dog, or pizza.'
+              : 'No emojis in this category.'}
+          </p>
+        ) : (
+          <div className="grid grid-cols-8 gap-0.5">
+            {emojiGridEmojis.map((emoji, index) => (
+              <button
+                key={`${query}-${activeCategory}-${emoji}-${index}`}
+                type="button"
+                aria-label={`React with ${emoji}`}
+                className="flex h-8 w-8 items-center justify-center rounded-lg text-[22px] leading-none transition-transform hover:scale-110 active:scale-95 hover:bg-app-chat-hover"
+                onClick={() => selectEmoji(emoji)}
+              >
+                <EmojiGlyph emoji={emoji} />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="shrink-0 border-t border-app-border/40 px-3 py-2">
         <input
-          ref={customInputRef}
           type="text"
           value={customEmoji}
           placeholder="Paste any emoji"
           aria-label="Paste any emoji"
           className="w-full rounded-xl border border-app-border/60 bg-app-surface-input px-3 py-1.5 text-xs text-app-text outline-none transition-all placeholder:text-app-muted focus:border-accent focus:ring-1 focus:ring-accent/30"
           onChange={(event) => handleCustomEmojiChange(event.target.value)}
-          onFocus={() => customInputRef.current?.select()}
         />
       </div>
     </div>
   ) : null;
 
   return (
-    <div 
+    <div
       className="relative flex items-center"
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -182,13 +238,13 @@ export function ReactionPicker({ align, onSelect }: ReactionPickerProps) {
                 key={emoji}
                 type="button"
                 aria-label={`React with ${emoji}`}
-                className="flex h-8 w-8 items-center justify-center rounded-xl text-xl transition-transform hover:scale-110 active:scale-95 hover:bg-app-chat-hover"
+                className="flex h-8 w-8 items-center justify-center rounded-xl text-[22px] leading-none transition-transform hover:scale-110 active:scale-95 hover:bg-app-chat-hover"
                 onClick={() => {
                   setHovered(false);
                   onSelect(emoji);
                 }}
               >
-                {emoji}
+                <EmojiGlyph emoji={emoji} />
               </button>
             ))}
             <div className="mx-1 h-4 w-px bg-app-border/50" />

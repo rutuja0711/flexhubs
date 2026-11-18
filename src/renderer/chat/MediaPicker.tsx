@@ -16,6 +16,7 @@ import { addCustomSticker, readCustomStickers } from '../customStickersStorage';
 import { uploadChatFile } from '../extrasApi';
 import { RemoteImage } from '../RemoteImage';
 import { readRecentEmojis, rememberRecentEmoji } from './recentEmojis';
+import { EmojiGlyph } from './EmojiGlyph';
 
 export type MediaPickerTab = 'gif' | 'emoji' | 'sticker';
 
@@ -134,9 +135,11 @@ export function MediaPicker({
       return;
     }
 
-    setQuery('');
     if (tab === 'gif') {
       setGifScreen('categories');
+      setQuery('');
+    } else if (tab === 'sticker') {
+      setQuery('');
     }
   }, [open, tab]);
 
@@ -408,7 +411,7 @@ export function MediaPicker({
                     className="emoji-glyph flex h-9 w-9 items-center justify-center rounded-lg text-[22px] leading-none transition-transform hover:scale-110 hover:bg-app-chat-hover active:scale-95"
                     onClick={() => handleEmojiPick(emoji)}
                   >
-                    {emoji}
+                    <EmojiGlyph emoji={emoji} />
                   </button>
                 ))}
               </div>
@@ -450,7 +453,7 @@ export function MediaPicker({
                   className="emoji-glyph flex h-9 w-9 items-center justify-center rounded-lg text-[22px] leading-none transition-transform hover:scale-110 hover:bg-app-chat-hover active:scale-95"
                   onClick={() => handleEmojiPick(emoji)}
                 >
-                  {emoji}
+                  <EmojiGlyph emoji={emoji} />
                 </button>
               ))}
             </div>

@@ -1,6 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { formatReactionAuthors, listReactionAuthors } from '../../shared/messages';
+import { EmojiGlyph } from './EmojiGlyph';
 import type { MessageReaction } from '../../shared/messages';
 
 type ReactionChipProps = {
@@ -76,7 +77,8 @@ export function ReactionChip({
         onFocus={openTooltip}
         onBlur={closeTooltip}
       >
-        {emoji} <span className="ml-1 text-[11px]">{count}</span>
+        <EmojiGlyph emoji={emoji} className="text-sm" />{' '}
+        <span className="ml-0.5 text-[11px]">{count}</span>
       </button>
 
       {tooltipPosition && authors.length > 0
@@ -87,8 +89,8 @@ export function ReactionChip({
               style={{ left: tooltipPosition.x, top: tooltipPosition.y }}
             >
               <div className="rounded-2xl border border-app-border/80 bg-app-elevated/95 backdrop-blur-xl px-3 py-2 text-left shadow-2xl">
-                <span className="mb-1.5 block text-base leading-none" aria-hidden="true">
-                  {emoji}
+                <span className="mb-1.5 block text-lg leading-none" aria-hidden="true">
+                  <EmojiGlyph emoji={emoji} />
                 </span>
                 <span className="flex flex-col gap-0.5">
                   {authors.map((name) => (

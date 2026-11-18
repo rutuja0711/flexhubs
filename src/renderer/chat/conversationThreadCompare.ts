@@ -107,6 +107,7 @@ export function areConversationThreadPropsEqual(
   if (
     prev.draft !== next.draft ||
     prev.loading !== next.loading ||
+    prev.threadSyncing !== next.threadSyncing ||
     prev.error !== next.error ||
     prev.draftError !== next.draftError ||
     prev.typingLabel !== next.typingLabel ||

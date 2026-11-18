@@ -52,7 +52,7 @@ export function buildEditMessageRequestBody(
   content: string,
   mediaUpdate: MessageEditMediaChange | null,
 ): EditMessageRequestBody {
-  const trimmed = content;
+  const trimmed = content.trim();
 
   if (!mediaUpdate || mediaUpdate.kind === 'unchanged') {
     return { content: trimmed };

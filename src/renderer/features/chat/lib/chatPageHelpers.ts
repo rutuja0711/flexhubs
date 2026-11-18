@@ -198,6 +198,26 @@ export function resolveHasMoreMessagesFromBootstrap(bootstrap: ConversationBoots
   return true;
 }
 
+export function areThreadMessageListsVisuallyEqual(
+  current: MessageItem[],
+  next: MessageItem[],
+): boolean {
+  return (
+    current.length === next.length &&
+    current.every((message, index) => {
+      const candidate = next[index];
+      return (
+        candidate &&
+        message.id === candidate.id &&
+        message.status === candidate.status &&
+        message.content === candidate.content &&
+        message.editedAt === candidate.editedAt &&
+        message.reactions.length === candidate.reactions.length
+      );
+    })
+  );
+}
+
 export function applyMainChatFilterIfChanged(messages: MessageItem[]): MessageItem[] {
   const filtered = filterMainChatMessages(messages);
 
@@ -249,6 +269,72 @@ export function createLocalMessageId(): string {
 
 export function isLocalMessageId(id: string): boolean {
   return id.startsWith('local-');
+}
+
+function readConversationField(
+  conversation: ConversationItem | Record<string, unknown> | null,
+  key: string,
+): string | null {
+  if (!conversation) {
+    return null;
+  }
+
+  if (key in conversation) {
+    const value = (conversation as Record<string, unknown>)[key];
+    return typeof value === 'string' && value.trim() ? value : null;
+  }
+
+  return null;
+}
+
+/** Drops cached messages that could not belong to this conversation (e.g. hub GIFs in a DM). */
+export function sanitizeThreadMessagesForConversation(
+  messages: MessageItem[],
+  conversation: ConversationItem | Record<string, unknown> | null,
+  userId: string | null,
+  serverMessages: MessageItem[] = [],
+): MessageItem[] {
+  if (messages.length === 0) {
+    return messages;
+  }
+
+  const kind = readConversationField(conversation, 'kind');
+  const peerUserId = readConversationField(conversation, 'peerUserId');
+  const isDirect = kind === 'direct' && Boolean(peerUserId);
+
+  if (!isDirect) {
+    return messages;
+  }
+
+  const serverIds = new Set(serverMessages.map((message) => message.id));
+  const allowedSenderIds = new Set<string>();
+
+  if (userId) {
+    allowedSenderIds.add(userId);
+  }
+  if (peerUserId) {
+    allowedSenderIds.add(peerUserId);
+  }
+
+  for (const message of serverMessages) {
+    if (message.senderId) {
+      allowedSenderIds.add(message.senderId);
+    }
+  }
+
+  return messages.filter((message) => {
+    if (isLocalMessageId(message.id)) {
+      return true;
+    }
+    if (serverIds.has(message.id)) {
+      return true;
+    }
+    if (!message.senderId) {
+      return true;
+    }
+
+    return allowedSenderIds.has(message.senderId);
+  });
 }
 
 export function withDeliveredStatus(message: MessageItem): MessageItem {

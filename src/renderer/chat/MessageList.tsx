@@ -296,6 +296,7 @@ type MessageRowProps = {
   sendProgressByMessageId?: Record<string, number>;
   onViewCalendarEvent?: (eventId: string) => void;
   memberProfilePopupEnabled?: boolean;
+  pollVotingMessageId?: string | null;
   onOpenMemberProfile?: (
     anchor: {
       userId: string;
@@ -606,6 +607,7 @@ const MessageRow = memo(function MessageRow({
   conversationKind,
   hideIncomingSenderMeta = false,
   sendProgressByMessageId = {},
+  pollVotingMessageId = null,
   onViewCalendarEvent,
   memberProfilePopupEnabled = false,
   onOpenMemberProfile,
@@ -830,6 +832,7 @@ const MessageRow = memo(function MessageRow({
                     onVotePoll={
                       onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
                     }
+                    pollDisabled={pollVotingMessageId === message.id}
                   />
                 </div>
               ) : (
@@ -843,6 +846,7 @@ const MessageRow = memo(function MessageRow({
                     onVotePoll={
                       onVotePoll ? (optionId) => onVotePoll(message.id, optionId) : undefined
                     }
+                    pollDisabled={pollVotingMessageId === message.id}
                   />
                 </div>
               )}
@@ -950,6 +954,7 @@ const MessageRow = memo(function MessageRow({
 type MessageListProps = {
   messages: MessageItem[];
   loading: boolean;
+  threadSyncing?: boolean;
   error: string;
   highlightTerm?: string;
   highlightedMessageIds?: string[];
@@ -999,6 +1004,7 @@ type MessageListProps = {
   /** Hide avatar + name on incoming messages (direct / 1:1 chats). */
   hideIncomingSenderMeta?: boolean;
   sendProgressByMessageId?: Record<string, number>;
+  pollVotingMessageId?: string | null;
   /** True when the signed-in user blocked the direct-chat peer (not shown to the blocked party). */
   peerBlockedByCurrentUser?: boolean;
   onViewCalendarEvent?: (eventId: string) => void;
@@ -1018,6 +1024,7 @@ type MessageListProps = {
 export function MessageList({
   messages,
   loading,
+  threadSyncing = false,
   error,
   highlightTerm = '',
   highlightedMessageIds = [],
@@ -1058,6 +1065,7 @@ export function MessageList({
   conversationKind,
   hideIncomingSenderMeta = false,
   sendProgressByMessageId = {},
+  pollVotingMessageId = null,
   peerBlockedByCurrentUser = false,
   onViewCalendarEvent,
   memberProfilePopupEnabled = false,
@@ -1241,7 +1249,12 @@ export function MessageList({
   const virtuosoAlignToBottom = virtuosoMountScrollTop === undefined && !openAtUnreadAnchor;
 
   const requestStickToBottomIfNeeded = useCallback(() => {
-    if (suppressAutoScrollRef.current || pendingScrollToMessageId || scrollToMessageId) {
+    if (
+      threadSyncing ||
+      suppressAutoScrollRef.current ||
+      pendingScrollToMessageId ||
+      scrollToMessageId
+    ) {
       return;
     }
 
@@ -1256,7 +1269,7 @@ export function MessageList({
 
     virtuosoAutoscrollLastAtRef.current = now;
     virtuosoRef.current?.autoscrollToBottom();
-  }, [pendingScrollToMessageId, scrollToMessageId]);
+  }, [pendingScrollToMessageId, scrollToMessageId, threadSyncing]);
 
   useEffect(() => {
     if (!virtualListEnabled) {
@@ -1378,6 +1391,50 @@ export function MessageList({
 
     bottomAnchorRef.current?.scrollIntoView({ block: 'end', behavior });
   }, [pendingScrollToMessageId, scrollToMessageId, virtualListEnabled]);
+
+  useEffect(() => {
+    if (threadSyncing) {
+      suppressAutoScrollRef.current = true;
+      return;
+    }
+
+    let innerFrame = 0;
+    const settleTimer = window.setTimeout(() => {
+      if (
+        pendingScrollToMessageId ||
+        scrollToMessageId ||
+        unreadAnchorMessageId ||
+        (resolvedInitialScrollSnapshot && !resolvedInitialScrollSnapshot.stickToBottom)
+      ) {
+        suppressAutoScrollRef.current = false;
+        return;
+      }
+
+      innerFrame = window.requestAnimationFrame(() => {
+        suppressAutoScrollRef.current = false;
+        if (stickToBottomRef.current) {
+          setShowJumpToLatest(false);
+          setNewMessagesBelow(0);
+          jumpAnchorMessageIdRef.current = null;
+          scrollToBottom('auto');
+          requestStickToBottomIfNeeded();
+        }
+      });
+    }, 120);
+
+    return () => {
+      window.clearTimeout(settleTimer);
+      window.cancelAnimationFrame(innerFrame);
+    };
+  }, [
+    pendingScrollToMessageId,
+    requestStickToBottomIfNeeded,
+    resolvedInitialScrollSnapshot,
+    scrollToBottom,
+    scrollToMessageId,
+    threadSyncing,
+    unreadAnchorMessageId,
+  ]);
 
   const syncJumpToLatestUi = useCallback(
     (atBottom: boolean) => {
@@ -1647,6 +1704,7 @@ export function MessageList({
       !onLoadOlder ||
       !hasMoreOlder ||
       loadingOlder ||
+      threadSyncing ||
       showInitialLoading ||
       pendingScrollToMessageId
     ) {
@@ -1679,6 +1737,7 @@ export function MessageList({
     onLoadOlder,
     pendingScrollToMessageId,
     showInitialLoading,
+    threadSyncing,
     triggerLoadOlder,
     virtualListEnabled,
   ]);
@@ -1862,7 +1921,7 @@ export function MessageList({
   ]);
 
   useEffect(() => {
-    if (!virtualListEnabled || showInitialLoading) {
+    if (threadSyncing || !virtualListEnabled || showInitialLoading) {
       return;
     }
 
@@ -1898,7 +1957,7 @@ export function MessageList({
   ]);
 
   useEffect(() => {
-    if (showInitialLoading || messages.length === 0) {
+    if (threadSyncing || showInitialLoading || messages.length === 0) {
       return;
     }
 
@@ -2003,13 +2062,19 @@ export function MessageList({
     scrollToBottom,
     scrollToMessageId,
     showInitialLoading,
+    threadSyncing,
     unreadAnchorMessageId,
     virtualListEnabled,
   ]);
 
   const handleFollowOutput = useCallback(
     (isAtBottom: boolean): FollowOutputScalarType => {
-      if (suppressAutoScrollRef.current || pendingScrollToMessageId || scrollToMessageId) {
+      if (
+        threadSyncing ||
+        suppressAutoScrollRef.current ||
+        pendingScrollToMessageId ||
+        scrollToMessageId
+      ) {
         return false;
       }
 
@@ -2031,7 +2096,7 @@ export function MessageList({
 
       return false;
     },
-    [messages, pendingScrollToMessageId, scrollToMessageId],
+    [messages, pendingScrollToMessageId, scrollToMessageId, threadSyncing],
   );
 
   const handleStartReached = useCallback(() => {
@@ -2050,7 +2115,7 @@ export function MessageList({
   );
 
   const handleTotalListHeightChanged = useCallback(() => {
-    if (loadingOlder || loadOlderAnchorMessageIdRef.current) {
+    if (threadSyncing || loadingOlder || loadOlderAnchorMessageIdRef.current) {
       return;
     }
 
@@ -2059,7 +2124,7 @@ export function MessageList({
     }
 
     requestStickToBottomIfNeeded();
-  }, [loadingOlder, openAtUnreadAnchor, requestStickToBottomIfNeeded]);
+  }, [loadingOlder, openAtUnreadAnchor, requestStickToBottomIfNeeded, threadSyncing]);
 
   const publishMessageListEntryGauges = useCallback(() => {
     if (!isPerfEnabled()) {
@@ -2128,6 +2193,26 @@ export function MessageList({
         toast.success('Copied to clipboard.');
       } catch {
         toast.error('Could not copy to clipboard.');
+      }
+    },
+    [toast],
+  );
+
+  const copyImageToClipboard = useCallback(
+    async (url: string) => {
+      try {
+        const blob = await fetchMediaBlob(url);
+        const mimeType =
+          blob.type && blob.type.startsWith('image/') ? blob.type : 'image/png';
+
+        await navigator.clipboard.write([
+          new ClipboardItem({
+            [mimeType]: blob.type === mimeType ? blob : new Blob([blob], { type: mimeType }),
+          }),
+        ]);
+        toast.success('Image copied to clipboard.');
+      } catch {
+        toast.error('Could not copy image to clipboard.');
       }
     },
     [toast],
@@ -2202,6 +2287,7 @@ export function MessageList({
           conversationKind={conversationKind}
           hideIncomingSenderMeta={hideIncomingSenderMeta}
           sendProgressByMessageId={sendProgressByMessageId}
+          pollVotingMessageId={pollVotingMessageId}
           onViewCalendarEvent={onViewCalendarEvent}
           memberProfilePopupEnabled={memberProfilePopupEnabled}
           onOpenMemberProfile={handleOpenMemberProfile}
@@ -2242,6 +2328,7 @@ export function MessageList({
       replyTargetByMessageId,
       savedMessageIds,
       sendProgressByMessageId,
+      pollVotingMessageId,
       showReactionAuthors,
       threadsEnabled,
     ],
@@ -2350,8 +2437,14 @@ export function MessageList({
           void copyToClipboard(media.url);
         }
       },
+      onCopyImage: () => {
+        if (media?.url) {
+          void copyImageToClipboard(media.url);
+        }
+      },
     });
   }, [
+    copyImageToClipboard,
     copyToClipboard,
     currentUserId,
     messageContextMenu,

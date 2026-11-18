@@ -80,6 +80,8 @@ export type ConversationThreadProps = {
   messages: MessageItem[];
   draft: string;
   loading: boolean;
+  /** Background refresh after open/switch — suppress scroll churn until cleared. */
+  threadSyncing?: boolean;
   error: string;
   draftError: string;
   typingLabel: string;
@@ -135,6 +137,7 @@ export type ConversationThreadProps = {
   onThreadMessagesRegistered?: () => void;
   onSummarizeUnread?: () => void;
   sendProgressByMessageId?: Record<string, number>;
+  pollVotingMessageId?: string | null;
   onBlockedUsersChanged?: () => void;
   blockedUserIds?: ReadonlySet<string>;
   blockedByPeerIds?: ReadonlySet<string>;
@@ -164,6 +167,7 @@ function ConversationThreadComponent({
   messages,
   draft,
   loading,
+  threadSyncing = false,
   error,
   draftError,
   typingLabel,
@@ -190,6 +194,7 @@ function ConversationThreadComponent({
   onUnsaveMessage,
   onSummarizeUnread,
   sendProgressByMessageId = {},
+  pollVotingMessageId = null,
   savedMessageIds = new Set<string>(),
   onVotePoll,
   onConversationUpdated,
@@ -1243,6 +1248,7 @@ function ConversationThreadComponent({
       <MessageList
         messages={mainChatMessages}
         loading={loading}
+        threadSyncing={threadSyncing}
         error={error}
         highlightTerm={searchOpen && searchQuery.trim() ? searchQuery : ''}
         highlightedMessageIds={highlightedMessageIds}
@@ -1295,6 +1301,7 @@ function ConversationThreadComponent({
         onEditMessage={onEditMessage}
         onDeleteMessage={onDeleteMessage}
         sendProgressByMessageId={sendProgressByMessageId}
+        pollVotingMessageId={pollVotingMessageId}
         onForwardMessage={setForwardMessageId}
         onPinMessage={onPinMessage}
         onSaveMessage={onSaveMessage}

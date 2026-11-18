@@ -122,9 +122,11 @@
   }
 
   .emoji-glyph {
-    font-family: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', sans-serif;
+    font-family: 'Noto Color Emoji', 'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', sans-serif;
     font-style: normal;
+    font-weight: normal;
     line-height: 1;
+    font-variant-emoji: emoji;
   }
 
   body {

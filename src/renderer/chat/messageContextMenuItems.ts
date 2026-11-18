@@ -38,6 +38,7 @@ export type BuildMessageContextMenuOptions = {
   onOpenMedia?: () => void;
   onDownloadMedia?: () => void;
   onCopyMediaLink?: () => void;
+  onCopyImage?: () => void;
 };
 
 function primaryMedia(message: MessageItem) {
@@ -68,6 +69,7 @@ export function buildMessageContextMenuItems(
     onOpenMedia,
     onDownloadMedia,
     onCopyMediaLink,
+    onCopyImage,
   } = options;
 
   const deleted = isDeletedMessage(message);
@@ -123,6 +125,14 @@ export function buildMessageContextMenuItems(
 
     if (onCopyMediaLink && media.url) {
       push({ id: 'copy-link', label: 'Copy link', onSelect: onCopyMediaLink });
+    }
+
+    if (
+      onCopyImage &&
+      media.url &&
+      (kind === 'image' || kind === 'sticker' || kind === 'gif')
+    ) {
+      push({ id: 'copy-image', label: 'Copy image', onSelect: onCopyImage });
     }
   }
 

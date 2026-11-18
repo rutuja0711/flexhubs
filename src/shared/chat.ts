@@ -1669,12 +1669,20 @@ export function findConversationByAnyId(
     return byPeerUserId;
   }
 
-  const byHubChannelId = conversations.find(
-    (item) => item.kind === 'hub' && item.channelId === normalizedId,
+  const byChannelId = conversations.find(
+    (item) => item.channelId !== null && item.channelId === normalizedId,
   );
 
-  if (byHubChannelId) {
-    return byHubChannelId;
+  if (byChannelId) {
+    return byChannelId;
+  }
+
+  const byConversationAsChannelId = conversations.find(
+    (item) => item.channelId !== null && item.id === normalizedId,
+  );
+
+  if (byConversationAsChannelId) {
+    return byConversationAsChannelId;
   }
 
   return null;

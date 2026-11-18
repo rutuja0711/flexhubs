@@ -1,4 +1,4 @@
-import emojilib from 'emojilib/dist/emoji-en-US.json';
+import emojilib from 'emojilib';
 import { REACTION_EMOJI_CATEGORIES } from './reactionEmojis';
 
 const CATALOG_EMOJIS = [
@@ -60,8 +60,14 @@ function scoreEmojiMatch(tokens: string[], queryTokens: string[]): number {
   }
 
   const haystack = tokens.join(' ');
+  const phrase = queryTokens.join(' ');
+
+  if (haystack.includes(phrase)) {
+    return 24 + queryTokens.length * 4;
+  }
 
   let score = 0;
+  let matchedTokens = 0;
 
   for (const token of queryTokens) {
     const exact = tokens.some((entry) => entry === token);
@@ -70,13 +76,22 @@ function scoreEmojiMatch(tokens: string[], queryTokens: string[]): number {
 
     if (exact) {
       score += 12;
+      matchedTokens += 1;
     } else if (prefix) {
       score += 8;
+      matchedTokens += 1;
     } else if (includes) {
       score += 4;
-    } else {
-      return 0;
+      matchedTokens += 1;
     }
+  }
+
+  if (matchedTokens === 0) {
+    return 0;
+  }
+
+  if (matchedTokens < queryTokens.length) {
+    score = Math.max(1, Math.floor(score / 2));
   }
 
   return score;

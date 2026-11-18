@@ -1,4 +1,5 @@
 import { app, BrowserWindow, nativeImage } from 'electron';
+import { createWindowsTaskbarBadgeBitmap } from './windowsTaskbarBadgeBitmap';
 
 export type AppBadgeUpdate = {
   count: number;
@@ -47,6 +48,13 @@ function formatBadgeLabel(count: number, mentionUnread: number): string {
 function createWindowsOverlayImage(count: number, mentionUnread: number): Electron.NativeImage {
   const label = formatBadgeLabel(count, mentionUnread);
   const display = label === '@' ? '@' : label;
+
+  // Electron on Windows often fails to decode SVG data URLs (overlay stays empty).
+  const bitmapOverlay = createWindowsTaskbarBadgeBitmap(display);
+  if (!bitmapOverlay.isEmpty()) {
+    return bitmapOverlay;
+  }
+
   const fontSize = display.length > 2 ? 18 : display.length > 1 ? 20 : 22;
   const svg = `
 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
@@ -60,11 +68,10 @@ function createWindowsOverlayImage(count: number, mentionUnread: number): Electr
   );
 
   if (image.isEmpty()) {
-    console.warn('[FlexHubs] Windows badge overlay SVG could not be loaded.');
+    console.warn('[FlexHubs] Windows badge overlay could not be rendered.');
     return image;
   }
 
-  // 32×32 source scales more clearly on 125–200% Windows display scaling (OS shows ~16×16).
   return image.resize({ width: 32, height: 32, quality: 'best' });
 }
 
