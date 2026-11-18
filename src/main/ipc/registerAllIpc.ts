@@ -521,8 +521,14 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
   );
   ipcMain.handle(
     'chat:edit-message',
-    (_event, token: string, conversationId: string, messageId: string, content: string) =>
-      editMessage(token, conversationId, messageId, content),
+    (
+      _event,
+      token: string,
+      conversationId: string,
+      messageId: string,
+      content: string,
+      mediaUpdateJson?: string,
+    ) => editMessage(token, conversationId, messageId, content, mediaUpdateJson),
   );
   ipcMain.handle(
     'chat:delete-message',

@@ -161,16 +161,19 @@ export function getWindowsNotificationIdentityStatus(): WindowsNotificationIdent
   };
 }
 
-/** Idempotent — safe on every packaged launch (covers in-app updates that skip NSIS hooks). */
+/** Idempotent — safe on every launch (registry also helps dev `npm start` toasts show "FlexHubs"). */
 export function registerWindowsNotificationIdentity(): void {
-  if (process.platform !== 'win32' || !app.isPackaged) {
+  if (process.platform !== 'win32') {
     return;
   }
 
   app.setAppUserModelId(DESKTOP_APP_BUNDLE_ID);
 
   const registryOk = writeNotificationRegistry();
-  ensureWindowsShellShortcut();
+
+  if (app.isPackaged) {
+    ensureWindowsShellShortcut();
+  }
 
   const status = getWindowsNotificationIdentityStatus();
   console.log(

@@ -127,7 +127,7 @@ import {
   writePersistedDesktopLegalVersion,
 } from './main/desktopLegalStorage';
 import { deliverDesktopNotification } from './main/notifications/deliverDesktopNotification';
-import { setBadgeHostWindow } from './main/appBadge';
+import { reapplyApplicationBadge, setBadgeHostWindow } from './main/appBadge';
 import {
   closeNotificationWindow,
   setNotificationHostWindowProvider,
@@ -304,7 +304,8 @@ function patchDevElectronNotificationIcon(): void {
     return;
   }
 
-  const sourceIcns = resolveAppIconIcnsPath() ?? buildAppIconIcnsFromPng();
+  // Rebuild from app-icon.png so macOS banners match the Dock tile in dev.
+  const sourceIcns = buildAppIconIcnsFromPng() ?? resolveAppIconIcnsPath();
 
   if (!sourceIcns) {
     return;
@@ -551,6 +552,9 @@ const createWindow = (): void => {
 
   mainWindow.on('show', () => {
     updateDisplaySleepBlocker();
+    if (process.platform === 'win32') {
+      reapplyApplicationBadge();
+    }
   });
 
   mainWindow.on('hide', () => {
@@ -852,7 +856,7 @@ app.whenReady().then(() => {
   patchDevElectronNotificationIcon();
   applyApplicationIcon();
 
-  if (process.platform === 'win32' && app.isPackaged) {
+  if (process.platform === 'win32') {
     registerWindowsNotificationIdentity();
   }
 

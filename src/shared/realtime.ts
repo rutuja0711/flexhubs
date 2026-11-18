@@ -571,16 +571,28 @@ export function extractConversationId(payload: unknown): string | null {
 
   const messageRecord = asRecord(record.message);
 
+  const nestedNew = asRecord(record.new);
+  const nestedOld = asRecord(record.old);
+  const nestedData = asRecord(record.data);
+
   return (
     readString(record.conversationId) ??
     readString(record.conversation_id) ??
     readString(asRecord(record.conversation)?.id) ??
     readString(messageRecord?.conversationId) ??
     readString(messageRecord?.conversation_id) ??
+    readString(nestedNew?.conversationId) ??
+    readString(nestedNew?.conversation_id) ??
+    readString(nestedOld?.conversationId) ??
+    readString(nestedOld?.conversation_id) ??
+    readString(nestedData?.conversationId) ??
+    readString(nestedData?.conversation_id) ??
     readString(record.channelId) ??
     readString(record.channel_id) ??
     readString(record.chatId) ??
-    readString(record.chat_id)
+    readString(record.chat_id) ??
+    readString(record.roomId) ??
+    readString(record.room_id)
   );
 }
 

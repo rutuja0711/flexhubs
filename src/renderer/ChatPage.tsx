@@ -242,7 +242,7 @@ import { loadCallHistory } from './callsApi';
 import { useCallManager } from './callManager';
 import { isUserCallChannelSubscribed } from './callSignaling';
 import { CallOverlay } from './chat/CallOverlay';
-import { MediaPreviewHost } from './chat/MediaPreviewHost';
+import { MediaPreviewHost, openMediaPreview } from './chat/MediaPreviewHost';
 import type { CallPanelLayout } from './call/CallFloatingPanel';
 import { subscribeCallWindowPresentation } from './callWindowApi';
 import { FlexAiPanel } from './chat/FlexAiPanel';
@@ -272,6 +272,17 @@ import {
 import { readProfileCache, writeProfileCache } from './profileCache';
 import { clearConversationScrollSnapshot } from './conversationScrollCache';
 import {
+  applyDeletionTombstoneToMessage,
+  applyDeletionToListWithTombstones,
+  applyDeletionTombstones,
+  findTombstoneConversationId,
+  isMessageDeletedForEveryoneTombstone,
+  rememberMessageDeletedForEveryone,
+} from '../shared/messageDeletions';
+import type { MessageEditMediaChange } from '../shared/messageEditPlan';
+import { resolveMessageEditMediaChange } from '../shared/messageEditPlan';
+import {
+  findConversationIdForMessage,
   getThreadCacheEntry,
   invalidateThreadCacheEntry,
   patchThreadCacheDraft,
@@ -291,6 +302,8 @@ import {
   applyThreadReplyDeletion,
   applyThreadReplyEdit,
   clearThreadRepliesStore,
+  patchThreadReplyReactions,
+  syncThreadReplyCountForRoot,
 } from './threadRepliesStore';
 import {
   perfMeasure,
@@ -308,6 +321,7 @@ import {
   applyMainChatFilterIfChanged,
   buildPresenceRefreshInflightKey,
   bumpThreadReplyCount,
+  setThreadReplyCount,
   commitMessages,
   createLocalMessageId,
   isActivelyViewingConversation,
@@ -576,6 +590,8 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
   const selectedIdRef = useRef<string | null>(null);
   const messagesRef = useRef<MessageItem[]>([]);
   const reactionInFlightRef = useRef<Set<string>>(new Set());
+  const editInFlightRef = useRef<Set<string>>(new Set());
+  const reactionRefreshTimersRef = useRef<Map<string, number>>(new Map());
   const mainViewRef = useRef<MainView>('chat');
   const userIdRef = useRef<string | null>(null);
   const notificationSettingsRef = useRef<ProfileSettings | null>(null);
@@ -1937,12 +1953,18 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
 
         const updated = applyReactionPatch(messages[index], patch);
-
-        return messages.map((message, currentIndex) =>
+        const next = messages.map((message, currentIndex) =>
           currentIndex === index
             ? preserveMessageOwnership(updated, message, userId)
             : message,
         );
+
+        const patched = next[index];
+        if (patched?.reactions) {
+          patchThreadReplyReactions(conversationId, messageId, patched.reactions);
+        }
+
+        return next;
       };
 
       if (selectedIdRef.current === conversationId) {
@@ -1968,6 +1990,26 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       });
     },
     [patchMessageReactions],
+  );
+
+  const scheduleMessageReactionRefresh = useCallback(
+    (conversationId: string, messageId: string) => {
+      const key = `${conversationId}:${messageId}`;
+      const existing = reactionRefreshTimersRef.current.get(key);
+
+      if (existing) {
+        window.clearTimeout(existing);
+      }
+
+      reactionRefreshTimersRef.current.set(
+        key,
+        window.setTimeout(() => {
+          reactionRefreshTimersRef.current.delete(key);
+          refreshMessageReactions(conversationId, messageId);
+        }, 300),
+      );
+    },
+    [refreshMessageReactions],
   );
 
   const refreshMessageFromNotification = useCallback(
@@ -2713,7 +2755,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
         const mergedWithLocal = mergeServerMessagesWithLocal(serverMessages, localBaseline);
         const nextMessages = applyRecentMessageEdits(
-          mergeLocalPendingMessages(mergedWithLocal, localBaseline),
+          applyDeletionTombstones(mergeLocalPendingMessages(mergedWithLocal, localBaseline)),
           recentMessageEditsRef.current,
         );
         const conversationUnread =
@@ -2940,9 +2982,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         result.data.conversation,
       );
       const nextMessages = applyRecentMessageEdits(
-        mergeLocalPendingMessages(
-          mergeServerMessagesWithLocal(serverMessages, messagesRef.current),
-          messagesRef.current,
+        applyDeletionTombstones(
+          mergeLocalPendingMessages(
+            mergeServerMessagesWithLocal(serverMessages, messagesRef.current),
+            messagesRef.current,
+          ),
         ),
         recentMessageEditsRef.current,
       );
@@ -3816,17 +3860,34 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         extractConversationId(event.payload) ??
         (realtimeDeletion ? extractConversationIdFromRealtime(rawEvent, event.payload) : null);
 
-      if (realtimeDeletion && deletionConversationId) {
+      if (realtimeDeletion) {
         const { messageId, scope } = realtimeDeletion;
-        const applyDelete = (current: MessageItem[]) =>
-          applyMessageDeletionToList(current, messageId, scope);
+        const resolvedConversationId =
+          deletionConversationId ??
+          findTombstoneConversationId(messageId) ??
+          findConversationIdForMessage(threadCacheRef.current, messageId) ??
+          (messagesRef.current.some((message) => message.id === messageId) ? activeConversationId : null);
 
-        if (deletionConversationId === activeConversationId) {
-          setMessages(applyDelete);
+        if (scope === 'everyone') {
+          rememberMessageDeletedForEveryone(messageId, resolvedConversationId);
         }
 
-        patchThreadCacheMessages(threadCacheRef.current, deletionConversationId, applyDelete);
-        applyThreadReplyDeletion(deletionConversationId, messageId, scope);
+        const applyDelete = (current: MessageItem[]) =>
+          applyDeletionToListWithTombstones(current, messageId, scope);
+
+        if (resolvedConversationId && resolvedConversationId === activeConversationId) {
+          setMessages((current) => {
+            const next = applyDelete(current);
+            messagesRef.current = next;
+            return next;
+          });
+        }
+
+        if (resolvedConversationId) {
+          patchThreadCacheMessages(threadCacheRef.current, resolvedConversationId, applyDelete);
+          applyThreadReplyDeletion(resolvedConversationId, messageId, scope);
+        }
+
         setSavedItems((current) => current.filter((item) => item.messageId !== messageId));
         scheduleConversationsRefresh();
         void syncNotifications();
@@ -3834,7 +3895,11 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       }
 
       if (incomingMessage && conversationId && isNewMessageEvent(type, event.payload)) {
-        const message = markOwnMessages([incomingMessage], userId)[0];
+        if (isMessageDeletedForEveryoneTombstone(incomingMessage.id)) {
+          return;
+        }
+
+        const message = markOwnMessages([applyDeletionTombstoneToMessage(incomingMessage)], userId)[0];
         const { conversationId: resolvedConversationId, conversation } = resolveConversationForMessage(
           conversationsRef.current,
           conversationId,
@@ -3960,7 +4025,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
             Boolean(reactionPatch.removedReaction);
 
           if (conversationId === activeConversationId && !hasAuthoritativeReactionPayload) {
-            refreshMessageReactions(conversationId, reactionPatch.messageId);
+            scheduleMessageReactionRefresh(conversationId, reactionPatch.messageId);
           }
 
           void syncNotifications();
@@ -3970,11 +4035,16 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
       if (incomingMessage && conversationId && isMessageUpdateEvent(type, event.payload)) {
         if (isDeletedMessage(incomingMessage)) {
+          rememberMessageDeletedForEveryone(incomingMessage.id, conversationId);
           const applyDelete = (current: MessageItem[]) =>
-            applyMessageDeletionToList(current, incomingMessage.id, 'everyone');
+            applyDeletionToListWithTombstones(current, incomingMessage.id, 'everyone');
 
           if (conversationId === activeConversationId) {
-            setMessages(applyDelete);
+            setMessages((current) => {
+              const next = applyDelete(current);
+              messagesRef.current = next;
+              return next;
+            });
           }
 
           patchThreadCacheMessages(threadCacheRef.current, conversationId, applyDelete);
@@ -4200,8 +4270,36 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         }
       }
     },
-    [applyDraftPreviews, applyTypingUpdate, callManager.clearMeetingBannerFromCallLog, clearTypingUser, isConversationSnoozed, notifyIncomingMessage, patchMessageReactions, refreshActiveThreadSilently, refreshMessageReactions, scheduleConversationsRefresh, shouldSuppressNotificationAlerts, syncConversationReadState, syncNotifications, touchConversationWithMessage],
+    [applyDraftPreviews, applyTypingUpdate, callManager.clearMeetingBannerFromCallLog, clearTypingUser, isConversationSnoozed, notifyIncomingMessage, patchMessageReactions, refreshActiveThreadSilently, scheduleConversationsRefresh, scheduleMessageReactionRefresh, shouldSuppressNotificationAlerts, syncConversationReadState, syncNotifications, touchConversationWithMessage],
   );
+
+  useEffect(() => {
+    if (!selectedId) {
+      return;
+    }
+
+    const userId = getUserId(user);
+    const lastReadIds = extractPeerLastReadMessageIds(activeHubDetails, userId);
+
+    const applyReadReceiptsIfChanged = (current: MessageItem[]) => {
+      const next = applyMessageReadReceipts(current, lastReadIds);
+
+      if (next === current || next.length !== current.length) {
+        return next;
+      }
+
+      for (let index = 0; index < current.length; index += 1) {
+        if (current[index].status !== next[index].status) {
+          return next;
+        }
+      }
+
+      return current;
+    };
+
+    setMessages((current) => applyReadReceiptsIfChanged(current));
+    patchThreadCacheMessages(threadCacheRef.current, selectedId, applyReadReceiptsIfChanged);
+  }, [activeHubDetails, selectedId, user]);
 
   useEffect(() => {
     const banner = callManager.session.meetingBanner;
@@ -4763,6 +4861,17 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
 
     skipNextDraftLoadRef.current = false;
 
+    if (!messageId) {
+      const unread =
+        conversationsRef.current.find((item) => item.id === conversationId)?.unreadCount ?? 0;
+
+      if (unread > 0) {
+        clearConversationScrollSnapshot(conversationId);
+      } else {
+        setConversationScrollSnapshot(conversationId, { scrollTop: 0, stickToBottom: true });
+      }
+    }
+
     const shouldUseCache = !options?.forceReload;
     const hasCachedThread = shouldUseCache && hydrateThreadFromCache(conversationId);
 
@@ -5054,6 +5163,10 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     },
     [],
   );
+
+  const openProfileImagePreview = useCallback((imageUrl: string) => {
+    openMediaPreview({ url: imageUrl, kind: 'image', name: 'Profile photo' });
+  }, []);
 
   const openUserProfileFromTeammate = useCallback(
     (anchor: UserProfileAnchor, event: MouseEvent<HTMLElement>) => {
@@ -6640,17 +6753,16 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     ],
   );
 
-  const handleEditMessage = async (messageId: string, content: string): Promise<boolean> => {
+  const handleEditMessage = async (
+    messageId: string,
+    content: string,
+    options?: { keptMedia?: MessageItem['media']; addedFile?: File | null },
+  ): Promise<boolean> => {
     if (!selectedId) {
       return false;
     }
 
     const trimmed = content.trim();
-
-    if (!trimmed) {
-      return false;
-    }
-
     const previous = messagesRef.current.find((message) => message.id === messageId);
 
     if (!previous) {
@@ -6658,115 +6770,185 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       return false;
     }
 
-    if (trimmed === previous.content.trim()) {
-      return true;
-    }
+    const keptMedia = options?.keptMedia ?? previous.media;
+    const addedFile = options?.addedFile ?? null;
 
-    const viewerUserId = getUserId(user);
-    const optimisticEditedAt = new Date().toISOString();
-
-    recentMessageEditsRef.current.set(messageId, {
-      content: trimmed,
-      editedAt: optimisticEditedAt,
-      savedAt: Date.now(),
-    });
-
-    const buildPatch = (patch: MessageItem): MessageItem => ({
-      ...patch,
-      content: patch.content?.trim() || trimmed,
-      editedAt: patch.editedAt ?? optimisticEditedAt,
-    });
-
-    let updatedForSidebar: MessageItem | null = null;
-
-    const applyEdit = (current: MessageItem[], patch: MessageItem) => {
-      const mapped = current.map((message) => {
-        if (message.id !== messageId) {
-          return message;
-        }
-
-        return preserveMessageOwnership(
-          mergeMessageUpdates(message, buildPatch(patch)),
-          message,
-          viewerUserId,
-        );
-      });
-
-      updatedForSidebar = mapped.find((message) => message.id === messageId) ?? null;
-      return applyRecentMessageEdits(mapped, recentMessageEditsRef.current);
-    };
-
-    const optimisticPatch = buildPatch({ ...previous, content: trimmed, editedAt: optimisticEditedAt });
-    const optimisticNext = applyEdit(messagesRef.current, optimisticPatch);
-    messagesRef.current = optimisticNext;
-    setMessages(optimisticNext);
-    patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
-      applyEdit(current, optimisticPatch),
-    );
-
-    const result = await editChatMessage(selectedId, messageId, trimmed);
-
-    if (!result.ok) {
-      recentMessageEditsRef.current.delete(messageId);
-
-      const reverted = messagesRef.current.map((message) =>
-        message.id === messageId ? previous : message,
-      );
-      messagesRef.current = reverted;
-      setMessages(reverted);
-      patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
-        current.map((message) => (message.id === messageId ? previous : message)),
-      );
-
-      if (handleUnauthorized(result.status)) {
-        return false;
-      }
-
-      toast.error(result.error || 'Could not update message.');
+    if (!trimmed && keptMedia.length === 0 && !addedFile) {
+      toast.error('Message cannot be empty.');
       return false;
     }
 
-    let authoritative = buildPatch(result.data);
-    const refetch = await loadMessageById(selectedId, messageId);
-
-    if (refetch.ok) {
-      authoritative = buildPatch(mergeMessageUpdates(authoritative, refetch.data));
+    const editInFlightKey = `edit:${messageId}`;
+    if (editInFlightRef.current.has(editInFlightKey)) {
+      return false;
     }
 
-    recentMessageEditsRef.current.set(messageId, {
-      content: authoritative.content,
-      editedAt: authoritative.editedAt ?? optimisticEditedAt,
-      savedAt: Date.now(),
-    });
+    editInFlightRef.current.add(editInFlightKey);
 
-    const finalNext = applyEdit(messagesRef.current, authoritative);
-    messagesRef.current = finalNext;
-    setMessages(finalNext);
-    patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
-      applyEdit(current, authoritative),
-    );
+    try {
+      let uploaded: { url: string; fileName: string; mimeType: string } | null = null;
 
-    const cached = getThreadCacheEntry(threadCacheRef.current, selectedId);
-    if (cached) {
-      syncThreadCache(selectedId, {
-        ...cached,
-        messages: applyEdit(cached.messages, authoritative),
+      if (addedFile) {
+        const uploadResult = await uploadChatFile(addedFile);
+
+        if (handleUnauthorized(uploadResult.status)) {
+          return false;
+        }
+
+        if (!uploadResult.ok) {
+          toast.error(uploadResult.error || 'Could not upload attachment.');
+          return false;
+        }
+
+        uploaded = {
+          url: uploadResult.data.url,
+          fileName: addedFile.name,
+          mimeType: addedFile.type || 'application/octet-stream',
+        };
+      }
+
+      const mediaChange: MessageEditMediaChange = resolveMessageEditMediaChange(
+        previous,
+        keptMedia,
+        addedFile,
+        uploaded,
+      );
+
+      const viewerUserId = getUserId(user);
+      const optimisticEditedAt = new Date().toISOString();
+
+      recentMessageEditsRef.current.set(messageId, {
+        content: trimmed,
+        editedAt: optimisticEditedAt,
+        savedAt: Date.now(),
       });
+
+      const buildPatch = (patch: MessageItem): MessageItem => {
+        let media = patch.media;
+
+        if (mediaChange.kind === 'cleared') {
+          media = [];
+        } else if (mediaChange.kind === 'replaced') {
+          const isImage = mediaChange.mimeType.startsWith('image/');
+          const isVideo = mediaChange.mimeType.startsWith('video/');
+          media = [
+            {
+              kind: isImage ? 'image' : isVideo ? 'video' : 'file',
+              url: mediaChange.fileUrl,
+              previewUrl: isImage || isVideo ? mediaChange.fileUrl : null,
+              name: mediaChange.fileName,
+            },
+          ];
+        } else if (patch.media.length === 0 && keptMedia.length > 0) {
+          media = keptMedia;
+        }
+
+        return {
+          ...patch,
+          content: patch.content?.trim() ?? trimmed,
+          editedAt: patch.editedAt ?? optimisticEditedAt,
+          media,
+        };
+      };
+
+      let updatedForSidebar: MessageItem | null = null;
+
+      const applyEdit = (current: MessageItem[], patch: MessageItem) => {
+        const mapped = current.map((message) => {
+          if (message.id !== messageId) {
+            return message;
+          }
+
+          return preserveMessageOwnership(
+            mergeMessageUpdates(message, buildPatch(patch)),
+            message,
+            viewerUserId,
+          );
+        });
+
+        updatedForSidebar = mapped.find((message) => message.id === messageId) ?? null;
+        return applyRecentMessageEdits(mapped, recentMessageEditsRef.current);
+      };
+
+      const optimisticPatch = buildPatch({
+        ...previous,
+        content: trimmed,
+        editedAt: optimisticEditedAt,
+        media: keptMedia,
+      });
+      const optimisticNext = applyEdit(messagesRef.current, optimisticPatch);
+      messagesRef.current = optimisticNext;
+      setMessages(optimisticNext);
+      patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
+        applyEdit(current, optimisticPatch),
+      );
+
+      const result = await editChatMessage(selectedId, messageId, trimmed, mediaChange);
+
+      if (!result.ok) {
+        recentMessageEditsRef.current.delete(messageId);
+
+        const reverted = messagesRef.current.map((message) =>
+          message.id === messageId ? previous : message,
+        );
+        messagesRef.current = reverted;
+        setMessages(reverted);
+        patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
+          current.map((message) => (message.id === messageId ? previous : message)),
+        );
+
+        if (handleUnauthorized(result.status)) {
+          return false;
+        }
+
+        toast.error(result.error || 'Could not update message.');
+        return false;
+      }
+
+      let authoritative = buildPatch(result.data);
+      const refetch = await loadMessageById(selectedId, messageId);
+
+      if (refetch.ok) {
+        authoritative = buildPatch(mergeMessageUpdates(authoritative, refetch.data));
+      }
+
+      recentMessageEditsRef.current.set(messageId, {
+        content: authoritative.content,
+        editedAt: authoritative.editedAt ?? optimisticEditedAt,
+        savedAt: Date.now(),
+      });
+
+      const finalNext = applyEdit(messagesRef.current, authoritative);
+      messagesRef.current = finalNext;
+      setMessages(finalNext);
+      patchThreadCacheMessages(threadCacheRef.current, selectedId, (current) =>
+        applyEdit(current, authoritative),
+      );
+
+      const cached = getThreadCacheEntry(threadCacheRef.current, selectedId);
+      if (cached) {
+        syncThreadCache(selectedId, {
+          ...cached,
+          messages: applyEdit(cached.messages, authoritative),
+        });
+      }
+
+      const latestMainMessage = [...finalNext].sort(compareMessagesChronologically).at(-1);
+
+      if (updatedForSidebar && latestMainMessage?.id === messageId) {
+        touchConversationWithMessage(selectedId, updatedForSidebar, false);
+      }
+
+      const threadRootId = updatedForSidebar?.threadRootId;
+      if (threadRootId && updatedForSidebar) {
+        applyThreadReplyEdit(selectedId, threadRootId, messageId, updatedForSidebar);
+      }
+
+      showActionMessage('Message updated.');
+      return true;
+    } finally {
+      editInFlightRef.current.delete(editInFlightKey);
     }
-
-    const latestMainMessage = [...finalNext].sort(compareMessagesChronologically).at(-1);
-
-    if (updatedForSidebar && latestMainMessage?.id === messageId) {
-      touchConversationWithMessage(selectedId, updatedForSidebar, false);
-    }
-
-    const threadRootId = updatedForSidebar?.threadRootId;
-    if (threadRootId && updatedForSidebar) {
-      applyThreadReplyEdit(selectedId, threadRootId, messageId, updatedForSidebar);
-    }
-
-    showActionMessage('Message updated.');
-    return true;
   };
 
   const handleDeleteMessage = async (messageId: string, scope: 'me' | 'everyone') => {
@@ -6827,15 +7009,26 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     const originalMessages = [...messages];
     const originalSaved = [...savedItems];
 
+    const applyLocalDelete = (current: MessageItem[]) =>
+      scope === 'everyone'
+        ? applyDeletionToListWithTombstones(current, messageId, scope)
+        : applyMessageDeletionToList(current, messageId, scope);
+
     if (scope === 'everyone') {
-      setMessages((current) =>
-        current.map((message) =>
-          message.id === messageId ? markMessageDeletedForEveryone(message) : message,
-        ),
-      );
-    } else {
-      setMessages((current) => current.filter((message) => message.id !== messageId));
+      rememberMessageDeletedForEveryone(messageId, selectedId);
     }
+
+    setMessages((current) => {
+      const next = applyLocalDelete(current);
+      messagesRef.current = next;
+      return next;
+    });
+
+    patchThreadCacheMessages(threadCacheRef.current, selectedId, applyLocalDelete);
+    if (scope === 'everyone') {
+      applyThreadReplyDeletion(selectedId, messageId, scope);
+    }
+
     setSavedItems((current) => current.filter((item) => item.messageId !== messageId));
 
     if (scope === 'everyone') {
@@ -6880,12 +7073,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         void unsaveChatMessage(selectedId, messageId);
       }
 
-      patchThreadCacheMessages(
-        threadCacheRef.current,
-        selectedId,
-        (current) => applyMessageDeletionToList(current, messageId, 'everyone'),
-      );
-      applyThreadReplyDeletion(selectedId, messageId, 'everyone');
+      patchThreadCacheMessages(threadCacheRef.current, selectedId, applyLocalDelete);
       return;
     }
 
@@ -7278,7 +7466,18 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       conversations.find((entry) => entry.id === conversationId)?.peerUserId ??
       null,
     applyThreadReplySent: (threadRootId) => {
-      setMessages((current) => bumpThreadReplyCount(current, threadRootId));
+      const conversationId = selectedIdRef.current;
+
+      if (!conversationId) {
+        setMessages((current) => bumpThreadReplyCount(current, threadRootId));
+        return;
+      }
+
+      const replyCount = syncThreadReplyCountForRoot(conversationId, threadRootId);
+      const syncCount = (current: MessageItem[]) => setThreadReplyCount(current, threadRootId, replyCount);
+
+      setMessages(syncCount);
+      patchThreadCacheMessages(threadCacheRef.current, conversationId, syncCount);
     },
     applyThreadMessagesRegistered: () => {
       setMessages((current) => filterMainChatMessages(current));
@@ -7651,6 +7850,9 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
           isSending={isSending}
           onUnauthorized={handleUnauthorized}
           currentUserId={getUserId(user)}
+          currentUserDisplayName={getUserDisplayName(user)}
+          currentUserInitials={getUserInitials(user)}
+          onProfileImageClick={openProfileImagePreview}
           savedMessageIds={savedMessageIds}
           focusMessageId={focusMessageId}
           unreadAnchorMessageId={threadUnreadAnchorId}
@@ -7752,6 +7954,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
         onViewFullProfile={(anchor) => {
           setUserProfileOverlay({ mode: 'full', anchor });
         }}
+        onProfileImageClick={openProfileImagePreview}
       />
       {showMeetingBanner && callManager.session.meetingBanner
         ? createPortal(

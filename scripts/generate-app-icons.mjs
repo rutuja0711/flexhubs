@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Build platform icons from assets/app-icon.png (full app icon with background).
- * Master PNG is composed from assets/logo-symbol.png via scripts/compose-app-icon.py.
+ * Build platform icons from assets/app-icon.png.
+ * Master: assets/desktop-icon-master.jpg (official). Fallback: compose-app-icon.py + logo-symbol.png.
  *
  * Run: npm run generate:icons
  */
@@ -12,6 +12,8 @@ import { fileURLToPath } from 'node:url';
 
 const projectRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const symbolPng = path.join(projectRoot, 'assets', 'logo-symbol.png');
+const desktopMasterPng = path.join(projectRoot, 'assets', 'desktopicon.png');
+const desktopMasterJpg = path.join(projectRoot, 'assets', 'desktop-icon-master.jpg');
 const sourcePng = path.join(projectRoot, 'assets', 'app-icon.png');
 const icnsOut = path.join(projectRoot, 'assets', 'icon.icns');
 const icoOut = path.join(projectRoot, 'assets', 'icon.ico');
@@ -74,6 +76,15 @@ function assertSymbol() {
   }
 }
 
+function importDesktopMasterPng(pythonBin) {
+  const scriptPath = path.join(projectRoot, 'scripts', 'import-desktop-icon.py');
+  execFileSync(pythonBin, [scriptPath], { stdio: 'inherit', cwd: projectRoot });
+
+  if (!fs.existsSync(sourcePng)) {
+    throw new Error(`Missing imported app icon: ${sourcePng}`);
+  }
+}
+
 function composeMasterPng(pythonBin) {
   const scriptPath = path.join(projectRoot, 'scripts', 'compose-app-icon.py');
   execFileSync(pythonBin, [scriptPath], { stdio: 'inherit', cwd: projectRoot });
@@ -81,6 +92,19 @@ function composeMasterPng(pythonBin) {
   if (!fs.existsSync(sourcePng)) {
     throw new Error(`Missing composed app icon: ${sourcePng}`);
   }
+}
+
+function prepareMasterPng(pythonBin) {
+  if (fs.existsSync(desktopMasterPng) || fs.existsSync(desktopMasterJpg)) {
+    const master = fs.existsSync(desktopMasterPng) ? desktopMasterPng : desktopMasterJpg;
+    console.log('[FlexHubs] Importing official desktop icon from', master);
+    importDesktopMasterPng(pythonBin);
+    return;
+  }
+
+  assertSymbol();
+  console.log('[FlexHubs] Composing master app icon from', symbolPng);
+  composeMasterPng(pythonBin);
 }
 
 function generateIcnsDarwin() {
@@ -140,10 +164,8 @@ function syncRendererPublicAssets() {
 }
 
 function main() {
-  assertSymbol();
   const pythonBin = resolveIcoPython();
-  console.log('[FlexHubs] Composing master app icon from', symbolPng);
-  composeMasterPng(pythonBin);
+  prepareMasterPng(pythonBin);
 
   console.log('[FlexHubs] Generating .icns and .ico from', sourcePng);
 

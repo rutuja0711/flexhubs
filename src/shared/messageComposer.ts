@@ -1,10 +1,11 @@
 import type { MessageItem } from './messages';
+import { filterEditableMessageMedia } from './messageEditPlan';
 import {
   isCallLogMessage,
   isCalendarEventAnnouncementMessage,
   isDeletedMessage,
-  isMediaOnlyMessage,
   isPollMessage,
+  isStickerMessage,
   isVoiceOnlyMessage,
 } from './messages';
 
@@ -34,16 +35,19 @@ export function canEditMessage(
     return false;
   }
 
-  if (isMediaOnlyMessage(message) || isVoiceOnlyMessage(message)) {
-    return false;
-  }
-
-  if ((message.media?.length ?? 0) > 0) {
+  if (isStickerMessage(message) || isVoiceOnlyMessage(message)) {
     return false;
   }
 
   const messageType = String(message.messageType ?? 'TEXT').toUpperCase();
-  if (messageType !== 'TEXT' && messageType !== '') {
+  if (messageType === 'GIF' || messageType === 'STICKER' || messageType === 'VOICE' || messageType === 'POLL') {
+    return false;
+  }
+
+  const hasEditableAttachments = filterEditableMessageMedia(message).length > 0;
+  const hasText = message.content.trim().length > 0;
+
+  if (!hasText && !hasEditableAttachments) {
     return false;
   }
 
@@ -52,7 +56,7 @@ export function canEditMessage(
     return false;
   }
 
-  return message.content.trim().length > 0;
+  return true;
 }
 
 export function findLastEditableOwnMessage(

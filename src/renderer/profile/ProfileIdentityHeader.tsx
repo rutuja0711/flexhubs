@@ -16,6 +16,7 @@ type ProfileIdentityHeaderProps = {
   editable?: boolean;
   onEditCover?: () => void;
   onEditAvatar?: () => void;
+  onAvatarImagePreview?: (imageUrl: string) => void;
   coverHeightClass?: string;
   size?: 'sm' | 'md' | 'lg';
   /** Edge-to-edge banner (conversation panel / sidebar). */
@@ -36,6 +37,7 @@ export function ProfileIdentityHeader({
   editable = false,
   onEditCover,
   onEditAvatar,
+  onAvatarImagePreview,
   coverHeightClass = 'h-[88px] sm:h-[104px]',
   size = 'lg',
   flush = false,
@@ -72,7 +74,13 @@ export function ProfileIdentityHeader({
           <div className="absolute bottom-0 left-1/2 z-10 -translate-x-1/2 translate-y-1/2">
             <div className="relative">
               <div className="rounded-full border-4 border-app-surface bg-app-surface shadow-lg">
-                <Avatar imageUrl={avatarUrl ?? null} initials={avatarInitials} size={avatarSize} loading="eager" />
+                <Avatar
+                  imageUrl={avatarUrl ?? null}
+                  initials={avatarInitials}
+                  size={avatarSize}
+                  loading="eager"
+                  onImageClick={onAvatarImagePreview}
+                />
               </div>
               {onEditAvatar ? (
                 <button

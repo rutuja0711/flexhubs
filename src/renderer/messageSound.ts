@@ -1,4 +1,4 @@
-import { applyAudioContextSink } from './audioOutputDevice';
+import { applyAudioContextSink, getPreferredAudioOutputDeviceId } from './audioOutputDevice';
 
 let audioContext: AudioContext | null = null;
 
@@ -33,24 +33,34 @@ export async function playMessageNotificationSound(): Promise<boolean> {
     await context.resume();
   }
 
-  await applyAudioContextSink(context);
+  const deviceId = getPreferredAudioOutputDeviceId();
+  if (deviceId !== 'default') {
+    await applyAudioContextSink(context);
+  }
 
-  const oscillator = context.createOscillator();
-  const gain = context.createGain();
+  const t0 = context.currentTime;
 
-  oscillator.type = 'sine';
-  oscillator.frequency.setValueAtTime(880, context.currentTime);
-  oscillator.frequency.exponentialRampToValueAtTime(660, context.currentTime + 0.08);
+  const playTone = (frequency: number, start: number, duration: number) => {
+    const oscillator = context.createOscillator();
+    const gain = context.createGain();
 
-  gain.gain.setValueAtTime(0.0001, context.currentTime);
-  gain.gain.exponentialRampToValueAtTime(0.18, context.currentTime + 0.01);
-  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.22);
+    oscillator.type = 'sine';
+    oscillator.frequency.setValueAtTime(frequency, t0 + start);
 
-  oscillator.connect(gain);
-  gain.connect(context.destination);
+    gain.gain.setValueAtTime(0.0001, t0 + start);
+    gain.gain.exponentialRampToValueAtTime(0.16, t0 + start + 0.008);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t0 + start + duration);
 
-  oscillator.start(context.currentTime);
-  oscillator.stop(context.currentTime + 0.24);
+    oscillator.connect(gain);
+    gain.connect(context.destination);
+
+    oscillator.start(t0 + start);
+    oscillator.stop(t0 + start + duration + 0.02);
+  };
+
+  // Two-tone chime (1.0.32-style message alert).
+  playTone(784, 0, 0.11);
+  playTone(988, 0.12, 0.14);
 
   return true;
 }

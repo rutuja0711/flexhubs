@@ -14,7 +14,62 @@ import {
 } from '../shared/messages';
 import type { MessageHistoryPage } from '../shared/messages';
 import { normalizeScheduledMessage, normalizeScheduledMessages } from '../shared/extras';
+import type { MessageEditMediaChange } from '../shared/messageEditPlan';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from './apiRequest';
+
+function parseEditMediaUpdate(value: string | undefined): MessageEditMediaChange | null {
+  if (!value?.trim()) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(value) as MessageEditMediaChange;
+    if (parsed?.kind === 'unchanged' || parsed?.kind === 'cleared' || parsed?.kind === 'replaced') {
+      return parsed;
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
+function buildEditMessageBodies(content: string, mediaUpdate: MessageEditMediaChange | null): unknown[] {
+  const trimmed = content.trim();
+  const bodies: unknown[] = [{ content: trimmed }];
+
+  if (!mediaUpdate || mediaUpdate.kind === 'unchanged') {
+    return bodies;
+  }
+
+  if (mediaUpdate.kind === 'cleared') {
+    bodies.push({ content: trimmed, type: 'TEXT' });
+    bodies.push({ content: trimmed, messageType: 'TEXT' });
+    bodies.push({ content: trimmed, fileUrl: null });
+    bodies.push({ content: trimmed, attachments: [] });
+    bodies.push({ content: trimmed, media: [] });
+    return bodies;
+  }
+
+  const { fileUrl, fileName, mimeType, messageType } = mediaUpdate;
+  bodies.push({
+    content: trimmed,
+    type: messageType,
+    messageType,
+    fileUrl,
+    fileName,
+    mimeType,
+  });
+  bodies.push({
+    type: messageType,
+    content: trimmed,
+    fileUrl,
+    fileName,
+    mimeType,
+  });
+
+  return bodies;
+}
 
 export async function fetchConversationBootstrap(
   token: string,
@@ -503,19 +558,32 @@ export async function editMessage(
   conversationId: string,
   messageId: string,
   content: string,
+  mediaUpdateJson?: string,
 ): Promise<ApiResult<MessageItem>> {
-  const result = await apiPatch<unknown>(
-    `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}`,
-    token,
-    'Edit Message API',
-    { content: content.trim() },
-  );
+  const mediaUpdate = parseEditMediaUpdate(mediaUpdateJson);
+  const bodies = buildEditMessageBodies(content, mediaUpdate);
+  const url = `${API_BASE_URL}/conversations/${conversationId}/messages/${messageId}`;
 
-  if (!result.ok) {
-    return result;
+  let lastResult: ApiResult<unknown> = {
+    ok: false,
+    error: 'Could not update message.',
+  };
+
+  for (const body of bodies) {
+    const result = await apiPatch<unknown>(url, token, 'Edit Message API', body);
+
+    if (result.ok) {
+      return { ok: true, data: normalizeMessageResult(result.data) };
+    }
+
+    lastResult = result;
+
+    if (result.status !== 400 || !result.error?.toLowerCase().includes('invalid')) {
+      return result;
+    }
   }
 
-  return { ok: true, data: normalizeMessageResult(result.data) };
+  return lastResult;
 }
 
 export async function deleteMessage(

@@ -13,6 +13,8 @@ import {
   enrichMessageReplies,
   extractPeerLastReadMessageIds,
   filterMainChatMessages,
+  isDeletedMessage,
+  markMessageDeletedForEveryone,
   resolveMessageReadBy,
   resolveNotificationConversationId,
   resolveThreadRootId,
@@ -320,6 +322,18 @@ export function bumpThreadReplyCount(current: MessageItem[], threadRootId: strin
   );
 }
 
+export function setThreadReplyCount(
+  current: MessageItem[],
+  threadRootId: string,
+  replyCount: number,
+): MessageItem[] {
+  const safeCount = Math.max(0, replyCount);
+
+  return current.map((message) =>
+    message.id === threadRootId ? { ...message, threadReplyCount: safeCount } : message,
+  );
+}
+
 export function mergeIncomingMessage(
   current: MessageItem[],
   incoming: MessageItem,
@@ -328,6 +342,12 @@ export function mergeIncomingMessage(
 ): MessageItem[] {
   if (shouldIgnore?.(incoming)) {
     return current;
+  }
+
+  if (isDeletedMessage(incoming)) {
+    return current.map((message) =>
+      message.id === incoming.id ? markMessageDeletedForEveryone(message) : message,
+    );
   }
 
   const threadRootId = resolveThreadRootId(incoming, userId);

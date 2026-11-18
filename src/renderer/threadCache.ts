@@ -65,6 +65,19 @@ export function invalidateThreadCacheEntry(store: ThreadCacheStore, conversation
   delete store[conversationId];
 }
 
+export function findConversationIdForMessage(
+  store: ThreadCacheStore,
+  messageId: string,
+): string | null {
+  for (const [conversationId, entry] of Object.entries(store)) {
+    if (entry.messages.some((message) => message.id === messageId)) {
+      return conversationId;
+    }
+  }
+
+  return null;
+}
+
 export function patchThreadCacheMessages(
   store: ThreadCacheStore,
   conversationId: string,

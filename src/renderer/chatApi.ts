@@ -364,13 +364,17 @@ export async function editChatMessage(
   conversationId: string,
   messageId: string,
   content: string,
+  mediaUpdate?: import('../shared/messageEditPlan').MessageEditMediaChange,
 ): Promise<ApiResult<import('../shared/messages').MessageItem>> {
   if (!window.electronAPI?.editMessage) {
     return unavailable();
   }
 
+  const mediaUpdateJson =
+    mediaUpdate && mediaUpdate.kind !== 'unchanged' ? JSON.stringify(mediaUpdate) : undefined;
+
   return withToken((token) =>
-    window.electronAPI.editMessage(token, conversationId, messageId, content),
+    window.electronAPI.editMessage(token, conversationId, messageId, content, mediaUpdateJson),
   );
 }
 

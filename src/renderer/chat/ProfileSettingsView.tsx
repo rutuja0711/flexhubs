@@ -26,6 +26,7 @@ import {
 import { KeyboardShortcutsReference } from './KeyboardShortcutsReference';
 import { isMacPlatform } from './keyboardShortcuts';
 import { RemoteImage } from '../RemoteImage';
+import { openMediaPreview } from './MediaPreviewHost';
 import {
   apiStatusToUi,
   applyNotificationPreferenceUpdate,
@@ -1852,6 +1853,9 @@ export function ProfileSettingsView({
                             initials={initials}
                             size="xl"
                             loading="eager"
+                            onImageClick={(url) => {
+                              openMediaPreview({ url, kind: 'image', name: 'Profile photo' });
+                            }}
                           />
                         </div>
                         <button

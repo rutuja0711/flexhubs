@@ -38,6 +38,14 @@ export function formatScheduledAt(value: string): string {
   return `${day} ${month}, ${hours}:${minutes}`;
 }
 
+function messageTimeSuffix(date: Date): string {
+  return date.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  });
+}
+
 export function formatConversationTimestamp(value: string): string {
   if (!value) {
     return '';
@@ -56,7 +64,7 @@ export function formatConversationTimestamp(value: string): string {
     date.getDate() === now.getDate();
 
   if (sameDay) {
-    return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return messageTimeSuffix(date);
   }
 
   const day = date.getDate();
@@ -67,6 +75,39 @@ export function formatConversationTimestamp(value: string): string {
   }
 
   return `${day} ${month} ${date.getFullYear()}`;
+}
+
+/** Timestamp on chat message bubbles — includes time for older messages. */
+export function formatMessageTimestamp(value: string): string {
+  if (!value) {
+    return '';
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  const now = new Date();
+  const sameDay =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+
+  if (sameDay) {
+    return messageTimeSuffix(date);
+  }
+
+  const day = date.getDate();
+  const month = MONTHS[date.getMonth()] ?? '';
+  const time = messageTimeSuffix(date);
+
+  if (date.getFullYear() === now.getFullYear()) {
+    return `${day} ${month}, ${time}`;
+  }
+
+  return `${day} ${month} ${date.getFullYear()}, ${time}`;
 }
 
 export function formatMessageDayDivider(value: string): string {

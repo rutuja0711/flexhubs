@@ -37,23 +37,28 @@ export function resolveAppIconIcnsPath(): string | undefined {
   return fs.existsSync(icnsPath) ? icnsPath : undefined;
 }
 
-export function resolveAppIconImage(): Electron.NativeImage | undefined {
-  const assetsDir = resolveAssetsDir();
-
-  if (process.platform === 'darwin') {
-    const icnsPath = path.join(assetsDir, 'icon.icns');
-    if (fs.existsSync(icnsPath)) {
-      const icon = nativeImage.createFromPath(icnsPath);
-      if (!icon.isEmpty()) {
-        return icon;
-      }
-    }
+/** Same artwork as Dock — always assets/app-icon.png (from desktopicon.png). */
+export function resolveNotificationIconImage(): Electron.NativeImage | undefined {
+  const pngPath = resolveAppIconPngPath();
+  if (!fs.existsSync(pngPath)) {
+    return undefined;
   }
 
+  const icon = nativeImage.createFromPath(pngPath);
+  return icon.isEmpty() ? undefined : icon;
+}
+
+export function resolveAppIconImage(): Electron.NativeImage | undefined {
+  const fromMasterPng = resolveNotificationIconImage();
+  if (fromMasterPng) {
+    return fromMasterPng;
+  }
+
+  const assetsDir = resolveAssetsDir();
   const candidates = [
-    path.join(assetsDir, 'app-icon.png'),
     path.join(assetsDir, 'icon.png'),
     path.join(assetsDir, 'icon.ico'),
+    path.join(assetsDir, 'icon.icns'),
   ];
 
   for (const iconPath of candidates) {

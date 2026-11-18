@@ -224,6 +224,7 @@ declare global {
         conversationId: string,
         messageId: string,
         content: string,
+        mediaUpdateJson?: string,
       ) => Promise<ApiResult<MessageItem>>;
       deleteMessage: (
         token: string,

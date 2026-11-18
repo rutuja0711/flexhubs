@@ -36,11 +36,17 @@ import {
   filterMainChatMessages,
   isThreadReply,
   formatMessagePreview,
-  registerThreadReplyMessage,
-  trackPendingThreadSend,
 } from '../../shared/messages';
+import { sendThreadTextReply } from './threadReplySend';
 import { validateSearchInput } from '../../shared/search';
+import { filterEditableMessageMedia, messageEditHasChanges } from '../../shared/messageEditPlan';
 import { canEditMessage, findLastEditableOwnMessage } from '../../shared/messageComposer';
+import { MessageEditAttachments } from './MessageEditAttachments';
+import {
+  buildPendingAttachment,
+  revokePendingAttachments,
+  type PendingAttachment,
+} from './pendingAttachments';
 import {
   loadMessageSearch,
   loadPinnedMessages,
@@ -88,8 +94,15 @@ export type ConversationThreadProps = {
   onSendVoice?: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
   onUnauthorized: (status?: number) => boolean;
   currentUserId: string | null;
+  currentUserDisplayName?: string;
+  currentUserInitials?: string;
+  onProfileImageClick?: (imageUrl: string) => void;
   onAddReaction: (messageId: string, emoji: string, options?: { remove?: boolean }) => void;
-  onEditMessage: (messageId: string, content: string) => void | Promise<boolean>;
+  onEditMessage: (
+    messageId: string,
+    content: string,
+    options?: { keptMedia?: MessageItem['media']; addedFile?: File | null },
+  ) => void | Promise<boolean>;
   onDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
   onForwardMessage: (messageId: string, targetConversationIds: string[]) => Promise<string | null>;
   onPinMessage: (messageId: string, isPinned: boolean) => void;
@@ -165,6 +178,9 @@ function ConversationThreadComponent({
   onSendVoice,
   onUnauthorized,
   currentUserId,
+  currentUserDisplayName = 'You',
+  currentUserInitials = '?',
+  onProfileImageClick,
   onAddReaction,
   onEditMessage,
   onDeleteMessage,
@@ -231,6 +247,9 @@ function ConversationThreadComponent({
   const [replyingToMessage, setReplyingToMessage] = useState<MessageItem | null>(null);
   const [composerEditMessage, setComposerEditMessage] = useState<MessageItem | null>(null);
   const [composerEditSaving, setComposerEditSaving] = useState(false);
+  const [editKeptMedia, setEditKeptMedia] = useState<MessageItem['media']>([]);
+  const [editPendingAttachments, setEditPendingAttachments] = useState<PendingAttachment[]>([]);
+  const composerEditFileInputRef = useRef<HTMLInputElement>(null);
   const composerDraftBackupRef = useRef('');
   const [aiReplyLoadingMessageId, setAiReplyLoadingMessageId] = useState<string | null>(null);
   const [threadRootMessage, setThreadRootMessage] = useState<MessageItem | null>(null);
@@ -367,6 +386,11 @@ function ConversationThreadComponent({
     setReplyingToMessage(null);
     setComposerEditMessage(null);
     setComposerEditSaving(false);
+    setEditKeptMedia([]);
+    setEditPendingAttachments((pending) => {
+      revokePendingAttachments(pending);
+      return [];
+    });
     composerDraftBackupRef.current = '';
     setThreadRootMessage(null);
     setSettingsOpen(false);
@@ -533,6 +557,11 @@ function ConversationThreadComponent({
       }
 
       composerDraftBackupRef.current = draft;
+      setEditPendingAttachments((pending) => {
+        revokePendingAttachments(pending);
+        return [];
+      });
+      setEditKeptMedia(filterEditableMessageMedia(message));
       setComposerEditMessage(message);
       setReplyingToMessage(null);
       onDraftChange(message.content);
@@ -544,6 +573,11 @@ function ConversationThreadComponent({
   const cancelComposerEdit = useCallback(() => {
     setComposerEditMessage(null);
     setComposerEditSaving(false);
+    setEditKeptMedia([]);
+    setEditPendingAttachments((pending) => {
+      revokePendingAttachments(pending);
+      return [];
+    });
     onDraftChange(composerDraftBackupRef.current);
     composerDraftBackupRef.current = '';
   }, [onDraftChange]);
@@ -554,39 +588,71 @@ function ConversationThreadComponent({
     }
 
     const nextContent = draft.trim();
+    const addedFile = editPendingAttachments[0]?.file ?? null;
 
-    if (!nextContent) {
-      toast.error('Message cannot be empty.');
+    if (!messageEditHasChanges(composerEditMessage, nextContent, editKeptMedia, addedFile)) {
+      cancelComposerEdit();
       return;
     }
 
-    if (nextContent === composerEditMessage.content.trim()) {
-      cancelComposerEdit();
+    if (!nextContent && editKeptMedia.length === 0 && !addedFile) {
+      toast.error('Message cannot be empty.');
       return;
     }
 
     setComposerEditSaving(true);
 
     try {
-      const result = await onEditMessage(composerEditMessage.id, nextContent);
+      const result = await onEditMessage(composerEditMessage.id, nextContent, {
+        keptMedia: editKeptMedia,
+        addedFile,
+      });
 
       if (result === true) {
-        setComposerEditMessage(null);
-        composerDraftBackupRef.current = '';
+        cancelComposerEdit();
         onDraftChange('');
         toast.success('Message updated.');
         return;
       }
 
       if (result !== false) {
-        setComposerEditMessage(null);
-        composerDraftBackupRef.current = '';
+        cancelComposerEdit();
         onDraftChange('');
       }
     } finally {
       setComposerEditSaving(false);
     }
-  }, [cancelComposerEdit, composerEditMessage, composerEditSaving, draft, onDraftChange, onEditMessage, toast]);
+  }, [
+    cancelComposerEdit,
+    composerEditMessage,
+    composerEditSaving,
+    draft,
+    editKeptMedia,
+    editPendingAttachments,
+    onDraftChange,
+    onEditMessage,
+    toast,
+  ]);
+
+  const editCanSave = composerEditMessage
+    ? messageEditHasChanges(
+        composerEditMessage,
+        draft.trim(),
+        editKeptMedia,
+        editPendingAttachments[0]?.file ?? null,
+      )
+    : false;
+
+  const queueEditAttachmentFiles = useCallback((files: File[]) => {
+    if (files.length === 0) {
+      return;
+    }
+
+    setEditPendingAttachments((pending) => {
+      revokePendingAttachments(pending);
+      return [buildPendingAttachment(files[files.length - 1]!)];
+    });
+  }, []);
 
   const editLastMessage = useCallback(() => {
     const candidate = findLastEditableOwnMessage(messages, currentUserId);
@@ -1237,16 +1303,29 @@ function ConversationThreadComponent({
         savedMessageIds={savedMessageIds}
         expandedThreadMessageId={threadRootMessage?.id}
         onSendThreadMessage={async (content, threadRootId) => {
-          const { sendChatMessage } = await import('../chatApi');
-          trackPendingThreadSend(content, threadRootId);
-          const result = await sendChatMessage(conversation.id, content, undefined, threadRootId);
+          if (!currentUserId) {
+            return { ok: false as const, error: 'Not signed in.' };
+          }
+
+          const result = await sendThreadTextReply({
+            conversationId: conversation.id,
+            threadRootId,
+            content,
+            author: {
+              userId: currentUserId,
+              displayName: currentUserDisplayName,
+              initials: currentUserInitials,
+            },
+          });
+
           if (!result.ok) {
             return { ok: false as const, error: result.error };
           }
-          registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
+
           onThreadMessagesRegistered?.();
-          return { ok: true as const, message: result.data };
+          return { ok: true as const, message: result.message };
         }}
+        onProfileImageClick={onProfileImageClick}
         conversationId={conversation.id}
         conversationDetails={conversationDetails ?? hubDetails ?? null}
         conversationKind={conversation.kind}
@@ -1280,6 +1359,41 @@ function ConversationThreadComponent({
         </div>
       ) : null}
 
+      <input
+        ref={composerEditFileInputRef}
+        type="file"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          event.target.value = '';
+          if (file) {
+            queueEditAttachmentFiles([file]);
+          }
+        }}
+      />
+
+      {composerEditMessage ? (
+        <MessageEditAttachments
+          existing={editKeptMedia}
+          pending={editPendingAttachments}
+          disabled={composerEditSaving}
+          onRemoveExisting={(index) => {
+            setEditKeptMedia((current) => current.filter((_, itemIndex) => itemIndex !== index));
+          }}
+          onRemovePending={(index) => {
+            setEditPendingAttachments((current) => {
+              const next = current.filter((_, itemIndex) => itemIndex !== index);
+              const removed = current[index];
+              if (removed) {
+                revokePendingAttachments([removed]);
+              }
+              return next;
+            });
+          }}
+          onAddFiles={() => composerEditFileInputRef.current?.click()}
+        />
+      ) : null}
+
       <MessageInput
         ref={composerRef}
         attachmentOverlayRootRef={attachmentOverlayRootRef}
@@ -1301,9 +1415,11 @@ function ConversationThreadComponent({
         onComposerBlur={onComposerBlur}
         editingMessage={composerEditMessage}
         editSaving={composerEditSaving}
+        editCanSave={editCanSave}
         onCancelComposerEdit={cancelComposerEdit}
         onSaveComposerEdit={saveComposerEdit}
         onEditLastMessage={editLastMessage}
+        onEditAttachFiles={queueEditAttachmentFiles}
         onSend={() => {
           if (composerEditMessage) {
             void saveComposerEdit();
@@ -1325,12 +1441,16 @@ function ConversationThreadComponent({
             : undefined
         }
         onSendFile={
-          onSendFile
-            ? (file, caption) => {
-                onSendFile(file, caption, replyingToMessage?.id);
-                setReplyingToMessage(null);
+          composerEditMessage
+            ? (file) => {
+                queueEditAttachmentFiles([file]);
               }
-            : undefined
+            : onSendFile
+              ? (file, caption) => {
+                  onSendFile(file, caption, replyingToMessage?.id);
+                  setReplyingToMessage(null);
+                }
+              : undefined
         }
         onSendVoice={
           onSendVoice
@@ -1485,6 +1605,7 @@ function ConversationThreadComponent({
           viewerSharePresence={viewerSharePresence}
           onRefreshPeerPresence={onRefreshPeerPresence}
           onFocusComposer={() => composerRef.current?.focusComposer()}
+          onProfileImageClick={onProfileImageClick}
         />
       ) : null}
       {settingsOpen && isHubPanel ? (
@@ -1526,15 +1647,28 @@ function ConversationThreadComponent({
           currentUserId={currentUserId}
           onClose={() => setThreadRootMessage(null)}
           onSendThreadMessage={async (content, threadRootId, replyToId) => {
-            const { sendChatMessage } = await import('../chatApi');
-            trackPendingThreadSend(content, threadRootId);
-            const result = await sendChatMessage(conversation.id, content, replyToId, threadRootId);
+            if (!currentUserId) {
+              return { ok: false as const, error: 'Not signed in.' };
+            }
+
+            const result = await sendThreadTextReply({
+              conversationId: conversation.id,
+              threadRootId,
+              content,
+              replyToId,
+              author: {
+                userId: currentUserId,
+                displayName: currentUserDisplayName,
+                initials: currentUserInitials,
+              },
+            });
+
             if (!result.ok) {
               return { ok: false as const, error: result.error };
             }
-            registerThreadReplyMessage(result.data.id, result.data.threadRootId ?? threadRootId);
+
             onThreadMessagesRegistered?.();
-            return { ok: true as const, message: result.data };
+            return { ok: true as const, message: result.message };
           }}
           onSendMedia={onSendMedia}
           onSendFile={onSendFile}

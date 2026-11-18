@@ -45,7 +45,7 @@ import { isPerfEnabled, perfRecordRender, perfSetGauge } from '../dev/perfInstru
 import { isMessageListVirtualizationEnabled } from '../dev/messageListVirtualization';
 import { registerMessageListVirtuosoLayoutSync } from './messageListVirtuosoSync';
 import { fetchMediaBlob } from '../mediaBlob';
-import { formatConversationTimestamp, formatMessageDayDivider, messageDayKey } from './format';
+import { formatMessageDayDivider, formatMessageTimestamp, messageDayKey } from './format';
 import { Avatar, EnhanceSparkleIcon } from './ChatIcons';
 import { MessageMenu } from './MessageMenu';
 import { ReactionChip } from './ReactionChip';
@@ -270,7 +270,11 @@ type MessageRowProps = {
   aiReplyLoadingMessageId?: string | null;
   onReplyInThread: (messageId: string) => void;
   onJumpToMessage?: (messageId: string) => void;
-  onEditMessage: (messageId: string, content: string) => void | Promise<boolean>;
+  onEditMessage: (
+    messageId: string,
+    content: string,
+    options?: { keptMedia?: MessageItem['media']; addedFile?: File | null },
+  ) => void | Promise<boolean>;
   onDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
   onForwardMessage: (messageId: string) => void;
   onPinMessage: (messageId: string, isPinned: boolean) => void;
@@ -301,6 +305,7 @@ type MessageRowProps = {
     },
     position: { top: number; left: number },
   ) => void;
+  onProfileImageClick?: (imageUrl: string) => void;
 };
 
 function MessageHoverAction({
@@ -478,7 +483,7 @@ function MessageTimeInline({
       } ${className}`}
     >
       {message.editedAt ? <span className="lowercase">edited</span> : null}
-      {message.createdAt ? formatConversationTimestamp(message.createdAt) : null}
+      {message.createdAt ? formatMessageTimestamp(message.createdAt) : null}
       {message.isOwn && message.status === 'seen' ? <DoubleCheckIcon /> : null}
       {message.isOwn && message.status === 'delivered' ? (
         <FiCheck className="text-[11px]" strokeWidth={2.5} aria-hidden="true" />
@@ -604,6 +609,7 @@ const MessageRow = memo(function MessageRow({
   onViewCalendarEvent,
   memberProfilePopupEnabled = false,
   onOpenMemberProfile,
+  onProfileImageClick,
 }: MessageRowProps) {
   const calendarAnnouncement = parseCalendarEventAnnouncementContent(message.content);
   if (calendarAnnouncement) {
@@ -760,17 +766,17 @@ const MessageRow = memo(function MessageRow({
       }}
     >
       {showIncomingSenderMeta ? (
-        <button
-          type="button"
-          className={`shrink-0 rounded-full transition-opacity ${
-            memberProfilePopupEnabled && onOpenMemberProfile ? 'cursor-pointer hover:opacity-90' : 'cursor-default'
-          }`}
-          onClick={openMemberProfile}
-          aria-label={message.senderName ? `View ${message.senderName}'s profile` : 'View sender profile'}
-          tabIndex={memberProfilePopupEnabled && onOpenMemberProfile ? 0 : -1}
-        >
-          <Avatar imageUrl={message.senderAvatarUrl ?? null} initials={message.senderInitials} size="sm" />
-        </button>
+        <div className="shrink-0">
+          <Avatar
+            imageUrl={message.senderAvatarUrl ?? null}
+            initials={message.senderInitials}
+            size="sm"
+            onImageClick={onProfileImageClick}
+            imagePreviewLabel={
+              message.senderName ? `View ${message.senderName}'s profile photo` : 'View profile photo'
+            }
+          />
+        </div>
       ) : null}
       <div className={`flex max-w-[70%] flex-col ${message.isOwn ? 'items-end' : 'items-start'}`}>
         {showIncomingSenderMeta ? (
@@ -928,7 +934,7 @@ const MessageRow = memo(function MessageRow({
               onClick={() => onReplyInThread(message.id)}
             >
               <FiChevronUp className="text-[10px]" />
-              <span className="font-medium">{message.threadReplyCount} {message.threadReplyCount === 1 ? 'reply' : 'replies'} - {formatConversationTimestamp(message.createdAt)}</span>
+              <span className="font-medium">{message.threadReplyCount} {message.threadReplyCount === 1 ? 'reply' : 'replies'} - {formatMessageTimestamp(message.createdAt)}</span>
               <FiMessageSquare className="text-[10px]" />
             </button>
             <span className="text-[10px] text-app-muted mt-0.5 pr-0.5 cursor-pointer hover:underline" onClick={() => onReplyInThread(message.id)}>
@@ -967,7 +973,11 @@ type MessageListProps = {
   onReplyInThread: (messageId: string) => void;
   onJumpToMessage?: (messageId: string) => void;
   onOpenComposerEdit?: (message: MessageItem) => void;
-  onEditMessage: (messageId: string, content: string) => void | Promise<boolean>;
+  onEditMessage: (
+    messageId: string,
+    content: string,
+    options?: { keptMedia?: MessageItem['media']; addedFile?: File | null },
+  ) => void | Promise<boolean>;
   onDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
   onForwardMessage: (messageId: string) => void;
   onPinMessage: (messageId: string, isPinned: boolean) => void;
@@ -1002,6 +1012,7 @@ type MessageListProps = {
     },
     position: { top: number; left: number },
   ) => void;
+  onProfileImageClick?: (imageUrl: string) => void;
 };
 
 export function MessageList({
@@ -1051,6 +1062,7 @@ export function MessageList({
   onViewCalendarEvent,
   memberProfilePopupEnabled = false,
   onOpenMemberProfile,
+  onProfileImageClick,
 }: MessageListProps) {
   perfRecordRender('MessageList');
   const virtualListEnabled = isMessageListVirtualizationEnabled();
@@ -1084,6 +1096,7 @@ export function MessageList({
   const [newMessagesBelow, setNewMessagesBelow] = useState(0);
   const virtuosoAutoscrollLastAtRef = useRef(0);
   const scrollPersistReadyRef = useRef(false);
+  const unreadScrollDoneRef = useRef<string | null>(null);
   const resolvedInitialScrollSnapshot = useMemo(
     () => normalizeConversationScrollSnapshot(initialScrollSnapshot),
     [initialScrollSnapshot],
@@ -1114,6 +1127,7 @@ export function MessageList({
     virtuosoFirstItemIndexRef.current = VIRTUOSO_BASE_FIRST_ITEM_INDEX;
     topVisibleMessageIdRef.current = null;
     setMessageContextMenu(null);
+    unreadScrollDoneRef.current = null;
   }, [conversationId]);
 
   useEffect(() => {
@@ -1212,12 +1226,19 @@ export function MessageList({
     virtualListEnabled,
   ]);
 
-  const virtuosoAlignToBottom = virtuosoMountScrollTop === undefined;
-
   const scrollRestoreTarget = useMemo(
     () => resolveScrollRestoreTarget(resolvedInitialScrollSnapshot, listEntries),
     [listEntries, resolvedInitialScrollSnapshot],
   );
+
+  const openAtUnreadAnchor = Boolean(
+    unreadAnchorMessageId &&
+      !scrollToMessageId &&
+      !pendingScrollToMessageId &&
+      (!scrollRestoreTarget || scrollRestoreTarget.mode === 'bottom'),
+  );
+
+  const virtuosoAlignToBottom = virtuosoMountScrollTop === undefined && !openAtUnreadAnchor;
 
   const requestStickToBottomIfNeeded = useCallback(() => {
     if (suppressAutoScrollRef.current || pendingScrollToMessageId || scrollToMessageId) {
@@ -1511,7 +1532,13 @@ export function MessageList({
       return;
     }
 
-    if (resolvedInitialScrollSnapshot && !resolvedInitialScrollSnapshot.stickToBottom) {
+    if (openAtUnreadAnchor) {
+      stickToBottomRef.current = false;
+      suppressAutoScrollRef.current = false;
+      return;
+    }
+
+  if (resolvedInitialScrollSnapshot && !resolvedInitialScrollSnapshot.stickToBottom) {
       stickToBottomRef.current = false;
       suppressAutoScrollRef.current = false;
       return;
@@ -1531,7 +1558,7 @@ export function MessageList({
 
     stickToBottomRef.current = true;
     suppressAutoScrollRef.current = false;
-  }, [pendingScrollToMessageId, resolvedInitialScrollSnapshot, scrollToMessageId]);
+  }, [openAtUnreadAnchor, pendingScrollToMessageId, resolvedInitialScrollSnapshot, scrollToMessageId]);
 
   useEffect(() => {
     return () => {
@@ -1776,6 +1803,64 @@ export function MessageList({
     virtualListEnabled,
   ]);
 
+  useLayoutEffect(() => {
+    if (!openAtUnreadAnchor || !unreadAnchorMessageId || showInitialLoading || messages.length === 0) {
+      return;
+    }
+
+    const token = `${conversationId}:${unreadAnchorMessageId}`;
+
+    if (unreadScrollDoneRef.current === token) {
+      return;
+    }
+
+    const entryIndex = findMessageEntryIndex(listEntries, unreadAnchorMessageId);
+
+    if (entryIndex < 0) {
+      return;
+    }
+
+    unreadScrollDoneRef.current = token;
+    stickToBottomRef.current = false;
+    suppressAutoScrollRef.current = true;
+
+    if (virtualListEnabled && virtuosoRef.current) {
+      virtuosoRef.current.scrollToIndex({
+        index: entryIndex,
+        align: 'center',
+        behavior: 'auto',
+      });
+    } else {
+      const container = scrollContainerRef.current;
+      const element = container?.querySelector(`[data-message-id="${unreadAnchorMessageId}"]`);
+
+      if (container && element instanceof HTMLElement) {
+        const elementTop =
+          element.getBoundingClientRect().top -
+          container.getBoundingClientRect().top +
+          container.scrollTop;
+
+        container.scrollTop = Math.max(0, elementTop - Math.round(container.clientHeight * 0.35));
+      }
+    }
+
+    lastMessageIdRef.current = messages[messages.length - 1]?.id ?? null;
+
+    const timer = window.setTimeout(() => {
+      suppressAutoScrollRef.current = false;
+    }, 300);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    conversationId,
+    listEntries,
+    messages,
+    openAtUnreadAnchor,
+    showInitialLoading,
+    unreadAnchorMessageId,
+    virtualListEnabled,
+  ]);
+
   useEffect(() => {
     if (!virtualListEnabled || showInitialLoading) {
       return;
@@ -1833,6 +1918,7 @@ export function MessageList({
 
       const shouldPinToBottomOnMount =
         isInitialLoad &&
+        !unreadAnchorMessageId &&
         !pendingScrollToMessageId &&
         !scrollToMessageId &&
         !completedScrollTargetRef.current &&
@@ -1879,6 +1965,7 @@ export function MessageList({
 
     const shouldScroll =
       (isInitialLoad &&
+        !unreadAnchorMessageId &&
         !pendingScrollToMessageId &&
         !scrollToMessageId &&
         !completedScrollTargetRef.current &&
@@ -1916,6 +2003,7 @@ export function MessageList({
     scrollToBottom,
     scrollToMessageId,
     showInitialLoading,
+    unreadAnchorMessageId,
     virtualListEnabled,
   ]);
 
@@ -1966,8 +2054,12 @@ export function MessageList({
       return;
     }
 
+    if (openAtUnreadAnchor && !stickToBottomRef.current) {
+      return;
+    }
+
     requestStickToBottomIfNeeded();
-  }, [loadingOlder, requestStickToBottomIfNeeded]);
+  }, [loadingOlder, openAtUnreadAnchor, requestStickToBottomIfNeeded]);
 
   const publishMessageListEntryGauges = useCallback(() => {
     if (!isPerfEnabled()) {
@@ -2113,6 +2205,7 @@ export function MessageList({
           onViewCalendarEvent={onViewCalendarEvent}
           memberProfilePopupEnabled={memberProfilePopupEnabled}
           onOpenMemberProfile={handleOpenMemberProfile}
+          onProfileImageClick={onProfileImageClick}
         />
       );
     },
@@ -2283,12 +2376,25 @@ export function MessageList({
       }
     }
 
+    if (openAtUnreadAnchor && unreadAnchorMessageId) {
+      const unreadIndex = findMessageEntryIndex(listEntries, unreadAnchorMessageId);
+      if (unreadIndex >= 0) {
+        return unreadIndex;
+      }
+    }
+
     if (virtuosoMountScrollTop !== undefined) {
       return 0;
     }
 
     return Math.max(0, listEntries.length - 1);
-  }, [listEntries, scrollRestoreTarget, virtuosoMountScrollTop]);
+  }, [
+    listEntries,
+    openAtUnreadAnchor,
+    scrollRestoreTarget,
+    unreadAnchorMessageId,
+    virtuosoMountScrollTop,
+  ]);
 
   if (showInitialLoading) {
     return <MessageListSkeleton />;

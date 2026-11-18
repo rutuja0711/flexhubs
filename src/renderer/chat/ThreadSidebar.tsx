@@ -4,14 +4,13 @@ import type { MessageItem } from '../../shared/messages';
 import { registerThreadReplyMessages } from '../../shared/messages';
 import { loadMessageThread } from '../chatApi';
 import {
-  appendThreadReply,
   getThreadReplies,
   mergeThreadReplies,
   subscribeThreadReplies,
 } from '../threadRepliesStore';
 import { MessageContent } from './MessageContent';
 import { MessageInput, type MessageInputHandle } from './MessageInput';
-import { formatConversationTimestamp } from './format';
+import { formatMessageTimestamp } from './format';
 import { Avatar } from './ChatIcons';
 type ThreadSidebarProps = {
   conversationId: string;
@@ -47,7 +46,9 @@ export function ThreadSidebar({
   onThreadMessagesRegistered,
 }: ThreadSidebarProps) {
   const [messages, setMessages] = useState<MessageItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [initialLoading, setInitialLoading] = useState(
+    () => getThreadReplies(conversationId, rootMessage.id).length === 0,
+  );
   const [error, setError] = useState('');
   const [draft, setDraft] = useState('');
   const [isSending, setIsSending] = useState(false);
@@ -69,6 +70,7 @@ export function ThreadSidebar({
     const merged = mergeThreadReplies(conversationId, rootMessage.id, fetched);
     setMessages(merged);
     onThreadMessagesRegistered?.();
+    onThreadReplySent?.(rootMessage.id);
   };
 
   const refreshThread = async () => {
@@ -89,17 +91,19 @@ export function ThreadSidebar({
 
     if (cached.length > 0) {
       setMessages(cached);
-      setLoading(false);
+      setInitialLoading(false);
     }
 
     async function fetchThread() {
-      setLoading(true);
+      if (cached.length === 0) {
+        setInitialLoading(true);
+      }
       setError('');
 
       const response = await loadMessageThread(conversationId, rootMessage.id);
 
       if (!mounted) return;
-      setLoading(false);
+      setInitialLoading(false);
 
       if (!response.ok) {
         setError(response.error);
@@ -126,34 +130,36 @@ export function ThreadSidebar({
   }, [conversationId, rootMessage.id]);
 
   const handleSend = async () => {
-    if (!draft.trim() || isSending) return;
+    const text = draft.trim();
+
+    if (!text || isSending) {
+      return;
+    }
 
     setIsSending(true);
     setDraftError('');
 
-    const result = await onSendThreadMessage(draft.trim(), rootMessage.id, replyingToMessage?.id);
+    try {
+      const result = await onSendThreadMessage(text, rootMessage.id, replyingToMessage?.id);
 
-    if (!result.ok) {
-      setDraftError(result.error);
-      setIsSending(false);
-      return;
-    }
+      if (!result.ok) {
+        setDraftError(result.error);
+        return;
+      }
 
-    setDraft('');
-    setReplyingToMessage(null);
-    setIsSending(false);
-    onThreadReplySent?.(rootMessage.id);
-    setMessages(appendThreadReply(conversationId, rootMessage.id, result.message));
-    window.setTimeout(() => {
+      setDraft('');
+      setReplyingToMessage(null);
+      setMessages(getThreadReplies(conversationId, rootMessage.id));
+      onThreadReplySent?.(rootMessage.id);
       void refreshThread();
-    }, 400);
+    } finally {
+      setIsSending(false);
+    }
   };
 
   const scheduleThreadRefresh = () => {
     onThreadReplySent?.(rootMessage.id);
-    window.setTimeout(() => {
-      void refreshThread();
-    }, 500);
+    void refreshThread();
   };
 
   return (
@@ -183,7 +189,7 @@ export function ThreadSidebar({
             <Avatar imageUrl={null} initials={rootMessage.senderInitials} size="sm" />
             <div>
               <p className="text-xs font-semibold text-app-text">{rootMessage.senderName}</p>
-              <p className="text-[10px] text-app-muted">{formatConversationTimestamp(rootMessage.createdAt)}</p>
+              <p className="text-[10px] text-app-muted">{formatMessageTimestamp(rootMessage.createdAt)}</p>
             </div>
           </div>
           <div className="text-sm text-app-text leading-relaxed">
@@ -198,7 +204,9 @@ export function ThreadSidebar({
           <div className="h-px flex-1 bg-app-border/60" />
         </div>
 
-        {loading && <p className="text-xs text-app-muted py-2 text-center">Loading replies...</p>}
+        {initialLoading ? (
+          <p className="text-xs text-app-muted py-2 text-center">Loading replies...</p>
+        ) : null}
         {error && <p className="text-xs text-accent-soft py-2 text-center">{error}</p>}
 
         {messages.map((msg) => (
@@ -218,7 +226,7 @@ export function ThreadSidebar({
                 <MessageContent message={msg} currentUserId={currentUserId} />
                 <div className="mt-1 flex justify-end items-center gap-2">
                   <span className={`text-[10px] ${msg.isOwn ? 'text-white/70' : 'text-app-muted'}`}>
-                    {formatConversationTimestamp(msg.createdAt)}
+                    {formatMessageTimestamp(msg.createdAt)}
                   </span>
                   <button
                     type="button"
@@ -244,7 +252,7 @@ export function ThreadSidebar({
           attachmentOverlayRootRef={attachmentOverlayRootRef}
           compact
           value={draft}
-          disabled={loading}
+          disabled={initialLoading}
           isSending={isSending}
           error={draftError}
           replyingToMessage={replyingToMessage}

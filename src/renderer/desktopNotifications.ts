@@ -3,7 +3,7 @@ import { buildConversationListPreview, type ConversationItem } from '../shared/c
 import type { MessageItem, NotificationItem, PendingFriendItem } from '../shared/messages';
 import { getUserId } from '../shared/user';
 import { getStoredUser } from './authApi';
-import { APP_LOGO_SYMBOL_SRC } from './brand/logoAssets';
+import { APP_NOTIFICATION_ICON_SRC } from './brand/logoAssets';
 import { playMessageNotificationSound } from './messageSound';
 import { shouldDeliverDesktopNotifications } from './pushNotifications';
 import {
@@ -172,8 +172,8 @@ export function isIncomingMessageNotification(notification: NotificationItem): b
 }
 
 function notificationIconUrl(): string {
-  if (typeof APP_LOGO_SYMBOL_SRC === 'string' && APP_LOGO_SYMBOL_SRC.length > 0) {
-    return APP_LOGO_SYMBOL_SRC;
+  if (typeof APP_NOTIFICATION_ICON_SRC === 'string' && APP_NOTIFICATION_ICON_SRC.length > 0) {
+    return APP_NOTIFICATION_ICON_SRC;
   }
 
   return new URL('./icon-256.png', window.location.href).href;
@@ -381,8 +381,7 @@ async function openDesktopNotification(
     const desktopNotification = new Notification(title || 'FlexHubs Desktop', {
       body,
       tag,
-      // Main-process notifications use the app bundle icon on macOS.
-      ...(window.electronAPI ? {} : { icon: notificationIconUrl() }),
+      icon: notificationIconUrl(),
     });
 
     desktopNotification.onclick = () => {

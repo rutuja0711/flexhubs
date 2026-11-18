@@ -1,5 +1,6 @@
 import { Notification } from 'electron';
-import { resolveAppIconImage, resolveAppIconPngPath } from '../appBrandAssets';
+import { WINDOWS_NOTIFICATION_DISPLAY_NAME } from '../../shared/desktopAppId';
+import { resolveNotificationIconImage, resolveAppIconPngPath } from '../appBrandAssets';
 import fs from 'node:fs';
 
 type TrackedNotification = {
@@ -66,6 +67,40 @@ export function closeDesktopNotificationsForConversation(conversationId: string)
   }
 }
 
+function formatNativeNotificationCopy(
+  title: string,
+  body: string,
+): { title: string; body: string } {
+  const trimmedTitle = title.trim();
+  const trimmedBody = body.trim();
+
+  if (process.platform === 'win32') {
+    const appName = WINDOWS_NOTIFICATION_DISPLAY_NAME;
+
+    if (
+      trimmedTitle &&
+      trimmedTitle !== appName &&
+      trimmedTitle !== trimmedBody &&
+      !trimmedBody.startsWith(`${trimmedTitle}:`)
+    ) {
+      return {
+        title: appName,
+        body: trimmedBody ? `${trimmedTitle}\n${trimmedBody}` : trimmedTitle,
+      };
+    }
+
+    return {
+      title: appName,
+      body: trimmedBody || trimmedTitle || 'New activity',
+    };
+  }
+
+  return {
+    title: trimmedTitle || WINDOWS_NOTIFICATION_DISPLAY_NAME,
+    body: trimmedBody || 'New activity',
+  };
+}
+
 export function showNativeDesktopNotification(
   title: string,
   body: string,
@@ -84,10 +119,13 @@ export function showNativeDesktopNotification(
     closeDesktopNotificationByTag(tag);
   }
 
+  const copy = formatNativeNotificationCopy(title, body);
+
   const constructorOptions: Electron.NotificationConstructorOptions = {
-    title: title.trim() || 'FlexHubs',
-    body: body.trim() || 'New activity',
-    silent: false,
+    title: copy.title,
+    body: copy.body,
+    // Windows: renderer plays FlexHubs chime; macOS keeps system alert (1.0.32 behavior).
+    silent: process.platform === 'win32',
   };
 
   if (tag) {
@@ -98,8 +136,9 @@ export function showNativeDesktopNotification(
     constructorOptions.timeoutType = 'never';
   }
 
+  // macOS: `icon` becomes the large image on the *right*; the app tile on the left comes from the bundle.
   if (process.platform !== 'darwin') {
-    const iconImage = resolveAppIconImage();
+    const iconImage = resolveNotificationIconImage();
     const iconPath = resolveAppIconPngPath();
 
     if (iconImage && !iconImage.isEmpty()) {

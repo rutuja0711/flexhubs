@@ -1,5 +1,5 @@
 import React, { ReactNode } from 'react';
-import { AppLogoMark } from '../../brand/AppLogo';
+import { AppDockIcon } from '../../brand/AppLogo';
 import { Avatar } from '../../chat/ChatIcons';
 import { RemoteImage } from '../../RemoteImage';
 import { FiFileText, FiPlay, FiCalendar, FiPhoneMissed, FiCheck, FiX, FiVideo, FiPhone } from 'react-icons/fi';
@@ -27,9 +27,9 @@ export type NotificationBaseProps = {
 export function FlexHubsBadge({ className = '' }: { className?: string }) {
   return (
     <div
-      className={`absolute bottom-0 right-0 z-10 flex h-[18px] w-[18px] items-center justify-center rounded-full border-2 border-app-surface bg-app-surface p-[2px] shadow-sm ${className}`}
+      className={`absolute bottom-0 right-0 z-10 h-[18px] w-[18px] overflow-hidden rounded-full border-2 border-app-surface shadow-sm ${className}`}
     >
-      <AppLogoMark className="h-full w-full text-accent" />
+      <AppDockIcon className="h-full w-full" />
     </div>
   );
 }

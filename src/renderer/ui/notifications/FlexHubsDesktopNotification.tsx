@@ -8,7 +8,7 @@ import {
   NotificationMediaThumbnail,
   NotificationTimestamp,
 } from './DesktopNotificationSystem';
-import { AppLogoMark } from '../../brand/AppLogo';
+import { AppDockIcon, AppLogoMark } from '../../brand/AppLogo';
 import { formatNotificationRelativeTime } from './notificationTime';
 import { FiPhone, FiVideo, FiX } from 'react-icons/fi';
 
@@ -153,7 +153,7 @@ function ToastHeader({
 
   return (
     <div className={`mb-2.5 flex items-center gap-2 border-b ${borderClass} pb-2`}>
-      <AppLogoMark className="h-5 w-5 shrink-0" />
+      <AppDockIcon className="h-5 w-5 shrink-0" />
       <span className={`min-w-0 flex-1 truncate text-[11px] font-bold uppercase tracking-[0.12em] ${labelClass}`}>
         FlexHubs
       </span>
@@ -337,7 +337,7 @@ export function FlexHubsDesktopNotification({
         className="w-full"
       >
         {data.isSystem ? (
-          <AppLogoMark className="h-10 w-10 shrink-0" />
+          <AppDockIcon className="h-10 w-10 shrink-0" />
         ) : (
           <NotificationAvatar initials={data.avatarInitials} avatarUrl={data.avatarUrl} compact />
         )}
@@ -398,7 +398,7 @@ export function FlexHubsDesktopNotification({
           />
         ) : (
           <div className="flex h-12 w-12 shrink-0 items-center justify-center">
-            <AppLogoMark className="h-10 w-10" />
+            <AppDockIcon className="h-10 w-10" />
           </div>
         )}
         <div className={`min-w-0 flex-1 pt-0.5 ${textMuted}`}>

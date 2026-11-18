@@ -9,7 +9,18 @@ import {
   type RefObject,
 } from 'react';
 import { createPortal } from 'react-dom';
-import { FiBarChart2, FiClock, FiImage, FiLink, FiMic, FiPaperclip, FiPlus, FiSend, FiSmile } from 'react-icons/fi';
+import {
+  FiBarChart2,
+  FiCheck,
+  FiClock,
+  FiImage,
+  FiLink,
+  FiMic,
+  FiPaperclip,
+  FiPlus,
+  FiSend,
+  FiSmile,
+} from 'react-icons/fi';
 import { EnhanceSparkleIcon } from './ChatIcons';
 import type { GifPickerItem } from '../../shared/gifs';
 import type { MessageItem } from '../../shared/messages';
@@ -71,9 +82,12 @@ type MessageInputProps = {
   attachmentOverlayRootRef?: RefObject<HTMLElement | null>;
   editingMessage?: MessageItem | null;
   editSaving?: boolean;
+  editCanSave?: boolean;
   onCancelComposerEdit?: () => void;
   onSaveComposerEdit?: () => void | Promise<void>;
   onEditLastMessage?: () => void;
+  /** When editing a message, route file picks / paste / drop here instead of new-message send flow. */
+  onEditAttachFiles?: (files: File[]) => void;
 };
 
 export type MessageInputHandle = {
@@ -258,9 +272,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   attachmentOverlayRootRef,
   editingMessage = null,
   editSaving = false,
+  editCanSave = true,
   onCancelComposerEdit,
   onSaveComposerEdit,
   onEditLastMessage,
+  onEditAttachFiles,
 },
   ref,
 ) {
@@ -350,7 +366,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   pendingAttachmentsRef.current = pendingAttachments;
   const localOverlayRootRef = useRef<HTMLDivElement>(null);
   const attachmentOverlayAnchorRef = attachmentOverlayRootRef ?? localOverlayRootRef;
-  const attachmentComposerActive = pendingAttachments.length > 0;
+  const attachmentComposerActive = pendingAttachments.length > 0 && !editingMessage;
   const hideInlineComposerForAttachments =
     attachmentComposerActive && Boolean(attachmentOverlayRootRef);
 
@@ -392,6 +408,12 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       revokePendingAttachments(pendingAttachmentsRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (editingMessage) {
+      clearPendingAttachments();
+    }
+  }, [editingMessage?.id]);
 
   useEffect(() => {
     clearPendingAttachments();
@@ -801,6 +823,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       return;
     }
 
+    if (editingMessage && onEditAttachFiles) {
+      onEditAttachFiles(files);
+      return;
+    }
+
     const newAttachments = files.map(buildPendingAttachment);
 
     setPendingAttachments((current) => {
@@ -1068,7 +1095,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
 
   const handleSendAction = () => {
     if (editingMessage) {
-      if (!value.trim() || editSaving) {
+      if (editSaving || !editCanSave) {
         return;
       }
 
@@ -1367,7 +1394,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
               type="button"
               className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white shadow-sm disabled:opacity-50"
               onClick={() => void onSaveComposerEdit?.()}
-              disabled={editSaving || !value.trim()}
+              disabled={editSaving || !editCanSave}
             >
               {editSaving ? 'Saving…' : 'Save changes'}
             </button>
@@ -1583,7 +1610,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                 event.preventDefault();
 
                 if (editingMessage) {
-                  if (!editSaving && value.trim()) {
+                  if (!editSaving && editCanSave) {
                     void onSaveComposerEdit?.();
                   }
 
@@ -1672,18 +1699,31 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           <button
             type="button"
             disabled={
-              disabled ||
-              isSending ||
-              aiBusy ||
-              Boolean(voiceCaptureMode) ||
-              voiceTypingTranscribing ||
-              (!value.trim() && pendingAttachments.length === 0 && !pendingVoiceNote)
+              editingMessage
+                ? editSaving || !editCanSave
+                : disabled ||
+                  isSending ||
+                  aiBusy ||
+                  Boolean(voiceCaptureMode) ||
+                  voiceTypingTranscribing ||
+                  (!value.trim() && pendingAttachments.length === 0 && !pendingVoiceNote)
             }
-            aria-label={isSending ? 'Sending message' : aiBusy ? 'Working' : 'Send message'}
+            aria-label={
+              editingMessage
+                ? editSaving
+                  ? 'Saving changes'
+                  : 'Save changes'
+                : isSending
+                  ? 'Sending message'
+                  : aiBusy
+                    ? 'Working'
+                    : 'Send message'
+            }
+            title={editingMessage ? 'Save changes' : undefined}
             className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center self-end rounded-xl bg-accent text-white shadow-md shadow-accent/25 transition-all duration-200 hover:bg-accent-hover hover:shadow-accent-glow active:scale-95 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100 disabled:shadow-none"
             onClick={handleSendAction}
           >
-            <FiSend className="text-sm" />
+            {editingMessage ? <FiCheck className="text-base" /> : <FiSend className="text-sm" />}
           </button>
         </div>
       </div>

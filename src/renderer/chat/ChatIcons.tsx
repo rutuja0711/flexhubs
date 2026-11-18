@@ -345,11 +345,15 @@ export function Avatar({
   initials,
   size = 'md',
   loading = 'lazy',
+  onImageClick,
+  imagePreviewLabel = 'View profile photo',
 }: {
   imageUrl: string | null;
   initials: string;
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
   loading?: 'eager' | 'lazy';
+  onImageClick?: (imageUrl: string) => void;
+  imagePreviewLabel?: string;
 }) {
   const [failed, setFailed] = useState(false);
   const imageKey = imageUrl ? normalizeUploadUrl(imageUrl) : '';
@@ -372,15 +376,41 @@ export function Avatar({
     size === 'xs' || size === 'sm' ? '' : 'ring-1 ring-white/10 shadow-sm';
 
   if (imageUrl && !failed) {
+    const canPreview = Boolean(onImageClick);
+
     return (
       <div
-        className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-app-chat-bg ${sizeClass}`}
+        className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-full bg-app-chat-bg ${sizeClass} ${
+          canPreview ? 'cursor-zoom-in' : ''
+        }`}
+        role={canPreview ? 'button' : undefined}
+        tabIndex={canPreview ? 0 : undefined}
+        aria-label={canPreview ? imagePreviewLabel : undefined}
+        onClick={
+          canPreview
+            ? (event) => {
+                event.stopPropagation();
+                onImageClick?.(imageUrl);
+              }
+            : undefined
+        }
+        onKeyDown={
+          canPreview
+            ? (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  onImageClick?.(imageUrl);
+                }
+              }
+            : undefined
+        }
       >
         <RemoteImage
           src={imageUrl}
           alt=""
           loading={loading}
-          wrapperClassName="flex h-full w-full overflow-hidden rounded-full"
+          wrapperClassName="flex h-full w-full overflow-hidden rounded-full pointer-events-none"
           className="block h-full w-full rounded-full object-cover object-center"
           onError={() => setFailed(true)}
         />

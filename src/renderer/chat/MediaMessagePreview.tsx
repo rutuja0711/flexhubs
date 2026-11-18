@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { FiPlay } from 'react-icons/fi';
 import { RemoteImage } from '../RemoteImage';
 import { RemoteVideo } from '../RemoteVideo';
@@ -79,6 +79,7 @@ export function MediaMessagePreview({
   canDrag: canDragProp,
 }: MediaMessagePreviewProps) {
   const [imageError, setImageError] = useState(false);
+  const [imageSrcIndex, setImageSrcIndex] = useState(0);
   const [videoPosterError, setVideoPosterError] = useState(false);
   const transfer = useAttachmentTransfer({ url, name, isSending, sendProgress });
   const { showSendProgress, ringProgress, ringIndeterminate } = transfer;
@@ -93,6 +94,27 @@ export function MediaMessagePreview({
   useEffect(() => {
     setVideoPosterError(false);
   }, [url, videoThumb]);
+
+  const imageSrcCandidates = useMemo(() => {
+    if (kind === 'gif') {
+      return [url].filter(Boolean);
+    }
+
+    const primary = previewUrl?.trim() || url?.trim();
+    const fallback = url?.trim();
+    const candidates = [primary, fallback].filter(
+      (item, index, list): item is string => Boolean(item) && list.indexOf(item) === index,
+    );
+
+    return candidates.length > 0 ? candidates : [''];
+  }, [kind, previewUrl, url]);
+
+  useEffect(() => {
+    setImageError(false);
+    setImageSrcIndex(0);
+  }, [imageSrcCandidates]);
+
+  const activeImageSrc = imageSrcCandidates[Math.min(imageSrcIndex, imageSrcCandidates.length - 1)] ?? url;
   const showBusyOverlay = showSendProgress || isSending;
 
   const openPreview = () => {
@@ -203,10 +225,17 @@ export function MediaMessagePreview({
             </div>
           ) : (
             <RemoteImage
-              src={kind === 'gif' ? url : previewUrl}
+              src={activeImageSrc}
               alt={name}
               loading="lazy"
-              onError={() => setImageError(true)}
+              onError={() => {
+                if (imageSrcIndex < imageSrcCandidates.length - 1) {
+                  setImageSrcIndex((current) => current + 1);
+                  return;
+                }
+
+                setImageError(true);
+              }}
               className="block max-h-[min(72vw,360px)] w-auto max-w-[min(330px,78vw)] min-w-[120px] object-cover"
             />
           )}

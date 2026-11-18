@@ -38,6 +38,7 @@ export type UserProfilePopupProps = {
   onViewProfile?: (userId: string, displayName: string) => void;
   onRefreshPresence?: (userId: string) => void;
   callBusy?: boolean;
+  onProfileImageClick?: (imageUrl: string) => void;
 };
 
 const PANEL_WIDTH = 340;
@@ -84,6 +85,7 @@ export function UserProfilePopup({
   onViewProfile,
   onRefreshPresence,
   callBusy = false,
+  onProfileImageClick,
 }: UserProfilePopupProps) {
   const panelRef = useRef<HTMLDivElement>(null);
   const messageRef = useRef<HTMLTextAreaElement>(null);
@@ -268,6 +270,7 @@ export function UserProfilePopup({
         showPresence={!redactIdentity && peerPresenceVisible}
         coverHeightClass="h-[112px]"
         size="lg"
+        onAvatarImagePreview={onProfileImageClick}
       />
 
       <div className="px-4 pb-3 text-center">

@@ -286,8 +286,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     conversationId: string,
     messageId: string,
     content: string,
+    mediaUpdateJson?: string,
   ): Promise<ApiResult<MessageItem>> =>
-    ipcRenderer.invoke('chat:edit-message', token, conversationId, messageId, content),
+    ipcRenderer.invoke('chat:edit-message', token, conversationId, messageId, content, mediaUpdateJson),
   deleteMessage: (
     token: string,
     conversationId: string,

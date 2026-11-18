@@ -688,6 +688,7 @@ export function mapMessageToNotificationData(
     body,
     timestamp: message.createdAt,
     avatarInitials: message.senderInitials,
+    avatarUrl: message.senderAvatarUrl ?? null,
     mediaPreviewUrl,
     mediaPreviewCount: mediaPreviewCount > 0 ? mediaPreviewCount : undefined,
     mediaIsVideo: mediaIsVideo || undefined,

@@ -1,5 +1,6 @@
 import type { SVGProps } from 'react';
 import {
+  APP_DOCK_ICON_SRC,
   APP_ICON_LARGE_SRC,
   APP_ICON_SRC,
   APP_LOGO_HORIZONTAL_SRC,
@@ -108,12 +109,24 @@ export function AppLogoMark({ className = 'h-9 w-9' }: LogoProps) {
   );
 }
 
+/** Matches the Dock / taskbar application icon (rounded tile with brand mark). */
+export function AppDockIcon({ className = 'h-9 w-9' }: LogoProps) {
+  return (
+    <img
+      src={APP_DOCK_ICON_SRC}
+      alt="FlexHubs"
+      className={`shrink-0 object-contain ${className}`}
+      draggable={false}
+    />
+  );
+}
+
 export function AppIcon({ className = 'h-9 w-9' }: LogoProps) {
-  return <AppLogoMark className={className} />;
+  return <AppDockIcon className={className} />;
 }
 
 export function AppNotificationIcon({ className = 'h-9 w-9' }: LogoProps) {
-  return <AppLogoMark className={className} />;
+  return <AppDockIcon className={className} />;
 }
 
 /** Fallback exports for backward compatibility */

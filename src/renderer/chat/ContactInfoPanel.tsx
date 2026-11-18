@@ -74,6 +74,7 @@ type ContactInfoPanelProps = {
   viewerSharePresence?: boolean;
   onRefreshPeerPresence?: (peerUserId: string) => void;
   onFocusComposer?: () => void;
+  onProfileImageClick?: (imageUrl: string) => void;
 };
 
 type AccordionProps = {
@@ -147,6 +148,7 @@ export function ContactInfoPanel({
   viewerSharePresence = true,
   onRefreshPeerPresence,
   onFocusComposer,
+  onProfileImageClick,
 }: ContactInfoPanelProps) {
   const toast = useToast();
   const confirm = useConfirm();
@@ -321,6 +323,7 @@ export function ContactInfoPanel({
           showPresence={!peerBlockedViewer && peerPresenceVisible}
           coverHeightClass="h-[128px]"
           flush
+          onAvatarImagePreview={onProfileImageClick}
         />
         <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start justify-between bg-gradient-to-b from-black/50 to-transparent px-3 py-3">
           <h2 className="text-[15px] font-bold tracking-tight text-white drop-shadow-sm">

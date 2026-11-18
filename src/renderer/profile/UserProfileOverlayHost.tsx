@@ -29,6 +29,7 @@ type UserProfileOverlayHostProps = {
   onVideoCall?: (userId: string, displayName: string) => void;
   onRefreshPresence?: (userId: string) => void;
   onViewFullProfile?: (anchor: UserProfileAnchor) => void;
+  onProfileImageClick?: (imageUrl: string) => void;
 };
 
 export function UserProfileOverlayHost({
@@ -45,6 +46,7 @@ export function UserProfileOverlayHost({
   onVideoCall,
   onRefreshPresence,
   onViewFullProfile,
+  onProfileImageClick,
 }: UserProfileOverlayHostProps) {
   if (!state) {
     return null;
@@ -95,6 +97,7 @@ export function UserProfileOverlayHost({
           avatarInitials: state.anchor.avatarInitials,
         });
       }}
+      onProfileImageClick={onProfileImageClick}
     />
   );
 }

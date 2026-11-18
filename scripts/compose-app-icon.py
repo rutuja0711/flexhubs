@@ -18,13 +18,12 @@ SYMBOL = ROOT / "assets" / "logo-symbol.png"
 OUT = ROOT / "assets" / "app-icon.png"
 
 SIZE = 1024
-# Light fill matching the macOS Applications reference screenshot.
+# Light fill matching the macOS Applications / Dock reference.
 BACKGROUND = (242, 242, 242, 255)
-# Outer transparent margin so Dock / taskbar size matches neighboring app icons.
-# (~10% inset ≈ macOS 1024px icon safe area.)
-OUTER_INSET = int(SIZE * 0.10)
-# Logo occupies ~58% of the inner tile.
-LOGO_MAX_FRACTION = 0.58
+# Full-bleed tile: transparent outer margin shrinks the mark in Dock and notifications.
+OUTER_INSET = 0
+# Logo scale — same mark size as 1.0.32 (~58% of the old inner tile), on full-bleed canvas.
+LOGO_MAX_FRACTION = 0.475
 # Rounded tile corners (~22.5% of tile width).
 CORNER_RADIUS_FRACTION = 0.225
 

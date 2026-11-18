@@ -877,6 +877,10 @@ export function mergeMessageUpdates(
   incoming: MessageItem,
   options?: { replaceReactions?: boolean },
 ): MessageItem {
+  if (isDeletedMessage(previous) && !isDeletedMessage(incoming)) {
+    return previous;
+  }
+
   if (isDeletedMessage(incoming)) {
     return markMessageDeletedForEveryone({
       ...previous,
@@ -902,7 +906,15 @@ export function mergeMessageUpdates(
     senderName: incoming.senderName !== 'Unknown' ? incoming.senderName : previous.senderName,
     senderId: incoming.senderId ?? previous.senderId,
     reactions: mergedReactions,
-    media: incoming.media.length > 0 ? incoming.media : previous.media,
+    media:
+      incoming.media.length > 0
+        ? incoming.media
+        : isDeletedMessage(incoming)
+          ? []
+          : previous.media,
+    deletedForEveryone: isDeletedMessage(incoming)
+      ? true
+      : previous.deletedForEveryone ?? incoming.deletedForEveryone,
     status: incoming.status ?? previous.status,
     readBy: incoming.readBy.length > 0 ? incoming.readBy : previous.readBy,
     poll: incoming.poll ?? previous.poll,
@@ -2462,6 +2474,7 @@ export function normalizeMessage(record: Record<string, unknown>, index: number)
       : typeof record.repliesCount === 'number' 
         ? record.repliesCount 
         : Array.isArray(record.replies) ? record.replies.length : 0,
+    deletedForEveryone,
   };
 }
 

@@ -54,7 +54,7 @@ function wrapWithSendOverlay(node: ReactNode, isSending: boolean, sendProgress?:
   );
 }
 
-function renderFormattedText(content: string): ReactNode {
+function renderFormattedText(content: string, isOwn = false): ReactNode {
   const parts = content.split(/((?:https?:\/\/[^\s]+)|(?:@[a-zA-Z0-9._-]+))/g);
 
   return parts.map((part, index) => {
@@ -63,7 +63,11 @@ function renderFormattedText(content: string): ReactNode {
         <a
           key={`${part}-${index}`}
           href={part}
-          className="text-accent hover:underline break-all cursor-pointer"
+          className={
+            isOwn
+              ? 'break-all cursor-pointer font-medium text-white underline decoration-white/50 underline-offset-2 hover:decoration-white'
+              : 'break-all cursor-pointer text-accent hover:underline'
+          }
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -78,7 +82,14 @@ function renderFormattedText(content: string): ReactNode {
     }
     if (part.startsWith('@')) {
       return (
-        <span key={`${part}-${index}`} className="font-semibold text-accent-soft">
+        <span
+          key={`${part}-${index}`}
+          className={
+            isOwn
+              ? 'font-semibold text-white underline decoration-white/50 underline-offset-2'
+              : 'font-semibold text-accent'
+          }
+        >
           {part}
         </span>
       );
@@ -87,15 +98,15 @@ function renderFormattedText(content: string): ReactNode {
   });
 }
 
-function highlightContent(content: string, term: string): ReactNode {
+function highlightContent(content: string, term: string, isOwn = false): ReactNode {
   if (!term.trim()) {
-    return renderFormattedText(content);
+    return renderFormattedText(content, isOwn);
   }
 
   const index = content.toLowerCase().indexOf(term.toLowerCase());
 
   if (index < 0) {
-    return renderFormattedText(content);
+    return renderFormattedText(content, isOwn);
   }
 
   const before = content.slice(0, index);
@@ -104,9 +115,17 @@ function highlightContent(content: string, term: string): ReactNode {
 
   return (
     <>
-      {renderFormattedText(before)}
-      <mark className="rounded bg-accent/25 px-0.5 text-app-text">{match}</mark>
-      {renderFormattedText(after)}
+      {renderFormattedText(before, isOwn)}
+      <mark
+        className={
+          isOwn
+            ? 'rounded bg-white/25 px-0.5 text-white'
+            : 'rounded bg-accent/25 px-0.5 text-app-text'
+        }
+      >
+        {match}
+      </mark>
+      {renderFormattedText(after, isOwn)}
     </>
   );
 }
@@ -317,13 +336,13 @@ export function MessageContent({
           <span
             className={`block min-w-0 whitespace-pre-wrap break-words ${hasCaption && media.length > 0 ? 'max-w-sm' : ''}`}
           >
-            {highlightContent(visibleText, highlightTerm)}
+            {highlightContent(visibleText, highlightTerm, isOwn)}
           </span>
         ) : (
           <p
             className={`min-w-0 whitespace-pre-wrap break-words ${hasCaption && media.length > 0 ? 'max-w-sm px-3.5 pt-2 pb-0' : ''}`}
           >
-            {highlightContent(visibleText, highlightTerm)}
+            {highlightContent(visibleText, highlightTerm, isOwn)}
           </p>
         )
       ) : null}

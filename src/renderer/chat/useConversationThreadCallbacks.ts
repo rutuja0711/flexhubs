@@ -14,7 +14,11 @@ export type ConversationThreadActions = {
   handleSendFile: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
   handleSendVoice: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
   handleAddReaction: (messageId: string, emoji: string, options?: { remove?: boolean }) => void;
-  handleEditMessage: (messageId: string, content: string) => void | Promise<boolean>;
+  handleEditMessage: (
+    messageId: string,
+    content: string,
+    options?: { keptMedia?: import('../../shared/messages').MessageItem['media']; addedFile?: File | null },
+  ) => void | Promise<boolean>;
   handleDeleteMessage: (messageId: string, scope: 'me' | 'everyone') => void;
   handleForwardMessage: (
     messageId: string,
@@ -114,8 +118,11 @@ export function useConversationThreadCallbacks(
   );
 
   const onEditMessage = useCallback(
-    (messageId: string, content: string) =>
-      actionsRef.current.handleEditMessage(messageId, content),
+    (
+      messageId: string,
+      content: string,
+      options?: { keptMedia?: import('../../shared/messages').MessageItem['media']; addedFile?: File | null },
+    ) => actionsRef.current.handleEditMessage(messageId, content, options),
     [actionsRef],
   );
 

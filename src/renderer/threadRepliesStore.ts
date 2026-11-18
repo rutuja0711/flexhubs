@@ -59,6 +59,58 @@ export function mergeThreadReplies(
   return merged;
 }
 
+export function replaceThreadReply(
+  conversationId: string,
+  rootId: string,
+  localId: string,
+  serverMessage: MessageItem | null,
+): MessageItem[] {
+  const key = threadKey(conversationId, rootId);
+  const cached = repliesByThread.get(key) ?? [];
+
+  const withoutLocal = cached.filter((message) => message.id !== localId);
+  const next = serverMessage
+    ? dedupeThreadReplies([...withoutLocal, serverMessage], rootId)
+    : dedupeThreadReplies(withoutLocal, rootId);
+
+  repliesByThread.set(key, next);
+  notify(key);
+  return next;
+}
+
+export function syncThreadReplyCountForRoot(
+  conversationId: string,
+  rootId: string,
+): number {
+  return getThreadReplies(conversationId, rootId).length;
+}
+
+export function patchThreadReplyReactions(
+  conversationId: string,
+  messageId: string,
+  reactions: MessageItem['reactions'],
+): void {
+  const prefix = `${conversationId}:`;
+
+  for (const [key, replies] of repliesByThread.entries()) {
+    if (!key.startsWith(prefix)) {
+      continue;
+    }
+
+    const rootId = key.slice(prefix.length);
+    const index = replies.findIndex((message) => message.id === messageId);
+
+    if (index < 0) {
+      continue;
+    }
+
+    const next = [...replies];
+    next[index] = { ...next[index], reactions };
+    repliesByThread.set(key, dedupeThreadReplies(next, rootId));
+    notify(key);
+  }
+}
+
 export function appendThreadReply(
   conversationId: string,
   rootId: string,
