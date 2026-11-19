@@ -439,8 +439,26 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
       suspendSuperAdminOrganization(token, organizationId, suspend),
   );
   
-  ipcMain.handle('chat:summarize-unread', (_event, token: string, conversationId: string) =>
-    summarizeUnreadMessages(token, conversationId),
+  ipcMain.handle(
+    'chat:summarize-unread',
+    (
+      _event,
+      token: string,
+      conversationId: string,
+      request?: { messageIds?: string[]; limit?: number } | null,
+    ) => {
+      const messageIds = request?.messageIds?.filter((id) => id.trim()) ?? [];
+
+      if (messageIds.length === 0) {
+        return summarizeUnreadMessages(token, conversationId, null);
+      }
+
+      return summarizeUnreadMessages(token, conversationId, {
+        messageIds,
+        limit: Math.max(1, Math.min(request?.limit ?? messageIds.length, 50)),
+      });
+    },
+  );
   );
   ipcMain.handle('desktop:prepare-file-drag', (_event, token: string, url: string, fileName: string) =>
     prepareFileDragFromUrl(token, url, fileName),

@@ -105,7 +105,7 @@ import {
   sendFriendRequest,
   unsaveChatMessage,
   votePoll,
-  summarizeUnreadMessages,
+  summarizeConversationMessages,
   translateUnreadMessages,
 } from './chatApi';
 import { ActivityView } from './chat/ActivityView';
@@ -5142,12 +5142,30 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
     setSummaryPanelOpen(true);
     setSummaryLoading(true);
     try {
-      const res = await summarizeUnreadMessages(selectedId);
+      const conversation = selectedConversationForDisplay ?? selectedConversation;
+      const unreadForSummary = conversation
+        ? resolveConversationUnreadCountOverride(
+            conversation,
+            selectedId,
+            mainView,
+            pendingConversationReadSyncRef.current,
+          )
+        : 0;
+      const threadMessages =
+        messagesConversationIdRef.current === selectedId
+          ? messagesRef.current
+          : messages;
+
+      const res = await summarizeConversationMessages(selectedId, {
+        messages: threadMessages,
+        unreadCount: unreadForSummary,
+        currentUserId: getUserId(user),
+      });
       if (res.ok) {
         setSummaryContent(res.data.summary);
       } else {
         setSummaryContent(null);
-        toast.error('Failed to summarize unread messages.');
+        toast.error(res.error || 'Failed to summarize messages.');
       }
     } catch (err) {
       setSummaryContent(null);
@@ -5229,7 +5247,7 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       setThreadJumpSyncing(false);
       setFocusMessageId(messageId);
     } else {
-      setThreadJumpSyncing(false);
+      setThreadJumpSyncing(true);
       setFocusMessageId(null);
     }
 
@@ -6111,7 +6129,22 @@ export default function ChatPage({ onSessionExpired }: ChatPageProps) {
       if (!conversation) {
         return command.text || `I couldn't find ${command.conversationName ?? 'that chat'} to summarize.`;
       }
-      const summaryRes = await summarizeUnreadMessages(conversation.id);
+      const unreadForSummary = resolveConversationUnreadCountOverride(
+        conversation,
+        selectedIdRef.current,
+        mainViewRef.current,
+        pendingConversationReadSyncRef.current,
+      );
+      const threadMessages =
+        conversation.id === selectedIdRef.current
+          ? messagesRef.current
+          : (getThreadCacheEntry(threadCacheRef.current, conversation.id)?.messages ?? []);
+
+      const summaryRes = await summarizeConversationMessages(conversation.id, {
+        messages: threadMessages,
+        unreadCount: unreadForSummary,
+        currentUserId: getUserId(user),
+      });
       if (handleUnauthorized(summaryRes.status)) {
         return 'Please sign in again.';
       }

@@ -152,6 +152,7 @@ declare global {
       summarizeUnreadMessages: (
         token: string,
         conversationId: string,
+        request?: { messageIds?: string[]; limit?: number } | null,
       ) => Promise<ApiResult<{ summary: string }>>;
       prepareChatFileDrag: (
         token: string,

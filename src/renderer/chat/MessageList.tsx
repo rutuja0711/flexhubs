@@ -1095,6 +1095,8 @@ export function MessageList({
   const contentRef = useRef<HTMLDivElement>(null);
   const bottomAnchorRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
+  /** Stay on latest after refresh/sync unless the user has scrolled up in this chat. */
+  const preferStickToBottomRef = useRef(true);
   const suppressAutoScrollRef = useRef(false);
   const lastMessageIdRef = useRef<string | null>(null);
   const loadOlderScrollSnapshotRef = useRef<{ scrollHeight: number; scrollTop: number } | null>(
@@ -1138,6 +1140,9 @@ export function MessageList({
     listEntriesLengthRef.current = 0;
     restoredScrollForConversationRef.current = null;
     stickToBottomRef.current = true;
+    preferStickToBottomRef.current = !(
+      resolvedInitialScrollSnapshot && !resolvedInitialScrollSnapshot.stickToBottom
+    );
     suppressAutoScrollRef.current = false;
     scrollPersistReadyRef.current = false;
     setVirtuosoFirstItemIndex(VIRTUOSO_BASE_FIRST_ITEM_INDEX);
@@ -1145,12 +1150,12 @@ export function MessageList({
     topVisibleMessageIdRef.current = null;
     setMessageContextMenu(null);
     unreadScrollDoneRef.current = null;
-  }, [conversationId]);
+  }, [conversationId, resolvedInitialScrollSnapshot]);
 
   useEffect(() => {
     const readyTimer = window.setTimeout(() => {
       scrollPersistReadyRef.current = true;
-    }, 350);
+    }, 700);
 
     return () => window.clearTimeout(readyTimer);
   }, [conversationId]);
@@ -1171,7 +1176,12 @@ export function MessageList({
   }, [messages]);
 
   const persistScrollPosition = useCallback(() => {
-    if (!conversationId || !onSaveScrollPosition || !scrollPersistReadyRef.current) {
+    if (
+      !conversationId ||
+      !onSaveScrollPosition ||
+      !scrollPersistReadyRef.current ||
+      threadSyncing
+    ) {
       return;
     }
 
@@ -1185,7 +1195,7 @@ export function MessageList({
       stickToBottom: stickToBottomRef.current,
       anchorMessageId: topVisibleMessageIdRef.current,
     });
-  }, [conversationId, onSaveScrollPosition]);
+  }, [conversationId, onSaveScrollPosition, threadSyncing]);
   const showRefreshing = loading && messages.length > 0;
 
   useEffect(() => {
@@ -1421,10 +1431,16 @@ export function MessageList({
 
       innerFrame = window.requestAnimationFrame(() => {
         suppressAutoScrollRef.current = false;
-        if (stickToBottomRef.current) {
+
+        const shouldPinToLatest =
+          preferStickToBottomRef.current || stickToBottomRef.current;
+
+        if (shouldPinToLatest) {
+          stickToBottomRef.current = true;
           setShowJumpToLatest(false);
           setNewMessagesBelow(0);
           jumpAnchorMessageIdRef.current = null;
+          scrollToBottom('auto');
           requestStickToBottomIfNeeded();
         }
       });
@@ -1462,7 +1478,8 @@ export function MessageList({
         : 0;
 
       setNewMessagesBelow(below);
-      setShowJumpToLatest(below > 0);
+      // Show whenever the reader is not pinned to the bottom — not only when new tail messages exist.
+      setShowJumpToLatest(true);
     },
     [messages],
   );
@@ -1480,16 +1497,30 @@ export function MessageList({
     setNewMessagesBelow(0);
     setShowJumpToLatest(false);
     stickToBottomRef.current = true;
+    preferStickToBottomRef.current = true;
     suppressAutoScrollRef.current = false;
     scrollToBottom('smooth');
   }, [scrollToBottom]);
 
   const handleAtBottomStateChange = useCallback(
     (atBottom: boolean) => {
+      if (threadSyncing && !atBottom) {
+        return;
+      }
+
       stickToBottomRef.current = atBottom;
       onAtBottomChange?.(atBottom);
 
       if (!atBottom) {
+        if (
+          scrollPersistReadyRef.current &&
+          !suppressAutoScrollRef.current &&
+          !pendingScrollToMessageId &&
+          !scrollToMessageId
+        ) {
+          preferStickToBottomRef.current = false;
+        }
+
         syncJumpToLatestUi(false);
         if (!suppressAutoScrollRef.current && !pendingScrollToMessageId) {
           persistScrollPosition();
@@ -1504,7 +1535,14 @@ export function MessageList({
       syncJumpToLatestUi(true);
       persistScrollPosition();
     },
-    [onAtBottomChange, pendingScrollToMessageId, persistScrollPosition, syncJumpToLatestUi],
+    [
+      onAtBottomChange,
+      pendingScrollToMessageId,
+      persistScrollPosition,
+      scrollToMessageId,
+      syncJumpToLatestUi,
+      threadSyncing,
+    ],
   );
 
   useEffect(() => {
@@ -1526,6 +1564,7 @@ export function MessageList({
     const maxAttempts = 96;
 
     const completeJumpScroll = () => {
+      preferStickToBottomRef.current = false;
       stickToBottomRef.current = false;
       suppressAutoScrollRef.current = true;
       completedScrollTargetRef.current = scrollTargetId;
@@ -1831,6 +1870,7 @@ export function MessageList({
 
     restoredScrollForConversationRef.current = conversationId;
     suppressAutoScrollRef.current = true;
+    preferStickToBottomRef.current = false;
     stickToBottomRef.current = false;
 
     if (scrollRestoreTarget.mode === 'anchor') {
@@ -1909,6 +1949,7 @@ export function MessageList({
     }
 
     unreadScrollDoneRef.current = token;
+    preferStickToBottomRef.current = false;
     stickToBottomRef.current = false;
     suppressAutoScrollRef.current = true;
 
@@ -2129,8 +2170,12 @@ export function MessageList({
   );
 
   const handleStartReached = useCallback(() => {
+    if (threadSyncing || showInitialLoading) {
+      return;
+    }
+
     triggerLoadOlder({ fromScroll: true });
-  }, [triggerLoadOlder]);
+  }, [showInitialLoading, threadSyncing, triggerLoadOlder]);
 
   const handleAtTopStateChange = useCallback(
     (atTop: boolean) => {
@@ -2148,8 +2193,12 @@ export function MessageList({
       return;
     }
 
-    if (!stickToBottomRef.current) {
+    if (!stickToBottomRef.current && !preferStickToBottomRef.current) {
       return;
+    }
+
+    if (preferStickToBottomRef.current) {
+      stickToBottomRef.current = true;
     }
 
     requestStickToBottomIfNeeded();

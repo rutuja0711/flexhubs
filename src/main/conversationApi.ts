@@ -2,6 +2,7 @@ import type { ConversationItem } from '../shared/chat';
 import { normalizeConversation, patchDirectConversationMetadata } from '../shared/chat';
 import { API_BASE_URL } from '../shared/api';
 import type { ApiResult } from '../shared/api';
+import type { SummarizeUnreadRequest } from '../shared/conversationSummaryScope';
 import type { ConversationBootstrap, ConversationDraftSummary, MessageItem } from '../shared/messages';
 import {
   extractMessageFromPayload,
@@ -1296,14 +1297,41 @@ export async function fetchConversationNotificationSettings(
 export async function summarizeUnreadMessages(
   token: string,
   conversationId: string,
+  request?: SummarizeUnreadRequest | null,
 ): Promise<ApiResult<{ summary: string }>> {
-  const result = await apiGet<{ summary: string }>(
-    `${API_BASE_URL}/conversations/${conversationId}/summarize-unread`,
-    token,
-    'Summarize Unread API',
-  );
+  const limit = request?.limit ?? 15;
+  const messageIds = request?.messageIds ?? [];
 
-  return result;
+  if (messageIds.length > 0) {
+    const postResult = await apiPost<{ summary: string }>(
+      `${API_BASE_URL}/conversations/${conversationId}/summarize-unread`,
+      token,
+      'Summarize Unread API',
+      { messageIds, limit },
+    );
+
+    if (postResult.ok) {
+      return postResult;
+    }
+
+    if (postResult.status !== 404 && postResult.status !== 405 && postResult.status !== 415) {
+      return postResult;
+    }
+  }
+
+  const params = new URLSearchParams();
+  params.set('limit', String(limit));
+
+  if (messageIds.length > 0) {
+    params.set('messageIds', messageIds.join(','));
+  }
+
+  const query = params.toString();
+  const path = query
+    ? `${API_BASE_URL}/conversations/${conversationId}/summarize-unread?${query}`
+    : `${API_BASE_URL}/conversations/${conversationId}/summarize-unread`;
+
+  return apiGet<{ summary: string }>(path, token, 'Summarize Unread API');
 }
 
 export async function translateUnreadMessages(

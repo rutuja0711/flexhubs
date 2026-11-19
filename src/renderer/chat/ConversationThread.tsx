@@ -1178,7 +1178,7 @@ function ConversationThreadComponent({
                   >
                     <span className="flex items-center gap-2">
                       <SparkleIcon className="h-4 w-4 shrink-0 text-app-muted" />
-                      Summarize recent messages
+                      Summarize unread / recent
                     </span>
                   </button>
                 ) : null}
@@ -1332,10 +1332,10 @@ function ConversationThreadComponent({
         />
       ) : null}
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
       {typingParticipants.length > 0 && !threadStickToBottom ? (
         <div
-          className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-start px-6"
+          className="pointer-events-none absolute inset-x-0 bottom-20 z-30 flex justify-start px-6"
           aria-live="polite"
         >
           <ChatTypingIndicator participants={typingParticipants} className="py-0" />

@@ -4,7 +4,13 @@ import { buildFileMessagePayload, buildMediaMessagePayload, buildVoiceMessagePay
 import type { ScheduledMessageItem } from '../shared/extras';
 import { buildCreatePollPayload } from '../shared/messages';
 import type { ConversationsPayload, ConversationItem, UnreadCountPayload } from '../shared/chat';
-import type { ConversationBootstrap, ConversationDraftSummary } from '../shared/messages';
+import {
+  buildConversationSummaryTranscript,
+  buildSummarizeUnreadRequest,
+  type SummarizeUnreadRequest,
+} from '../shared/conversationSummaryScope';
+import type { ConversationBootstrap, ConversationDraftSummary, MessageItem } from '../shared/messages';
+import { filterMainChatMessages } from '../shared/messages';
 import { buildProfileUpdatePayload, normalizeUploadUrl } from '../shared/profile';
 import { buildCoverUpdatePayload } from '../shared/profileBanner';
 import { clearAuth, getStoredToken, getStoredUser } from './authApi';
@@ -40,11 +46,82 @@ function unavailable<T>(): ApiResult<T> {
   };
 }
 
-export async function summarizeUnreadMessages(conversationId: string): Promise<ApiResult<{ summary: string }>> {
+export type SummarizeConversationInput = {
+  messages: MessageItem[];
+  unreadCount?: number;
+  currentUserId?: string | null;
+};
+
+async function summarizeWithScopedAiFallback(
+  picked: MessageItem[],
+  unreadCount: number,
+  currentUserId: string | null,
+): Promise<ApiResult<{ summary: string }>> {
+  const { generateMessageText } = await import('./extrasApi');
+
+  const transcript = buildConversationSummaryTranscript(picked, currentUserId);
+  if (!transcript.trim()) {
+    return { ok: false, error: 'No readable messages to summarize.' };
+  }
+
+  const scopeLabel =
+    unreadCount > 0
+      ? `the ${picked.length} most recent unread message(s)`
+      : `only the latest ${picked.length} message(s)`;
+
+  const prompt = `Summarize ${scopeLabel} from this chat. Use ONLY the transcript below—do not mention older messages. Reply with 3-6 concise bullet points.\n\n${transcript}`;
+
+  const aiResult = await generateMessageText(prompt);
+  if (!aiResult.ok) {
+    return aiResult;
+  }
+
+  return { ok: true, data: { summary: aiResult.data.text } };
+}
+
+export async function summarizeConversationMessages(
+  conversationId: string,
+  input: SummarizeConversationInput,
+): Promise<ApiResult<{ summary: string }>> {
+  const unreadCount = Math.max(0, input.unreadCount ?? 0);
+  const mainMessages = filterMainChatMessages(input.messages);
+  const request = buildSummarizeUnreadRequest(mainMessages, unreadCount);
+
+  if (!request) {
+    return { ok: false, error: 'No messages to summarize.' };
+  }
+
+  const picked = mainMessages.filter((message) => request.messageIds.includes(message.id));
+  const currentUserId = input.currentUserId ?? getUserId(getStoredUser()) ?? null;
+
+  const aiResult = await summarizeWithScopedAiFallback(picked, unreadCount, currentUserId);
+  if (aiResult.ok) {
+    return aiResult;
+  }
+
+  if (window.electronAPI?.summarizeUnreadMessages) {
+    const scopedResult = await withToken((token) =>
+      window.electronAPI.summarizeUnreadMessages(token, conversationId, request),
+    );
+
+    if (scopedResult.ok && scopedResult.data.summary?.trim()) {
+      return scopedResult;
+    }
+  }
+
+  return aiResult;
+}
+
+/** @deprecated Use summarizeConversationMessages with scoped messages. */
+export async function summarizeUnreadMessages(
+  conversationId: string,
+  request?: SummarizeUnreadRequest | null,
+): Promise<ApiResult<{ summary: string }>> {
   if (!window.electronAPI?.summarizeUnreadMessages) {
     return unavailable();
   }
-  return withToken((token) => window.electronAPI.summarizeUnreadMessages(token, conversationId));
+
+  return withToken((token) => window.electronAPI.summarizeUnreadMessages(token, conversationId, request ?? null));
 }
 
 export async function prepareChatFileDrag(

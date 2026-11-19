@@ -194,8 +194,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   summarizeUnreadMessages: (
     token: string,
     conversationId: string,
+    request?: { messageIds?: string[]; limit?: number } | null,
   ): Promise<ApiResult<{ summary: string }>> =>
-    ipcRenderer.invoke('chat:summarize-unread', token, conversationId),
+    ipcRenderer.invoke('chat:summarize-unread', token, conversationId, request ?? null),
   prepareChatFileDrag: (
     token: string,
     url: string,

@@ -19,7 +19,7 @@ function buttonLabel(count: number): string {
 
 export function JumpToLatestButton({ newMessageCount, onClick }: JumpToLatestButtonProps) {
   return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-6 z-30 flex justify-center px-4">
+    <div className="pointer-events-none absolute inset-x-0 bottom-16 z-40 flex justify-center px-4">
       <button
         type="button"
         onClick={onClick}
