@@ -40,20 +40,37 @@ const COVER_FIELD_KEYS = [
 ] as const;
 
 const LOCAL_COVER_STORAGE_PREFIX = 'flexhubs:profileCover:';
+const SESSION_COVER_STORAGE_PREFIX = 'flexhubs:sessionCover:';
 
 /** Best available cover URL from API/profile payloads, then device-local fallback. */
 export function resolveEffectiveCoverBanner(
   userId: string | null | undefined,
   ...sources: unknown[]
 ): string | null {
+  const local = readPersistedLocalCover(userId);
+  const fromSources: string[] = [];
+
   for (const source of sources) {
     const fromSource = resolveProfileBannerUrl(source);
     if (fromSource) {
-      return fromSource;
+      fromSources.push(fromSource);
     }
   }
 
-  return readPersistedLocalCover(userId);
+  if (local) {
+    if (fromSources.some((url) => url === local)) {
+      return local;
+    }
+
+    // Backend often omits cover on GET or returns a stale placeholder — keep the saved upload.
+    if (fromSources.length === 0) {
+      return local;
+    }
+
+    return local;
+  }
+
+  return fromSources[0] ?? null;
 }
 
 export function readPersistedLocalCover(userId: string | null | undefined): string | null {
@@ -67,6 +84,61 @@ export function readPersistedLocalCover(userId: string | null | undefined): stri
   } catch {
     return null;
   }
+}
+
+export function writeSessionCoverUrl(userId: string | null | undefined, url: string | null): void {
+  if (!userId || typeof sessionStorage === 'undefined') {
+    return;
+  }
+
+  try {
+    const key = `${SESSION_COVER_STORAGE_PREFIX}${userId}`;
+    if (url?.trim()) {
+      sessionStorage.setItem(key, url.trim());
+      return;
+    }
+    sessionStorage.removeItem(key);
+  } catch {
+    // Ignore quota / privacy mode errors.
+  }
+}
+
+export function readSessionCoverUrl(userId: string | null | undefined): string | null {
+  if (!userId || typeof sessionStorage === 'undefined') {
+    return null;
+  }
+
+  try {
+    const raw = sessionStorage.getItem(`${SESSION_COVER_STORAGE_PREFIX}${userId}`);
+    return raw?.trim() ? raw.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Apply a saved cover URL across localStorage, session, and the optional auth user record. */
+export function commitCoverBannerToClient(
+  userId: string | null | undefined,
+  coverUrl: string | null,
+  syncAuthUser?: (user: unknown) => void,
+  getStoredUser?: () => unknown,
+): void {
+  writePersistedLocalCover(userId, coverUrl);
+  writeSessionCoverUrl(userId, coverUrl);
+
+  if (!syncAuthUser || !getStoredUser) {
+    return;
+  }
+
+  const stored = getStoredUser();
+  if (stored && typeof stored === 'object') {
+    syncAuthUser(mergeCoverFieldsIntoUserRecord(stored as Record<string, unknown>, coverUrl));
+  }
+}
+
+export function isCoverOnlyProfileUpdate(updates: Record<string, unknown>): boolean {
+  const keys = Object.keys(updates).filter((key) => updates[key] !== undefined);
+  return keys.length > 0 && keys.every(isProfileCoverFieldKey);
 }
 
 export function writePersistedLocalCover(userId: string | null | undefined, url: string | null): void {
@@ -239,13 +311,25 @@ export function readUserClientDevice(source: unknown): 'Mobile' | 'Web' | 'Deskt
   return normalizeClientDeviceLabel(raw);
 }
 
-/** PATCH body for cover — mirrors web `{ avatar: fileUrl }` (single canonical field). */
+/** PATCH body for cover — mirrors web `{ avatar: fileUrl }` (+ common read-back aliases). */
 export function buildCoverUpdatePayload(url: string | null): Record<string, unknown> {
   if (!url) {
-    return { cover: null };
+    return {
+      coverImageUrl: null,
+      coverImage: null,
+      cover: null,
+      coverUrl: null,
+      coverBannerUrl: null,
+    };
   }
 
-  return { cover: url };
+  return {
+    coverImageUrl: url,
+    coverImage: url,
+    cover: url,
+    coverUrl: url,
+    coverBannerUrl: url,
+  };
 }
 
 /** Read the cover URL we intended to save from a PATCH payload. */
@@ -276,20 +360,23 @@ export function resolveCoverUrlAfterProfileSave(
   response: unknown,
   fallbackUrl?: string | null,
 ): string | null {
-  const fromApi = resolveProfileBannerUrl(response);
-  if (fromApi) {
-    return fromApi;
-  }
-
   if (fallbackUrl === null) {
-    return null;
+    return resolveProfileBannerUrl(response) ?? null;
   }
 
-  if (typeof fallbackUrl === 'string' && fallbackUrl.trim()) {
-    return fallbackUrl.trim();
+  const intended =
+    typeof fallbackUrl === 'string' && fallbackUrl.trim() ? fallbackUrl.trim() : null;
+
+  if (intended) {
+    const fromApi = resolveProfileBannerUrl(response);
+    if (!fromApi || fromApi === intended) {
+      return intended;
+    }
+    // Backend often echoes a stale/default cover — keep the URL we just saved.
+    return intended;
   }
 
-  return null;
+  return resolveProfileBannerUrl(response);
 }
 
 export function isProfileCoverFieldKey(key: string): boolean {
@@ -304,9 +391,19 @@ export function mergeCoverFieldsIntoUserRecord(
   return {
     ...user,
     cover: url,
+    cover_url: url,
     coverUrl: url,
+    cover_image: url,
     coverImageUrl: url,
+    coverImage: url,
+    bannerUrl: url,
+    banner_url: url,
     coverBannerUrl: url,
+    profileBannerUrl: url,
+    profileCoverUrl: url,
+    coverPhoto: url,
+    coverPhotoUrl: url,
+    backgroundImageUrl: url,
   };
 }
 

@@ -130,6 +130,73 @@ export function resolveTyperDisplayName(
   );
 }
 
+export type ChatTypingParticipant = {
+  userId: string;
+  displayName: string;
+  avatarUrl: string | null;
+  avatarInitials: string;
+};
+
+export function resolveTyperProfile(
+  userId: string,
+  teammates: TeammateItem[],
+  conversations: ConversationItem[],
+): { avatarUrl: string | null; avatarInitials: string } {
+  const teammate = teammates.find((member) => member.id === userId);
+  if (teammate) {
+    return {
+      avatarUrl: teammate.avatarUrl,
+      avatarInitials: teammate.initials || teammate.name.slice(0, 2).toUpperCase(),
+    };
+  }
+
+  const direct = conversations.find((item) => item.peerUserId === userId);
+  if (direct) {
+    const title = direct.title?.trim() || '?';
+    return {
+      avatarUrl: direct.avatarUrl ?? null,
+      avatarInitials: direct.avatarInitials || title.slice(0, 2).toUpperCase(),
+    };
+  }
+
+  return { avatarUrl: null, avatarInitials: '?' };
+}
+
+export function buildVisibleTypingParticipants(
+  state: ConversationTypingState,
+  conversation: ConversationItem | null | undefined,
+  teammates: TeammateItem[],
+  conversations: ConversationItem[],
+  blockedUserIds: ReadonlySet<string>,
+  blockedByPeerIds: ReadonlySet<string>,
+): ChatTypingParticipant[] {
+  const visibleUserIds = state.userIds.filter((id) => {
+    if (blockedUserIds.has(id)) {
+      return false;
+    }
+
+    if (
+      conversation?.kind === 'direct' &&
+      conversation.peerUserId &&
+      blockedByPeerIds.has(conversation.peerUserId)
+    ) {
+      return false;
+    }
+
+    return true;
+  });
+
+  return visibleUserIds.map((userId) => {
+    const profile = resolveTyperProfile(userId, teammates, conversations);
+    return {
+      userId,
+      displayName: state.namesByUserId[userId] ?? 'Someone',
+      avatarUrl: profile.avatarUrl,
+      avatarInitials: profile.avatarInitials,
+    };
+  });
+}
+
 export function shouldDropHubMessageFromBlockedSender(
   message: MessageItem,
   conversation: ConversationItem | null | undefined,

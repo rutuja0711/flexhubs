@@ -5,7 +5,8 @@ import type { ScheduledMessageItem } from '../shared/extras';
 import { buildCreatePollPayload } from '../shared/messages';
 import type { ConversationsPayload, ConversationItem, UnreadCountPayload } from '../shared/chat';
 import type { ConversationBootstrap, ConversationDraftSummary } from '../shared/messages';
-import { buildProfileUpdatePayload } from '../shared/profile';
+import { buildProfileUpdatePayload, normalizeUploadUrl } from '../shared/profile';
+import { buildCoverUpdatePayload } from '../shared/profileBanner';
 import { clearAuth, getStoredToken, getStoredUser } from './authApi';
 import { getUserId } from '../shared/user';
 import { uploadFileToApi } from './uploadApi';
@@ -951,6 +952,43 @@ export async function saveUserProfile(
   const payload = buildProfileUpdatePayload(updates);
 
   return withToken((token) => window.electronAPI.updateUserProfile(token, JSON.stringify(payload)));
+}
+
+const COVER_PATCH_SINGLE_FIELDS = [
+  'coverImageUrl',
+  'coverImage',
+  'coverUrl',
+  'cover',
+  'coverBannerUrl',
+] as const;
+
+/** Persist profile cover — retries alternate API field names when validation rejects the bundle. */
+export async function saveProfileCover(coverUrl: string | null): Promise<ApiResult<unknown>> {
+  const normalized =
+    typeof coverUrl === 'string' && coverUrl.trim() ? normalizeUploadUrl(coverUrl.trim()) : null;
+
+  const primary = buildCoverUpdatePayload(normalized);
+  let result = await saveUserProfile(primary);
+
+  if (result.ok || normalized === null) {
+    return result;
+  }
+
+  if (result.status !== 400 && result.status !== 422) {
+    return result;
+  }
+
+  for (const field of COVER_PATCH_SINGLE_FIELDS) {
+    const attempt = await saveUserProfile({
+      [field]: normalized,
+      __coverPatchMinimal: true,
+    });
+    if (attempt.ok) {
+      return attempt;
+    }
+  }
+
+  return result;
 }
 
 export async function deleteUserAccount(): Promise<ApiResult<{ deleted: boolean }>> {

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { FiX } from 'react-icons/fi';
 import type { MessageItem } from '../../shared/messages';
 import { registerThreadReplyMessages } from '../../shared/messages';
@@ -12,6 +12,8 @@ import { MessageContent } from './MessageContent';
 import { MessageInput, type MessageInputHandle } from './MessageInput';
 import { formatMessageTimestamp } from './format';
 import { Avatar } from './ChatIcons';
+import { ComposerSuggestionBar } from './ComposerSuggestionBar';
+import { buildQuickReplySuggestions, readQuickReplySourceText } from './quickReplySuggestionRules';
 type ThreadSidebarProps = {
   conversationId: string;
   rootMessage: MessageItem;
@@ -29,6 +31,7 @@ type ThreadSidebarProps = {
   onOpenFlexAi?: () => void;
   onThreadReplySent?: (threadRootId: string) => void;
   onThreadMessagesRegistered?: () => void;
+  mentionsEnabled?: boolean;
 };
 
 export function ThreadSidebar({
@@ -44,6 +47,7 @@ export function ThreadSidebar({
   onOpenFlexAi,
   onThreadReplySent,
   onThreadMessagesRegistered,
+  mentionsEnabled = false,
 }: ThreadSidebarProps) {
   const [messages, setMessages] = useState<MessageItem[]>([]);
   const [initialLoading, setInitialLoading] = useState(
@@ -129,10 +133,33 @@ export function ThreadSidebar({
     };
   }, [conversationId, rootMessage.id]);
 
-  const handleSend = async () => {
-    const text = draft.trim();
+  const quickReplySuggestions = useMemo(() => {
+    const lastMessage = messages[messages.length - 1];
+    if (lastMessage) {
+      if (lastMessage.isOwn) {
+        return [];
+      }
 
-    if (!text || isSending) {
+      const preview = readQuickReplySourceText(lastMessage);
+      if (preview) {
+        return buildQuickReplySuggestions(preview);
+      }
+
+      return [];
+    }
+
+    const rootPreview = readQuickReplySourceText(rootMessage);
+    if (rootPreview) {
+      return buildQuickReplySuggestions(rootPreview);
+    }
+
+    return [];
+  }, [messages, rootMessage]);
+
+  const sendThreadText = async (text: string) => {
+    const trimmed = text.trim();
+
+    if (!trimmed || isSending) {
       return;
     }
 
@@ -140,7 +167,7 @@ export function ThreadSidebar({
     setDraftError('');
 
     try {
-      const result = await onSendThreadMessage(text, rootMessage.id, replyingToMessage?.id);
+      const result = await onSendThreadMessage(trimmed, rootMessage.id, replyingToMessage?.id);
 
       if (!result.ok) {
         setDraftError(result.error);
@@ -156,6 +183,13 @@ export function ThreadSidebar({
       setIsSending(false);
     }
   };
+
+  const handleSend = async () => {
+    await sendThreadText(draft);
+  };
+
+  const showQuickReplySuggestions =
+    !draft.trim() && !isSending && quickReplySuggestions.length > 0;
 
   const scheduleThreadRefresh = () => {
     onThreadReplySent?.(rootMessage.id);
@@ -243,6 +277,15 @@ export function ThreadSidebar({
       </div>
 
       <div className="p-3.5 border-t border-app-border/50 bg-app-surface/60 backdrop-blur-md">
+        {showQuickReplySuggestions ? (
+          <ComposerSuggestionBar
+            className="mb-2 -mx-1.5 border-t-0 bg-transparent px-1.5 py-0"
+            suggestions={quickReplySuggestions}
+            onSelectSuggestion={(text) => {
+              void sendThreadText(text);
+            }}
+          />
+        ) : null}
         <div className="mb-2 px-1 text-[11px] text-app-muted flex items-center gap-1.5">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-accent" />
           <span>Replying to <span className="text-app-text font-medium">{rootMessage.senderName}</span></span>
@@ -260,6 +303,7 @@ export function ThreadSidebar({
           onChange={setDraft}
           onSend={handleSend}
           conversationId={conversationId}
+          mentionsEnabled={mentionsEnabled}
           onSendMedia={
             onSendMedia
               ? (item, kind) => {

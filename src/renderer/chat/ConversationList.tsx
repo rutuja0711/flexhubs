@@ -10,13 +10,15 @@ import {
   ConversationContextMenu,
   type ConversationContextMenuActions,
 } from './ConversationContextMenu';
+import { ChatTypingIndicator } from './ChatTypingIndicator';
+import type { ChatTypingParticipant } from '../features/chat/lib/chatPageHelpers';
 
 type ConversationRowProps = {
   conversation: ConversationItem;
   presenceByUserId: ReadonlyMap<string, PresenceStatus>;
   viewerUserId: string | null;
   viewerSharePresence: boolean;
-  typingPreview?: string;
+  typingParticipants?: ChatTypingParticipant[];
   selected: boolean;
   onSelect: (id: string) => void;
   onPrefetch?: (id: string) => void;
@@ -31,7 +33,7 @@ export const ConversationRow = memo(function ConversationRow({
   presenceByUserId,
   viewerUserId,
   viewerSharePresence,
-  typingPreview,
+  typingParticipants,
   selected,
   onSelect,
   onPrefetch,
@@ -133,15 +135,10 @@ export const ConversationRow = memo(function ConversationRow({
           >
             {displayTitle}
           </span>
-          {typingPreview ? (
-            <p className="flex min-w-0 items-center gap-1.5 truncate text-xs text-accent-soft mt-0.5">
-              <span className="inline-flex shrink-0 items-end gap-0.5" aria-hidden="true">
-                <span className="h-1 w-1 animate-bounce rounded-full bg-accent [animation-delay:-0.2s]" />
-                <span className="h-1 w-1 animate-bounce rounded-full bg-accent [animation-delay:-0.1s]" />
-                <span className="h-1 w-1 animate-bounce rounded-full bg-accent" />
-              </span>
-              <span className="truncate italic">{typingPreview}</span>
-            </p>
+          {typingParticipants && typingParticipants.length > 0 ? (
+            <div className="min-w-0 w-full max-w-full">
+              <ChatTypingIndicator participants={typingParticipants} variant="sidebar" />
+            </div>
           ) : conversation.isDraftPreview && conversation.draftPreview ? (
             <p className="truncate text-xs mt-0.5">
               <span className="text-accent-soft font-medium">Draft: </span>
@@ -205,7 +202,7 @@ type ConversationListProps = {
   presenceByUserId: ReadonlyMap<string, PresenceStatus>;
   viewerUserId: string | null;
   viewerSharePresence: boolean;
-  typingPreviews?: Record<string, string>;
+  typingParticipantsByConversation?: Record<string, ChatTypingParticipant[]>;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onPrefetch?: (id: string) => void;
@@ -221,7 +218,7 @@ export function ConversationList({
   presenceByUserId,
   viewerUserId,
   viewerSharePresence,
-  typingPreviews = {},
+  typingParticipantsByConversation = {},
   selectedId,
   onSelect,
   onPrefetch,
@@ -267,7 +264,7 @@ export function ConversationList({
             presenceByUserId={presenceByUserId}
             viewerUserId={viewerUserId}
             viewerSharePresence={viewerSharePresence}
-            typingPreview={typingPreviews[conversation.id]}
+            typingParticipants={typingParticipantsByConversation[conversation.id]}
             selected={selectedId === conversation.id}
             onSelect={onSelect}
             onPrefetch={onPrefetch}

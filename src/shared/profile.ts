@@ -1,6 +1,7 @@
 import {
   isProfileCoverFieldKey,
   readPersistedLocalCover,
+  resolveEffectiveCoverBanner,
   resolveProfileBannerUrl,
 } from './profileBanner';
 
@@ -595,9 +596,10 @@ export function normalizeUserProfile(user: unknown, settings?: ProfileSettings):
     name,
     username: readString(record.username) ?? '',
     email: readString(record.email) ?? '',
-    coverBannerUrl:
-      resolveProfileBannerUrl(record) ??
-      readPersistedLocalCover(readString(record.id) ?? readString(record.userId)),
+    coverBannerUrl: resolveEffectiveCoverBanner(
+      readString(record.id) ?? readString(record.userId),
+      record,
+    ),
     avatarUrl: resolveAvatarUrl(record),
     avatarStyle:
       readString(record.avatarStyle) ?? readString(record.avatarStyleId) ?? readString(record.style),
@@ -1046,6 +1048,8 @@ export function buildProfileUpdatePayload(
   updates: Record<string, unknown>,
 ): Record<string, unknown> {
   const payload: Record<string, unknown> = { ...updates };
+  const minimalCoverPatch = updates.__coverPatchMinimal === true;
+  delete payload.__coverPatchMinimal;
   const avatarUrl = readString(updates.avatarUrl);
   const avatarMode = readString(updates.avatarMode);
   const coverUrl =
@@ -1059,7 +1063,10 @@ export function buildProfileUpdatePayload(
         readString(updates.bannerUrl) ??
         readString(updates.coverBannerUrl) ??
         readString(updates.profileBannerUrl) ??
-        readString(updates.profileCoverUrl);
+        readString(updates.profileCoverUrl) ??
+        readString(updates.coverPhotoUrl) ??
+        readString(updates.coverPhoto) ??
+        readString(updates.backgroundImageUrl);
 
   delete payload.avatarMode;
 
@@ -1071,9 +1078,35 @@ export function buildProfileUpdatePayload(
     }
 
     if (coverUrl === null) {
+      payload.coverImageUrl = null;
+      payload.coverImage = null;
       payload.cover = null;
+      payload.coverUrl = null;
+      payload.coverBannerUrl = null;
     } else if (coverUrl) {
-      payload.cover = coverUrl;
+      if (minimalCoverPatch) {
+        for (const key of Object.keys(updates)) {
+          if (!isProfileCoverFieldKey(key)) {
+            continue;
+          }
+          payload[key] = coverUrl;
+        }
+        if (!payload.coverImage && !payload.coverImageUrl && !payload.cover && !payload.coverUrl) {
+          payload.coverImageUrl = coverUrl;
+        }
+        if (payload.coverImageUrl && !payload.coverImage) {
+          payload.coverImage = coverUrl;
+        }
+        if (payload.coverImageUrl && !payload.cover) {
+          payload.cover = coverUrl;
+        }
+      } else {
+        payload.coverImageUrl = coverUrl;
+        payload.coverImage = coverUrl;
+        payload.cover = coverUrl;
+        payload.coverUrl = coverUrl;
+        payload.coverBannerUrl = coverUrl;
+      }
     }
   }
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ConversationItem, DirectChatMetadata, PresenceStatus } from '../../shared/chat';
 import type { ProfileSettings } from '../../shared/profile';
-import { NotificationStatusBanner } from './NotificationStatusBanner';
+import { NotificationSnoozeMenu } from './NotificationSnoozeMenu';
 import type { TeammateItem } from '../../shared/messages';
 import type { GlobalSearchResult, SearchPerson } from '../../shared/search';
 import {
@@ -31,7 +31,10 @@ type ChatSidebarProps = {
   organizationNavEnabled?: boolean;
   selfLabel: string;
   conversations: ConversationItem[];
-  typingPreviews?: Record<string, string>;
+  typingParticipantsByConversation?: Record<
+    string,
+    import('../features/chat/lib/chatPageHelpers').ChatTypingParticipant[]
+  >;
   teammates: TeammateItem[];
   loading: boolean;
   error: string;
@@ -63,6 +66,7 @@ type ChatSidebarProps = {
   viewerSharePresence?: boolean;
   notificationSettings?: ProfileSettings | null;
   onOpenNotificationSettings?: () => void;
+  onNotificationSettingsUpdated?: (settings: ProfileSettings) => void;
   onTeammateOpenProfile?: (
     anchor: { userId: string; displayName: string; avatarUrl?: string | null; avatarInitials?: string },
     event: React.MouseEvent<HTMLElement>,
@@ -74,7 +78,7 @@ export function ChatSidebar({
   organizationNavEnabled = true,
   selfLabel,
   conversations,
-  typingPreviews = {},
+  typingParticipantsByConversation = {},
   teammates,
   loading,
   error,
@@ -106,6 +110,7 @@ export function ChatSidebar({
   viewerSharePresence = true,
   notificationSettings = null,
   onOpenNotificationSettings,
+  onNotificationSettingsUpdated,
   onTeammateOpenProfile,
 }: ChatSidebarProps) {
   const [activeTab, setActiveTab] = useState<ChatTab>('all');
@@ -303,18 +308,25 @@ export function ChatSidebar({
               </div>
             </button>
 
-            <button
-              type="button"
-              aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
-              className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95"
-              onClick={toggleTheme}
-            >
-              {theme === 'dark' ? (
-                <FiSun className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden="true" />
-              ) : (
-                <FiMoon className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden="true" />
-              )}
-            </button>
+            <div className="flex shrink-0 items-center gap-0.5">
+              <NotificationSnoozeMenu
+                settings={notificationSettings}
+                onSettingsUpdated={(next) => onNotificationSettingsUpdated?.(next)}
+                onOpenNotificationSettings={onOpenNotificationSettings}
+              />
+              <button
+                type="button"
+                aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+                className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-xl text-app-muted transition-all duration-200 hover:bg-app-chat-hover hover:text-app-text active:scale-95"
+                onClick={toggleTheme}
+              >
+                {theme === 'dark' ? (
+                  <FiSun className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden="true" />
+                ) : (
+                  <FiMoon className="h-[18px] w-[18px]" strokeWidth={1.75} aria-hidden="true" />
+                )}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -411,13 +423,6 @@ export function ChatSidebar({
         </div>
       ) : null}
 
-      {notificationSettings && onOpenNotificationSettings ? (
-        <NotificationStatusBanner
-          settings={notificationSettings}
-          onOpenSettings={onOpenNotificationSettings}
-        />
-      ) : null}
-
       <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         {loading && conversations.length === 0 ? (
           <div className="px-4 py-8 text-center text-sm text-app-muted" role="status">
@@ -463,7 +468,7 @@ export function ChatSidebar({
               presenceByUserId={presenceByUserId}
               viewerUserId={viewerUserId}
               viewerSharePresence={viewerSharePresence}
-              typingPreviews={typingPreviews}
+              typingParticipantsByConversation={typingParticipantsByConversation}
               selectedId={selectedId}
               onSelect={onSelect}
               onPrefetch={onPrefetch}

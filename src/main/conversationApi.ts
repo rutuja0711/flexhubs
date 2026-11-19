@@ -862,7 +862,69 @@ export async function leaveConversation(token: string, conversationId: string, i
 }
 
 export async function deleteConversation(token: string, conversationId: string): Promise<ApiResult<unknown>> {
-  return apiDelete<unknown>(`${API_BASE_URL}/conversations/${conversationId}`, token, 'Delete Conversation API');
+  const deleteResult = await apiDelete<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}`,
+    token,
+    'Delete Conversation API',
+  );
+
+  if (deleteResult.ok) {
+    return deleteResult;
+  }
+
+  const shouldTryLeave =
+    deleteResult.status === 404 ||
+    deleteResult.status === 405 ||
+    deleteResult.status === 403 ||
+    deleteResult.status === 400;
+
+  if (!shouldTryLeave) {
+    return deleteResult;
+  }
+
+  const leaveDelete = await apiDelete<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/leave`,
+    token,
+    'Leave Conversation API',
+  );
+
+  if (leaveDelete.ok) {
+    return leaveDelete;
+  }
+
+  const leavePost = await apiPost<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/leave`,
+    token,
+    'Leave Conversation API',
+    {},
+  );
+
+  if (leavePost.ok) {
+    return leavePost;
+  }
+
+  const hideDelete = await apiDelete<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/hide`,
+    token,
+    'Hide Conversation API',
+  );
+
+  if (hideDelete.ok) {
+    return hideDelete;
+  }
+
+  const hidePost = await apiPost<unknown>(
+    `${API_BASE_URL}/conversations/${conversationId}/hide`,
+    token,
+    'Hide Conversation API',
+    {},
+  );
+
+  if (hidePost.ok) {
+    return hidePost;
+  }
+
+  return deleteResult.error ? deleteResult : leaveDelete;
 }
 
 export async function clearConversationHistory(token: string, conversationId: string): Promise<ApiResult<unknown>> {

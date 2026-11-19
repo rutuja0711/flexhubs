@@ -11,6 +11,7 @@ import { FiPlus, FiSend, FiSmile, FiX } from 'react-icons/fi';
 import { AttachmentFileIcon } from './AttachmentFileIcon';
 import { formatFileSize } from './FileAttachmentCard';
 import { openMediaPreview } from './MediaPreviewHost';
+import { ChatAttachmentPreviewPanel } from './ChatAttachmentPreviewPanel';
 import {
   pendingAttachmentTypeLabel,
   type PendingAttachment,
@@ -39,6 +40,11 @@ export type AttachmentComposerOverlayProps = {
   sendDisabled: boolean;
   isSending: boolean;
   replyBanner?: string | null;
+  onCaptionPaste?: (event: React.ClipboardEvent<HTMLTextAreaElement>) => void;
+  onPasteFiles?: (files: File[]) => void;
+  onCaptionKeyDown?: (event: React.KeyboardEvent<HTMLTextAreaElement>) => void;
+  onCaptionInput?: (value: string, cursor: number) => void;
+  captionTextareaRef?: RefObject<HTMLTextAreaElement | null>;
 };
 
 function formatVideoDuration(seconds: number): string {
@@ -162,32 +168,25 @@ function FilePreviewUnavailable({ attachment }: { attachment: PendingAttachment 
 
 function MainPreview({ attachment }: { attachment: PendingAttachment }) {
   const [mediaPreviewFailed, setMediaPreviewFailed] = useState(false);
-  const [pdfLoaded, setPdfLoaded] = useState(false);
-  const [pdfFailed, setPdfFailed] = useState(false);
 
   useEffect(() => {
     setMediaPreviewFailed(false);
-    setPdfLoaded(false);
-    setPdfFailed(false);
   }, [attachment.id]);
-
-  useEffect(() => {
-    if (!attachment.isPdf || !attachment.previewUrl) {
-      return;
-    }
-
-    const timer = window.setTimeout(() => {
-      if (!pdfLoaded) {
-        setPdfFailed(true);
-      }
-    }, 2500);
-
-    return () => window.clearTimeout(timer);
-  }, [attachment.id, attachment.isPdf, attachment.previewUrl, pdfLoaded]);
 
   if (mediaPreviewFailed) {
     return <FilePreviewUnavailable attachment={attachment} />;
   }
+
+  const preview = (
+    <ChatAttachmentPreviewPanel
+      name={attachment.file.name}
+      category={attachment.category}
+      mediaUrl={attachment.previewUrl || null}
+      localFile={attachment.file}
+      mode="composer"
+      onMediaError={() => setMediaPreviewFailed(true)}
+    />
+  );
 
   if (attachment.isImage && attachment.previewUrl) {
     return (
@@ -203,13 +202,7 @@ function MainPreview({ attachment }: { attachment: PendingAttachment }) {
           });
         }}
       >
-        <img
-          src={attachment.previewUrl}
-          alt={attachment.file.name}
-          className="max-h-[min(52vh,520px)] max-w-full object-contain"
-          draggable={false}
-          onError={() => setMediaPreviewFailed(true)}
-        />
+        {preview}
       </button>
     );
   }
@@ -217,15 +210,7 @@ function MainPreview({ attachment }: { attachment: PendingAttachment }) {
   if (attachment.isVideo && attachment.previewUrl) {
     return (
       <div className="flex h-full w-full max-w-full flex-col items-center justify-center">
-        <video
-          key={attachment.id}
-          src={attachment.previewUrl}
-          controls
-          playsInline
-          preload="metadata"
-          className="max-h-[min(52vh,520px)] max-w-full rounded-xl bg-black/40"
-          onError={() => setMediaPreviewFailed(true)}
-        />
+        {preview}
         <button
           type="button"
           className="mt-2 text-xs font-medium text-accent-soft hover:underline"
@@ -243,23 +228,17 @@ function MainPreview({ attachment }: { attachment: PendingAttachment }) {
     );
   }
 
-  if (attachment.isPdf && attachment.previewUrl && !pdfFailed) {
+  if (attachment.isPdf && attachment.previewUrl) {
     return (
       <iframe
         title={attachment.file.name}
         src={attachment.previewUrl}
-        className="h-[min(52vh,520px)] w-full max-w-3xl rounded-xl border border-app-border/60 bg-app-card"
-        onLoad={() => setPdfLoaded(true)}
-        onError={() => setPdfFailed(true)}
+        className="h-[min(52vh,520px)] w-full max-w-3xl rounded-xl border border-app-border/60 bg-white"
       />
     );
   }
 
-  if (attachment.isImage || attachment.isVideo) {
-    return <FilePreviewUnavailable attachment={attachment} />;
-  }
-
-  return <FilePreviewUnavailable attachment={attachment} />;
+  return preview;
 }
 
 function AttachmentThumbnail({
@@ -328,9 +307,20 @@ export function AttachmentComposerOverlay({
   sendDisabled,
   isSending,
   replyBanner,
+  onCaptionPaste,
+  onPasteFiles,
+  onCaptionKeyDown,
+  onCaptionInput,
+  captionTextareaRef,
 }: AttachmentComposerOverlayProps) {
   const bounds = useOverlayBounds(open, anchorRef);
   const captionRef = useRef<HTMLTextAreaElement>(null);
+  const setCaptionRef = (node: HTMLTextAreaElement | null) => {
+    captionRef.current = node;
+    if (captionTextareaRef && 'current' in captionTextareaRef) {
+      (captionTextareaRef as React.MutableRefObject<HTMLTextAreaElement | null>).current = node;
+    }
+  };
   const selected = attachments[selectedIndex] ?? attachments[0] ?? null;
 
   useEffect(() => {
@@ -350,10 +340,38 @@ export function AttachmentComposerOverlay({
   }, [onClose, open]);
 
   useEffect(() => {
-    if (open) {
-      requestAnimationFrame(() => captionRef.current?.focus());
+    if (!open) {
+      return;
     }
-  }, [open, selectedIndex]);
+
+    const onWindowPaste = (event: ClipboardEvent) => {
+      const target = event.target as Node | null;
+      if (target && captionRef.current?.contains(target)) {
+        return;
+      }
+      if (!captionRef.current) {
+        return;
+      }
+      const fromItems = Array.from(event.clipboardData?.items ?? [])
+        .filter((item) => item.kind === 'file')
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => file !== null);
+      const fromFiles = Array.from(event.clipboardData?.files ?? []);
+      const files = fromItems.length > 0 ? fromItems : fromFiles;
+      if (!files.length) {
+        return;
+      }
+      event.preventDefault();
+      onPasteFiles?.(files);
+    };
+
+    requestAnimationFrame(() => captionRef.current?.focus());
+    window.addEventListener('paste', onWindowPaste);
+
+    return () => {
+      window.removeEventListener('paste', onWindowPaste);
+    };
+  }, [onPasteFiles, open, selectedIndex]);
 
   if (!open || !bounds || attachments.length === 0 || !selected) {
     return null;
@@ -417,14 +435,30 @@ export function AttachmentComposerOverlay({
         <div className="flex items-center gap-2">
           <div className="flex min-h-[44px] min-w-0 flex-1 items-center gap-2 rounded-3xl border border-app-border/80 bg-app-card/90 px-3 py-1.5">
             <textarea
-              ref={captionRef}
+              ref={setCaptionRef}
               value={caption}
               rows={1}
               disabled={isSending}
-              placeholder="Type a message"
+              placeholder="Type a message (@ to mention)"
               className="max-h-24 min-h-[28px] min-w-0 flex-1 resize-none bg-transparent py-1 text-sm leading-snug text-app-text outline-none placeholder:text-app-placeholder"
-              onChange={(event) => onCaptionChange(event.target.value)}
+              onChange={(event) => {
+                onCaptionChange(event.target.value);
+                onCaptionInput?.(event.target.value, event.target.selectionStart ?? event.target.value.length);
+              }}
+              onPaste={onCaptionPaste}
+              onKeyUp={(event) => {
+                onCaptionInput?.(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+              }}
+              onClick={(event) => {
+                onCaptionInput?.(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+              }}
+              onSelect={(event) => {
+                onCaptionInput?.(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length);
+              }}
               onKeyDown={(event) => {
+                if (onCaptionKeyDown?.(event)) {
+                  return;
+                }
                 if (event.key === 'Enter' && !event.shiftKey) {
                   event.preventDefault();
                   if (!sendDisabled) {

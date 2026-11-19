@@ -59,13 +59,19 @@ export function ForwardMessageModal({
   };
 
   return (
-    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/60 p-4 backdrop-blur-md animate-fade-in">
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center p-4 animate-fade-in">
+      <button
+        type="button"
+        aria-label="Close forward dialog"
+        className="fixed inset-0 bg-black/55 backdrop-blur-sm dark:bg-black/65"
+        onClick={onClose}
+      />
       <div
-        className="relative flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-3xl border border-app-border/80 bg-app-surface/95 backdrop-blur-2xl shadow-2xl animate-pop-in origin-center"
+        className="relative flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-3xl border border-app-border bg-app-surface text-app-text shadow-2xl animate-pop-in origin-center"
         role="dialog"
         aria-labelledby="forward-title"
       >
-        <div className="border-b border-app-border/50 px-6 py-5 shrink-0">
+        <div className="shrink-0 border-b border-app-border px-6 py-5">
           <div className="flex items-center justify-between gap-3">
             <h3 id="forward-title" className="text-base font-semibold text-app-text tracking-tight">
               Forward message
@@ -86,7 +92,7 @@ export function ForwardMessageModal({
               placeholder="Search people, groups, or hubs..."
               value={searchQuery}
               onChange={e => setSearchQuery(e.target.value)}
-              className="w-full bg-app-inset border border-app-border rounded-xl py-2.5 pl-9 pr-3 text-sm text-app-text outline-none focus:border-accent transition-colors"
+              className="w-full rounded-xl border border-app-border bg-app-inset py-2.5 pl-9 pr-3 text-sm text-app-text placeholder:text-app-placeholder outline-none transition-colors focus:border-accent focus:ring-1 focus:ring-accent/30"
             />
           </div>
         </div>
@@ -97,7 +103,7 @@ export function ForwardMessageModal({
           </p>
         ) : null}
 
-        <div className="overflow-y-auto flex-1 p-2 space-y-0.5">
+        <div className="flex-1 space-y-0.5 overflow-y-auto bg-app-surface p-2">
           {filteredTargets.length === 0 ? (
             <p className="px-4 py-8 text-center text-xs text-app-muted">No other conversations available.</p>
           ) : (
@@ -108,13 +114,13 @@ export function ForwardMessageModal({
                   key={conversation.id}
                   type="button"
                   disabled={loading || (!isSelected && selectedIds.length >= 10)}
-                  className="flex w-full items-center gap-3 rounded-2xl p-2.5 text-left transition-all duration-150 border border-transparent hover:bg-app-card/60 disabled:opacity-50"
+                  className="flex w-full items-center gap-3 rounded-2xl border border-transparent p-2.5 text-left transition-all duration-150 hover:bg-app-chat-hover disabled:opacity-50"
                   onClick={() => toggleSelection(conversation.id)}
                 >
                   {conversation.avatarUrl ? (
                     <img src={conversation.avatarUrl} alt={conversation.title || 'User'} className="w-10 h-10 rounded-full shrink-0 object-cover" />
                   ) : (
-                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent/20 to-accent/5 border border-accent/20 text-xs font-bold text-accent-soft">
+                    <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-accent/20 bg-accent/10 text-xs font-bold text-accent">
                       {conversation.avatarInitials || '?'}
                     </span>
                   )}
@@ -135,7 +141,7 @@ export function ForwardMessageModal({
           )}
         </div>
 
-        <div className="border-t border-app-border/50 p-4 shrink-0 flex items-center justify-between bg-app-surface">
+        <div className="flex shrink-0 items-center justify-between border-t border-app-border bg-app-surface p-4">
           <span className="text-xs text-app-muted font-medium">
             {selectedIds.length} selected · max 10
           </span>
@@ -150,7 +156,7 @@ export function ForwardMessageModal({
             <button
               onClick={() => onForward(selectedIds)}
               disabled={loading || selectedIds.length === 0}
-              className="px-6 py-2 text-sm font-semibold text-white bg-accent rounded-xl hover:bg-accent-soft disabled:opacity-50 disabled:hover:bg-accent transition-colors"
+              className="rounded-xl bg-accent px-6 py-2 text-sm font-semibold text-white transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:bg-app-inset disabled:text-app-muted disabled:hover:bg-app-inset"
             >
               {loading ? 'Forwarding...' : 'Forward'}
             </button>

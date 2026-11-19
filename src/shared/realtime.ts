@@ -1492,7 +1492,8 @@ export function extractTypingUpdate(
   };
 }
 
-export function formatTypingIndicatorLabel(names: string[]): string {
+/** Status copy without trailing ellipsis (UI renders animated dots). */
+export function buildTypingIndicatorPhrase(names: string[]): string {
   const unique = [...new Set(names.map((name) => name.trim()).filter(Boolean))];
 
   if (unique.length === 0) {
@@ -1500,12 +1501,23 @@ export function formatTypingIndicatorLabel(names: string[]): string {
   }
 
   if (unique.length === 1) {
-    return `${unique[0]} is typing...`;
+    return `${unique[0]} is typing`;
   }
 
   if (unique.length === 2) {
-    return `${unique[0]} and ${unique[1]} are typing...`;
+    return `${unique[0]} and ${unique[1]} are typing`;
   }
 
-  return `${unique[0]} and ${unique.length - 1} others are typing...`;
+  if (unique.length === 3) {
+    return `${unique[0]}, ${unique[1]} and ${unique[2]} are typing`;
+  }
+
+  const others = unique.length - 2;
+  const otherLabel = others === 1 ? '1 other' : `${others} others`;
+  return `${unique[0]}, ${unique[1]} and ${otherLabel} are typing`;
+}
+
+export function formatTypingIndicatorLabel(names: string[]): string {
+  const phrase = buildTypingIndicatorPhrase(names);
+  return phrase ? `${phrase}...` : '';
 }

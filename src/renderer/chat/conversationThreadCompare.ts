@@ -3,6 +3,35 @@ import { normalizePresenceUserId } from '../../shared/chat';
 import type { MessageItem } from '../../shared/messages';
 import type { ConversationScrollSnapshot } from '../conversationScrollCache';
 import type { ConversationThreadProps } from './ConversationThread';
+import type { ChatTypingParticipant } from '../features/chat/lib/chatPageHelpers';
+
+function areTypingParticipantsEqual(
+  left?: ChatTypingParticipant[],
+  right?: ChatTypingParticipant[],
+): boolean {
+  if (left === right) {
+    return true;
+  }
+
+  if (!left || !right || left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+    if (
+      a.userId !== b.userId ||
+      a.displayName !== b.displayName ||
+      a.avatarUrl !== b.avatarUrl ||
+      a.avatarInitials !== b.avatarInitials
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
 
 function readOnlySetEqual(left?: ReadonlySet<string>, right?: ReadonlySet<string>): boolean {
   if (left === right) {
@@ -110,7 +139,7 @@ export function areConversationThreadPropsEqual(
     prev.threadSyncing !== next.threadSyncing ||
     prev.error !== next.error ||
     prev.draftError !== next.draftError ||
-    prev.typingLabel !== next.typingLabel ||
+    !areTypingParticipantsEqual(prev.typingParticipants, next.typingParticipants) ||
     prev.isSending !== next.isSending ||
     prev.currentUserId !== next.currentUserId ||
     prev.focusMessageId !== next.focusMessageId ||

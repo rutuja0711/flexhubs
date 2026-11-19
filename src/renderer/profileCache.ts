@@ -1,5 +1,5 @@
 import type { AvatarStyleItem, ProfileSettings, UserProfileState } from '../shared/profile';
-import { resolveEffectiveCoverBanner } from '../shared/profileBanner';
+import { resolveEffectiveCoverBanner, readSessionCoverUrl } from '../shared/profileBanner';
 import { getStoredUser } from './authApi';
 
 export type ProfileCacheSnapshot = {
@@ -15,11 +15,9 @@ const PROFILE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 let snapshot: ProfileCacheSnapshot | null = null;
 
 function withResolvedCoverBanner(profile: UserProfileState): UserProfileState {
-  const cover = resolveEffectiveCoverBanner(
-    profile.id,
-    profile,
-    getStoredUser(),
-  );
+  const cover =
+    resolveEffectiveCoverBanner(profile.id, profile, getStoredUser()) ??
+    readSessionCoverUrl(profile.id);
 
   if (!cover || cover === profile.coverBannerUrl) {
     return profile;

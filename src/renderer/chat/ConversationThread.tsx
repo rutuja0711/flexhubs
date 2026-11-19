@@ -37,6 +37,7 @@ import {
   isThreadReply,
   formatMessagePreview,
 } from '../../shared/messages';
+import { buildQuickReplySuggestions, readQuickReplySourceText } from './quickReplySuggestionRules';
 import { sendThreadTextReply } from './threadReplySend';
 import { validateSearchInput } from '../../shared/search';
 import { filterEditableMessageMedia, messageEditHasChanges } from '../../shared/messageEditPlan';
@@ -55,6 +56,7 @@ import {
   markConversationUnread,
   clearConversationHistory,
   deleteConversation,
+  leaveConversation,
 } from '../chatApi';
 import { generateAiReply } from '../extrasApi';
 import { useConfirm } from '../ui/ConfirmDialog';
@@ -62,6 +64,8 @@ import { useToast } from '../ui/Toast';
 import { PinIcon, SearchIcon, SparkleIcon } from './ChatIcons';
 import { ForwardMessageModal } from './ForwardMessageModal';
 import { InConversationSearchBar } from './InConversationSearchBar';
+import { ChatTypingIndicator } from './ChatTypingIndicator';
+import { ComposerSuggestionBar } from './ComposerSuggestionBar';
 import { MessageInput, type MessageInputHandle } from './MessageInput';
 import { MessageList } from './MessageList';
 import { PinnedMessageBanner } from './PinnedMessageBanner';
@@ -71,6 +75,7 @@ import { GroupMembersPanel } from './GroupMembersPanel';
 import { ThreadSidebar } from './ThreadSidebar';
 import { areConversationThreadPropsEqual } from './conversationThreadCompare';
 import { perfRecordRender } from '../dev/perfInstrumentation';
+import type { ChatTypingParticipant } from '../features/chat/lib/chatPageHelpers';
 
 export type ConversationThreadProps = {
   conversation: ConversationItem;
@@ -84,12 +89,12 @@ export type ConversationThreadProps = {
   threadSyncing?: boolean;
   error: string;
   draftError: string;
-  typingLabel: string;
+  typingParticipants?: ChatTypingParticipant[];
   isSending: boolean;
   onDraftChange: (value: string) => void;
   onComposerBlur?: () => void;
   onDraftReplyToIdChange?: (replyToId: string | null) => void;
-  onSend: (replyToId?: string) => void;
+  onSend: (replyToId?: string, contentOverride?: string) => void;
   onRetryMessage?: (messageId: string) => void;
   onSendMedia?: (item: GifPickerItem, kind: 'gif' | 'sticker', replyToId?: string, threadRootId?: string) => void;
   onSendFile?: (file: File, caption?: string, replyToId?: string, threadRootId?: string) => void;
@@ -117,6 +122,7 @@ export type ConversationThreadProps = {
   onNotificationsSnoozedChange?: (snoozed: boolean) => void;
   onTogglePin?: (conversationId: string, isPinned: boolean) => void;
   onHubDeleted?: () => void;
+  onConversationDeleted?: (conversationId: string) => void;
   pinnedMessageIds?: string[];
   onOpenCalendar?: () => void;
   onOpenCalendarEvent?: (eventId: string) => void;
@@ -170,7 +176,7 @@ function ConversationThreadComponent({
   threadSyncing = false,
   error,
   draftError,
-  typingLabel,
+  typingParticipants = [],
   isSending,
   onDraftChange,
   onComposerBlur,
@@ -202,6 +208,7 @@ function ConversationThreadComponent({
   onNotificationsSnoozedChange,
   onTogglePin,
   onHubDeleted,
+  onConversationDeleted,
   pinnedMessageIds = [],
   onOpenCalendar,
   onOpenCalendarEvent,
@@ -265,6 +272,7 @@ function ConversationThreadComponent({
   const [pinnedBannerDismissed, setPinnedBannerDismissed] = useState(false);
   const [pinnedBannerIndex, setPinnedBannerIndex] = useState(0);
   const [bannerScrollTargetId, setBannerScrollTargetId] = useState<string | null>(null);
+  const [threadStickToBottom, setThreadStickToBottom] = useState(true);
   const [scrollRequestKey, setScrollRequestKey] = useState(0);
   const [menuBusy, setMenuBusy] = useState(false);
   const [snoozeMenuOpen, setSnoozeMenuOpen] = useState(false);
@@ -427,6 +435,10 @@ function ConversationThreadComponent({
   }, [conversation.id, loading, peerBlockedByCurrentUser, peerBlockedViewer]);
 
   useEffect(() => {
+    setThreadStickToBottom(true);
+  }, [conversation.id]);
+
+  useEffect(() => {
     return () => {
       highlightTimeoutsRef.current.forEach((timeoutId) => window.clearTimeout(timeoutId));
       highlightTimeoutsRef.current = [];
@@ -496,6 +508,47 @@ function ConversationThreadComponent({
     );
   }, [blockedUserIds, conversation.kind, currentUserId, messages]);
   const threadsEnabled = conversation.kind === 'hub';
+
+  const quickReplyContext = useMemo(() => {
+    if (composerEditMessage || peerBlockedByCurrentUser || peerBlockedViewer) {
+      return { suggestions: [] as string[], messageId: null as string | null };
+    }
+
+    const lastMessage = mainChatMessages[mainChatMessages.length - 1];
+    if (!lastMessage || lastMessage.isOwn) {
+      return { suggestions: [], messageId: null };
+    }
+
+    const preview = readQuickReplySourceText(lastMessage);
+    if (!preview) {
+      return { suggestions: [], messageId: null };
+    }
+
+    return {
+      suggestions: buildQuickReplySuggestions(preview),
+      messageId: lastMessage.id,
+    };
+  }, [composerEditMessage, mainChatMessages, peerBlockedByCurrentUser, peerBlockedViewer]);
+
+  const quickReplySuggestions = quickReplyContext.suggestions;
+  const quickReplySourceMessageId = quickReplyContext.messageId;
+
+  const composerInputDisabled =
+    (loading && messages.length === 0) || peerBlockedByCurrentUser || peerBlockedViewer;
+  const showQuickReplySuggestions =
+    !composerEditMessage &&
+    !composerInputDisabled &&
+    !isSending &&
+    !draft.trim() &&
+    quickReplySuggestions.length > 0;
+  const showQuickReplyAiAction =
+    Boolean(quickReplySourceMessageId) &&
+    !composerEditMessage &&
+    !composerInputDisabled &&
+    !isSending &&
+    !draft.trim();
+  const showComposerSuggestionBar =
+    typingParticipants.length > 0 || showQuickReplySuggestions || showQuickReplyAiAction;
 
   const handleAiReplyMessage = useCallback(
     async (messageId: string) => {
@@ -846,17 +899,49 @@ function ConversationThreadComponent({
 
   const handleDeleteConversation = async () => {
     setMenuOpen(false);
+    const isDirectChat = conversation.kind === 'direct' || conversation.isSelf;
+    const isGroupChat = conversation.kind === 'group';
+
     const confirmed = await confirm({
-      title: 'Delete conversation',
-      message: `Delete "${conversation.title}"? This cannot be undone.`,
-      confirmLabel: 'Delete',
+      title: isDirectChat ? 'Remove chat' : 'Delete conversation',
+      message: isDirectChat
+        ? `Remove "${conversation.title}" from your chat list? Messages will be cleared on your device only. You can message them again anytime.`
+        : isGroupChat
+          ? `Delete or leave "${conversation.title}"? Admins can delete the group for everyone; otherwise you will leave the group.`
+          : `Delete "${conversation.title}"? This cannot be undone.`,
+      confirmLabel: isDirectChat ? 'Remove' : 'Delete',
       tone: 'danger',
     });
 
     if (!confirmed) return;
 
     setMenuBusy(true);
-    const result = await deleteConversation(conversation.id);
+
+    let result = await (async () => {
+      if (isDirectChat) {
+        return clearConversationHistory(conversation.id);
+      }
+
+      const deleteResult = await deleteConversation(conversation.id);
+      if (deleteResult.ok) {
+        return deleteResult;
+      }
+
+      if (isGroupChat) {
+        const leaveResult = await leaveConversation(conversation.id, false);
+        if (leaveResult.ok) {
+          return leaveResult;
+        }
+
+        if (deleteResult.error) {
+          return deleteResult;
+        }
+        return leaveResult;
+      }
+
+      return deleteResult;
+    })();
+
     setMenuBusy(false);
 
     if (!result.ok) {
@@ -865,9 +950,11 @@ function ConversationThreadComponent({
       return;
     }
 
-    toast.success('Conversation deleted.');
-    onHubDeleted?.();
-    onConversationUpdated?.();
+    toast.success(isDirectChat ? 'Chat removed.' : 'Conversation deleted.');
+    onConversationDeleted?.(conversation.id);
+    if (!isDirectChat) {
+      onConversationUpdated?.();
+    }
   };
 
   const handleScheduleEvent = () => {
@@ -1245,6 +1332,15 @@ function ConversationThreadComponent({
         />
       ) : null}
 
+      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+      {typingParticipants.length > 0 && !threadStickToBottom ? (
+        <div
+          className="pointer-events-none absolute inset-x-0 bottom-4 z-20 flex justify-start px-6"
+          aria-live="polite"
+        >
+          <ChatTypingIndicator participants={typingParticipants} className="py-0" />
+        </div>
+      ) : null}
       <MessageList
         messages={mainChatMessages}
         loading={loading}
@@ -1347,23 +1443,11 @@ function ConversationThreadComponent({
         onOpenMemberProfile={
           isGroupConversation && onOpenMemberProfile ? onOpenMemberProfile : undefined
         }
+        typingParticipants={typingParticipants}
+        suppressTypingIndicator
+        onAtBottomChange={setThreadStickToBottom}
       />
-
-      {typingLabel ? (
-        <div className="border-t border-app-border px-6 py-2.5" role="status">
-          <div className="flex items-center gap-2.5">
-            <span
-              className="inline-flex items-center gap-1 rounded-lg bg-app-elevated/80 px-2 py-1.5"
-              aria-hidden="true"
-            >
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.2s]" />
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent [animation-delay:-0.1s]" />
-              <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-accent" />
-            </span>
-            <span className="text-xs italic text-app-muted">{typingLabel}</span>
-          </div>
-        </div>
-      ) : null}
+      </div>
 
       <input
         ref={composerEditFileInputRef}
@@ -1400,16 +1484,36 @@ function ConversationThreadComponent({
         />
       ) : null}
 
+      {showComposerSuggestionBar ? (
+        <ComposerSuggestionBar
+          typingParticipants={threadStickToBottom ? typingParticipants : []}
+          suggestions={showQuickReplySuggestions ? quickReplySuggestions : []}
+          onSelectSuggestion={(text) => {
+            onSend(replyingToMessage?.id, text);
+            setReplyingToMessage(null);
+          }}
+          onAiReply={
+            showQuickReplyAiAction && quickReplySourceMessageId
+              ? () => {
+                  void handleAiReplyMessage(quickReplySourceMessageId);
+                }
+              : undefined
+          }
+          aiReplyLoading={Boolean(
+            quickReplySourceMessageId && aiReplyLoadingMessageId === quickReplySourceMessageId,
+          )}
+        />
+      ) : null}
+
       <MessageInput
         ref={composerRef}
         attachmentOverlayRootRef={attachmentOverlayRootRef}
         value={draft}
-        disabled={
-          (loading && messages.length === 0) || peerBlockedByCurrentUser || peerBlockedViewer
-        }
+        disabled={composerInputDisabled}
         isSending={isSending}
         error={draftError}
         conversationId={conversation.id}
+        mentionsEnabled={isGroupConversation}
         currentUserId={currentUserId}
         replyingToMessage={replyingToMessage}
         aiReplyGenerating={Boolean(aiReplyLoadingMessageId)}
@@ -1651,6 +1755,7 @@ function ConversationThreadComponent({
           conversationId={conversation.id}
           rootMessage={threadRootMessage}
           currentUserId={currentUserId}
+          mentionsEnabled={isGroupConversation}
           onClose={() => setThreadRootMessage(null)}
           onSendThreadMessage={async (content, threadRootId, replyToId) => {
             if (!currentUserId) {

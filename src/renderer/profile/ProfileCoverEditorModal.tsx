@@ -8,8 +8,8 @@ import {
   PROFILE_BANNER_MIN_WIDTH,
   validateProfileBannerFile,
 } from '../../shared/profileBanner';
-import { saveUserProfile, uploadUserProfileImage } from '../chatApi';
-import { buildCoverUpdatePayload, resolveCoverUrlAfterProfileSave } from '../../shared/profileBanner';
+import { saveProfileCover, uploadUserProfileImage } from '../chatApi';
+import { resolveCoverUrlAfterProfileSave } from '../../shared/profileBanner';
 import { useToast } from '../ui/Toast';
 import { ProfileCoverImage } from './ProfileCoverImage';
 import {
@@ -119,7 +119,7 @@ export function ProfileCoverEditorModal({
       return persistCover(url);
     }
 
-    const result = await saveUserProfile(buildCoverUpdatePayload(url));
+    const result = await saveProfileCover(url);
 
     if (!result.ok) {
       if (onUnauthorized?.(result.status)) {

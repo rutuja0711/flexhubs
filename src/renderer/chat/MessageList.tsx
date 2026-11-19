@@ -56,6 +56,8 @@ import {
   type ConversationScrollSnapshot,
 } from '../conversationScrollCache';
 import { JumpToLatestButton } from './JumpToLatestButton';
+import { ChatTypingIndicator } from './ChatTypingIndicator';
+import type { ChatTypingParticipant } from '../features/chat/lib/chatPageHelpers';
 import { canEditMessage, isTextSelectionContext } from '../../shared/messageComposer';
 import { MessageContextMenu } from './MessageContextMenu';
 import { buildMessageContextMenuItems } from './messageContextMenuItems';
@@ -1019,6 +1021,10 @@ type MessageListProps = {
     position: { top: number; left: number },
   ) => void;
   onProfileImageClick?: (imageUrl: string) => void;
+  typingParticipants?: ChatTypingParticipant[];
+  /** When true, typing is shown above the composer instead of in the message list footer. */
+  suppressTypingIndicator?: boolean;
+  onAtBottomChange?: (atBottom: boolean) => void;
 };
 
 export function MessageList({
@@ -1071,6 +1077,9 @@ export function MessageList({
   memberProfilePopupEnabled = false,
   onOpenMemberProfile,
   onProfileImageClick,
+  typingParticipants = [],
+  suppressTypingIndicator = false,
+  onAtBottomChange,
 }: MessageListProps) {
   perfRecordRender('MessageList');
   const virtualListEnabled = isMessageListVirtualizationEnabled();
@@ -1416,7 +1425,6 @@ export function MessageList({
           setShowJumpToLatest(false);
           setNewMessagesBelow(0);
           jumpAnchorMessageIdRef.current = null;
-          scrollToBottom('auto');
           requestStickToBottomIfNeeded();
         }
       });
@@ -1478,15 +1486,25 @@ export function MessageList({
 
   const handleAtBottomStateChange = useCallback(
     (atBottom: boolean) => {
+      stickToBottomRef.current = atBottom;
+      onAtBottomChange?.(atBottom);
+
+      if (!atBottom) {
+        syncJumpToLatestUi(false);
+        if (!suppressAutoScrollRef.current && !pendingScrollToMessageId) {
+          persistScrollPosition();
+        }
+        return;
+      }
+
       if (suppressAutoScrollRef.current || pendingScrollToMessageId) {
         return;
       }
 
-      stickToBottomRef.current = atBottom;
-      syncJumpToLatestUi(atBottom);
+      syncJumpToLatestUi(true);
       persistScrollPosition();
     },
-    [pendingScrollToMessageId, persistScrollPosition, syncJumpToLatestUi],
+    [onAtBottomChange, pendingScrollToMessageId, persistScrollPosition, syncJumpToLatestUi],
   );
 
   useEffect(() => {
@@ -1653,12 +1671,13 @@ export function MessageList({
         return;
       }
 
-      if (suppressAutoScrollRef.current || pendingScrollToMessageId) {
-        return;
-      }
-
       if (container.scrollHeight <= container.clientHeight + 1) {
         stickToBottomRef.current = true;
+        onAtBottomChange?.(true);
+        if (!suppressAutoScrollRef.current && !pendingScrollToMessageId) {
+          syncJumpToLatestUi(true);
+          persistScrollPosition();
+        }
         return;
       }
 
@@ -1666,10 +1685,17 @@ export function MessageList({
         container.scrollHeight - container.scrollTop - container.clientHeight;
       const atBottom = distanceFromBottom < STICK_TO_BOTTOM_THRESHOLD_PX;
       stickToBottomRef.current = atBottom;
-      if (!pendingScrollToMessageId && !suppressAutoScrollRef.current) {
-        syncJumpToLatestUi(atBottom);
+      onAtBottomChange?.(atBottom);
+
+      if (!atBottom) {
+        syncJumpToLatestUi(false);
+      } else if (!suppressAutoScrollRef.current && !pendingScrollToMessageId) {
+        syncJumpToLatestUi(true);
       }
-      persistScrollPosition();
+
+      if (!suppressAutoScrollRef.current && !pendingScrollToMessageId) {
+        persistScrollPosition();
+      }
 
       if (
         onLoadOlder &&
@@ -1693,6 +1719,7 @@ export function MessageList({
     loadingOlder,
     pendingScrollToMessageId,
     persistScrollPosition,
+    onAtBottomChange,
     syncJumpToLatestUi,
     triggerLoadOlder,
     virtualListEnabled,
@@ -2121,12 +2148,12 @@ export function MessageList({
       return;
     }
 
-    if (openAtUnreadAnchor && !stickToBottomRef.current) {
+    if (!stickToBottomRef.current) {
       return;
     }
 
     requestStickToBottomIfNeeded();
-  }, [loadingOlder, openAtUnreadAnchor, requestStickToBottomIfNeeded, threadSyncing]);
+  }, [loadingOlder, requestStickToBottomIfNeeded, threadSyncing]);
 
   const publishMessageListEntryGauges = useCallback(() => {
     if (!isPerfEnabled()) {
@@ -2376,11 +2403,24 @@ export function MessageList({
       Footer: () => (
         <div className="box-border w-full max-w-full px-6">
           {peerBlockedByCurrentUser ? <BlockedByYouDivider key="blocked-by-you" /> : null}
+          {!suppressTypingIndicator && typingParticipants.length > 0 ? (
+            <div className="flex justify-start pb-1">
+              <ChatTypingIndicator participants={typingParticipants} />
+            </div>
+          ) : null}
           <div ref={bottomAnchorRef} aria-hidden="true" className="h-px shrink-0" />
         </div>
       ),
     };
-  }, [hasMoreOlder, loadingOlder, onLoadOlder, peerBlockedByCurrentUser, triggerLoadOlder]);
+  }, [
+    hasMoreOlder,
+    loadingOlder,
+    onLoadOlder,
+    peerBlockedByCurrentUser,
+    suppressTypingIndicator,
+    triggerLoadOlder,
+    typingParticipants,
+  ]);
 
   const attachScrollContainerRef = useCallback((ref: HTMLElement | null) => {
     scrollContainerRef.current = ref instanceof HTMLDivElement ? ref : null;
@@ -2508,9 +2548,17 @@ export function MessageList({
   if (messages.length === 0) {
     return (
       <MessageListSurface>
-        <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-app-muted" role="status">
-          No messages yet. Say hello.
-        </div>
+        {!suppressTypingIndicator && typingParticipants.length > 0 ? (
+          <div className="flex min-h-0 flex-1 flex-col justify-end px-6 pb-2">
+            <div className="flex justify-start">
+              <ChatTypingIndicator participants={typingParticipants} />
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-app-muted" role="status">
+            No messages yet. Say hello.
+          </div>
+        )}
       </MessageListSurface>
     );
   }
@@ -2571,6 +2619,11 @@ export function MessageList({
               <div key={entry.key}>{renderListEntry(entry)}</div>
             ))}
             {peerBlockedByCurrentUser ? <BlockedByYouDivider key="blocked-by-you" /> : null}
+            {!suppressTypingIndicator && typingParticipants.length > 0 ? (
+              <div className="flex justify-start pb-1">
+                <ChatTypingIndicator participants={typingParticipants} />
+              </div>
+            ) : null}
             <div ref={bottomAnchorRef} aria-hidden="true" className="h-px shrink-0" />
           </div>
         </div>

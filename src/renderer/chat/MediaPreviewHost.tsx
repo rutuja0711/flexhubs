@@ -9,6 +9,8 @@ import {
 } from '../authenticatedMedia';
 import { RemoteImage } from '../RemoteImage';
 import { fetchMediaBlob, isFlexHubsHostedMediaUrl } from '../mediaBlob';
+import { categorizeAttachmentFile } from './attachmentFileMeta';
+import { ChatFilePreviewModal, type ChatFilePreviewItem } from './ChatFilePreviewModal';
 
 export type MediaPreviewItem = {
   url: string;
@@ -17,6 +19,22 @@ export type MediaPreviewItem = {
 };
 
 let openPreviewHandler: ((playlist: MediaPreviewItem[], index: number) => void) | null = null;
+let openFileAttachmentPreviewHandler: ((item: ChatFilePreviewItem) => void) | null = null;
+
+export function openFileAttachmentPreview(item: ChatFilePreviewItem): void {
+  const category = categorizeAttachmentFile(item.name);
+  if (category === 'image') {
+    openMediaPreview({ url: item.url, name: item.name, kind: 'image' });
+    return;
+  }
+
+  if (category === 'video') {
+    openMediaPreview({ url: item.url, name: item.name, kind: 'video' });
+    return;
+  }
+
+  openFileAttachmentPreviewHandler?.(item);
+}
 
 export function openMediaPreview(item: MediaPreviewItem): void {
   const elements = document.querySelectorAll('.js-media-preview-item');
@@ -346,9 +364,11 @@ function MediaPreviewModal({
 export function MediaPreviewHost() {
   const [playlist, setPlaylist] = useState<MediaPreviewItem[]>([]);
   const [currentIndex, setCurrentIndex] = useState(-1);
+  const [filePreview, setFilePreview] = useState<ChatFilePreviewItem | null>(null);
 
   useEffect(() => {
     openPreviewHandler = (newPlaylist, index) => {
+      setFilePreview(null);
       setPlaylist(newPlaylist);
       setCurrentIndex(index);
     };
@@ -356,6 +376,27 @@ export function MediaPreviewHost() {
       openPreviewHandler = null;
     };
   }, []);
+
+  useEffect(() => {
+    openFileAttachmentPreviewHandler = (item) => {
+      setCurrentIndex(-1);
+      setPlaylist([]);
+      setFilePreview(item);
+    };
+    return () => {
+      openFileAttachmentPreviewHandler = null;
+    };
+  }, []);
+
+  if (filePreview) {
+    return (
+      <ChatFilePreviewModal
+        key={filePreview.url}
+        item={filePreview}
+        onClose={() => setFilePreview(null)}
+      />
+    );
+  }
 
   if (currentIndex === -1 || !playlist[currentIndex]) {
     return null;

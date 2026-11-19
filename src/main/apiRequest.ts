@@ -4,12 +4,13 @@ import type { ApiResult } from '../shared/api';
 /** Verbose API logs in dev only when FLEXHUBS_LOG_API=1 (background polls otherwise flood the terminal). */
 const logApiTraffic = !app.isPackaged && process.env.FLEXHUBS_LOG_API === '1';
 
+const API_REQUEST_TIMEOUT_MS = 45_000;
+
 type JsonRecord = Record<string, unknown> & { error?: string };
 
-const NETWORK_COOLDOWN_MS = 20_000;
 const inflightGets = new Map<string, Promise<ApiResult<unknown>>>();
 
-let unreachableUntil = 0;
+let consecutiveNetworkFailures = 0;
 let loggedUnreachable = false;
 
 function unavailableResult<T>(): ApiResult<T> {
@@ -20,45 +21,95 @@ function unavailableResult<T>(): ApiResult<T> {
   };
 }
 
+function requestFailedResult<T>(message: string): ApiResult<T> {
+  return {
+    ok: false,
+    error: message,
+    status: 0,
+  };
+}
+
 function isNetworkFailure(error: unknown): boolean {
+  if (error instanceof Error && error.name === 'AbortError') {
+    const causeMessage =
+      error.cause instanceof Error ? error.cause.message : String(error.cause ?? '');
+    const text = `${error.message} ${causeMessage}`;
+    return /timed out|timeout|connect/i.test(text);
+  }
+
   const cause =
     error instanceof Error && 'cause' in error && error.cause instanceof Error
       ? `${error.cause.name} ${error.cause.message}`
       : '';
   const text = `${error instanceof Error ? error.message : String(error)} ${cause}`;
-  return /fetch failed|Connect Timeout|UND_ERR_CONNECT|ECONNREFUSED|ENOTFOUND|ETIMEDOUT/i.test(text);
+  return /fetch failed|Connect Timeout|UND_ERR_CONNECT|ECONNREFUSED|ECONNRESET|ENOTFOUND|ETIMEDOUT|EAI_AGAIN|socket hang up|network|certificate|TLS/i.test(
+    text,
+  );
 }
 
-function markUnreachable(): void {
-  unreachableUntil = Date.now() + NETWORK_COOLDOWN_MS;
+function noteNetworkFailure(): void {
+  consecutiveNetworkFailures += 1;
 
-  if (!loggedUnreachable) {
+  if (!loggedUnreachable && consecutiveNetworkFailures >= 3) {
     loggedUnreachable = true;
-    console.warn(`[API] Server unreachable. Pausing requests for ${NETWORK_COOLDOWN_MS / 1000}s.`);
+    console.warn(
+      `[API] Multiple connection failures (${consecutiveNetworkFailures}). Check network or flexhubs.in status.`,
+    );
   }
 }
 
-function clearUnreachable(): void {
-  unreachableUntil = 0;
+function clearNetworkFailureStreak(): void {
+  consecutiveNetworkFailures = 0;
   loggedUnreachable = false;
 }
 
-function isCoolingDown(): boolean {
-  return Date.now() < unreachableUntil;
+/** Used by realtime reconnect backoff hints only (does not block HTTP). */
+export function getUnreachableRemainingMs(): number {
+  if (consecutiveNetworkFailures < 3) {
+    return 0;
+  }
+
+  return Math.min(5_000, consecutiveNetworkFailures * 1_000);
 }
 
-export function getUnreachableRemainingMs(): number {
-  return Math.max(0, unreachableUntil - Date.now());
+async function fetchWithTimeout(url: string, init: RequestInit, label: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => {
+    controller.abort(new Error(`Request timed out after ${API_REQUEST_TIMEOUT_MS}ms`));
+  }, API_REQUEST_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`[${label}] Request timed out`, { cause: error });
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 function handleFetchError<T>(label: string, error: unknown): ApiResult<T> {
   if (isNetworkFailure(error)) {
-    markUnreachable();
+    noteNetworkFailure();
+    if (logApiTraffic || !app.isPackaged) {
+      console.warn(`[${label}] network error:`, error);
+    }
     return unavailableResult();
   }
 
   console.error(`[${label}] request failed:`, error);
-  return unavailableResult();
+  const detail = error instanceof Error ? error.message.trim() : '';
+  if (detail) {
+    return requestFailedResult(`Request failed. ${detail}`);
+  }
+
+  return requestFailedResult('Request failed. Please try again.');
 }
 
 async function parseResponse<T>(response: Response, label: string): Promise<ApiResult<T>> {
@@ -96,22 +147,22 @@ async function parseResponse<T>(response: Response, label: string): Promise<ApiR
     };
   }
 
-  clearUnreachable();
+  clearNetworkFailureStreak();
   return { ok: true, data };
 }
 
 async function runGet<T>(url: string, token: string, label: string): Promise<ApiResult<T>> {
-  if (isCoolingDown()) {
-    return unavailableResult();
-  }
-
   try {
-    const response = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${token}`,
+    const response = await fetchWithTimeout(
+      url,
+      {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       },
-    });
+      label,
+    );
 
     return parseResponse<T>(response, label);
   } catch (error) {
@@ -141,19 +192,19 @@ export async function apiPost<T>(
   label: string,
   body?: unknown,
 ): Promise<ApiResult<T>> {
-  if (isCoolingDown()) {
-    return unavailableResult();
-  }
-
   try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
+    const response = await fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+      label,
+    );
 
     return parseResponse<T>(response, label);
   } catch (error) {
@@ -166,17 +217,17 @@ export async function apiDelete<T>(
   token: string,
   label: string,
 ): Promise<ApiResult<T>> {
-  if (isCoolingDown()) {
-    return unavailableResult();
-  }
-
   try {
-    const response = await fetch(url, {
-      method: 'DELETE',
-      headers: {
-        Authorization: `Bearer ${token}`,
+    const response = await fetchWithTimeout(
+      url,
+      {
+        method: 'DELETE',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
       },
-    });
+      label,
+    );
 
     return parseResponse<T>(response, label);
   } catch (error) {
@@ -190,19 +241,19 @@ export async function apiPut<T>(
   label: string,
   body?: unknown,
 ): Promise<ApiResult<T>> {
-  if (isCoolingDown()) {
-    return unavailableResult();
-  }
-
   try {
-    const response = await fetch(url, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
+    const response = await fetchWithTimeout(
+      url,
+      {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+      label,
+    );
 
     return parseResponse<T>(response, label);
   } catch (error) {
@@ -216,19 +267,19 @@ export async function apiPatch<T>(
   label: string,
   body?: unknown,
 ): Promise<ApiResult<T>> {
-  if (isCoolingDown()) {
-    return unavailableResult();
-  }
-
   try {
-    const response = await fetch(url, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json',
+    const response = await fetchWithTimeout(
+      url,
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+      label,
+    );
 
     return parseResponse<T>(response, label);
   } catch (error) {
@@ -244,10 +295,6 @@ export async function apiPostForm<T>(
   mimeType: string,
   base64Data: string,
 ): Promise<ApiResult<T>> {
-  if (isCoolingDown()) {
-    return unavailableResult();
-  }
-
   try {
     const buffer = Buffer.from(base64Data, 'base64');
     const file = new File([new Uint8Array(buffer)], fileName, {
@@ -256,13 +303,17 @@ export async function apiPostForm<T>(
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${token}`,
+    const response = await fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        body: formData,
       },
-      body: formData,
-    });
+      label,
+    );
 
     return parseResponse<T>(response, label);
   } catch (error) {

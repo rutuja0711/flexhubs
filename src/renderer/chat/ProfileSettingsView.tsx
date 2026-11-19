@@ -46,7 +46,7 @@ import {
   type UserProfileState,
 } from '../../shared/profile';
 import { formatTimezoneLabel, getTimezoneOptions } from '../../shared/timezones';
-import { getUserAvatarUrl, getUserInitials } from '../../shared/user';
+import { getUserAvatarUrl, getUserId, getUserInitials } from '../../shared/user';
 import {
   getEffectivePresenceStatus,
   getPresenceStatusMessage,
@@ -64,6 +64,7 @@ import {
   deleteUserAccount,
   loadNotificationSettings,
   saveNotificationSettings,
+  saveProfileCover,
   saveUserProfile,
   saveUserStatus,
   saveUserTimezone,
@@ -90,9 +91,12 @@ import { ProfileIdentityHeader } from '../profile/ProfileIdentityHeader';
 import {
   PROFILE_BANNER_ACCEPT,
   buildCoverUpdatePayload,
+  commitCoverBannerToClient,
+  isCoverOnlyProfileUpdate,
   isProfileCoverFieldKey,
   mergeCoverFieldsIntoUserRecord,
   pickCoverUrlFromUpdates,
+  readSessionCoverUrl,
   resolveCoverUrlAfterProfileSave,
   readPersistedLocalCover,
   resolveEffectiveCoverBanner,
@@ -138,7 +142,7 @@ type ProfileSettingsViewProps = {
   onLogout: () => void;
   onAccountDeleted?: () => void;
   onUnauthorized: (status?: number) => boolean;
-  onUserUpdated?: () => void;
+  onUserUpdated?: (options?: { coverOnly?: boolean }) => void;
   hasUpdateBadge?: boolean;
   onUpdateViewed?: () => void;
   onNotificationSettingsChange?: (settings: ProfileSettings) => void;
@@ -232,12 +236,7 @@ function areProfileSettingsEqual(a: ProfileSettings, b: ProfileSettings): boolea
 }
 
 function resolveSessionUserId(user: unknown): string | null {
-  if (!user || typeof user !== 'object') {
-    return null;
-  }
-
-  const id = (user as { id?: unknown }).id;
-  return typeof id === 'string' && id.trim() ? id : null;
+  return getUserId(user);
 }
 
 function statusDotClass(statusUi: string): string {
@@ -433,8 +432,12 @@ export function ProfileSettingsView({
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
   const [coverBannerUrl, setCoverBannerUrl] = useState<string | null>(() => {
     const stored = getStoredUser();
-    const userId = normalizeUserProfile(stored ?? {}).id;
-    return resolveEffectiveCoverBanner(userId, stored) ?? null;
+    const userId = getUserId(stored);
+    return (
+      resolveEffectiveCoverBanner(userId, stored) ??
+      readSessionCoverUrl(userId) ??
+      null
+    );
   });
   const [coverPreviewUrl, setCoverPreviewUrl] = useState<string | null>(null);
   const [coverEditorOpen, setCoverEditorOpen] = useState(false);
@@ -1131,7 +1134,9 @@ export function ProfileSettingsView({
       setSaving(true);
     }
     setActionError('');
-    const result = await saveUserProfile(updates);
+    const result = isCoverOnlyProfileUpdate(updates)
+      ? await saveProfileCover(pickCoverUrlFromUpdates(updates) ?? null)
+      : await saveUserProfile(updates);
     if (!options?.skipSavingFlag) {
       setSaving(false);
     }
@@ -1210,32 +1215,30 @@ export function ProfileSettingsView({
       const clearing = fallback === null;
       const userId = resolveProfileUserId(profile?.id, sessionUserId, getStoredUser());
       const fromApi = resolveCoverUrlAfterProfileSave(result.data, fallback);
+      const intended =
+        typeof fallback === 'string'
+          ? fallback
+          : fallback === null
+            ? null
+            : undefined;
       const finalCover = clearing
         ? null
-        : fromApi ??
-          (typeof fallback === 'string' ? fallback : undefined) ??
+        : intended ??
+          fromApi ??
           readPersistedLocalCover(userId);
 
       setCoverBannerUrl(finalCover);
-      if (clearing) {
-        writePersistedLocalCover(userId, null);
-      } else if (finalCover) {
-        writePersistedLocalCover(userId, finalCover);
-      }
+      commitCoverBannerToClient(userId, finalCover, syncStoredAuthUser, getStoredUser);
 
-      const stored = getStoredUser();
-      if (stored && typeof stored === 'object') {
-        const patched = mergeCoverFieldsIntoUserRecord(
-          stored as Record<string, unknown>,
-          finalCover,
-        );
-        syncStoredAuthUser(patched);
-      }
       setProfile((current) => {
-        if (!current) {
-          return current;
-        }
-        const next = { ...current, coverBannerUrl: finalCover ?? current.coverBannerUrl };
+        const base =
+          current ??
+          (readProfileCache()?.profile ??
+            normalizeUserProfile(getStoredUser() ?? {}, settingsRef.current ?? undefined));
+        const next: UserProfileState = {
+          ...base,
+          coverBannerUrl: finalCover ?? base.coverBannerUrl,
+        };
         writeProfileCache({
           profile: next,
           settings: settingsRef.current ?? settings ?? normalizeNotificationSettings({}),
@@ -1245,18 +1248,7 @@ export function ProfileSettingsView({
       });
     }
 
-    const coverOnly =
-      Object.keys(updates).some(isProfileCoverFieldKey) &&
-      updates.avatarUrl === undefined &&
-      updates.avatarMode === undefined &&
-      updates.username === undefined &&
-      updates.avatarStyle === undefined &&
-      updates.avatarSeed === undefined &&
-      updates.useInitials === undefined;
-
-    if (!coverOnly) {
-      onUserUpdated?.();
-    }
+    onUserUpdated?.({ coverOnly: Object.keys(updates).some(isProfileCoverFieldKey) });
 
     toast.success(successMessage);
     if (typeof updates.avatarUrl === 'string' || updates.avatarMode === 'upload') {
@@ -1368,19 +1360,14 @@ export function ProfileSettingsView({
 
           const coverUrl = uploadResult.data.url;
           const userId = resolveProfileUserId(profile?.id, sessionUserId, getStoredUser());
-          writePersistedLocalCover(userId, coverUrl);
           setCoverBannerUrl(coverUrl);
-          const storedUser = getStoredUser();
-          if (storedUser && typeof storedUser === 'object') {
-            syncStoredAuthUser(
-              mergeCoverFieldsIntoUserRecord(storedUser as Record<string, unknown>, coverUrl),
-            );
-          }
+          commitCoverBannerToClient(userId, coverUrl, syncStoredAuthUser, getStoredUser);
           setProfile((current) => {
-            if (!current) {
-              return current;
-            }
-            const next = { ...current, coverBannerUrl: coverUrl };
+            const base =
+              current ??
+              (readProfileCache()?.profile ??
+                normalizeUserProfile(getStoredUser() ?? {}, settingsRef.current ?? undefined));
+            const next = { ...base, coverBannerUrl: coverUrl };
             writeProfileCache({
               profile: next,
               settings: settingsRef.current ?? settings ?? normalizeNotificationSettings({}),
@@ -1414,14 +1401,17 @@ export function ProfileSettingsView({
     input.click();
   };
 
-  const resolvedCoverBannerUrl = useMemo(
-    () =>
+  const resolvedCoverBannerUrl = useMemo(() => {
+    const userId = resolveProfileUserId(profile?.id, sessionUserId, getStoredUser());
+    return (
       coverBannerUrl ??
-      resolveEffectiveCoverBanner(profile?.id, profile, getStoredUser()) ??
+      coverPreviewUrl ??
+      resolveEffectiveCoverBanner(userId, profile, getStoredUser()) ??
+      readSessionCoverUrl(userId) ??
       profile?.coverBannerUrl ??
-      null,
-    [coverBannerUrl, profile, profile?.id, profile?.coverBannerUrl],
-  );
+      null
+    );
+  }, [coverBannerUrl, coverPreviewUrl, profile, sessionUserId, profile?.coverBannerUrl]);
 
   const clearCoverPreview = useCallback(() => {
     if (coverPreviewRef.current) {
@@ -1840,6 +1830,7 @@ export function ProfileSettingsView({
                     bannerUrl={resolvedCoverBannerUrl}
                     bannerPlaceholderUrl={coverPreviewUrl}
                     onBannerPrimaryLoaded={clearCoverPreview}
+                    onBannerPrimaryLoaded={clearCoverPreview}
                     presenceStatus={null}
                     showPresence={false}
                     showAvatar={false}
@@ -1972,9 +1963,21 @@ export function ProfileSettingsView({
                   onSaved={(url) => {
                     const userId = resolveProfileUserId(profile?.id, sessionUserId, getStoredUser());
                     setCoverBannerUrl(url);
-                    setProfile((current) => (current ? { ...current, coverBannerUrl: url } : current));
-                    writePersistedLocalCover(userId, url);
-                    onUserUpdated?.();
+                    commitCoverBannerToClient(userId, url, syncStoredAuthUser, getStoredUser);
+                    setProfile((current) => {
+                      const base =
+                        current ??
+                        (readProfileCache()?.profile ??
+                          normalizeUserProfile(getStoredUser() ?? {}, settingsRef.current ?? undefined));
+                      const next = { ...base, coverBannerUrl: url };
+                      writeProfileCache({
+                        profile: next,
+                        settings: settingsRef.current ?? settings ?? normalizeNotificationSettings({}),
+                        avatarStyles: avatarStylesRef.current,
+                      });
+                      return next;
+                    });
+                    onUserUpdated?.({ coverOnly: true });
                   }}
                 />
 

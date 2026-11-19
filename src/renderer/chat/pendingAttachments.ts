@@ -4,6 +4,7 @@ import {
   readFileExtension,
   type AttachmentFileCategory,
 } from './attachmentFileMeta';
+import { isTextPreviewFile, shouldAttachObjectUrlForPreview } from './attachmentPreviewSupport';
 
 export type PendingAttachment = {
   id: string;
@@ -13,6 +14,8 @@ export type PendingAttachment = {
   isImage: boolean;
   isVideo: boolean;
   isPdf: boolean;
+  isAudio: boolean;
+  isText: boolean;
 };
 
 function createAttachmentId(): string {
@@ -25,7 +28,9 @@ export function buildPendingAttachment(file: File): PendingAttachment {
   const isImage = mimeType.startsWith('image/') || category === 'image';
   const isVideo = mimeType.startsWith('video/') || category === 'video';
   const isPdf = category === 'pdf' || mimeType === 'application/pdf';
-  const needsObjectUrl = isImage || isVideo || isPdf;
+  const isAudio = mimeType.startsWith('audio/') || category === 'audio';
+  const isText = isTextPreviewFile(file.name, mimeType);
+  const needsObjectUrl = shouldAttachObjectUrlForPreview(file, category);
   const previewUrl = needsObjectUrl ? URL.createObjectURL(file) : '';
 
   return {
@@ -36,6 +41,8 @@ export function buildPendingAttachment(file: File): PendingAttachment {
     isImage,
     isVideo,
     isPdf,
+    isAudio,
+    isText,
   };
 }
 

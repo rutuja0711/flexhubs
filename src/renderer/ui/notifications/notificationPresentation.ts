@@ -59,6 +59,27 @@ function parseFriendRequestSenderName(
   return 'Someone';
 }
 
+function parseReplyNotificationBody(body: string): { actor: string; preview: string } | null {
+  const trimmed = body.trim();
+  const repliedToYou = trimmed.match(/^(.+?)\s+replied to you:\s*([\s\S]*)$/i);
+  if (repliedToYou) {
+    return {
+      actor: repliedToYou[1].trim(),
+      preview: repliedToYou[2].trim(),
+    };
+  }
+
+  const repliedInThread = trimmed.match(/^(.+?)\s+replied in thread:\s*([\s\S]*)$/i);
+  if (repliedInThread) {
+    return {
+      actor: repliedInThread[1].trim(),
+      preview: repliedInThread[2].trim(),
+    };
+  }
+
+  return null;
+}
+
 function parseSenderName(
   notification: NotificationItem,
   conversations: ConversationItem[] = [],
@@ -68,6 +89,11 @@ function parseSenderName(
 
   if (sentMatch?.[1]) {
     return sentMatch[1].trim();
+  }
+
+  const replyActor = parseReplyNotificationBody(body);
+  if (replyActor?.actor) {
+    return replyActor.actor;
   }
 
   const colonMatch = body.match(/^([^:\n]{1,64}):\s/);
@@ -204,6 +230,9 @@ export function resolveNotificationPresentationType(
   if (stack.includes('mention') || notification.body.includes('@')) {
     return 'mention';
   }
+  if (notification.type.toUpperCase() === 'REPLY') {
+    return 'thread_reply';
+  }
   if (stack.includes('reply') || stack.includes('replied')) {
     return 'thread_reply';
   }
@@ -305,27 +334,6 @@ function parseReaction(body: string): { emoji: string; count: number } | undefin
   };
 }
 
-function parseThreadQuote(body: string): { quote: string; reply: string } | undefined {
-  const lower = body.toLowerCase();
-  if (!lower.includes('replied')) {
-    return undefined;
-  }
-
-  const cleaned = bodyWithoutSenderPrefix(body);
-  const youMatch = cleaned.match(/you[\s\S]*?(.+)/i);
-  if (youMatch) {
-    return {
-      quote: 'You',
-      reply: youMatch[1]?.trim() || cleaned,
-    };
-  }
-
-  return {
-    quote: 'Your message',
-    reply: cleaned,
-  };
-}
-
 export function mapNotificationItemToFlexHubsData(
   notification: NotificationItem,
   options: {
@@ -390,7 +398,13 @@ export function mapNotificationItemToFlexHubsData(
   }
 
   if (type === 'thread_reply') {
-    data.body = parseThreadQuote(formattedBody)?.reply || contentBody || 'Replied in thread';
+    const reply = parseReplyNotificationBody(formattedBody);
+    if (reply) {
+      data.title = reply.actor || data.title;
+      data.body = reply.preview || 'Replied in thread';
+    } else {
+      data.body = contentBody.trim() || formattedBody.trim() || 'Replied in thread';
+    }
   }
 
   if (type === 'reaction') {

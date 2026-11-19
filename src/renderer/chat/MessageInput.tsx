@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -88,6 +89,8 @@ type MessageInputProps = {
   onEditLastMessage?: () => void;
   /** When editing a message, route file picks / paste / drop here instead of new-message send flow. */
   onEditAttachFiles?: (files: File[]) => void;
+  /** @mention autocomplete (group/hub only; off in direct messages). */
+  mentionsEnabled?: boolean;
 };
 
 export type MessageInputHandle = {
@@ -277,6 +280,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   onSaveComposerEdit,
   onEditLastMessage,
   onEditAttachFiles,
+  mentionsEnabled = false,
 },
   ref,
 ) {
@@ -365,10 +369,18 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   const pendingAttachmentsRef = useRef(pendingAttachments);
   pendingAttachmentsRef.current = pendingAttachments;
   const localOverlayRootRef = useRef<HTMLDivElement>(null);
+  const attachmentCaptionRef = useRef<HTMLTextAreaElement | null>(null);
   const attachmentOverlayAnchorRef = attachmentOverlayRootRef ?? localOverlayRootRef;
   const attachmentComposerActive = pendingAttachments.length > 0 && !editingMessage;
   const hideInlineComposerForAttachments =
     attachmentComposerActive && Boolean(attachmentOverlayRootRef);
+
+  const getComposerTextarea = useCallback(() => {
+    if (attachmentComposerActive && attachmentCaptionRef.current) {
+      return attachmentCaptionRef.current;
+    }
+    return textareaRef.current;
+  }, [attachmentComposerActive]);
 
   const removeAttachment = (indexToRemove: number) => {
     setPendingAttachments((current) => {
@@ -483,6 +495,15 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   };
 
   useEffect(() => {
+    if (!mentionsEnabled) {
+      setMentionQuery(null);
+      setMentionCandidatePool([]);
+      setMentionRemoteSuggestions([]);
+      setMentionLoading(false);
+      mentionAnchorRef.current = null;
+      return;
+    }
+
     if (!conversationId) {
       setMentionCandidatePool([]);
       setMentionRemoteSuggestions([]);
@@ -508,10 +529,10 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     return () => {
       cancelled = true;
     };
-  }, [conversationId]);
+  }, [conversationId, mentionsEnabled]);
 
   useEffect(() => {
-    if (!conversationId || mentionQuery === null) {
+    if (!mentionsEnabled || !conversationId || mentionQuery === null) {
       setMentionRemoteSuggestions([]);
       setMentionLoading(false);
       return;
@@ -558,7 +579,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [conversationId, mentionQuery]);
+  }, [conversationId, mentionQuery, mentionsEnabled]);
 
   const visibleMentionSuggestions = useMemo(() => {
     if (mentionQuery === null) {
@@ -576,18 +597,19 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   }, [mentionQuery, visibleMentionSuggestions]);
 
   useLayoutEffect(() => {
-    if (mentionQuery === null || !textareaRef.current) {
+    const textarea = getComposerTextarea();
+    if (mentionQuery === null || !textarea) {
       setMentionMenuStyle(null);
       return;
     }
 
-    const rect = textareaRef.current.getBoundingClientRect();
+    const rect = textarea.getBoundingClientRect();
     setMentionMenuStyle({
       left: rect.left,
       top: Math.max(8, rect.top - 8),
       width: Math.max(rect.width, 240),
     });
-  }, [mentionQuery, visibleMentionSuggestions.length, value]);
+  }, [getComposerTextarea, mentionQuery, visibleMentionSuggestions.length, value]);
 
   useLayoutEffect(() => {
     const textarea = textareaRef.current;
@@ -681,7 +703,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   };
 
   const insertMention = (username: string) => {
-    const textarea = textareaRef.current;
+    const textarea = getComposerTextarea();
     const cursor = textarea?.selectionStart ?? value.length;
     const anchor = mentionAnchorRef.current ?? detectMentionAnchor(value, cursor);
     const after = value.slice(cursor);
@@ -713,6 +735,45 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
       textarea.focus();
       textarea.setSelectionRange(nextCursor, nextCursor);
     });
+  };
+
+  const handleMentionKeyboard = (event: React.KeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (mentionQuery === null || visibleMentionSuggestions.length === 0) {
+      return false;
+    }
+
+    if (event.key === 'ArrowDown') {
+      event.preventDefault();
+      setMentionHighlightIndex((current) =>
+        Math.min(current + 1, visibleMentionSuggestions.length - 1),
+      );
+      return true;
+    }
+
+    if (event.key === 'ArrowUp') {
+      event.preventDefault();
+      setMentionHighlightIndex((current) => Math.max(current - 1, 0));
+      return true;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setMentionQuery(null);
+      mentionAnchorRef.current = null;
+      return true;
+    }
+
+    if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
+      event.preventDefault();
+      const selected =
+        visibleMentionSuggestions[mentionHighlightIndex] ?? visibleMentionSuggestions[0];
+      if (selected) {
+        insertMention(selected.username);
+      }
+      return true;
+    }
+
+    return false;
   };
 
   const handleCreatePoll = async () => {
@@ -809,6 +870,14 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
   };
 
   const updateMentionState = (nextValue: string, cursor: number) => {
+    if (!mentionsEnabled) {
+      if (mentionQuery !== null) {
+        setMentionQuery(null);
+        mentionAnchorRef.current = null;
+      }
+      return;
+    }
+
     const query = detectMentionQuery(nextValue, cursor);
     mentionAnchorRef.current = query === null ? null : detectMentionAnchor(nextValue, cursor);
     setMentionQuery(query);
@@ -1344,6 +1413,11 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           onOpenEmoji={() => openPicker('emoji')}
           sendDisabled={disabled || isSending || aiBusy || fileDisabled}
           isSending={isSending}
+          onCaptionPaste={handlePaste}
+          onPasteFiles={(files) => addFilesToComposer(files)}
+          onCaptionKeyDown={handleMentionKeyboard}
+          onCaptionInput={(nextValue, cursor) => updateMentionState(nextValue, cursor)}
+          captionTextareaRef={attachmentCaptionRef}
           replyBanner={
             replyingToMessage
               ? `Replying to ${replyingToMessage.senderName || replyingToMessage.senderId}`
@@ -1543,40 +1617,8 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                 }
               }
 
-              if (mentionQuery !== null && visibleMentionSuggestions.length > 0) {
-                if (event.key === 'ArrowDown') {
-                  event.preventDefault();
-                  setMentionHighlightIndex((current) =>
-                    Math.min(current + 1, visibleMentionSuggestions.length - 1),
-                  );
-                  return;
-                }
-
-                if (event.key === 'ArrowUp') {
-                  event.preventDefault();
-                  setMentionHighlightIndex((current) => Math.max(current - 1, 0));
-                  return;
-                }
-
-                if (event.key === 'Escape') {
-                  event.preventDefault();
-                  setMentionQuery(null);
-                  mentionAnchorRef.current = null;
-                  return;
-                }
-
-                if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey)) {
-                  event.preventDefault();
-                  const selected =
-                    visibleMentionSuggestions[mentionHighlightIndex] ??
-                    visibleMentionSuggestions[0];
-
-                  if (selected) {
-                    insertMention(selected.username);
-                  }
-
-                  return;
-                }
+              if (handleMentionKeyboard(event)) {
+                return;
               }
 
               if (event.key === 'Enter' && !event.shiftKey) {
@@ -1847,7 +1889,7 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
           )
         : null}
 
-      {mentionQuery !== null && mentionMenuStyle
+      {mentionsEnabled && mentionQuery !== null && mentionMenuStyle
         ? createPortal(
             <div
               className="fixed z-[9999] max-h-56 overflow-y-auto rounded-xl border border-app-border bg-app-surface shadow-2xl p-1"

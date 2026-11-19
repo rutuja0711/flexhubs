@@ -1,8 +1,7 @@
 import type { LoginCredentials, LoginResult, LoginSuccess } from '../shared/auth';
 import {
   mergeCoverFieldsIntoUserRecord,
-  readPersistedLocalCover,
-  resolveProfileBannerUrl,
+  resolveEffectiveCoverBanner,
 } from '../shared/profileBanner';
 
 export type { LoginCredentials, LoginResult, LoginSuccess } from '../shared/auth';
@@ -55,32 +54,24 @@ function persistAuthSessionToDisk(token: string, user: unknown): void {
 }
 
 function mergeIncomingAuthUser(incoming: unknown): unknown {
-  const previous = getStoredUser();
-
-  if (!previous || typeof previous !== 'object' || !incoming || typeof incoming !== 'object') {
+  if (!incoming || typeof incoming !== 'object') {
     return incoming;
-  }
-
-  const previousCover = resolveProfileBannerUrl(previous as Record<string, unknown>);
-  const incomingCover = resolveProfileBannerUrl(incoming as Record<string, unknown>);
-
-  if (incomingCover) {
-    return incoming;
-  }
-
-  if (previousCover) {
-    return mergeCoverFieldsIntoUserRecord(incoming as Record<string, unknown>, previousCover);
   }
 
   const record = incoming as Record<string, unknown>;
+  const previous = getStoredUser();
   const userId =
     (typeof record.id === 'string' && record.id) ||
     (typeof record.userId === 'string' && record.userId) ||
     null;
-  const localCover = readPersistedLocalCover(userId);
+  const effectiveCover = resolveEffectiveCoverBanner(
+    userId,
+    record,
+    previous && typeof previous === 'object' ? previous : null,
+  );
 
-  if (localCover) {
-    return mergeCoverFieldsIntoUserRecord(record, localCover);
+  if (effectiveCover) {
+    return mergeCoverFieldsIntoUserRecord(record, effectiveCover);
   }
 
   return incoming;

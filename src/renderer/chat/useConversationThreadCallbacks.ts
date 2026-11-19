@@ -3,7 +3,7 @@ import type { GifPickerItem } from '../../shared/gifs';
 import type { ConversationScrollSnapshot } from '../conversationScrollCache';
 
 export type ConversationThreadActions = {
-  handleSendMessage: (replyToMessageId?: string) => void;
+  handleSendMessage: (replyToMessageId?: string, contentOverride?: string) => void;
   handleRetryMessage: (messageId: string) => void;
   handleSendMedia: (
     item: GifPickerItem,
@@ -65,14 +65,15 @@ export type ConversationThreadActions = {
   applyThreadMessagesRegistered: () => void;
   saveConversationScroll: (conversationId: string, snapshot: ConversationScrollSnapshot) => void;
   applyAfterConversationHistoryCleared: (conversationId: string) => void;
+  applyAfterConversationDeleted: (conversationId: string) => void;
 };
 
 export function useConversationThreadCallbacks(
   actionsRef: MutableRefObject<ConversationThreadActions>,
 ) {
   const onSend = useCallback(
-    (replyToMessageId?: string) => {
-      void actionsRef.current.handleSendMessage(replyToMessageId);
+    (replyToMessageId?: string, contentOverride?: string) => {
+      void actionsRef.current.handleSendMessage(replyToMessageId, contentOverride);
     },
     [actionsRef],
   );
@@ -372,6 +373,9 @@ export function useConversationThreadCallbacks(
     onOpenCalendar,
     onOpenCalendarEvent,
     onHubDeleted,
+    onConversationDeleted: (conversationId: string) => {
+      actionsRef.current.applyAfterConversationDeleted(conversationId);
+    },
     onLoadOlder,
     onFocusMessageHandled,
     onOpenFlexAi,
