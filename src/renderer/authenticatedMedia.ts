@@ -248,6 +248,14 @@ export async function fetchAuthenticatedMediaBlob(rawUrl: string): Promise<Blob>
     return response.blob();
   }
 
+  if (canStreamHostedMediaInDesktop()) {
+    const response = await fetch(normalized);
+    if (!response.ok) {
+      throw new Error('Unable to load this file.');
+    }
+    return response.blob();
+  }
+
   const objectUrl = await resolveAuthenticatedMediaUrl(normalized);
   const response = await fetch(objectUrl);
   return response.blob();

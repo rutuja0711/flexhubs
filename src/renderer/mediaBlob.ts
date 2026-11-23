@@ -1,5 +1,6 @@
 import { normalizeUploadUrl } from '../shared/profile';
 import {
+  canStreamHostedMediaInDesktop,
   fetchAuthenticatedMediaBlob,
   isFlexHubsHostedAssetUrl,
 } from './authenticatedMedia';
@@ -56,6 +57,11 @@ export async function fetchMediaBlobWithProgress(
   const normalized = normalizeUploadUrl(url.trim());
 
   if (isFlexHubsHostedAssetUrl(normalized)) {
+    // Desktop injects auth on flexhubs.in fetches in the main session — stream in the renderer instead of IPC buffering.
+    if (canStreamHostedMediaInDesktop()) {
+      return fetchPublicMediaBlob(normalized, onProgress);
+    }
+
     onProgress?.(0, null);
     const blob = await fetchAuthenticatedMediaBlob(normalized);
     onProgress?.(blob.size, blob.size);

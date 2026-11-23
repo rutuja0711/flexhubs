@@ -108,7 +108,7 @@ export function useAttachmentTransfer(options: {
 
     setDownloading(true);
     setDownloadError(false);
-    setDownloadProgress(0);
+    setDownloadProgress(null);
 
     try {
       let blob: Blob;

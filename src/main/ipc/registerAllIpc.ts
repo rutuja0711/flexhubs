@@ -459,7 +459,6 @@ export function registerAllIpc(deps: MainIpcWindowDeps): void {
       });
     },
   );
-  );
   ipcMain.handle('desktop:prepare-file-drag', (_event, token: string, url: string, fileName: string) =>
     prepareFileDragFromUrl(token, url, fileName),
   );
